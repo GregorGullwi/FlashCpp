@@ -71,14 +71,14 @@ std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(StringHandle name) {
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size());
+TypeInfo& add_user_type(StringHandle name, int type_size_in_bits) {
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size(), type_size_in_bits);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
 TypeInfo& add_function_type(StringHandle name, [[maybe_unused]] Type return_type) {
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size());
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size(), 0);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
@@ -95,13 +95,13 @@ TypeInfo& add_struct_type(StringHandle name) {
         return const_cast<TypeInfo&>(*existing_it->second);
     }
     
-    auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, gTypeInfo.size());
+    auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, gTypeInfo.size(), 0);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
 TypeInfo& add_enum_type(StringHandle name) {
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, gTypeInfo.size());
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, gTypeInfo.size(), 0);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
@@ -113,60 +113,70 @@ void initialize_native_types() {
     }
 
     // Add basic native types
-    auto& void_type = gTypeInfo.emplace_back(StringTable::createStringHandle("void"sv), Type::Void, gTypeInfo.size());
+    auto& void_type = gTypeInfo.emplace_back(StringTable::createStringHandle("void"sv), Type::Void, gTypeInfo.size(), 0);
     gNativeTypes[Type::Void] = &void_type;
 
-    auto& bool_type = gTypeInfo.emplace_back(StringTable::createStringHandle("bool"sv), Type::Bool, gTypeInfo.size());
+    auto& bool_type = gTypeInfo.emplace_back(StringTable::createStringHandle("bool"sv), Type::Bool, gTypeInfo.size(), get_type_size_bits(Type::Bool));
     gNativeTypes[Type::Bool] = &bool_type;
 
-    auto& char_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size());
+    auto& char_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_type_size_bits(Type::Char));
     gNativeTypes[Type::Char] = &char_type;
+    
+    auto& wchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_wchar_size_bits());
+    gNativeTypes[Type::WChar] = &wchar_type;
+    
+    auto& char8_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_type_size_bits(Type::Char8));
+    gNativeTypes[Type::Char8] = &char8_type;
+    
+    auto& char16_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_type_size_bits(Type::Char16));
+    gNativeTypes[Type::Char16] = &char16_type;
+    
+    auto& char32_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_type_size_bits(Type::Char32));
+    gNativeTypes[Type::Char32] = &char32_type;
 
-    auto& uchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uchar"sv), Type::UnsignedChar, gTypeInfo.size());
+    auto& uchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uchar"sv), Type::UnsignedChar, gTypeInfo.size(), get_type_size_bits(Type::UnsignedChar));
     gNativeTypes[Type::UnsignedChar] = &uchar_type;
 
-    auto& short_type = gTypeInfo.emplace_back(StringTable::createStringHandle("short"sv), Type::Short, gTypeInfo.size());
+    auto& short_type = gTypeInfo.emplace_back(StringTable::createStringHandle("short"sv), Type::Short, gTypeInfo.size(), get_type_size_bits(Type::Short));
     gNativeTypes[Type::Short] = &short_type;
 
-    auto& ushort_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ushort"sv), Type::UnsignedShort, gTypeInfo.size());
+    auto& ushort_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ushort"sv), Type::UnsignedShort, gTypeInfo.size(), get_type_size_bits(Type::UnsignedShort));
     gNativeTypes[Type::UnsignedShort] = &ushort_type;
 
-    auto& int_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int"sv), Type::Int, gTypeInfo.size());
+    auto& int_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int"sv), Type::Int, gTypeInfo.size(), get_type_size_bits(Type::Int));
     gNativeTypes[Type::Int] = &int_type;
 
-    auto& uint_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint"sv), Type::UnsignedInt, gTypeInfo.size());
+    auto& uint_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint"sv), Type::UnsignedInt, gTypeInfo.size(), get_type_size_bits(Type::UnsignedInt));
     gNativeTypes[Type::UnsignedInt] = &uint_type;
 
-	auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, gTypeInfo.size());
-	long_type.type_size_ = get_type_size_bits(Type::Long);
+	auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, gTypeInfo.size(), get_type_size_bits(Type::Long));
 	gNativeTypes[Type::Long] = &long_type;
 
-	auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, gTypeInfo.size());
-	ulong_type.type_size_ = get_type_size_bits(Type::UnsignedLong);
+	auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, gTypeInfo.size(), get_type_size_bits(Type::UnsignedLong));
 	gNativeTypes[Type::UnsignedLong] = &ulong_type;
 
-    auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), Type::LongLong, gTypeInfo.size());
+    auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), Type::LongLong, gTypeInfo.size(), get_type_size_bits(Type::LongLong));
     gNativeTypes[Type::LongLong] = &longlong_type;
 
-    auto& ulonglong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulonglong"sv), Type::UnsignedLongLong, gTypeInfo.size());
+    auto& ulonglong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulonglong"sv), Type::UnsignedLongLong, gTypeInfo.size(), get_type_size_bits(Type::UnsignedLongLong));
     gNativeTypes[Type::UnsignedLongLong] = &ulonglong_type;
 
-    auto& float_type = gTypeInfo.emplace_back(StringTable::createStringHandle("float"sv), Type::Float, gTypeInfo.size());
+    auto& float_type = gTypeInfo.emplace_back(StringTable::createStringHandle("float"sv), Type::Float, gTypeInfo.size(), get_type_size_bits(Type::Float));
     gNativeTypes[Type::Float] = &float_type;
 
-    auto& double_type = gTypeInfo.emplace_back(StringTable::createStringHandle("double"sv), Type::Double, gTypeInfo.size());
+    auto& double_type = gTypeInfo.emplace_back(StringTable::createStringHandle("double"sv), Type::Double, gTypeInfo.size(), get_type_size_bits(Type::Double));
     gNativeTypes[Type::Double] = &double_type;
 
-    auto& longdouble_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longdouble"sv), Type::LongDouble, gTypeInfo.size());
+    auto& longdouble_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longdouble"sv), Type::LongDouble, gTypeInfo.size(), get_type_size_bits(Type::LongDouble));
     gNativeTypes[Type::LongDouble] = &longdouble_type;
 
-    auto& auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("auto"sv), Type::Auto, gTypeInfo.size());
+    auto& auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("auto"sv), Type::Auto, gTypeInfo.size(), 0);
     gNativeTypes[Type::Auto] = &auto_type;
 
-    auto& function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("function_pointer"sv), Type::FunctionPointer, gTypeInfo.size());
+    auto& function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("function_pointer"sv), Type::FunctionPointer, gTypeInfo.size(), get_type_size_bits(Type::FunctionPointer));
     gNativeTypes[Type::FunctionPointer] = &function_pointer_type;
 
-    auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), Type::MemberFunctionPointer, gTypeInfo.size());
+    auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), Type::MemberFunctionPointer, gTypeInfo.size(), get_type_size_bits(Type::MemberFunctionPointer));
     gNativeTypes[Type::MemberFunctionPointer] = &member_function_pointer_type;
 
     // Register GCC builtin types used by libstdc++ headers
@@ -174,13 +184,11 @@ void initialize_native_types() {
     // We register it as a user-defined type so lookupTypeInCurrentContext finds it,
     // allowing declarations like '__builtin_va_list args;' to parse correctly.
     auto va_list_handle = StringTable::createStringHandle("__builtin_va_list"sv);
-    auto& va_list_type_info = gTypeInfo.emplace_back(va_list_handle, Type::UserDefined, gTypeInfo.size());
-    va_list_type_info.type_size_ = 64;  // Pointer-sized opaque handle
+    auto& va_list_type_info = gTypeInfo.emplace_back(va_list_handle, Type::UserDefined, gTypeInfo.size(), 64); // Pointer-sized opaque handle
     gTypesByName.emplace(va_list_handle, &va_list_type_info);
 
     auto gnuc_va_list_handle = StringTable::createStringHandle("__gnuc_va_list"sv);
-    auto& gnuc_va_list_type_info = gTypeInfo.emplace_back(gnuc_va_list_handle, Type::UserDefined, gTypeInfo.size());
-    gnuc_va_list_type_info.type_size_ = 64;
+    auto& gnuc_va_list_type_info = gTypeInfo.emplace_back(gnuc_va_list_handle, Type::UserDefined, gTypeInfo.size(), 64);
     gTypesByName.emplace(gnuc_va_list_handle, &gnuc_va_list_type_info);
 }
 

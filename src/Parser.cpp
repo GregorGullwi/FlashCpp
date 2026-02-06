@@ -95,26 +95,8 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 	return result;
 }
 
-// Helper function to get type size in bits for basic types
-// Helper function to get the size in bits for a type (including struct types)
-// Used for runtime type size queries when TypeInfo is already populated
-// Helper function to safely get type size - handles both basic types and UserDefined types
-// For UserDefined types, tries to look up size from type registry via type_index
-static size_t getTypeSizeForTemplateParameter(Type type, size_t type_index) {
-	// Check if this is a basic type that get_type_size_bits can handle
-	// Basic types range from Void to MemberObjectPointer in the Type enum
-	if (type >= Type::Void && type <= Type::MemberObjectPointer) {
-		return static_cast<size_t>(get_type_size_bits(type));
-	}
-	// For UserDefined and other types (Template, etc), look up size from type registry
-	if (type_index > 0 && type_index < gTypeInfo.size()) {
-		return gTypeInfo[type_index].type_size_;
-	}
-	return 0;  // Will be resolved during member access
-}
-
 // Helper function to safely get type size from TemplateArgument
-static size_t getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
+static int getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
 	if (arg.type_value >= Type::Void && arg.type_value <= Type::MemberObjectPointer) {
@@ -1713,10 +1695,8 @@ ParseResult Parser::parse_type_and_name() {
                 discard_saved_token(saved_pos);
                 return result;
             }
-            restore_token_position(saved_pos);
-        } else {
-            restore_token_position(saved_pos);
         }
+        restore_token_position(saved_pos);
     }
 
     // Parse postfix cv-qualifiers before references: Type const& or Type volatile&
@@ -4326,9 +4306,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			qualified_alias_name = StringTable::getOrInternStringHandle(qualified_builder.commit());
 		}
 		
-		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, final_type_spec.type(), gTypeInfo.size());
-		alias_type_info.type_index_ = final_type_spec.type_index();
-		alias_type_info.type_size_ = final_type_spec.size_in_bits();
+		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, final_type_spec.type(), final_type_spec.type_index(), final_type_spec.size_in_bits());
 		alias_type_info.is_reference_ = final_type_spec.is_reference();
 		alias_type_info.is_rvalue_reference_ = final_type_spec.is_rvalue_reference();
 		alias_type_info.pointer_depth_ = final_type_spec.pointer_depth();
@@ -4557,9 +4535,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the alias globally
-			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
+			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size(), type_spec.size_in_bits());
 			alias_type_info.type_index_ = type_spec.type_index();
-			alias_type_info.type_size_ = type_spec.size_in_bits();
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			return ParseResult::success();
@@ -4716,9 +4693,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the alias globally
-			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
-			alias_type_info.type_index_ = type_spec.type_index();
-			alias_type_info.type_size_ = type_spec.size_in_bits();
+			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			return ParseResult::success();
@@ -4827,9 +4802,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	}
 	
 	// Also register it globally
-	auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
-	alias_type_info.type_index_ = type_spec.type_index();
-	alias_type_info.type_size_ = type_spec.size_in_bits();
+	auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
+	alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
 	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 	
 	return ParseResult::success();
@@ -9744,10 +9718,9 @@ ParseResult Parser::parse_typedef_declaration()
 	// Register the typedef alias in the type system
 	// The typedef should resolve to the underlying type, not be a new UserDefined type
 	// We create a TypeInfo entry that mirrors the underlying type
-	auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec.type(), gTypeInfo.size());
-	alias_type_info.type_index_ = type_spec.type_index();
-	alias_type_info.type_size_ = type_spec.size_in_bits();
+	auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
+	alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
 	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
 	// Update the type_node with the modified type_spec (with pointers)
@@ -10497,9 +10470,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 					// Register the type alias in gTypesByName
 					// Create a TypeInfo for the alias that points to the underlying type
-					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token->value()), type_spec.type(), gTypeInfo.size());
-					alias_type_info.type_index_ = type_spec.type_index();
-					alias_type_info.type_size_ = type_spec.size_in_bits();
+					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token->value()), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
 					alias_type_info.pointer_depth_ = type_spec.pointer_depth();
 					alias_type_info.is_reference_ = type_spec.is_reference();
 					alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
@@ -10828,13 +10799,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			if (existing_type_it != gTypesByName.end()) {
 				// Found existing type - create alias pointing to it
 				const TypeInfo* source_type = existing_type_it->second;
-				auto& alias_type_info = gTypeInfo.emplace_back(target_type_name, source_type->type_, gTypeInfo.size());
-				alias_type_info.type_index_ = source_type->type_index_;
-				alias_type_info.type_size_ = source_type->type_size_;
+				auto& alias_type_info = gTypeInfo.emplace_back(target_type_name, source_type->type_, source_type->type_index_, source_type->type_size_);
 				alias_type_info.pointer_depth_ = source_type->pointer_depth_;
 				
 				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it
-				// This is the same pattern used for typedef resolution (see lines 6557-6565, 7032-7040)
+				// This is the same pattern used for typedef resolution
 				
 				gTypesByName.emplace(target_type_name, &alias_type_info);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias from using declaration: {} -> {}", 
@@ -10857,8 +10826,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				
 				if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
 					// Create opaque C library type
-					auto& type_info = gTypeInfo.emplace_back(target_type_name, Type::Struct, gTypeInfo.size());
-					type_info.type_size_ = type_it->second;
+					auto& type_info = gTypeInfo.emplace_back(target_type_name, Type::Struct, gTypeInfo.size(), static_cast<int>(type_it->second));
 					
 					auto struct_info = std::make_unique<StructTypeInfo>(target_type_name, AccessSpecifier::Public);
 					struct_info->total_size = type_it->second / 8;
@@ -10900,8 +10868,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			StringHandle type_name = StringTable::getOrInternStringHandle(identifier_token.value());
 			if (gTypesByName.find(type_name) == gTypesByName.end()) {
 				// Create opaque C library type in global namespace
-				auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
-				type_info.type_size_ = type_it->second;
+				auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size(), static_cast<int>(type_it->second));
 				
 				auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
 				struct_info->total_size = type_it->second / 8;
@@ -27445,7 +27412,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size(), 0); // Do we need a correct size here?
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
@@ -31969,7 +31936,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
@@ -32293,8 +32260,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name(), &type_info);
+				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -32469,8 +32435,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name(), &type_info);
+				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -33340,8 +33305,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name(), &type_info);
+				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -35355,8 +35319,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			std::string_view param_name = param_names[i];
 			Type concrete_type = template_args[i].type_value;
 
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
-			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
 			
 			// Preserve reference qualifiers from template arguments
 			// This ensures that when T=int&, the type T is properly marked as a reference
@@ -35969,7 +35932,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			
 			// Add this template parameter -> concrete type mapping
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0);	// Placeholder size
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
 			// instead of staying as UserDefined, which would cause toString() to return "unknown"
@@ -36057,7 +36020,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
 			std::string_view param_name = param_names[i];
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0); // Placeholder size
 			// Set type_size_ so parse_type_specifier treats this as a typedef
 			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
@@ -36428,8 +36391,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			std::string_view param_name = param_names[i];
 			Type concrete_type = template_args[i].type_value;
 
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
-			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
 			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
@@ -37507,10 +37469,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			auto& alias_type_info = gTypeInfo.emplace_back(
 				qualified_alias_name,
 				alias_type_spec.type(),
-				gTypeInfo.size()
+				alias_type_spec.type_index(),
+				alias_type_spec.size_in_bits()
 			);
-			alias_type_info.type_index_ = alias_type_spec.type_index();
-			alias_type_info.type_size_ = alias_type_spec.size_in_bits();
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias: ", StringTable::getStringView(qualified_alias_name), 
@@ -39078,7 +39039,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// we need to substitute T -> int
 			Type substituted_type = alias_type_spec.type();
 			TypeIndex substituted_type_index = alias_type_spec.type_index();
-			size_t substituted_size = alias_type_spec.size_in_bits();
+			int substituted_size = alias_type_spec.size_in_bits();
 			
 			// Check if the alias type is a template parameter that needs substitution
 			if (alias_type_spec.type() == Type::UserDefined && !template_args.empty() && !pattern_args.empty()) {
@@ -39144,10 +39105,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto& alias_type_info = gTypeInfo.emplace_back(
 				qualified_alias_name,
 				substituted_type,
-				gTypeInfo.size()
+				substituted_type_index,
+				substituted_size
 			);
-			alias_type_info.type_index_ = substituted_type_index;
-			alias_type_info.type_size_ = substituted_size;
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name, 
@@ -41280,7 +41240,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			
 			// Register the nested class in the type system
-			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size());
+			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size(), 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
@@ -41300,7 +41260,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Create a substituted type specifier
 		Type substituted_type = alias_type_spec.type();
 		TypeIndex substituted_type_index = alias_type_spec.type_index();
-		unsigned char substituted_size = alias_type_spec.size_in_bits();
+		int substituted_size = alias_type_spec.size_in_bits();
 		
 		// Substitute template parameters in the alias type
 		// Handle both UserDefined and Struct types (template types are often registered as Struct)
@@ -41339,9 +41299,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Register the type alias in gTypesByName
-		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, gTypeInfo.size());
-		alias_type_info.type_index_ = substituted_type_index;
-		alias_type_info.type_size_ = substituted_size;
+		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, substituted_type_index, substituted_size);
 		gTypesByName.emplace(qualified_alias_name, &alias_type_info);
 	}
 
@@ -41737,8 +41695,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::string_view param_name = param_names[i];
 						Type concrete_type = template_args_to_use[i].base_type;
 
-						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
-						type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
+						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 						
 						// Copy reference qualifiers from template arg
 						type_info.is_reference_ = template_args_to_use[i].is_reference;
@@ -43079,8 +43036,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		std::string_view param_name = param_names[i];
 		Type concrete_type = template_args[i].type_value;
 
-		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
-		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
+		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
 		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
@@ -43467,8 +43423,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		Type concrete_type = template_args[i].type_value;
 
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
-		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
-		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
+		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
 		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
@@ -43701,8 +43656,7 @@ if (param_decl.has_default_value()) {
 			std::string_view param_name = param_names[i];
 			Type concrete_type = lazy_info.template_args[i].base_type;
 
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
-			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 			
 			// Copy reference qualifiers from template arg
 			type_info.is_reference_ = lazy_info.template_args[i].is_reference;
@@ -44534,7 +44488,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	SaveHandle body_pos,
 	const std::vector<std::string_view>& template_param_names,
 	const std::vector<Type>& concrete_types,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	TypeIndex struct_type_index
 ) {
 	// Save current parser state using save_token_position so we can restore properly
@@ -44550,7 +44504,8 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 		auto& type_info = gTypeInfo.emplace_back(
 			param_name,
 			concrete_type,
-			gTypeInfo.size()
+			gTypeInfo.size(),
+			0 // Placeholder size
 		);
 
 		// Register in global type lookup
@@ -44559,11 +44514,11 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	}
 
 	// If this is a member function, set up member function context
-	bool setup_member_context = !struct_name.empty() && struct_type_index != 0;
+	bool setup_member_context = struct_name.isValid() && struct_type_index != 0;
 	ASTNode this_decl_node;  // Need to keep this alive for the duration of parsing
 	if (setup_member_context) {
 		// Find the struct in the type system
-		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+		auto struct_type_it = gTypesByName.find(struct_name);
 		if (struct_type_it != gTypesByName.end()) {
 			[[maybe_unused]] const TypeInfo* type_info = struct_type_it->second;
 			
@@ -44588,14 +44543,14 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			
 			// Also push member function context for good measure
 			// Try to find the StructDeclarationNode in the symbol table
-			auto struct_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(struct_name));
+			auto struct_symbol_opt = lookup_symbol(struct_name);
 			StructDeclarationNode* struct_node_ptr = nullptr;
 			if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
 				struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
 			}
 			
 			MemberFunctionContext ctx;
-			ctx.struct_name = StringTable::getOrInternStringHandle(struct_name);
+			ctx.struct_name = struct_name;
 			ctx.struct_type_index = struct_type_index;
 			ctx.struct_node = struct_node_ptr;
 			ctx.local_struct_info = nullptr;  // Not needed for template member function instantiation
