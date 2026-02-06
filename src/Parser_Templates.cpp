@@ -17632,8 +17632,8 @@ ASTNode Parser::substituteTemplateParameters(
 			// that needs to be resolved with concrete template arguments
 			std::string_view func_name = func_call.called_from().value();
 			if (func_name.empty()) func_name = func_call.function_declaration().identifier_token().value();
-			size_t dollar_pos = func_name.find('$');
-			size_t scope_pos = func_name.find("::");
+			size_t dollar_pos = func_name.empty() ? std::string_view::npos : func_name.find('$');
+			size_t scope_pos = func_name.empty() ? std::string_view::npos : func_name.find("::");
 			if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
 				std::string_view base_template_name = func_name.substr(0, dollar_pos);
 				std::string_view member_name = func_name.substr(scope_pos + 2);
@@ -17680,7 +17680,10 @@ ASTNode Parser::substituteTemplateParameters(
 							}
 						}
 						
-						// Create new forward declaration with corrected name
+						// Create new forward declaration with corrected name.
+						// The placeholder return type (Int/32) is safe because the codegen
+						// resolves the actual return type from the matched FunctionDeclarationNode,
+						// not from this forward declaration's type node.
 						Token new_token(Token::Type::Identifier, new_func_name,
 							func_call.called_from().line(), func_call.called_from().column(), func_call.called_from().file_index());
 						auto type_node_ast = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
