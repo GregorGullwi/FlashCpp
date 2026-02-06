@@ -8328,23 +8328,26 @@ ParseResult Parser::parse_static_assert()
 	
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 	
-	// If evaluation failed with a template-dependent expression error, always defer.
-	// Template-dependent expressions can't be evaluated at parse time regardless of context.
+	// If evaluation failed with a template-dependent expression error, defer only in template context.
+	// In non-template code, fall through to error handling (e.g. sizeof returning 0 for incomplete types).
 	if (!eval_result.success() && eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
-		FLASH_LOG(Templates, Debug, "Deferring static_assert with template-dependent expression: ", eval_result.error_message);
-		
-		// Store the deferred static_assert in the current struct/class for later evaluation
-		if (!struct_parsing_context_stack_.empty()) {
-			const auto& struct_ctx = struct_parsing_context_stack_.back();
-			if (struct_ctx.struct_node) {
-				StringHandle message_handle = StringTable::getOrInternStringHandle(message);
-				struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
-				FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
-				          struct_ctx.struct_node->name(), "' for later evaluation");
+		if (is_in_template_definition || is_in_template_struct) {
+			FLASH_LOG(Templates, Debug, "Deferring static_assert with template-dependent expression: ", eval_result.error_message);
+			
+			// Store the deferred static_assert in the current struct/class for later evaluation
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& struct_ctx = struct_parsing_context_stack_.back();
+				if (struct_ctx.struct_node) {
+					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
+					          struct_ctx.struct_node->name(), "' for later evaluation");
+				}
 			}
+			
+			return saved_position.success();
 		}
-		
-		return saved_position.success();
+		// Not in template context - fall through to error handling below
 	}
 	
 	// If we're in a template definition and evaluation failed for other reasons,
