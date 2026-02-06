@@ -3221,6 +3221,11 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 
 				std::string_view init_name = init_name_token->value();
 
+				// Check for template arguments: Base<T>(...) in base class initializer
+				if (peek_token().has_value() && peek_token()->value() == "<") {
+					skip_template_arguments();
+				}
+
 				// Expect '(' or '{'
 				bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
 				bool is_brace = peek_token().has_value() && peek_token()->value() == "{";

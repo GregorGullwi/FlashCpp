@@ -65,12 +65,12 @@ ParseResult Parser::parse_statement_or_declaration()
 		return parse_block();
 	}
 
-	// Handle ::new and ::delete expressions at statement level
+	// Handle ::new, ::delete, and ::operator new/delete expressions at statement level
 	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "::") {
 		auto next = peek_token(1);
 		if (next.has_value() && next->type() == Token::Type::Keyword &&
-			(next->value() == "new" || next->value() == "delete")) {
-			// This is a globally qualified new/delete expression
+			(next->value() == "new" || next->value() == "delete" || next->value() == "operator")) {
+			// This is a globally qualified new/delete/operator expression
 			return parse_expression_statement();
 		}
 	}

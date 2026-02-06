@@ -267,16 +267,21 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					// Parse the expression to cast
 					ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
 					if (expr_result.is_error() || !expr_result.node().has_value()) {
-						return ParseResult::error("Expected expression after C-style cast", *current_token_);
+						// Failed to parse expression after what looked like a cast.
+						// This means (identifier) was actually a parenthesized expression,
+						// not a C-style cast. Backtrack and let primary_expression handle it.
+						// Common case: function arguments like (__p), (__n) where the
+						// template-dependent identifier is mistaken for a type.
+						restore_token_position(saved_pos);
+					} else {
+						discard_saved_token(saved_pos);
+						// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
+						auto cast_expr = emplace_node<ExpressionNode>(
+							StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+						
+						// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
+						return apply_postfix_operators(cast_expr);
 					}
-
-					discard_saved_token(saved_pos);
-					// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
-					auto cast_expr = emplace_node<ExpressionNode>(
-						StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
-					
-					// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
-					return apply_postfix_operators(cast_expr);
 				}
 				// If not a valid type, fall through to restore position and try as expression
 			}
@@ -2298,6 +2303,35 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 		}
 	}
 
+	// Try to parse as a constant expression (e.g., alignas(__alignof__(_Tp2::_M_t)))
+	// This handles cases where the argument is a complex expression like alignof, sizeof, etc.
+	{
+		// Restore to just after the '(' for a fresh parse attempt
+		restore_token_position(saved_pos);
+		saved_pos = save_token_position();
+		consume_token(); // consume "alignas"
+		consume_punctuator("(");
+
+		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (!expr_result.is_error() && expr_result.node().has_value()) {
+			if (consume_punctuator(")")) {
+				// Try to evaluate the expression as a constant
+				auto eval_result = try_evaluate_constant_expression(*expr_result.node());
+				if (eval_result.has_value()) {
+					alignment = static_cast<size_t>(eval_result->value);
+					if (alignment > 0 && (alignment & (alignment - 1)) == 0) {
+						discard_saved_token(saved_pos);
+						return alignment;
+					}
+				}
+				// Expression parsed but couldn't evaluate (template-dependent) - use default alignment
+				// In template contexts, actual alignment will be resolved at instantiation time
+				discard_saved_token(saved_pos);
+				return static_cast<size_t>(8); // Default to 8-byte alignment
+			}
+		}
+	}
+
 	// Failed to parse - restore position
 	restore_token_position(saved_pos);
 	return std::nullopt;
@@ -4000,6 +4034,68 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	// Check for global namespace scope operator :: at the beginning
 	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
 		consume_token(); // consume ::
+
+		// Handle ::operator new(...) and ::operator delete(...) as function call expressions
+		// Used by libstdc++ allocators: static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)))
+		if (current_token_.has_value() && current_token_->type() == Token::Type::Keyword &&
+		    current_token_->value() == "operator") {
+			Token operator_token = *current_token_;
+			consume_token(); // consume 'operator'
+
+			// Expect 'new' or 'delete'
+			if (!current_token_.has_value() || current_token_->type() != Token::Type::Keyword ||
+			    (current_token_->value() != "new" && current_token_->value() != "delete")) {
+				return ParseResult::error("Expected 'new' or 'delete' after '::operator'", current_token_.value_or(Token()));
+			}
+
+			StringBuilder op_name_sb;
+			op_name_sb.append("operator ");
+			op_name_sb.append(current_token_->value());
+			consume_token(); // consume 'new' or 'delete'
+
+			// Check for array variant: operator new[] or operator delete[]
+			if (current_token_.has_value() && current_token_->value() == "[") {
+				consume_token(); // consume '['
+				if (current_token_.has_value() && current_token_->value() == "]") {
+					consume_token(); // consume ']'
+					op_name_sb.append("[]");
+				}
+			}
+
+			std::string_view op_name = op_name_sb.commit();
+			Token op_identifier(Token::Type::Identifier, op_name,
+			                    operator_token.line(), operator_token.column(), operator_token.file_index());
+
+			// Expect '(' for function call
+			if (!current_token_.has_value() || current_token_->value() != "(") {
+				return ParseResult::error("Expected '(' after '::operator new/delete'", current_token_.value_or(Token()));
+			}
+			consume_token(); // consume '('
+
+			// Parse function arguments
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after operator new/delete arguments", *current_token_);
+			}
+
+			// Create a forward declaration for the operator (returns void* for new, void for delete)
+			auto type_node = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0, Token());
+			type_node.as<TypeSpecifierNode>().add_pointer_level(); // void* return type
+			auto forward_decl = emplace_node<DeclarationNode>(type_node, op_identifier);
+			DeclarationNode& decl_ref = forward_decl.as<DeclarationNode>();
+
+			auto call_node = emplace_node<ExpressionNode>(
+				FunctionCallNode(decl_ref, std::move(args_result.args), op_identifier));
+			return ParseResult::success(call_node);
+		}
 
 		// Expect an identifier after ::
 		if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
