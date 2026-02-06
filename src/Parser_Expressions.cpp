@@ -9888,8 +9888,6 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	std::string_view member_name,
 	const Token& member_token) {
 	
-	FLASH_LOG(Templates, Debug, "try_parse_member_template_function_call: ", instantiated_class_name, "::", member_name);
-	
 	// Check for member template arguments: Template<T>::member<U>
 	std::optional<std::vector<TemplateTypeArg>> member_template_args;
 	if (peek_token().has_value() && peek_token()->value() == "<") {
