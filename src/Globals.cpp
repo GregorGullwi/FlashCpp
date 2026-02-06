@@ -13,6 +13,7 @@ bool g_enable_debug_output = false;
 bool g_enable_exceptions = true;
 
 NamespaceRegistry gNamespaceRegistry;
+ChunkedAnyVector<> gChunkedAnyStorage;
 
 namespace FlashCpp {
 LazyMemberResolver gLazyMemberResolver;

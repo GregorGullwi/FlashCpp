@@ -1,16 +1,13 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp" />
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\benchmark.cpp" />
     <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\FlashCppUnity.h" />
     <ClInclude Include="src\Globals.cpp" />
     <ClInclude Include="src\AstNodeTypes.cpp" />
-    <ClInclude Include="src\ChunkedAnyVector.cpp" />
     <ClInclude Include="src\CodeViewDebug.cpp" />
     <ClInclude Include="src\ExpressionSubstitutor.cpp" />
     <ClInclude Include="src\Parser_Core.cpp" />

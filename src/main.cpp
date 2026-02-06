@@ -1,42 +1,5 @@
 #include "FlashCppUnity.h"
 
-#include <iostream>
-#include <string>
-#include <string_view>
-#include <optional>
-#include <variant>
-#include <map>
-#include <vector>
-#include <filesystem>
-#include <chrono>
-#include <algorithm>
-#include <iomanip>
-
-#include "FileTree.h"
-#include "FileReader.h"
-#include "CompileContext.h"
-#include "CommandLineParser.h"
-#include "Lexer.h"
-#include "Parser.h"
-// #include "LibClangIRGenerator.h"  // Disabled for now due to LLVM dependency
-#include "CodeGen.h"
-#include "StackString.h"
-#include "IRTypes.h"
-#include "CrashHandler.h"
-#include "Log.h"
-#include "ObjFileWriter.h"
-#include "NameMangling.h"
-#include "TemplateProfilingStats.h"
-#include "AstNodeTypes.h"
-#include "NamespaceRegistry.h"
-#include "LazyMemberResolver.h"
-#include "InstantiationQueue.h"
-
-// Only include ELF writer on non-Windows platforms
-#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
-#include "ElfFileWriter.h"
-#endif
-
 // Timing helper
 struct PhaseTimer {
     std::chrono::high_resolution_clock::time_point start;

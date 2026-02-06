@@ -6,12 +6,52 @@
 // No need to edit the Makefile or .vcxproj files.
 #pragma once
 
+// Prevent Windows from defining min/max macros that conflict with std::min/std::max
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+
+#include <iostream>
+#include <string>
+#include <string_view>
+#include <optional>
+#include <variant>
+#include <map>
+#include <vector>
+#include <filesystem>
+#include <chrono>
+#include <algorithm>
+#include <iomanip>
+
+#include "StringTable.h"
+#include "FileTree.h"
+#include "FileReader.h"
+#include "CompileContext.h"
+#include "CommandLineParser.h"
+#include "Lexer.h"
+#include "Parser.h"
+#include "CodeGen.h"
+#include "StackString.h"
+#include "IRTypes.h"
+#include "CrashHandler.h"
+#include "Log.h"
+#include "ObjFileWriter.h"
+#include "NameMangling.h"
+#include "TemplateProfilingStats.h"
+#include "AstNodeTypes.h"
+#include "NamespaceRegistry.h"
+#include "LazyMemberResolver.h"
+#include "InstantiationQueue.h"
+
+// Only include ELF writer on non-Windows platforms
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+#include "ElfFileWriter.h"
+#endif
+
 // Shared globals (g_enable_debug_output, gNamespaceRegistry, etc.)
 #include "Globals.cpp"
 
 // Library implementations
 #include "AstNodeTypes.cpp"
-#include "ChunkedAnyVector.cpp"
 #include "CodeViewDebug.cpp"
 #include "ExpressionSubstitutor.cpp"
 

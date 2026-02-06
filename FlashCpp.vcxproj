@@ -169,9 +169,6 @@
       <ExcludedFromBuild Condition="'$(Configuration)'=='Benchmark' Or '$(Configuration)'=='Test'">true</ExcludedFromBuild>
     </ClCompile>
     <!-- Benchmark file - only include in Benchmark -->
-    <ClCompile Include="src\benchmark.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)'!='Benchmark'">true</ExcludedFromBuild>
-    </ClCompile>
     <!-- Test file - only include in Test -->
     <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Test'">true</ExcludedFromBuild>
@@ -182,7 +179,6 @@
     <ClInclude Include="src\FlashCppUnity.h" />
     <ClInclude Include="src\Globals.cpp" />
     <ClInclude Include="src\AstNodeTypes.cpp" />
-    <ClInclude Include="src\ChunkedAnyVector.cpp" />
     <ClInclude Include="src\CodeViewDebug.cpp" />
     <ClInclude Include="src\ExpressionSubstitutor.cpp" />
     <ClInclude Include="src\Parser_Core.cpp" />
