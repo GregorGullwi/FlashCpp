@@ -228,11 +228,22 @@ ParseResult Parser::parse_statement_or_declaration()
 					}
 				}
 				
-				// If followed by '::' after type/template args, this is a qualified member access expression
+				// If followed by '::member(' after type/template args, this is a qualified member function call
 				// e.g., Base<T>::deallocate(args) is a static member function call
+				// But Type<T>::type is a type alias used in a variable declaration
 				if (peek_token().has_value() && peek_token()->value() == "::") {
-					restore_token_position(check_pos);
-					return parse_expression_statement();
+					SaveHandle scope_check = save_token_position();
+					consume_token(); // consume '::'
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						consume_token(); // consume member name
+						if (peek_token().has_value() && peek_token()->value() == "(") {
+							// This is Type<T>::member(...) - a function call expression
+							restore_token_position(scope_check);
+							restore_token_position(check_pos);
+							return parse_expression_statement();
+						}
+					}
+					restore_token_position(scope_check);
 				}
 				
 				if (peek_token().has_value() && peek_token()->value() == "(") {
@@ -281,17 +292,24 @@ ParseResult Parser::parse_statement_or_declaration()
 					// This is a function call, parse as expression
 					return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				}
-				// Check for template<args>::member pattern (e.g., Base<T>::deallocate(args))
-				// This is a qualified member access expression, not a variable declaration
+				// Check for template<args>::member( pattern (e.g., Base<T>::deallocate(args))
+				// This is a qualified member function call expression, not a variable declaration
+				// But template<args>::type is a type alias - only treat as expression if followed by '('
 				if (peek_token()->value() == "<") {
-					// Lookahead: skip template args to check if :: follows
+					// Lookahead: skip template args to check if ::member( follows
 					SaveHandle template_check = save_token_position();
 					skip_template_arguments();
 					if (peek_token().has_value() && peek_token()->value() == "::") {
-						// This is Base<T>::member(...) - an expression
-						restore_token_position(template_check);
-						restore_token_position(saved_pos);
-						return parse_expression_statement();
+						consume_token(); // consume '::'
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+							consume_token(); // consume member name
+							if (peek_token().has_value() && peek_token()->value() == "(") {
+								// This is Base<T>::member(...) - a function call expression
+								restore_token_position(template_check);
+								restore_token_position(saved_pos);
+								return parse_expression_statement();
+							}
+						}
 					}
 					restore_token_position(template_check);
 				}

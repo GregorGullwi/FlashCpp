@@ -3,15 +3,8 @@
 template<typename T>
 struct Base {
     T value;
-    Base(T v) : value(v) {}
-};
-
-template<typename T>
-struct Derived : public Base<T> {
-    Derived(T v) : Base<T>(v) {}
 };
 
 int main() {
-    Derived<int> d(42);
-    return 0;
+    return sizeof(Base<double>);  // 8 (sizeof double)
 }
