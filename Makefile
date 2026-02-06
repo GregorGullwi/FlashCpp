@@ -48,53 +48,58 @@ TESTINCLUDES := -I $(TESTDIR)/external/doctest/ -I $(SRCDIR) -I external
 DEBUG_DIR := $(BINDIR)/Debug
 RELEASE_DIR := $(BINDIR)/Release
 TEST_DIR := $(BINDIR)/Test
-BENCHMARK_DIR := $(BINDIR)/Benchmark
 
-# Source files needed for the test (excluding main.cpp, benchmark.cpp, LibClangIRGenerator.cpp)
-TEST_SOURCES := $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp $(SRCDIR)/Parser.cpp $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp
+# Source files included via unity build (for dependency tracking)
+UNITY_SOURCES := $(SRCDIR)/FlashCppUnity.h $(SRCDIR)/Globals.cpp \
+    $(SRCDIR)/AstNodeTypes.cpp  \
+    $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp \
+    $(SRCDIR)/Parser_Core.cpp $(SRCDIR)/Parser_Declarations.cpp \
+    $(SRCDIR)/Parser_Types.cpp $(SRCDIR)/Parser_Statements.cpp \
+    $(SRCDIR)/Parser_Expressions.cpp $(SRCDIR)/Parser_Templates.cpp \
+    $(SRCDIR)/CodeGen_Visitors.cpp $(SRCDIR)/CodeGen_Statements.cpp \
+    $(SRCDIR)/CodeGen_Expressions.cpp $(SRCDIR)/CodeGen_Functions.cpp \
+    $(SRCDIR)/CodeGen_Lambdas.cpp \
+    $(SRCDIR)/ConstExprEvaluator_Core.cpp $(SRCDIR)/ConstExprEvaluator_Members.cpp \
+    $(SRCDIR)/FileReader_Core.cpp $(SRCDIR)/FileReader_Macros.cpp \
+    $(SRCDIR)/TemplateRegistry_Lazy.cpp
 
-# Main sources (excluding LLVM-dependent files)
-MAIN_SOURCES := $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp $(SRCDIR)/Parser.cpp $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp $(SRCDIR)/main.cpp
+# Source files needed for the test (unity build - only FlashCppTest.cpp is compiled)
+TEST_SOURCES :=
+
+# Main sources (unity build - only main.cpp is compiled)
+MAIN_SOURCES := $(SRCDIR)/main.cpp
 
 # Target executables with proper extensions (matching MSVC structure)
 MAIN_TARGET := $(DEBUG_DIR)/FlashCpp$(EXE_EXT)
 RELEASE_TARGET := $(RELEASE_DIR)/FlashCpp$(EXE_EXT)
 TEST_TARGET := $(TEST_DIR)/test$(EXE_EXT)
-BENCHMARK_TARGET := $(BENCHMARK_DIR)/benchmark$(EXE_EXT)
 
 # Default target
 .DEFAULT_GOAL := main
 
 # Build main executable (Debug configuration)
-$(MAIN_TARGET): $(MAIN_SOURCES)
+$(MAIN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
 	@echo "Built: $@"
 
 # Build release executable
-$(RELEASE_TARGET): $(MAIN_SOURCES)
+$(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 	@echo "Building main executable (Release) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(RELEASE_DIR) 2>nul || $(MKDIR) $(RELEASE_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $(MAIN_SOURCES)
 	@echo "Built: $@"
 
 # Build test executable
-$(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(TEST_SOURCES)
+$(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(UNITY_SOURCES)
 	@echo "Building test executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(TEST_DIR) 2>nul || $(MKDIR) $(TEST_DIR) || true
-	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $^
-	@echo "Built: $@"
-
-# Build benchmark executable (requires LLVM)
-$(BENCHMARK_TARGET): $(SRCDIR)/benchmark.cpp
-	@echo "Building benchmark executable for $(PLATFORM) with $(CXX)..."
-	@$(MKDIR) $(BENCHMARK_DIR) 2>nul || $(MKDIR) $(BENCHMARK_DIR) || true
-	$(CXX) $(CXXFLAGS) -DNDEBUG -O3 -o $@ $^ $(LLVM_LIBS)
+	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
 	@echo "Built: $@"
 
 # Phony targets
-.PHONY: all clean test main release benchmark help test-all
+.PHONY: all clean test main release help test-all
 
 # Build all targets
 all: main release test
@@ -112,9 +117,6 @@ test: $(TEST_TARGET)
 test-all: $(MAIN_TARGET)
 	@echo "Running comprehensive test suite..."
 	@bash $(TESTDIR)/run_all_tests.sh
-
-# Benchmark target
-benchmark: $(BENCHMARK_TARGET)
 
 # Clean build artifacts
 clean:
@@ -137,7 +139,6 @@ help:
 	@echo "  x64/Debug/FlashCpp$(EXE_EXT)      - Debug build"
 	@echo "  x64/Release/FlashCpp$(EXE_EXT)    - Release build"
 	@echo "  x64/Test/test$(EXE_EXT)           - Test build"
-	@echo "  x64/Benchmark/benchmark$(EXE_EXT) - Benchmark build"
 	@echo ""
 	@echo "Available targets:"
 	@echo "  make              - Build main executable in Debug mode (default)"
@@ -145,7 +146,6 @@ help:
 	@echo "  make release      - Build main executable in Release mode"
 	@echo "  make test         - Build test executable"
 	@echo "  make test-all     - Build compiler and run all .cpp tests (pass and _fail)"
-	@echo "  make benchmark    - Build benchmark executable"
 	@echo "  make all          - Build main, release, and test executables"
 	@echo "  make clean        - Remove all build artifacts"
 	@echo "  make help         - Show this help message"

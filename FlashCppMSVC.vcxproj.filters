@@ -1,17 +1,31 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="src\AstNodeTypes.cpp" />
-    <ClCompile Include="src\ChunkedAnyVector.cpp" />
-    <ClCompile Include="src\CodeViewDebug.cpp" />
-    <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp" />
-    <ClCompile Include="src\Parser.cpp" />
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\benchmark.cpp" />
     <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp" />
-    <ClCompile Include="src\ExpressionSubstitutor.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\FlashCppUnity.h" />
+    <ClInclude Include="src\Globals.cpp" />
+    <ClInclude Include="src\AstNodeTypes.cpp" />
+    <ClInclude Include="src\CodeViewDebug.cpp" />
+    <ClInclude Include="src\ExpressionSubstitutor.cpp" />
+    <ClInclude Include="src\Parser_Core.cpp" />
+    <ClInclude Include="src\Parser_Declarations.cpp" />
+    <ClInclude Include="src\Parser_Types.cpp" />
+    <ClInclude Include="src\Parser_Statements.cpp" />
+    <ClInclude Include="src\Parser_Expressions.cpp" />
+    <ClInclude Include="src\Parser_Templates.cpp" />
+    <ClInclude Include="src\CodeGen_Visitors.cpp" />
+    <ClInclude Include="src\CodeGen_Statements.cpp" />
+    <ClInclude Include="src\CodeGen_Expressions.cpp" />
+    <ClInclude Include="src\CodeGen_Functions.cpp" />
+    <ClInclude Include="src\CodeGen_Lambdas.cpp" />
+    <ClInclude Include="src\ConstExprEvaluator_Core.cpp" />
+    <ClInclude Include="src\ConstExprEvaluator_Members.cpp" />
+    <ClInclude Include="src\FileReader_Core.cpp" />
+    <ClInclude Include="src\FileReader_Macros.cpp" />
+    <ClInclude Include="src\TemplateRegistry_Lazy.cpp" />
     <ClInclude Include="src\ChunkedAnyVector.h" />
     <ClInclude Include="src\ChunkedString.h" />
     <ClInclude Include="src\CodeGen.h" />

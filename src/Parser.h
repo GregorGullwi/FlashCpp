@@ -323,7 +323,6 @@ public:
                 return node ? node->as<T>() : ASTNode{}.as<T>();
         }
 
-        bool generate_coff(const std::string& outputFilename);
         std::string get_last_error() const { return last_error_; }
 
 #if WITH_DEBUG_INFO
