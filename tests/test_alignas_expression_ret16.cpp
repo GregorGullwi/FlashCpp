@@ -10,5 +10,5 @@ struct Wrapper {
 
 int main() {
 	AlignedStruct as;
-	return alignof(as);  // 16
+	return alignof(AlignedStruct);  // 16
 }
