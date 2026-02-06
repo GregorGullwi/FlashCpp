@@ -6484,12 +6484,8 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// Check for 'virtual' keyword (for virtual destructors and virtual member functions)
-		bool is_virtual = false;
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-		    peek_token()->value() == "virtual") {
-			is_virtual = true;
-			consume_token();  // consume 'virtual'
-		}
+		// parse_member_leading_specifiers() already consumed 'virtual' if present
+		bool is_virtual = !!(member_specs & FlashCpp::MLS_Virtual);
 
 		// Check for destructor (~StructName followed by '(')
 		if (peek_token().has_value() && peek_token()->value() == "~") {
