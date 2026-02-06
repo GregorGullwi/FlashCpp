@@ -65,7 +65,9 @@ public:
 
 		ScopedFileStack filestack(filestack_, file, included_at_line);
 
-		std::ifstream stream(file.data());
+		// std::ifstream(const char*) expects a null-terminated path; string_view::data() is not guaranteed
+		// to be null-terminated.
+		std::ifstream stream(std::string(file));
 		if (!stream.is_open()) {
 			current_file_index_ = saved_file_index;  // Restore on error
 			current_parent_line_ = saved_parent_line;
