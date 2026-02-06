@@ -159,6 +159,9 @@ struct EvaluationContext {
 	// Symbol table for looking up constexpr variables/functions (required)
 	const SymbolTable* symbols;
 
+	// Global symbol table for looking up global variables (optional)
+	const SymbolTable* global_symbols = nullptr;
+
 	// Type information for sizeof, alignof, etc. (future use)
 	const TypeInfo* type_info = nullptr;
 

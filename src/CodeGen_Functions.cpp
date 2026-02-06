@@ -4070,9 +4070,17 @@
 							if (type_index < gTypeInfo.size()) {
 								const TypeInfo& type_info = gTypeInfo[type_index];
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
-								if (struct_info) {
+								if (struct_info && struct_info->total_size > 0) {
 									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(struct_info->total_size) };
 								}
+								// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
+								if (type_info.type_size_ > 0) {
+									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(type_info.type_size_) };
+								}
+							}
+							// Fallback: use size_in_bits from the type specifier node
+							if (var_type.size_in_bits() > 0) {
+								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(var_type.size_in_bits() / 8) };
 							}
 						} else {
 							// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set

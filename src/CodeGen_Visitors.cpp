@@ -926,6 +926,11 @@ private:
 		// Try to evaluate as a constant expression first
 		ConstExpr::EvaluationContext ctx(symbol_table);
 		
+		// Pass global symbol table for resolving global variables in sizeof etc.
+		if (global_symbol_table_) {
+			ctx.global_symbols = global_symbol_table_;
+		}
+		
 		// If we're in a member function, set the struct_info in the context
 		// This allows sizeof(T) to resolve template parameters from the struct
 		if (current_struct_name_.isValid()) {
