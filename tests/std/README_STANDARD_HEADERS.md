@@ -40,7 +40,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<typeinfo>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<typeindex>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
-| `<csignal>` | N/A | ❌ Parse Error | `signal.h:368` block parsing error |
+| `<csignal>` | N/A | ❌ Parse Error | `__attribute_deprecated_msg__` at `signal.h:368` (pre-existing, depends on system headers) |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
 | `<spanstream>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<print>` | N/A | ✅ Compiled | ~17ms (C++23) |
