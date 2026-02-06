@@ -4146,7 +4146,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 
 			// Create a forward declaration for the operator (returns void* for new, void for delete)
-			// Create a forward declaration for the operator (returns void* for new, void for delete)
 			bool is_new = op_name.find("new") != std::string_view::npos;
 			auto type_node = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0, Token());
 			if (is_new) {
