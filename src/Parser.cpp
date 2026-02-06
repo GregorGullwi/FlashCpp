@@ -1913,6 +1913,10 @@ ParseResult Parser::parse_type_and_name() {
             }
         }
         
+        // Skip GCC __attribute__((...)) that may appear between return type and function name
+        // e.g., inline _Atomic_word __attribute__((__always_inline__)) __exchange_and_add(...)
+        skip_gcc_attributes();
+        
         // After skipping specifiers, check if this is now an operator (e.g., void constexpr operator=())
         if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
             peek_token()->value() == "operator") {
@@ -6215,32 +6219,7 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
-		bool is_member_constexpr = false;
-		[[maybe_unused]] bool is_member_consteval = false;
-		[[maybe_unused]] bool is_member_inline = false;
-		[[maybe_unused]] bool is_member_explicit = false;
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-			std::string_view kw = peek_token()->value();
-			if (kw == "constexpr") {
-				is_member_constexpr = true;
-				consume_token();
-			} else if (kw == "consteval") {
-				is_member_consteval = true;
-				consume_token();
-			} else if (kw == "inline") {
-				is_member_inline = true;
-				consume_token();
-			} else if (kw == "explicit") {
-				is_member_explicit = true;
-				consume_token();
-				// C++20 explicit(condition) - skip the condition expression
-				if (peek_token().has_value() && peek_token()->value() == "(") {
-					skip_balanced_parens();
-				}
-			} else {
-				break;
-			}
-		}
+		auto member_specs = parse_member_leading_specifiers();
 
 		// Check for constructor (identifier matching struct name followed by '(')
 		// Save position BEFORE checking to allow restoration if not a constructor
@@ -6505,12 +6484,8 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// Check for 'virtual' keyword (for virtual destructors and virtual member functions)
-		bool is_virtual = false;
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-		    peek_token()->value() == "virtual") {
-			is_virtual = true;
-			consume_token();  // consume 'virtual'
-		}
+		// parse_member_leading_specifiers() already consumed 'virtual' if present
+		bool is_virtual = !!(member_specs & FlashCpp::MLS_Virtual);
 
 		// Check for destructor (~StructName followed by '(')
 		if (peek_token().has_value() && peek_token()->value() == "~") {
@@ -6731,7 +6706,7 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Mark as constexpr if the constexpr keyword was present
-			member_func_ref.set_is_constexpr(is_member_constexpr);
+			member_func_ref.set_is_constexpr(member_specs & FlashCpp::MLS_Constexpr);
 
 			// Use unified trailing specifiers parsing (Phase 2)
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
@@ -8331,6 +8306,11 @@ ParseResult Parser::parse_static_assert()
 	// The expression may depend on template parameters that are not yet known
 	bool is_in_template_definition = parsing_template_body_ && !current_template_param_names_.empty();
 	
+	// Also consider struct parsing context - if we're inside a template struct body,
+	// member function bodies may be parsed later but still contain template-dependent expressions
+	bool is_in_template_struct = !struct_parsing_context_stack_.empty() && 
+		(parsing_template_body_ || !current_template_param_names_.empty());
+	
 	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
 	ctx.parser = this;  // Enable template function instantiation
@@ -8344,22 +8324,17 @@ ParseResult Parser::parse_static_assert()
 	
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 	
-	// If we're in a template definition and evaluation failed due to dependent types,
-	// that's okay - skip it and it will be checked during instantiation
-	if (is_in_template_definition && !eval_result.success()) {
-		// Check if the error is due to template-dependent expressions using the error_type enum
-		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
-		if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
-			// This is a template-dependent expression - defer evaluation
-			FLASH_LOG(Templates, Debug, "Deferring static_assert evaluation in template body: ", eval_result.error_message);
+	// If evaluation failed with a template-dependent expression error, defer only in template context.
+	// In non-template code, fall through to error handling (e.g. sizeof returning 0 for incomplete types).
+	if (!eval_result.success() && eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
+		if (is_in_template_definition || is_in_template_struct) {
+			FLASH_LOG(Templates, Debug, "Deferring static_assert with template-dependent expression: ", eval_result.error_message);
 			
 			// Store the deferred static_assert in the current struct/class for later evaluation
 			if (!struct_parsing_context_stack_.empty()) {
 				const auto& struct_ctx = struct_parsing_context_stack_.back();
 				if (struct_ctx.struct_node) {
-					// Intern the message in StringTable for persistent storage
 					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
-					// Store the condition expression and message for re-evaluation during template instantiation
 					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
 					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
 					          struct_ctx.struct_node->name(), "' for later evaluation");
@@ -8368,7 +8343,24 @@ ParseResult Parser::parse_static_assert()
 			
 			return saved_position.success();
 		}
-		// Otherwise, it's a real error - report it
+		// Not in template context - fall through to error handling below
+	}
+	
+	// If we're in a template definition and evaluation failed for other reasons,
+	// that's okay - skip it and it will be checked during instantiation
+	if ((is_in_template_definition || is_in_template_struct) && !eval_result.success()) {
+		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
+		
+		// Store the deferred static_assert in the current struct/class for later evaluation
+		if (!struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			if (struct_ctx.struct_node) {
+				StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+				struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+			}
+		}
+		
+		return saved_position.success();
 	}
 	
 	if (!eval_result.success()) {
@@ -13436,6 +13428,38 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 	return result;
 }
 
+// Consume leading specifiers (constexpr, consteval, inline, explicit, virtual) before a member declaration.
+// Handles explicit(condition) syntax. Returns a bitmask of MemberLeadingSpecifiers flags.
+FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
+	using enum FlashCpp::MemberLeadingSpecifiers;
+	FlashCpp::MemberLeadingSpecifiers specs = MLS_None;
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view kw = peek_token()->value();
+		if (kw == "constexpr") {
+			specs |= MLS_Constexpr;
+			consume_token();
+		} else if (kw == "consteval") {
+			specs |= MLS_Consteval;
+			consume_token();
+		} else if (kw == "inline") {
+			specs |= MLS_Inline;
+			consume_token();
+		} else if (kw == "explicit") {
+			specs |= MLS_Explicit;
+			consume_token();
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				skip_balanced_parens(); // explicit(condition)
+			}
+		} else if (kw == "virtual") {
+			specs |= MLS_Virtual;
+			consume_token();
+		} else {
+			break;
+		}
+	}
+	return specs;
+}
+
 // Phase 2: Unified trailing specifiers parsing
 // This method handles all common trailing specifiers after function parameters:
 // - CV qualifiers: const, volatile
@@ -17246,6 +17270,93 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	return postfix_result;
 }
 
+// Trait info for type trait intrinsics - shared between is_known_type_trait_name and parse_primary_expression.
+// Keys use single underscore prefix (e.g. "_is_void") so both "__is_void" and "__builtin_is_void"
+// can be normalized to the same key via string_view::substr() with zero allocation.
+struct TraitInfo {
+	TypeTraitKind kind = TypeTraitKind::IsVoid;
+	bool is_binary = false;
+	bool is_variadic = false;
+	bool is_no_arg = false;
+};
+
+static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
+	{"_is_void", {TypeTraitKind::IsVoid, false, false, false}},
+	{"_is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
+	{"_is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
+	{"_is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
+	{"_is_array", {TypeTraitKind::IsArray, false, false, false}},
+	{"_is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
+	{"_is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
+	{"_is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
+	{"_is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
+	{"_is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
+	{"_is_enum", {TypeTraitKind::IsEnum, false, false, false}},
+	{"_is_union", {TypeTraitKind::IsUnion, false, false, false}},
+	{"_is_class", {TypeTraitKind::IsClass, false, false, false}},
+	{"_is_function", {TypeTraitKind::IsFunction, false, false, false}},
+	{"_is_reference", {TypeTraitKind::IsReference, false, false, false}},
+	{"_is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
+	{"_is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
+	{"_is_object", {TypeTraitKind::IsObject, false, false, false}},
+	{"_is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
+	{"_is_compound", {TypeTraitKind::IsCompound, false, false, false}},
+	{"_is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
+	{"_is_same", {TypeTraitKind::IsSame, true, false, false}},
+	{"_is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
+	{"_is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
+	{"_is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
+	{"_is_final", {TypeTraitKind::IsFinal, false, false, false}},
+	{"_is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
+	{"_is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
+	{"_is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
+	{"_is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
+	{"_has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
+	{"_is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
+	{"_is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
+	{"_is_pod", {TypeTraitKind::IsPod, false, false, false}},
+	{"_is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
+	{"_is_const", {TypeTraitKind::IsConst, false, false, false}},
+	{"_is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
+	{"_is_signed", {TypeTraitKind::IsSigned, false, false, false}},
+	{"_is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
+	{"_is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
+	{"_is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
+	{"_is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
+	{"_is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
+	{"_is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
+	{"_is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
+	{"_is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
+	{"_is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
+	{"_is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
+	{"_is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
+	{"_is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
+	{"_has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
+	{"_has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
+	{"_is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
+	{"_is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
+	{"_underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
+	{"_is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
+	{"_is_complete_or_unbounded", {TypeTraitKind::IsCompleteOrUnbounded, false, false, false}},
+};
+
+// Normalize a type trait name to its single-underscore lookup key.
+// "__is_void" -> "_is_void", "__builtin_is_void" -> "_is_void"
+// Returns a string_view into the original name (zero allocation).
+static std::string_view normalize_trait_name(std::string_view name) {
+	if (name.starts_with("__builtin_"))
+		return name.substr(9); // "__builtin_is_foo" -> "_is_foo"
+	if (name.starts_with("_"))
+		return name.substr(1); // "__is_foo" -> "_is_foo"
+	return name;
+}
+
+// Helper: check if a name (possibly with __builtin_ prefix) is a known compiler type trait intrinsic.
+// Used to distinguish type traits like __is_void(T) from regular functions like __is_single_threaded().
+static bool is_known_type_trait_name(std::string_view name) {
+	return trait_map.contains(normalize_trait_name(name));
+}
+
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 {
 	static thread_local int recursion_depth = 0;
@@ -19811,10 +19922,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	           (current_token_->value().starts_with("__builtin_is_") || 
 	            current_token_->value().starts_with("__builtin_has_")))) &&
 	         // Only parse as intrinsic if NEXT token is '(' - otherwise it's a template class name
-	         peek_token(1).has_value() && peek_token(1)->value() == "(") {
+	         peek_token(1).has_value() && peek_token(1)->value() == "(" &&
+	         // Only parse as intrinsic if the name is a KNOWN type trait.
+	         // This prevents regular functions like __is_single_threaded() from being misidentified.
+	         is_known_type_trait_name(current_token_->value())) {
 		// Check if this is actually a declared function template (library function, not intrinsic)
 		// If so, skip this branch and let it fall through to normal function call parsing
 		std::string_view trait_name = current_token_->value();
+		
 		bool is_declared_template = gTemplateRegistry.lookupTemplate(trait_name).has_value();
 		
 		// Also check namespace-qualified name if in namespace
@@ -19832,93 +19947,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			Token trait_token = *current_token_;
 			consume_token(); // consume the trait name
 
-			// Normalize __builtin_ prefix to __ prefix for easier matching
-			// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
-			std::string_view normalized_view = trait_name;
-			if (trait_name.starts_with("__builtin_")) {
-				StringBuilder builtin_normalized;
-				builtin_normalized.append("__").append(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
-				normalized_view = builtin_normalized.commit();
-			}
-
-			// Lookup trait info using a static table
-			struct TraitInfo {
-				TypeTraitKind kind;
-				bool is_binary;
-				bool is_variadic;
-				bool is_no_arg;
-			};
-			
-			static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
-				// Primary type categories
-				{"__is_void", {TypeTraitKind::IsVoid, false, false, false}},
-				{"__is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
-				{"__is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
-				{"__is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
-				{"__is_array", {TypeTraitKind::IsArray, false, false, false}},
-				{"__is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
-				{"__is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
-				{"__is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
-				{"__is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
-				{"__is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
-				{"__is_enum", {TypeTraitKind::IsEnum, false, false, false}},
-				{"__is_union", {TypeTraitKind::IsUnion, false, false, false}},
-				{"__is_class", {TypeTraitKind::IsClass, false, false, false}},
-				{"__is_function", {TypeTraitKind::IsFunction, false, false, false}},
-				// Composite type categories
-				{"__is_reference", {TypeTraitKind::IsReference, false, false, false}},
-				{"__is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
-				{"__is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
-				{"__is_object", {TypeTraitKind::IsObject, false, false, false}},
-				{"__is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
-				{"__is_compound", {TypeTraitKind::IsCompound, false, false, false}},
-				// Type relationships (binary traits)
-				{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
-				{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
-				{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
-				{"__is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
-				// Type properties
-				{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
-				{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
-				{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
-				{"__is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
-				{"__is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
-				{"__is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
-				{"__has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
-				{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
-				{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
-				{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
-				{"__is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
-				{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
-				{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
-				{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
-				{"__is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
-				{"__is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
-				{"__is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
-				// Constructibility traits (variadic)
-				{"__is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
-				{"__is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
-				{"__is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
-				// Assignability traits (binary)
-				{"__is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
-				{"__is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
-				{"__is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
-				// Destructibility traits
-				{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
-				{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
-				{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
-				{"__has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
-				{"__has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
-				// C++20 layout compatibility traits (binary)
-				{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
-				{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
-				// Special traits
-				{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
-				{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
-				{"__is_complete_or_unbounded", {TypeTraitKind::IsCompleteOrUnbounded, false, false, false}},
-			};
-
-			auto it = trait_map.find(normalized_view);
+			auto it = trait_map.find(normalize_trait_name(trait_name));
 			if (it == trait_map.end()) {
 				// Unknown type trait intrinsic - this shouldn't happen since we only reach here
 				// if followed by '(' which means it was intended as a type trait call
@@ -28822,8 +28851,67 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				if (found_constructor) continue;
 
-					// Parse member declaration (use same logic as regular struct parsing)
-				auto member_result = parse_type_and_name();
+				// Special handling for conversion operators: operator type()
+				// Conversion operators don't have a return type, so we need to detect them early
+				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
+				ParseResult member_result;
+				FlashCpp::MemberLeadingSpecifiers conv_specs;
+				{
+					SaveHandle conv_saved = save_token_position();
+					bool found_conversion_op = false;
+					conv_specs = parse_member_leading_specifiers();
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+					    peek_token()->value() == "operator") {
+						// Check if this is a conversion operator (not operator() or operator<< etc.)
+						// Conversion operators have: operator type-name ()
+						SaveHandle op_saved = save_token_position();
+						Token operator_keyword_token = *peek_token();
+						consume_token(); // consume 'operator'
+						
+						// If next token is not '(' and not an operator symbol, it's likely a conversion operator
+						bool is_conversion = false;
+						if (peek_token().has_value() && peek_token()->value() != "(" &&
+						    peek_token()->type() != Token::Type::Operator &&
+						    peek_token()->value() != "[" && peek_token()->value() != "new" && peek_token()->value() != "delete") {
+							// Try to parse the target type
+							auto type_result = parse_type_specifier();
+							if (!type_result.is_error() && type_result.node().has_value()) {
+								// Check for ()
+								if (peek_token().has_value() && peek_token()->value() == "(") {
+									is_conversion = true;
+									
+									const TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();
+									StringBuilder op_name_builder;
+									op_name_builder.append("operator ");
+									op_name_builder.append(target_type.getReadableString());
+									std::string_view operator_name = op_name_builder.commit();
+									
+									Token identifier_token = Token(Token::Type::Identifier, operator_name,
+									                              operator_keyword_token.line(), operator_keyword_token.column(),
+									                              operator_keyword_token.file_index());
+									
+									ASTNode decl_node = emplace_node<DeclarationNode>(
+										type_result.node().value(),
+										identifier_token
+									);
+									
+									discard_saved_token(op_saved);
+									discard_saved_token(conv_saved);
+									member_result = ParseResult::success(decl_node);
+									found_conversion_op = true;
+								}
+							}
+						}
+						if (!is_conversion) {
+							restore_token_position(op_saved);
+						}
+					}
+					if (!found_conversion_op) {
+						restore_token_position(conv_saved);
+						// Parse member declaration (use same logic as regular struct parsing)
+						member_result = parse_type_and_name();
+					}
+				}
 				if (member_result.is_error()) {
 					return member_result;
 				}
@@ -28869,6 +28957,11 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_ref.set_definition(definition_opt.value());
 					}
 
+					// Apply leading specifiers to the member function
+					member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
+					member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
+					member_func_ref.set_inline_always(conv_specs & FlashCpp::MLS_Inline);
+
 					// Parse trailing specifiers (const, volatile, &, &&, noexcept, override, final)
 					FlashCpp::MemberQualifiers member_quals;
 					FlashCpp::FunctionSpecifiers func_specs;
@@ -28911,10 +29004,10 @@ ParseResult Parser::parse_template_declaration() {
 					struct_ref.add_member_function(
 						member_func_node,
 						current_access,
-						false,  // is_virtual
-						false,  // is_pure_virtual
-						false,  // is_override
-						false   // is_final
+						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+						func_specs.is_pure_virtual,
+						func_specs.is_override,
+						func_specs.is_final
 					);
 					
 					// Add to AST for code generation
@@ -29627,33 +29720,7 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				
 				// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
-				// This mirrors the handling in regular struct parsing
-				[[maybe_unused]] bool is_member_constexpr = false;
-				[[maybe_unused]] bool is_member_consteval = false;
-				[[maybe_unused]] bool is_member_inline = false;
-				[[maybe_unused]] bool is_member_explicit = false;
-				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-					std::string_view kw = peek_token()->value();
-					if (kw == "constexpr") {
-						is_member_constexpr = true;
-						consume_token();
-					} else if (kw == "consteval") {
-						is_member_consteval = true;
-						consume_token();
-					} else if (kw == "inline") {
-						is_member_inline = true;
-						consume_token();
-					} else if (kw == "explicit") {
-						is_member_explicit = true;
-						consume_token();
-						// C++20 explicit(condition) - skip the condition expression
-						if (peek_token().has_value() && peek_token()->value() == "(") {
-							skip_balanced_parens();
-						}
-					} else {
-						break;
-					}
-				}
+				[[maybe_unused]] auto partial_member_specs = parse_member_leading_specifiers();
 				
 				// Check for constructor (identifier matching template name followed by '('
 				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),

@@ -13,44 +13,70 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Parses 500 templates (~147ms), nested type resolution issue (2026-02-04) |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parses 400 templates (~175ms), unnamed parameters at optional:564 (2026-02-04) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parses 500 templates (~160ms), static_assert constexpr at parse_numbers.h:198 (2026-02-04) |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Parses 100+ templates (~133ms), non-type template params with defaults at any:189 (2026-02-04) |
+| `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Blocked by missing features in allocator/string includes |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `static_assert` failed in `uses_allocator.h:106` |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Unnamed `in_place_t` parameter at `optional:564` |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | `alignas` in type specifier at `aligned_buffer.h:56` |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Expected type specifier at `any:583` (out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
-| `<bit>` | N/A | ❌ Parse Error | Progresses past char_traits.h (2026-02-03), likely blocked at similar point as string |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 650+ templates (~263ms), progresses past char_traits.h:534 (2026-02-03) |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 650+ templates (~262ms), progresses to new_allocator.h:131 (2026-02-03) |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
-| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parses 750+ templates, blocked by `pthread_self` call resolution in gthr-default.h (2026-02-05: `__typeof(func)`, `__builtin_va_list`, bitfields, funcptr params fixed) |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
-| `<atomic>` | N/A | ❌ Parse Error | Blocked by `pthread_self` call resolution in gthr-default.h (2026-02-05: `pthread_t` now works) |
+| `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Blocked by allocator includes |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | `::operator new()` in `static_cast` at `new_allocator.h:148` |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Blocked by allocator includes |
+| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Blocked by allocator includes |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | `static_assert` failed in `uses_allocator.h:106` |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Blocked by allocator includes |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Blocked by allocator includes |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Blocked by allocator includes |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Blocked by allocator includes |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Blocked by allocator includes |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | `::operator new()` in `static_cast` at `new_allocator.h:148` (2026-02-06: progressed past `__attribute__`, `__ATOMIC_ACQ_REL`, `__is_single_threaded`) |
+| `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
+| `<atomic>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (2026-02-06: progressed past `static_assert sizeof`) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<typeindex>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
-| `<csignal>` | N/A | ✅ Compiled | ~22ms |
+| `<csignal>` | N/A | ❌ Parse Error | `__attribute_deprecated_msg__` at `signal.h:368` (pre-existing, depends on system headers) |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
 | `<spanstream>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<print>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<expected>` | N/A | ✅ Compiled | ~18ms (C++23) |
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
-| `<barrier>` | N/A | ❌ Parse Error | Blocked by `pthread_self` call resolution in gthr-default.h (2026-02-05: `pthread_t` now works) |
+| `<barrier>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (2026-02-06: progressed past `static_assert sizeof`) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ❌ Parse Error | Out-of-line template member functions |
+| `<coroutine>` | N/A | ❌ Parse Error | `Expected identifier token` at `coroutine:297` (2026-02-06: progressed past `operator bool()`) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
+
+### Recent Fixes (2026-02-06)
+
+The following parser issues were fixed to unblock standard header compilation:
+
+1. **GCC `__attribute__((...))` between return type and function name**: `parse_type_and_name()` now skips `__attribute__` specifications that appear after the return type but before the function name (e.g., `_Atomic_word __attribute__((__always_inline__)) __exchange_and_add(...)`). This unblocks `atomicity.h` used by `<iostream>`.
+
+2. **`__ATOMIC_*` memory ordering macros**: Added `__ATOMIC_RELAXED` (0), `__ATOMIC_CONSUME` (1), `__ATOMIC_ACQUIRE` (2), `__ATOMIC_RELEASE` (3), `__ATOMIC_ACQ_REL` (4), `__ATOMIC_SEQ_CST` (5) as predefined macros. These are used by `<atomic>` and `<iostream>` via `atomicity.h`.
+
+3. **Type trait whitelist instead of prefix matching**: The expression parser now uses a whitelist of known type traits (`__is_void`, `__is_integral`, etc.) instead of matching all identifiers with `__is_*` or `__has_*` prefixes. This prevents regular functions like `__gnu_cxx::__is_single_threaded()` from being misidentified as type trait intrinsics. Unblocks `<iostream>`.
+
+4. **Conversion operator detection in template struct bodies**: Template specialization struct body parsing now correctly detects conversion operators like `constexpr explicit operator bool() const noexcept`. Previously these failed with "Unexpected token in type specifier: 'operator'" because `parse_type_and_name()` doesn't handle conversion operators. This progresses `<coroutine>`.
+
+5. **`sizeof` returning 0 for dependent types**: `evaluate_sizeof()` now returns a `TemplateDependentExpression` error instead of 0 when the type size is unknown. In standard C++, `sizeof` never returns 0, so a zero result indicates an incomplete or dependent type. This prevents false `static_assert` failures in templates.
+
+6. **Improved `static_assert` deferral in template contexts**: `parse_static_assert()` now always defers evaluation when the condition contains template-dependent expressions (regardless of parsing context), and also defers in template struct bodies when evaluation fails for any reason. This unblocks `<atomic>` and `<barrier>` past the `static_assert(sizeof(__waiter_type) == sizeof(__waiter_pool_base))` check.
+
+### Current Blockers for Major Headers
+
+| Blocker | Affected Headers | Details |
+|---------|-----------------|---------|
+| `::operator new()` in expressions | `<string>`, `<iostream>`, many others | `static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)))` — global scope `operator new` call in expressions |
+| `__cmpexch_failure_order2` overload | `<atomic>`, `<barrier>` | Constexpr function using bitwise ops on `memory_order` enum |
+| `alignas` in type specifier | `<variant>` | `alignas(...)` used inside `aligned_buffer.h` struct |
+| Unnamed `in_place_t` parameter | `<optional>` | `_Optional_base(in_place_t, _Args&&...)` unnamed parameter |
+| Memory corruption | `<ratio>`, `<chrono>` | glibc malloc assertion failure during parsing |
 
 ### Recent Fixes (2026-02-05)
 
