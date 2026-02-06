@@ -2339,6 +2339,14 @@ private:
 		defines_["__restrict"] = DefineDirective{};  // Strip __restrict keyword (not supported yet)
 		defines_["__extension__"] = DefineDirective{};  // Strip __extension__ keyword (GCC extension)
 		
+		// GCC atomic memory ordering macros (used by <atomic>, <iostream> via atomicity.h)
+		defines_["__ATOMIC_RELAXED"] = DefineDirective{ "0", {} };
+		defines_["__ATOMIC_CONSUME"] = DefineDirective{ "1", {} };
+		defines_["__ATOMIC_ACQUIRE"] = DefineDirective{ "2", {} };
+		defines_["__ATOMIC_RELEASE"] = DefineDirective{ "3", {} };
+		defines_["__ATOMIC_ACQ_REL"] = DefineDirective{ "4", {} };
+		defines_["__ATOMIC_SEQ_CST"] = DefineDirective{ "5", {} };
+		
 		// GCC libstdc++ macros
 		defines_["_GLIBCXX_VISIBILITY"] = DefineDirective{ "", { "V" }, true };
 		defines_["_GLIBCXX_BEGIN_NAMESPACE_VERSION"] = DefineDirective{};  // Inline namespace for versioning

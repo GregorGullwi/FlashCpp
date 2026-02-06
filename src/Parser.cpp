@@ -1913,6 +1913,10 @@ ParseResult Parser::parse_type_and_name() {
             }
         }
         
+        // Skip GCC __attribute__((...)) that may appear between return type and function name
+        // e.g., inline _Atomic_word __attribute__((__always_inline__)) __exchange_and_add(...)
+        skip_gcc_attributes();
+        
         // After skipping specifiers, check if this is now an operator (e.g., void constexpr operator=())
         if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
             peek_token()->value() == "operator") {
@@ -8331,6 +8335,11 @@ ParseResult Parser::parse_static_assert()
 	// The expression may depend on template parameters that are not yet known
 	bool is_in_template_definition = parsing_template_body_ && !current_template_param_names_.empty();
 	
+	// Also consider struct parsing context - if we're inside a template struct body,
+	// member function bodies may be parsed later but still contain template-dependent expressions
+	bool is_in_template_struct = !struct_parsing_context_stack_.empty() && 
+		(parsing_template_body_ || !current_template_param_names_.empty());
+	
 	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
 	ctx.parser = this;  // Enable template function instantiation
@@ -8344,31 +8353,40 @@ ParseResult Parser::parse_static_assert()
 	
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 	
-	// If we're in a template definition and evaluation failed due to dependent types,
-	// that's okay - skip it and it will be checked during instantiation
-	if (is_in_template_definition && !eval_result.success()) {
-		// Check if the error is due to template-dependent expressions using the error_type enum
-		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
-		if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
-			// This is a template-dependent expression - defer evaluation
-			FLASH_LOG(Templates, Debug, "Deferring static_assert evaluation in template body: ", eval_result.error_message);
-			
-			// Store the deferred static_assert in the current struct/class for later evaluation
-			if (!struct_parsing_context_stack_.empty()) {
-				const auto& struct_ctx = struct_parsing_context_stack_.back();
-				if (struct_ctx.struct_node) {
-					// Intern the message in StringTable for persistent storage
-					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
-					// Store the condition expression and message for re-evaluation during template instantiation
-					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
-					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
-					          struct_ctx.struct_node->name(), "' for later evaluation");
-				}
+	// If evaluation failed with a template-dependent expression error, always defer.
+	// Template-dependent expressions can't be evaluated at parse time regardless of context.
+	if (!eval_result.success() && eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
+		FLASH_LOG(Templates, Debug, "Deferring static_assert with template-dependent expression: ", eval_result.error_message);
+		
+		// Store the deferred static_assert in the current struct/class for later evaluation
+		if (!struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			if (struct_ctx.struct_node) {
+				StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+				struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+				FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
+				          struct_ctx.struct_node->name(), "' for later evaluation");
 			}
-			
-			return saved_position.success();
 		}
-		// Otherwise, it's a real error - report it
+		
+		return saved_position.success();
+	}
+	
+	// If we're in a template definition and evaluation failed for other reasons,
+	// that's okay - skip it and it will be checked during instantiation
+	if ((is_in_template_definition || is_in_template_struct) && !eval_result.success()) {
+		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
+		
+		// Store the deferred static_assert in the current struct/class for later evaluation
+		if (!struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			if (struct_ctx.struct_node) {
+				StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+				struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+			}
+		}
+		
+		return saved_position.success();
 	}
 	
 	if (!eval_result.success()) {
@@ -17246,6 +17264,41 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	return postfix_result;
 }
 
+// Helper: check if a name (possibly with __builtin_ prefix) is a known compiler type trait intrinsic.
+// Used to distinguish type traits like __is_void(T) from regular functions like __is_single_threaded().
+static bool is_known_type_trait_name(std::string_view name) {
+	// Normalize __builtin_ prefix
+	std::string_view check = name;
+	std::string normalized_storage;
+	if (name.starts_with("__builtin_")) {
+		normalized_storage = "__" + std::string(name.substr(10));
+		check = normalized_storage;
+	}
+	
+	static const std::unordered_set<std::string_view> known_traits = {
+		"__is_void", "__is_nullptr", "__is_integral", "__is_floating_point",
+		"__is_array", "__is_pointer", "__is_lvalue_reference", "__is_rvalue_reference",
+		"__is_member_object_pointer", "__is_member_function_pointer",
+		"__is_enum", "__is_union", "__is_class", "__is_function",
+		"__is_reference", "__is_arithmetic", "__is_fundamental", "__is_object",
+		"__is_scalar", "__is_compound",
+		"__is_base_of", "__is_same", "__is_convertible", "__is_nothrow_convertible",
+		"__is_polymorphic", "__is_final", "__is_abstract", "__is_empty",
+		"__is_aggregate", "__is_standard_layout",
+		"__has_unique_object_representations",
+		"__is_trivially_copyable", "__is_trivial", "__is_pod", "__is_literal_type",
+		"__is_const", "__is_volatile", "__is_signed", "__is_unsigned",
+		"__is_bounded_array", "__is_unbounded_array",
+		"__is_constructible", "__is_trivially_constructible", "__is_nothrow_constructible",
+		"__is_assignable", "__is_trivially_assignable", "__is_nothrow_assignable",
+		"__is_destructible", "__is_trivially_destructible", "__is_nothrow_destructible",
+		"__has_trivial_destructor", "__has_virtual_destructor",
+		"__is_layout_compatible", "__is_pointer_interconvertible_base_of",
+		"__underlying_type", "__is_constant_evaluated", "__is_complete_or_unbounded",
+	};
+	return known_traits.count(check) > 0;
+}
+
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 {
 	static thread_local int recursion_depth = 0;
@@ -19811,10 +19864,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	           (current_token_->value().starts_with("__builtin_is_") || 
 	            current_token_->value().starts_with("__builtin_has_")))) &&
 	         // Only parse as intrinsic if NEXT token is '(' - otherwise it's a template class name
-	         peek_token(1).has_value() && peek_token(1)->value() == "(") {
+	         peek_token(1).has_value() && peek_token(1)->value() == "(" &&
+	         // Only parse as intrinsic if the name is a KNOWN type trait.
+	         // This prevents regular functions like __is_single_threaded() from being misidentified.
+	         is_known_type_trait_name(current_token_->value())) {
 		// Check if this is actually a declared function template (library function, not intrinsic)
 		// If so, skip this branch and let it fall through to normal function call parsing
 		std::string_view trait_name = current_token_->value();
+		
 		bool is_declared_template = gTemplateRegistry.lookupTemplate(trait_name).has_value();
 		
 		// Also check namespace-qualified name if in namespace
@@ -19833,11 +19890,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			consume_token(); // consume the trait name
 
 			// Normalize __builtin_ prefix to __ prefix for easier matching
-			// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
 			std::string_view normalized_view = trait_name;
 			if (trait_name.starts_with("__builtin_")) {
 				StringBuilder builtin_normalized;
-				builtin_normalized.append("__").append(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
+				builtin_normalized.append("__").append(trait_name.substr(10));
 				normalized_view = builtin_normalized.commit();
 			}
 
@@ -19850,7 +19906,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			};
 			
 			static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
-				// Primary type categories
 				{"__is_void", {TypeTraitKind::IsVoid, false, false, false}},
 				{"__is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
 				{"__is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
@@ -19865,19 +19920,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				{"__is_union", {TypeTraitKind::IsUnion, false, false, false}},
 				{"__is_class", {TypeTraitKind::IsClass, false, false, false}},
 				{"__is_function", {TypeTraitKind::IsFunction, false, false, false}},
-				// Composite type categories
 				{"__is_reference", {TypeTraitKind::IsReference, false, false, false}},
 				{"__is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
 				{"__is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
 				{"__is_object", {TypeTraitKind::IsObject, false, false, false}},
 				{"__is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
 				{"__is_compound", {TypeTraitKind::IsCompound, false, false, false}},
-				// Type relationships (binary traits)
 				{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
 				{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
 				{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
 				{"__is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
-				// Type properties
 				{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
 				{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
 				{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
@@ -19895,24 +19947,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				{"__is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
 				{"__is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
 				{"__is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
-				// Constructibility traits (variadic)
 				{"__is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
 				{"__is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
 				{"__is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
-				// Assignability traits (binary)
 				{"__is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
 				{"__is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
 				{"__is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
-				// Destructibility traits
 				{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
 				{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
 				{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
 				{"__has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
 				{"__has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
-				// C++20 layout compatibility traits (binary)
 				{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
 				{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
-				// Special traits
 				{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
 				{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
 				{"__is_complete_or_unbounded", {TypeTraitKind::IsCompleteOrUnbounded, false, false, false}},
@@ -28822,8 +28869,77 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				if (found_constructor) continue;
 
-					// Parse member declaration (use same logic as regular struct parsing)
-				auto member_result = parse_type_and_name();
+				// Special handling for conversion operators: operator type()
+				// Conversion operators don't have a return type, so we need to detect them early
+				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
+				ParseResult member_result;
+				{
+					SaveHandle conv_saved = save_token_position();
+					bool found_conversion_op = false;
+					// Skip specifiers that can precede conversion operators
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+						std::string_view kw = peek_token()->value();
+						if (kw == "constexpr" || kw == "consteval" || kw == "inline" || kw == "explicit" || kw == "virtual") {
+							consume_token();
+							if (kw == "explicit" && peek_token().has_value() && peek_token()->value() == "(") {
+								skip_balanced_parens(); // explicit(condition)
+							}
+						} else {
+							break;
+						}
+					}
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+					    peek_token()->value() == "operator") {
+						// Check if this is a conversion operator (not operator() or operator<< etc.)
+						// Conversion operators have: operator type-name ()
+						SaveHandle op_saved = save_token_position();
+						Token operator_keyword_token = *peek_token();
+						consume_token(); // consume 'operator'
+						
+						// If next token is not '(' and not an operator symbol, it's likely a conversion operator
+						bool is_conversion = false;
+						if (peek_token().has_value() && peek_token()->value() != "(" &&
+						    peek_token()->type() != Token::Type::Operator &&
+						    peek_token()->value() != "[" && peek_token()->value() != "new" && peek_token()->value() != "delete") {
+							// Try to parse the target type
+							auto type_result = parse_type_specifier();
+							if (!type_result.is_error() && type_result.node().has_value()) {
+								// Check for ()
+								if (peek_token().has_value() && peek_token()->value() == "(") {
+									is_conversion = true;
+									
+									const TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();
+									StringBuilder op_name_builder;
+									op_name_builder.append("operator ");
+									op_name_builder.append(target_type.getReadableString());
+									std::string_view operator_name = op_name_builder.commit();
+									
+									Token identifier_token = Token(Token::Type::Identifier, operator_name,
+									                              operator_keyword_token.line(), operator_keyword_token.column(),
+									                              operator_keyword_token.file_index());
+									
+									ASTNode decl_node = emplace_node<DeclarationNode>(
+										type_result.node().value(),
+										identifier_token
+									);
+									
+									discard_saved_token(op_saved);
+									discard_saved_token(conv_saved);
+									member_result = ParseResult::success(decl_node);
+									found_conversion_op = true;
+								}
+							}
+						}
+						if (!is_conversion) {
+							restore_token_position(op_saved);
+						}
+					}
+					if (!found_conversion_op) {
+						restore_token_position(conv_saved);
+						// Parse member declaration (use same logic as regular struct parsing)
+						member_result = parse_type_and_name();
+					}
+				}
 				if (member_result.is_error()) {
 					return member_result;
 				}

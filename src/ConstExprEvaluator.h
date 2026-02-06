@@ -620,6 +620,14 @@ private:
 				
 				// size_in_bits() returns bits, convert to bytes
 				unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
+				// sizeof never returns 0 in valid C++ (sizeof(char) == 1, all complete types >= 1).
+				// A zero result indicates an incomplete or template-dependent type.
+				// Return a template-dependent error so static_assert can be deferred in template contexts.
+				if (size_in_bytes == 0) {
+					return EvalResult::error(
+						"sizeof evaluated to 0 for type '" + std::string(type_spec.token().value()) + "' (incomplete or dependent type)",
+						EvalErrorType::TemplateDependentExpression);
+				}
 				return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 			}
 		}
