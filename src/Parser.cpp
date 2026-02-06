@@ -17264,39 +17264,91 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	return postfix_result;
 }
 
+// Trait info for type trait intrinsics - shared between is_known_type_trait_name and parse_primary_expression.
+// Keys use single underscore prefix (e.g. "_is_void") so both "__is_void" and "__builtin_is_void"
+// can be normalized to the same key via string_view::substr() with zero allocation.
+struct TraitInfo {
+	TypeTraitKind kind = TypeTraitKind::IsVoid;
+	bool is_binary = false;
+	bool is_variadic = false;
+	bool is_no_arg = false;
+};
+
+static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
+	{"_is_void", {TypeTraitKind::IsVoid, false, false, false}},
+	{"_is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
+	{"_is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
+	{"_is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
+	{"_is_array", {TypeTraitKind::IsArray, false, false, false}},
+	{"_is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
+	{"_is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
+	{"_is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
+	{"_is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
+	{"_is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
+	{"_is_enum", {TypeTraitKind::IsEnum, false, false, false}},
+	{"_is_union", {TypeTraitKind::IsUnion, false, false, false}},
+	{"_is_class", {TypeTraitKind::IsClass, false, false, false}},
+	{"_is_function", {TypeTraitKind::IsFunction, false, false, false}},
+	{"_is_reference", {TypeTraitKind::IsReference, false, false, false}},
+	{"_is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
+	{"_is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
+	{"_is_object", {TypeTraitKind::IsObject, false, false, false}},
+	{"_is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
+	{"_is_compound", {TypeTraitKind::IsCompound, false, false, false}},
+	{"_is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
+	{"_is_same", {TypeTraitKind::IsSame, true, false, false}},
+	{"_is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
+	{"_is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
+	{"_is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
+	{"_is_final", {TypeTraitKind::IsFinal, false, false, false}},
+	{"_is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
+	{"_is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
+	{"_is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
+	{"_is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
+	{"_has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
+	{"_is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
+	{"_is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
+	{"_is_pod", {TypeTraitKind::IsPod, false, false, false}},
+	{"_is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
+	{"_is_const", {TypeTraitKind::IsConst, false, false, false}},
+	{"_is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
+	{"_is_signed", {TypeTraitKind::IsSigned, false, false, false}},
+	{"_is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
+	{"_is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
+	{"_is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
+	{"_is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
+	{"_is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
+	{"_is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
+	{"_is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
+	{"_is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
+	{"_is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
+	{"_is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
+	{"_is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
+	{"_is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
+	{"_has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
+	{"_has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
+	{"_is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
+	{"_is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
+	{"_underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
+	{"_is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
+	{"_is_complete_or_unbounded", {TypeTraitKind::IsCompleteOrUnbounded, false, false, false}},
+};
+
+// Normalize a type trait name to its single-underscore lookup key.
+// "__is_void" -> "_is_void", "__builtin_is_void" -> "_is_void"
+// Returns a string_view into the original name (zero allocation).
+static std::string_view normalize_trait_name(std::string_view name) {
+	if (name.starts_with("__builtin_"))
+		return name.substr(9); // "__builtin_is_foo" -> "_is_foo"
+	if (name.starts_with("_"))
+		return name.substr(1); // "__is_foo" -> "_is_foo"
+	return name;
+}
+
 // Helper: check if a name (possibly with __builtin_ prefix) is a known compiler type trait intrinsic.
 // Used to distinguish type traits like __is_void(T) from regular functions like __is_single_threaded().
 static bool is_known_type_trait_name(std::string_view name) {
-	// Normalize __builtin_ prefix
-	std::string_view check = name;
-	std::string normalized_storage;
-	if (name.starts_with("__builtin_")) {
-		normalized_storage = "__" + std::string(name.substr(10));
-		check = normalized_storage;
-	}
-	
-	static const std::unordered_set<std::string_view> known_traits = {
-		"__is_void", "__is_nullptr", "__is_integral", "__is_floating_point",
-		"__is_array", "__is_pointer", "__is_lvalue_reference", "__is_rvalue_reference",
-		"__is_member_object_pointer", "__is_member_function_pointer",
-		"__is_enum", "__is_union", "__is_class", "__is_function",
-		"__is_reference", "__is_arithmetic", "__is_fundamental", "__is_object",
-		"__is_scalar", "__is_compound",
-		"__is_base_of", "__is_same", "__is_convertible", "__is_nothrow_convertible",
-		"__is_polymorphic", "__is_final", "__is_abstract", "__is_empty",
-		"__is_aggregate", "__is_standard_layout",
-		"__has_unique_object_representations",
-		"__is_trivially_copyable", "__is_trivial", "__is_pod", "__is_literal_type",
-		"__is_const", "__is_volatile", "__is_signed", "__is_unsigned",
-		"__is_bounded_array", "__is_unbounded_array",
-		"__is_constructible", "__is_trivially_constructible", "__is_nothrow_constructible",
-		"__is_assignable", "__is_trivially_assignable", "__is_nothrow_assignable",
-		"__is_destructible", "__is_trivially_destructible", "__is_nothrow_destructible",
-		"__has_trivial_destructor", "__has_virtual_destructor",
-		"__is_layout_compatible", "__is_pointer_interconvertible_base_of",
-		"__underlying_type", "__is_constant_evaluated", "__is_complete_or_unbounded",
-	};
-	return known_traits.count(check) > 0;
+	return trait_map.contains(normalize_trait_name(name));
 }
 
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
@@ -19889,83 +19941,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			Token trait_token = *current_token_;
 			consume_token(); // consume the trait name
 
-			// Normalize __builtin_ prefix to __ prefix for easier matching
-			std::string_view normalized_view = trait_name;
-			if (trait_name.starts_with("__builtin_")) {
-				StringBuilder builtin_normalized;
-				builtin_normalized.append("__").append(trait_name.substr(10));
-				normalized_view = builtin_normalized.commit();
-			}
-
-			// Lookup trait info using a static table
-			struct TraitInfo {
-				TypeTraitKind kind;
-				bool is_binary;
-				bool is_variadic;
-				bool is_no_arg;
-			};
-			
-			static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
-				{"__is_void", {TypeTraitKind::IsVoid, false, false, false}},
-				{"__is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
-				{"__is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
-				{"__is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
-				{"__is_array", {TypeTraitKind::IsArray, false, false, false}},
-				{"__is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
-				{"__is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
-				{"__is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
-				{"__is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
-				{"__is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
-				{"__is_enum", {TypeTraitKind::IsEnum, false, false, false}},
-				{"__is_union", {TypeTraitKind::IsUnion, false, false, false}},
-				{"__is_class", {TypeTraitKind::IsClass, false, false, false}},
-				{"__is_function", {TypeTraitKind::IsFunction, false, false, false}},
-				{"__is_reference", {TypeTraitKind::IsReference, false, false, false}},
-				{"__is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
-				{"__is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
-				{"__is_object", {TypeTraitKind::IsObject, false, false, false}},
-				{"__is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
-				{"__is_compound", {TypeTraitKind::IsCompound, false, false, false}},
-				{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
-				{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
-				{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
-				{"__is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
-				{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
-				{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
-				{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
-				{"__is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
-				{"__is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
-				{"__is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
-				{"__has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
-				{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
-				{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
-				{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
-				{"__is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
-				{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
-				{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
-				{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
-				{"__is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
-				{"__is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
-				{"__is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
-				{"__is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
-				{"__is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
-				{"__is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
-				{"__is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
-				{"__is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
-				{"__is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
-				{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
-				{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
-				{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
-				{"__has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
-				{"__has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
-				{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
-				{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
-				{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
-				{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
-				{"__is_complete_or_unbounded", {TypeTraitKind::IsCompleteOrUnbounded, false, false, false}},
-			};
-
-			auto it = trait_map.find(normalized_view);
+			auto it = trait_map.find(normalize_trait_name(trait_name));
 			if (it == trait_map.end()) {
 				// Unknown type trait intrinsic - this shouldn't happen since we only reach here
 				// if followed by '(' which means it was intended as a type trait call
