@@ -122,16 +122,16 @@ void initialize_native_types() {
     auto& char_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_type_size_bits(Type::Char));
     gNativeTypes[Type::Char] = &char_type;
     
-    auto& wchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_wchar_size_bits());
+    auto& wchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("wchar_t"sv), Type::WChar, gTypeInfo.size(), get_wchar_size_bits());
     gNativeTypes[Type::WChar] = &wchar_type;
     
-    auto& char8_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_type_size_bits(Type::Char8));
+    auto& char8_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char8_t"sv), Type::Char8, gTypeInfo.size(), get_type_size_bits(Type::Char8));
     gNativeTypes[Type::Char8] = &char8_type;
     
-    auto& char16_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_type_size_bits(Type::Char16));
+    auto& char16_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char16_t"sv), Type::Char16, gTypeInfo.size(), get_type_size_bits(Type::Char16));
     gNativeTypes[Type::Char16] = &char16_type;
     
-    auto& char32_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size(), get_type_size_bits(Type::Char32));
+    auto& char32_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char32_t"sv), Type::Char32, gTypeInfo.size(), get_type_size_bits(Type::Char32));
     gNativeTypes[Type::Char32] = &char32_type;
 
     auto& uchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uchar"sv), Type::UnsignedChar, gTypeInfo.size(), get_type_size_bits(Type::UnsignedChar));
