@@ -264,21 +264,25 @@
 						bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
 						                                   current_lambda_context_.captures.count(var_name_str) > 0;
 
+					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
+						// Check if this variable is a captured variable from an enclosing lambda
+						bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
+						                                   current_lambda_context_.captures.count(var_name_str) > 0;
+
 						// Handle init-captures
 						if (capture.has_initializer()) {
 							// Init-capture: evaluate the initializer expression and store it
 							const ASTNode& init_node = *capture.initializer();
 							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-							
+
 							if (init_operands.size() < 3) {
-								capture_index++;
 								continue;
 							}
-							
+
 							// visitExpressionNode returns {type, size, value, ...}
 							// The actual value is at index 2
 							IrOperand init_value = init_operands[2];
-							
+
 							// For init-capture by reference [&y = x], we need to store the address of x
 							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 								// Get the type info from the init operands
@@ -294,7 +298,7 @@
 										init_size = static_cast<int>(std::get<unsigned long long>(init_operands[1]));
 									}
 								}
-								
+
 								// Generate AddressOf for the initializer
 								TempVar addr_temp = var_counter.next();
 								AddressOfOp addr_op;
@@ -302,19 +306,18 @@
 								addr_op.operand.type = init_type;
 								addr_op.operand.size_in_bits = init_size;
 								addr_op.operand.pointer_depth = 0;
-								
+
 								if (std::holds_alternative<StringHandle>(init_value)) {
 									addr_op.operand.value = std::get<StringHandle>(init_value);
 								} else if (std::holds_alternative<TempVar>(init_value)) {
 									addr_op.operand.value = std::get<TempVar>(init_value);
 								} else {
 									// For other types, skip
-									capture_index++;
 									continue;
 								}
-								
+
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
-								
+
 								// Store the address in the closure member
 								MemberStoreOp member_store;
 								member_store.value.type = init_type;
@@ -329,14 +332,11 @@
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 							} else {
 								// Init-capture by value [x = expr] - store the value directly
-								// Store the value in the closure member
-								// We need to convert IrOperand to IrValue
 								MemberStoreOp member_store;
 								member_store.value.type = member->type;
 								member_store.value.size_in_bits = static_cast<int>(member->size * 8);
-								
+
 								// Convert IrOperand to IrValue
-								// IrValue only supports: unsigned long long, double, TempVar, std::string_view
 								if (std::holds_alternative<TempVar>(init_value)) {
 									member_store.value.value = std::get<TempVar>(init_value);
 								} else if (std::holds_alternative<int>(init_value)) {
@@ -349,10 +349,9 @@
 									member_store.value.value = std::get<StringHandle>(init_value);
 								} else {
 									// For other types, skip this capture
-									capture_index++;
 									continue;
 								}
-								
+
 								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 								member_store.member_name = member->getName();
 								member_store.offset = static_cast<int>(member->offset);
@@ -361,6 +360,9 @@
 								member_store.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 							}
+
+							// Init-captures do not consume an entry from captured_var_decls.
+							continue;
 						} else if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 							// By-reference: store the address of the variable
 							// Get the original variable type from captured_var_decls
@@ -373,26 +375,22 @@
 							const auto& orig_type = decl->type_node().as<TypeSpecifierNode>();
 
 							TempVar addr_temp = var_counter.next();
-							
+
 							if (is_captured_from_enclosing) {
 								// Variable is captured from enclosing lambda - need to get address from this->x
-								// For by-reference capture of an already captured variable, we need to:
-								// 1. Load the enclosing lambda's captured value (or pointer if it was by-ref)
-								// 2. Take the address of that
 								auto enclosing_kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 								bool enclosing_is_ref = (enclosing_kind_it != current_lambda_context_.capture_kinds.end() &&
 								                         enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
-								
+
 								if (enclosing_is_ref) {
 									// Enclosing captured by reference - it already holds a pointer, just copy it
 									MemberLoadOp member_load;
 									member_load.result.value = addr_temp;
-									member_load.result.type = orig_type.type();  // Use original type (pointer semantics handled by IR converter)
-									member_load.result.size_in_bits = 64;  // Pointer size
-									member_load.object = StringTable::getOrInternStringHandle("this");  // "this" is a string literal
-									member_load.member_name = StringTable::getOrInternStringHandle(var_name);  // Intern to StringHandle
-									
-									// Look up the offset from the enclosing lambda's struct
+									member_load.result.type = orig_type.type();
+									member_load.result.size_in_bits = 64;
+									member_load.object = StringTable::getOrInternStringHandle("this");
+									member_load.member_name = StringTable::getOrInternStringHandle(var_name);
+
 									int enclosing_offset = -1;
 									auto enclosing_type_it = gTypesByName.find(current_lambda_context_.closure_type);
 									if (enclosing_type_it != gTypesByName.end()) {
@@ -406,18 +404,16 @@
 									}
 									member_load.offset = enclosing_offset;
 									member_load.struct_type_info = nullptr;
-									member_load.is_reference = true;  // Mark as reference
+									member_load.is_reference = true;
 									member_load.is_rvalue_reference = false;
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
 								} else {
 									// Enclosing captured by value - need to get address of this->x
-									// The IR converter's handleAddressOf checks current_lambda_captures_
-									// and generates member access to this->var_name instead of direct variable access
 									AddressOfOp addr_op;
 									addr_op.result = addr_temp;
 									addr_op.operand.type = orig_type.type();
 									addr_op.operand.size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+									addr_op.operand.pointer_depth = 0;
 									addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								}
@@ -427,7 +423,7 @@
 								addr_op.result = addr_temp;
 								addr_op.operand.type = orig_type.type();
 								addr_op.operand.size_in_bits = static_cast<int>(orig_type.size_in_bits());
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+								addr_op.operand.pointer_depth = 0;
 								addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 							}
@@ -437,62 +433,64 @@
 							member_store.value.type = member->type;
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = addr_temp;
-							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);  // Already a persistent string_view
+							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
 							member_store.is_rvalue_reference = member->is_rvalue_reference;
 							member_store.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
-					} else {
-						// By-value: copy the value
-						MemberStoreOp member_store;
-						member_store.value.type = member->type;
-						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
-						
-						if (is_captured_from_enclosing) {
-							// Variable is captured from enclosing lambda - load it via member access first
-							TempVar loaded_value = var_counter.next();
-							MemberLoadOp member_load;
-							member_load.result.value = loaded_value;
-							member_load.result.type = member->type;
-							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-							member_load.object = StringTable::getOrInternStringHandle("this");  // "this" is a string literal
-							member_load.member_name = StringTable::getOrInternStringHandle(var_name);  // Intern to StringHandle
-							
-							// Look up the offset from the enclosing lambda's struct
-							int enclosing_offset = -1;
-							auto enclosing_type_it = gTypesByName.find(current_lambda_context_.closure_type);
-							if (enclosing_type_it != gTypesByName.end()) {
-								const TypeInfo* enclosing_type = enclosing_type_it->second;
-								if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
-									const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
-									if (enclosing_member) {
-										enclosing_offset = static_cast<int>(enclosing_member->offset);
+						} else {
+							// By-value: copy the value
+							MemberStoreOp member_store;
+							member_store.value.type = member->type;
+							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+
+							if (is_captured_from_enclosing) {
+								// Variable is captured from enclosing lambda - load it via member access first
+								TempVar loaded_value = var_counter.next();
+								MemberLoadOp member_load;
+								member_load.result.value = loaded_value;
+								member_load.result.type = member->type;
+								member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+								member_load.object = StringTable::getOrInternStringHandle("this");
+								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
+
+								int enclosing_offset = -1;
+								auto enclosing_type_it = gTypesByName.find(current_lambda_context_.closure_type);
+								if (enclosing_type_it != gTypesByName.end()) {
+									const TypeInfo* enclosing_type = enclosing_type_it->second;
+									if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
+										const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
+										if (enclosing_member) {
+											enclosing_offset = static_cast<int>(enclosing_member->offset);
+										}
 									}
 								}
+								member_load.offset = enclosing_offset;
+								member_load.struct_type_info = nullptr;
+								member_load.is_reference = false;
+								member_load.is_rvalue_reference = false;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
+
+								member_store.value.value = loaded_value;
+							} else {
+								// Regular variable - use directly
+								member_store.value.value = StringTable::getOrInternStringHandle(var_name);
 							}
-							member_load.offset = enclosing_offset;
-							member_load.struct_type_info = nullptr;
-							member_load.is_reference = false;
-							member_load.is_rvalue_reference = false;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
-							
-							member_store.value.value = loaded_value;
-						} else {
-							// Regular variable - use directly (var_name is already a persistent string_view from AST)
-							member_store.value.value = StringTable::getOrInternStringHandle(var_name);
+
+							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+							member_store.member_name = member->getName();
+							member_store.offset = static_cast<int>(member->offset);
+							member_store.is_reference = member->is_reference;
+							member_store.is_rvalue_reference = member->is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						}
-						
-						member_store.object = StringTable::getOrInternStringHandle(closure_var_name);  // Already a persistent string_view
-						member_store.member_name = member->getName();
-						member_store.offset = static_cast<int>(member->offset);
-						member_store.is_reference = member->is_reference;
-						member_store.is_rvalue_reference = member->is_rvalue_reference;
-						member_store.struct_type_info = nullptr;
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
-					}						capture_index++;
+
+						capture_index++;
 					}
+				}
 				}
 			}
 		}
