@@ -295,8 +295,8 @@ fi
 }
 
 echo ""
-# NOTE: Return value mismatches now fail the build since __has_builtin has been fixed
-if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ] && [ ${#RETURN_MISMATCH[@]} -eq 0 ]; then
+# NOTE: Return value mismatches and runtime crashes now fail the build
+if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ] && [ ${#RETURN_MISMATCH[@]} -eq 0 ] && [ ${#RUNTIME_CRASH[@]} -eq 0 ]; then
     echo -e "${GREEN}RESULT: SUCCESS${NC}"
     exit 0
 else
