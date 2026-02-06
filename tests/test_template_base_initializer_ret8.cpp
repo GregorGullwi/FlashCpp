@@ -1,10 +1,18 @@
+@@ -1,17 +1,10 @@
 // Test: Template base class in member initializer list
 // Validates parsing of Base<T>(args) in constructor initializer lists
 template<typename T>
 struct Base {
     T value;
+    Base(T v) : value(v) {}
+};
+
+template<typename T>
+struct Derived : public Base<T> {
+    Derived(T v) : Base<T>(v) {}
 };
 
 int main() {
-    return sizeof(Base<double>);  // 8 (sizeof double)
+    Derived<double> d(42.0);
+    return sizeof(d);  // 8 (sizeof double)
 }
