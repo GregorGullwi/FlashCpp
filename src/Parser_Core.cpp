@@ -465,7 +465,7 @@ Parser::SaveHandle Parser::save_token_position() {
     
     // Save current parser state (including injected token for >> splitting)
     TokenPosition lexer_pos = lexer_.save_token_position();
-    saved_tokens_[handle] = { current_token_, ast_nodes_.size(), lexer_pos };
+    saved_tokens_[handle] = { current_token_, injected_token_, ast_nodes_.size(), lexer_pos };
     
     if (current_token_.has_value()) {
         FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}", 
@@ -500,9 +500,10 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
     lexer_.restore_token_position(saved_token.lexer_position_);
     current_token_ = saved_token.current_token_;
     
-    // Phase 5: Clear any injected token when restoring position
-    // This prevents issues when backtracking after >> splitting
-    injected_token_.reset();
+    // Phase 5: Restore injected token state from save point
+    // If the save was made before a >> split, injected_token_ will be nullopt (clearing it).
+    // If the save was made after a >> split, injected_token_ will contain the second >.
+    injected_token_ = saved_token.injected_token_;
 	
     // Process AST nodes that were added after the saved position.
     // We need to:
@@ -549,6 +550,7 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
     const SavedToken& saved_token = it->second;
     lexer_.restore_token_position(saved_token.lexer_position_);
     current_token_ = saved_token.current_token_;
+    injected_token_ = saved_token.injected_token_;
     // Don't erase AST nodes - they were intentionally created during re-parsing
 }
 

@@ -513,6 +513,7 @@ private:
 
         struct SavedToken {
                 std::optional<Token> current_token_;
+                std::optional<Token> injected_token_;  // Phase 5: Save injected token state for >> splitting
                 size_t ast_nodes_size_ = 0;
                 TokenPosition lexer_position_;  // Store the lexer position with each save
         };
