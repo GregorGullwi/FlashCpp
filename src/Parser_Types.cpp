@@ -3301,6 +3301,17 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 								break;
 							}
 						}
+						// Also check deferred template base classes (e.g., Base<T> in template<T> struct Derived : Base<T>)
+						if (!is_base_init) {
+							StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
+							for (const auto& deferred_base : delayed.struct_node->deferred_template_base_classes()) {
+								if (deferred_base.base_template_name == init_name_handle) {
+									is_base_init = true;
+									delayed.ctor_node->add_base_initializer(init_name_handle, std::move(init_args));
+									break;
+								}
+							}
+						}
 					}
 
 					if (!is_base_init) {

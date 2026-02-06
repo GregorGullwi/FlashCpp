@@ -17627,6 +17627,71 @@ ASTNode Parser::substituteTemplateParameters(
 			for (size_t i = 0; i < func_call.arguments().size(); ++i) {
 				substituted_args.push_back(substituteTemplateParameters(func_call.arguments()[i], template_params, template_args));
 			}
+			
+			// Check if function name contains a dependent template hash (Base$hash::member)
+			// that needs to be resolved with concrete template arguments
+			std::string_view func_name = func_call.called_from().value();
+			if (func_name.empty()) func_name = func_call.function_declaration().identifier_token().value();
+			size_t dollar_pos = func_name.find('$');
+			size_t scope_pos = func_name.find("::");
+			if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
+				std::string_view base_template_name = func_name.substr(0, dollar_pos);
+				std::string_view member_name = func_name.substr(scope_pos + 2);
+				
+				// Build concrete template arguments from the substitution context
+				std::vector<TemplateTypeArg> inst_args;
+				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+					const TemplateArgument& arg = template_args[i];
+					if (arg.kind == TemplateArgument::Kind::Type) {
+						TemplateTypeArg type_arg;
+						type_arg.base_type = arg.type_value;
+						type_arg.type_index = 0;
+						type_arg.is_value = false;
+						inst_args.push_back(type_arg);
+					} else if (arg.kind == TemplateArgument::Kind::Value) {
+						TemplateTypeArg val_arg;
+						val_arg.is_value = true;
+						val_arg.value = arg.int_value;
+						val_arg.base_type = arg.value_type;
+						inst_args.push_back(val_arg);
+					}
+				}
+				
+				if (!inst_args.empty()) {
+					try_instantiate_class_template(base_template_name, inst_args, true);
+					std::string_view correct_inst_name = get_instantiated_class_name(base_template_name, inst_args);
+					
+					if (correct_inst_name != func_name.substr(0, scope_pos)) {
+						// Build corrected function name
+						StringBuilder new_name_builder;
+						new_name_builder.append(correct_inst_name).append("::").append(member_name);
+						std::string_view new_func_name = new_name_builder.commit();
+						
+						FLASH_LOG(Templates, Debug, "Resolved dependent qualified call: ", func_name, " -> ", new_func_name);
+						
+						// Trigger lazy member function instantiation
+						StringHandle inst_handle = StringTable::getOrInternStringHandle(correct_inst_name);
+						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(inst_handle, member_handle)) {
+							auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(inst_handle, member_handle);
+							if (lazy_info_opt.has_value()) {
+								instantiateLazyMemberFunction(*lazy_info_opt);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(inst_handle, member_handle);
+							}
+						}
+						
+						// Create new forward declaration with corrected name
+						Token new_token(Token::Type::Identifier, new_func_name,
+							func_call.called_from().line(), func_call.called_from().column(), func_call.called_from().file_index());
+						auto type_node_ast = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+						auto fwd_decl = emplace_node<DeclarationNode>(type_node_ast, new_token);
+						ASTNode new_func_call_node = emplace_node<ExpressionNode>(
+							FunctionCallNode(fwd_decl.as<DeclarationNode>(), std::move(substituted_args), new_token));
+						return new_func_call_node;
+					}
+				}
+			}
+			
 			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
 			// Copy mangled name if present (important for template instantiation)
 			if (func_call.has_mangled_name()) {

@@ -9888,6 +9888,8 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	std::string_view member_name,
 	const Token& member_token) {
 	
+	FLASH_LOG(Templates, Debug, "try_parse_member_template_function_call: ", instantiated_class_name, "::", member_name);
+	
 	// Check for member template arguments: Template<T>::member<U>
 	std::optional<std::vector<TemplateTypeArg>> member_template_args;
 	if (peek_token().has_value() && peek_token()->value() == "<") {
@@ -9963,6 +9965,49 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			member_name,
 			*member_template_args
 		);
+	}
+	
+	// Trigger lazy member function instantiation if needed
+	if (!instantiated_func.has_value()) {
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
+			FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for qualified call: ", instantiated_class_name, "::", member_name);
+			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
+			if (lazy_info_opt.has_value()) {
+				instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
+				LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle);
+			}
+		}
+		// If the hash-based name didn't match (dependent vs concrete hash mismatch),
+		// try to find the correct instantiation by looking up gTypesByName for a matching
+		// template instantiation with the same base template name.
+		if (!instantiated_func.has_value()) {
+			size_t dollar_pos = instantiated_class_name.find('$');
+			if (dollar_pos != std::string_view::npos) {
+				std::string_view base_tmpl = instantiated_class_name.substr(0, dollar_pos);
+				// Search all types to find a matching template instantiation
+				for (const auto& [name_handle, type_info_ptr] : gTypesByName) {
+					if (type_info_ptr->isTemplateInstantiation() &&
+					    StringTable::getStringView(type_info_ptr->baseTemplateName()) == base_tmpl &&
+					    StringTable::getStringView(name_handle) != instantiated_class_name) {
+						StringHandle alt_class_handle = name_handle;
+						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(alt_class_handle, member_name_handle)) {
+							FLASH_LOG(Templates, Debug, "Lazy instantiation triggered via base template match: ", 
+							          StringTable::getStringView(alt_class_handle), "::", member_name);
+							auto lazy_info_opt2 = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(alt_class_handle, member_name_handle);
+							if (lazy_info_opt2.has_value()) {
+								instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt2);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(alt_class_handle, member_name_handle);
+								// Update instantiated_class_name to the correct one for mangling
+								instantiated_class_name = StringTable::getStringView(alt_class_handle);
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 	
 	// Build qualified function name including template args
