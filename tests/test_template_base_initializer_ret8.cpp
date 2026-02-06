@@ -1,4 +1,3 @@
-@@ -1,17 +1,10 @@
 // Test: Template base class in member initializer list
 // Validates parsing of Base<T>(args) in constructor initializer lists
 template<typename T>
