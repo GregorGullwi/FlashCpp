@@ -13017,7 +13017,6 @@ private:
 			int64_t array_base_offset = 0;
 			if (std::holds_alternative<StringHandle>(op.array)) {
 				StringHandle array_name_handle = std::get<StringHandle>(op.array);
-			[[maybe_unused]] std::string_view array_name = StringTable::getStringView(array_name_handle);
 				array_base_offset = variable_scopes.back().variables[array_name_handle].offset;
 			} else if (std::holds_alternative<TempVar>(op.array)) {
 				TempVar array_temp = std::get<TempVar>(op.array);

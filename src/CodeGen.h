@@ -10277,6 +10277,7 @@ private:
 						payload.index.type = Type::UnsignedLongLong;
 						payload.index.size_in_bits = 64;
 						payload.index.value = flat_index;
+						payload.is_pointer_to_array = false;  // Multidimensional arrays are actual arrays, not pointers
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 						
