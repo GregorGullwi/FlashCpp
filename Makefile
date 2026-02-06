@@ -56,7 +56,13 @@ UNITY_SOURCES := $(SRCDIR)/FlashCppUnity.h $(SRCDIR)/Globals.cpp \
     $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp \
     $(SRCDIR)/Parser_Core.cpp $(SRCDIR)/Parser_Declarations.cpp \
     $(SRCDIR)/Parser_Types.cpp $(SRCDIR)/Parser_Statements.cpp \
-    $(SRCDIR)/Parser_Expressions.cpp $(SRCDIR)/Parser_Templates.cpp
+    $(SRCDIR)/Parser_Expressions.cpp $(SRCDIR)/Parser_Templates.cpp \
+    $(SRCDIR)/CodeGen_Visitors.cpp $(SRCDIR)/CodeGen_Statements.cpp \
+    $(SRCDIR)/CodeGen_Expressions.cpp $(SRCDIR)/CodeGen_Functions.cpp \
+    $(SRCDIR)/CodeGen_Lambdas.cpp \
+    $(SRCDIR)/ConstExprEvaluator_Core.cpp $(SRCDIR)/ConstExprEvaluator_Members.cpp \
+    $(SRCDIR)/FileReader_Core.cpp $(SRCDIR)/FileReader_Macros.cpp \
+    $(SRCDIR)/TemplateRegistry_Lazy.cpp
 
 # Source files needed for the test (unity build - only FlashCppTest.cpp is compiled)
 TEST_SOURCES :=

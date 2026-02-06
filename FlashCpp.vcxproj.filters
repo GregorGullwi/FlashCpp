@@ -65,6 +65,36 @@
     <ClInclude Include="src\Parser_Templates.cpp">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\CodeGen_Visitors.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CodeGen_Statements.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CodeGen_Expressions.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CodeGen_Functions.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CodeGen_Lambdas.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ConstExprEvaluator_Core.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ConstExprEvaluator_Members.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\FileReader_Core.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\FileReader_Macros.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TemplateRegistry_Lazy.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\CommandLineParser.h">
       <Filter>Header Files</Filter>
     </ClInclude>
