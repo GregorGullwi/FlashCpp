@@ -12,5 +12,5 @@ struct SizeChecker {
 };
 
 int main() {
-    return 0;
+    return sizeof(SizeChecker<char>::value_type);
 }
