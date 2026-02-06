@@ -1,7 +1,4 @@
 #include "Parser.h"
-#ifdef USE_LLVM
-#include "LibClangIRGenerator.h"
-#endif
 #include "OverloadResolution.h"
 #include "TemplateRegistry.h"
 #include "ConstExprEvaluator.h"
@@ -330,14 +327,6 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 		}
 	}
 	// Add more node types as needed
-}
-
-bool Parser::generate_coff([[maybe_unused]] const std::string& outputFilename) {
-#ifdef USE_LLVM
-    return FlashCpp::GenerateCOFF(ast_nodes_, outputFilename);
-#else
-    return false; // Not implemented in this configuration
-#endif
 }
 
 Parser::Parser(Lexer& lexer, CompileContext& context)

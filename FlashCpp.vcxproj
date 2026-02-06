@@ -221,7 +221,6 @@
     <ClInclude Include="src\LazyMemberResolver.h" />
     <ClInclude Include="src\Lexer.h" />
     <ClInclude Include="src\AstNodeTypes.h" />
-    <ClInclude Include="src\LLVMHeaders.h" />
     <ClInclude Include="src\Log.h" />
     <ClInclude Include="src\LSDAGenerator.h" />
     <ClInclude Include="src\NameMangling.h" />
@@ -275,44 +274,6 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
-      <AdditionalDependencies>
-        ws2_32.lib;
-        libclang.lib;
-        LLVMCore.lib;
-        LLVMSupport.lib;
-        LLVMTarget.lib;
-        LLVMTargetParser.lib;
-        LLVMCodeGen.lib;
-        LLVMGlobalISel.lib;
-        LLVMSelectionDAG.lib;
-        LLVMAsmPrinter.lib;
-        LLVMMC.lib;
-        LLVMMCParser.lib;
-        LLVMBitWriter.lib;
-        LLVMBitReader.lib;
-        LLVMTransformUtils.lib;
-        LLVMAnalysis.lib;
-        LLVMIRReader.lib;
-        LLVMObject.lib;
-        LLVMScalarOpts.lib;
-        LLVMInstCombine.lib;
-        LLVMInstrumentation.lib;
-        LLVMProfileData.lib;
-        LLVMCoroutines.lib;
-        LLVMDebugInfoDWARF.lib;
-        LLVMDebugInfoMSF.lib;
-        LLVMDebugInfoCodeView.lib;
-        LLVMDebugInfoPDB.lib;
-        LLVMRemarks.lib;
-        LLVMDemangle.lib;
-        LLVMX86CodeGen.lib;
-        LLVMX86AsmParser.lib;
-        LLVMX86Desc.lib;
-        LLVMX86Info.lib;
-        LLVMX86Disassembler.lib;
-        LLVMX86TargetMCA.lib;
-        %(AdditionalDependencies)
-      </AdditionalDependencies>
       <AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>

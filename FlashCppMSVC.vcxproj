@@ -154,9 +154,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <!-- Unity build: only main.cpp is compiled; all other sources are included via FlashCppUnity.h -->
-    <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)'!='Benchmark'">true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\main.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'=='Benchmark' Or '$(Configuration)'=='Test'">true</ExcludedFromBuild>
     </ClCompile>
