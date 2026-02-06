@@ -264,11 +264,6 @@
 						bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
 						                                   current_lambda_context_.captures.count(var_name_str) > 0;
 
-					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
-						// Check if this variable is a captured variable from an enclosing lambda
-						bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
-						                                   current_lambda_context_.captures.count(var_name_str) > 0;
-
 						// Handle init-captures
 						if (capture.has_initializer()) {
 							// Init-capture: evaluate the initializer expression and store it
@@ -490,7 +485,6 @@
 
 						capture_index++;
 					}
-				}
 				}
 			}
 		}
