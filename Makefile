@@ -51,7 +51,7 @@ TEST_DIR := $(BINDIR)/Test
 
 # Source files included via unity build (for dependency tracking)
 UNITY_SOURCES := $(SRCDIR)/FlashCppUnity.h $(SRCDIR)/Globals.cpp \
-    $(SRCDIR)/AstNodeTypes.cpp
+    $(SRCDIR)/AstNodeTypes.cpp  \
     $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp \
     $(SRCDIR)/Parser_Core.cpp $(SRCDIR)/Parser_Declarations.cpp \
     $(SRCDIR)/Parser_Types.cpp $(SRCDIR)/Parser_Statements.cpp \
