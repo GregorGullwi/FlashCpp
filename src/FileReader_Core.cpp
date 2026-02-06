@@ -183,7 +183,7 @@ public:
 				}
 
 				size_t i;
-				while ((i = line.rfind('\\')) && (i == line.size() - 1)) {
+				while (((i = line.rfind('\\')) != std::string::npos) && (i == line.size() - 1)) {
 					std::string next_line;
 					std::getline(stream, next_line);
 					line.erase(line.end() - 1);
