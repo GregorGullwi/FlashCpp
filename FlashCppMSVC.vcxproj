@@ -153,15 +153,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="src\AstNodeTypes.cpp" />
-    <ClCompile Include="src\ChunkedAnyVector.cpp" />
-    <ClCompile Include="src\CodeViewDebug.cpp" />
-    <ClCompile Include="src\ExpressionSubstitutor.cpp" />
+    <!-- Unity build: only main.cpp is compiled; all other sources are included via FlashCppUnity.h -->
     <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Benchmark'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\Parser.cpp" />
-    <!-- Main file - exclude from Test and Benchmark -->
     <ClCompile Include="src\main.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'=='Benchmark' Or '$(Configuration)'=='Test'">true</ExcludedFromBuild>
     </ClCompile>
@@ -175,6 +170,19 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <!-- Unity build include file and sources (not compiled directly) -->
+    <ClInclude Include="src\FlashCppUnity.h" />
+    <ClInclude Include="src\Globals.cpp" />
+    <ClInclude Include="src\AstNodeTypes.cpp" />
+    <ClInclude Include="src\ChunkedAnyVector.cpp" />
+    <ClInclude Include="src\CodeViewDebug.cpp" />
+    <ClInclude Include="src\ExpressionSubstitutor.cpp" />
+    <ClInclude Include="src\Parser_Core.cpp" />
+    <ClInclude Include="src\Parser_Declarations.cpp" />
+    <ClInclude Include="src\Parser_Types.cpp" />
+    <ClInclude Include="src\Parser_Statements.cpp" />
+    <ClInclude Include="src\Parser_Expressions.cpp" />
+    <ClInclude Include="src\Parser_Templates.cpp" />
     <ClInclude Include="src\ChunkedAnyVector.h" />
     <ClInclude Include="src\ChunkedString.h" />
     <ClInclude Include="src\CodeGen.h" />

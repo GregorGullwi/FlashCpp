@@ -245,7 +245,7 @@ public:
 	static std::string_view getStringView(StringHandle handle) {
 		// Handle invalid handles gracefully by returning empty string view
 		if (!handle.isValid()) {
-			return ""sv;
+			return std::string_view{};
 		}
 		
 		char* ptr = gChunkedStringAllocator.getChunkPointer(

@@ -50,11 +50,19 @@ RELEASE_DIR := $(BINDIR)/Release
 TEST_DIR := $(BINDIR)/Test
 BENCHMARK_DIR := $(BINDIR)/Benchmark
 
-# Source files needed for the test (excluding main.cpp, benchmark.cpp, LibClangIRGenerator.cpp)
-TEST_SOURCES := $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp $(SRCDIR)/Parser.cpp $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp
+# Source files included via unity build (for dependency tracking)
+UNITY_SOURCES := $(SRCDIR)/FlashCppUnity.h $(SRCDIR)/Globals.cpp \
+    $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp \
+    $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp \
+    $(SRCDIR)/Parser_Core.cpp $(SRCDIR)/Parser_Declarations.cpp \
+    $(SRCDIR)/Parser_Types.cpp $(SRCDIR)/Parser_Statements.cpp \
+    $(SRCDIR)/Parser_Expressions.cpp $(SRCDIR)/Parser_Templates.cpp
 
-# Main sources (excluding LLVM-dependent files)
-MAIN_SOURCES := $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp $(SRCDIR)/Parser.cpp $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp $(SRCDIR)/main.cpp
+# Source files needed for the test (unity build - only FlashCppTest.cpp is compiled)
+TEST_SOURCES :=
+
+# Main sources (unity build - only main.cpp is compiled)
+MAIN_SOURCES := $(SRCDIR)/main.cpp
 
 # Target executables with proper extensions (matching MSVC structure)
 MAIN_TARGET := $(DEBUG_DIR)/FlashCpp$(EXE_EXT)
@@ -66,24 +74,24 @@ BENCHMARK_TARGET := $(BENCHMARK_DIR)/benchmark$(EXE_EXT)
 .DEFAULT_GOAL := main
 
 # Build main executable (Debug configuration)
-$(MAIN_TARGET): $(MAIN_SOURCES)
+$(MAIN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
 	@echo "Built: $@"
 
 # Build release executable
-$(RELEASE_TARGET): $(MAIN_SOURCES)
+$(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 	@echo "Building main executable (Release) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(RELEASE_DIR) 2>nul || $(MKDIR) $(RELEASE_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $(MAIN_SOURCES)
 	@echo "Built: $@"
 
 # Build test executable
-$(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(TEST_SOURCES)
+$(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(UNITY_SOURCES)
 	@echo "Building test executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(TEST_DIR) 2>nul || $(MKDIR) $(TEST_DIR) || true
-	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $^
+	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
 	@echo "Built: $@"
 
 # Build benchmark executable (requires LLVM)

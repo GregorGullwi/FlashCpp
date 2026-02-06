@@ -1,3 +1,5 @@
+#include "FlashCppUnity.h"
+
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -34,19 +36,6 @@
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
 #include "ElfFileWriter.h"
 #endif
-
-// Global debug flag
-bool g_enable_debug_output = false;
-
-// Global exception handling control
-bool g_enable_exceptions = true;
-
-NamespaceRegistry gNamespaceRegistry;
-
-namespace FlashCpp {
-LazyMemberResolver gLazyMemberResolver;
-InstantiationQueue gInstantiationQueue;
-} // namespace FlashCpp
 
 // Timing helper
 struct PhaseTimer {
