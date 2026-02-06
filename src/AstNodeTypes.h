@@ -1075,7 +1075,7 @@ struct EnumTypeInfo {
 struct TypeInfo
 {
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
-	TypeInfo(StringHandle name, Type type, TypeIndex idx) : name_(name), type_(type), type_index_(idx) {}
+	TypeInfo(StringHandle name, Type type, TypeIndex idx, int type_size) : name_(name), type_(type), type_index_(idx), type_size_(type_size) {}
 
 	StringHandle name_;  // Pure StringHandle
 	Type type_;
@@ -1181,7 +1181,7 @@ extern std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(StringHandle name);
+TypeInfo& add_user_type(StringHandle name, int size_in_bits);
 
 TypeInfo& add_function_type(StringHandle name, Type /*return_type*/);
 

@@ -21206,7 +21206,7 @@ private:
 			inst_info.body_position,
 			inst_info.template_param_names,
 			inst_info.template_args,
-			inst_info.struct_name.isValid() ? StringTable::getStringView(inst_info.struct_name) : std::string_view(),  // Pass struct name
+			inst_info.struct_name.isValid() ? inst_info.struct_name : StringHandle(),  // Pass struct name
 			struct_type_info ? struct_type_info->type_index_ : 0  // Pass type index
 		);
 
