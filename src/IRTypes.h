@@ -1058,34 +1058,34 @@ struct ReturnOp {
 
 // Array access (load element from array)
 struct ArrayAccessOp {
-	TempVar result;                                  // Result temp var
-	Type element_type;                               // Element type
-	int element_size_in_bits;                        // Element size
-	std::variant<StringHandle, TempVar> array;   // Array (StringHandle for variables, TempVar for temporaries)
-	TypedValue index;                                // Index value (type + value)
-	int64_t member_offset;                           // Offset in bytes for member arrays (0 for non-member)
-	bool is_pointer_to_array;                        // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
+	TempVar result;									// Result temp var
+	Type element_type = Type::Invalid;				// Element type
+	int element_size_in_bits = 0;					// Element size
+	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
+	TypedValue index;								// Index value (type + value)
+	int64_t member_offset = 0;						// Offset in bytes for member arrays (0 for non-member)
+	bool is_pointer_to_array = false;				// True if 'array' is a pointer (int* arr), false if actual array (int arr[])
 };
 
 // Array store (store value to array element)
 struct ArrayStoreOp {
-	Type element_type;                               // Element type
-	int element_size_in_bits;                        // Element size
-	std::variant<StringHandle, TempVar> array;   // Array (StringHandle for variables, TempVar for temporaries)
-	TypedValue index;                                // Index value (type + value)
-	TypedValue value;                                // Value to store
-	int64_t member_offset;                           // Offset in bytes for member arrays (0 for non-member)
-	bool is_pointer_to_array;                        // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
+	Type element_type = Type::Invalid;				// Element type
+	int element_size_in_bits = 0;					// Element size
+	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
+	TypedValue index;								// Index value (type + value)
+	TypedValue value;								// Value to store
+	int64_t member_offset = 0;						// Offset in bytes for member arrays (0 for non-member)
+	bool is_pointer_to_array = false;				// True if 'array' is a pointer (int* arr), false if actual array (int arr[])
 };
 
 // Array element address (get address without loading)
 struct ArrayElementAddressOp {
-	TempVar result;                                  // Result temp var (pointer to element)
-	Type element_type;                               // Element type
-	int element_size_in_bits;                        // Element size
-	std::variant<StringHandle, TempVar> array;   // Array (StringHandle for variables, TempVar for temporaries)
-	TypedValue index;                                // Index value (type + value)
-	bool is_pointer_to_array;                        // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
+	TempVar result;									// Result temp var (pointer to element)
+	Type element_type = Type::Invalid;				// Element type
+	int element_size_in_bits = 0;					// Element size
+	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
+	TypedValue index;								// Index value (type + value)
+	bool is_pointer_to_array = false;				// True if 'array' is a pointer (int* arr), false if actual array (int arr[])
 };
 
 // Address-of operator (&x)
@@ -1096,11 +1096,11 @@ struct AddressOfOp {
 
 // AddressOf for struct member (&obj.member)
 struct AddressOfMemberOp {
-	TempVar result;                                  // Result temp var (pointer to member)
-	StringHandle base_object;                        // Base object (variable name)
-	int member_offset;                               // Byte offset of member in struct
-	Type member_type;                                // Type of the member
-	int member_size_in_bits;                         // Size of member
+	TempVar result;									// Result temp var (pointer to member)
+	StringHandle base_object;						// Base object (variable name)
+	int member_offset = 0;							// Byte offset of member in struct
+	Type member_type;								// Type of the member
+	int member_size_in_bits = 0;					// Size of member
 };
 
 // One-pass address computation for complex expressions (&arr[i].member1.member2)
@@ -1122,7 +1122,7 @@ struct ComputeAddressOp {
 	// Member offset accumulation (for chained member access)
 	int total_member_offset = 0;                     // Sum of all member offsets
 	
-	Type result_type;                                // Type of final address
+	Type result_type = Type::Invalid;                // Type of final address
 	int result_size_bits;                            // Size in bits
 };
 
