@@ -8,7 +8,6 @@
 #include <functional>
 #include <cstdlib>
 #include <cstring>
-#include <xutility>
 
 // Helper class for cycle detection in recursive member lookup
 // Uses RAII to manage the resolution stack
