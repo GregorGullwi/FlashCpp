@@ -28849,17 +28849,35 @@ ParseResult Parser::parse_template_declaration() {
 				// Conversion operators don't have a return type, so we need to detect them early
 				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
 				ParseResult member_result;
+				// Track specifiers that can precede conversion operators
+				bool conv_is_constexpr = false;
+				bool conv_is_consteval = false;
+				bool conv_is_inline = false;
+				bool conv_is_explicit = false;
+				bool conv_is_virtual = false;
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
-					// Skip specifiers that can precede conversion operators
 					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 						std::string_view kw = peek_token()->value();
-						if (kw == "constexpr" || kw == "consteval" || kw == "inline" || kw == "explicit" || kw == "virtual") {
+						if (kw == "constexpr") {
+							conv_is_constexpr = true;
 							consume_token();
-							if (kw == "explicit" && peek_token().has_value() && peek_token()->value() == "(") {
+						} else if (kw == "consteval") {
+							conv_is_consteval = true;
+							consume_token();
+						} else if (kw == "inline") {
+							conv_is_inline = true;
+							consume_token();
+						} else if (kw == "explicit") {
+							conv_is_explicit = true;
+							consume_token();
+							if (peek_token().has_value() && peek_token()->value() == "(") {
 								skip_balanced_parens(); // explicit(condition)
 							}
+						} else if (kw == "virtual") {
+							conv_is_virtual = true;
+							consume_token();
 						} else {
 							break;
 						}
@@ -28961,6 +28979,12 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_ref.set_definition(definition_opt.value());
 					}
 
+					// Apply leading specifiers to the member function
+					member_func_ref.set_is_constexpr(conv_is_constexpr);
+					member_func_ref.set_is_consteval(conv_is_consteval);
+					member_func_ref.set_inline_always(conv_is_inline);
+					(void)conv_is_explicit; // explicit on conversion ops not yet tracked on FunctionDeclarationNode
+
 					// Parse trailing specifiers (const, volatile, &, &&, noexcept, override, final)
 					FlashCpp::MemberQualifiers member_quals;
 					FlashCpp::FunctionSpecifiers func_specs;
@@ -29003,10 +29027,10 @@ ParseResult Parser::parse_template_declaration() {
 					struct_ref.add_member_function(
 						member_func_node,
 						current_access,
-						false,  // is_virtual
-						false,  // is_pure_virtual
-						false,  // is_override
-						false   // is_final
+						conv_is_virtual || func_specs.is_virtual,
+						func_specs.is_pure_virtual,
+						func_specs.is_override,
+						func_specs.is_final
 					);
 					
 					// Add to AST for code generation
