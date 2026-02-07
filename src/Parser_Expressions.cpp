@@ -269,10 +269,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					if (expr_result.is_error() || !expr_result.node().has_value()) {
 						// Failed to parse expression after what looked like a cast.
 						// This means (identifier) was actually a parenthesized expression,
-						// not a C-style cast. Backtrack and let primary_expression handle it.
-						// Common case: function arguments like (__p), (__n) where the
-						// template-dependent identifier is mistaken for a type.
-						restore_token_position(saved_pos);
+						// not a C-style cast. Fall through to line 291 which restores position.
 					} else {
 						discard_saved_token(saved_pos);
 						// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
