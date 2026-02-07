@@ -6,18 +6,23 @@ This directory contains minimal reproduction cases for bugs discovered during C+
 
 | # | Bug | File | Status | Stage |
 |---|-----|------|--------|-------|
-| 1 | Alternative operator tokens | `bug_alternative_tokens.cpp` | Open | Compile |
-| 2 | Binary literals (0b prefix) | `bug_binary_literals.cpp` | Open | Compile |
-| 3 | Namespace symbol lookup | `bug_namespace_symbol_lookup.cpp` | Open | Link |
+| 1 | Alternative operator tokens | `bug_alternative_tokens.cpp` | **FIXED** | ~~Compile~~ |
+| 2 | Binary literals (0b prefix) | `bug_binary_literals.cpp` | **FIXED** | ~~Compile~~ |
+| 3 | Namespace symbol lookup | `bug_namespace_symbol_lookup.cpp` | **FIXED** | ~~Link~~ |
 | 4 | CTAD (deduction guides) | `bug_ctad.cpp` | Open | Link |
 | 5 | if constexpr + sizeof... | `bug_if_constexpr.cpp` | Open | Link |
-| 6 | Template specialization | `bug_template_specialization.cpp` | Open | Runtime |
+| 6 | Template specialization | `bug_template_specialization.cpp` | **FIXED** | ~~Runtime~~ |
 | 7 | Variadic template recursion | `bug_variadic_recursion.cpp` | Open | Runtime |
-| 8 | Digit separators | `bug_digit_separators.cpp` | Open | Runtime |
+| 8 | Digit separators | `bug_digit_separators.cpp` | **FIXED** | ~~Runtime~~ |
 | 9 | new/delete in large files | `bug_new_delete_combined.cpp` | Open | Runtime (crash) |
 
 ### Previously reported, now fixed:
 - ~~Boolean intermediate variables crash~~ -- **FIXED** (was crashing with assertion in IRTypes.h, now works correctly)
+- ~~Alternative operator tokens~~ -- **FIXED** (lexer now maps alternative tokens to standard operator spellings)
+- ~~Binary literals~~ -- **FIXED** (lexer now handles 0b/0B prefix at same level as 0x)
+- ~~Namespace symbol lookup~~ -- **FIXED** (codegen now uses fully qualified names for namespace-scoped global variables)
+- ~~Template specialization~~ -- **FIXED** (deduction-based instantiation now checks for explicit specializations)
+- ~~Digit separators~~ -- **FIXED** (digit separators are stripped before numeric value conversion)
 
 ## Detailed Bug Descriptions
 

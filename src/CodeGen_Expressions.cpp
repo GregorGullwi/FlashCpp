@@ -1320,7 +1320,10 @@
 				op.result.type = type_node.type();
 				op.result.size_in_bits = static_cast<int>(type_node.size_in_bits());
 				op.result.value = result_temp;
-				op.global_name = StringTable::getOrInternStringHandle(qualifiedIdNode.name());  // Use the identifier name
+				// Use fully qualified name (ns::value) to match the global variable symbol
+				op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
+					qualifiedIdNode.namespace_handle(),
+					StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Return the temp variable that will hold the loaded value
@@ -1346,7 +1349,10 @@
 			op.result.type = type_node.type();
 			op.result.size_in_bits = size_bits;
 			op.result.value = result_temp;
-			op.global_name = StringTable::getOrInternStringHandle(qualifiedIdNode.name());  // Use the identifier name
+			// Use fully qualified name (ns::value) to match the global variable symbol
+			op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				qualifiedIdNode.namespace_handle(),
+				StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value

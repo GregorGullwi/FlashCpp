@@ -8695,6 +8695,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// Note: Value arguments aren't used in type substitution
 	}
 
+	// Check for explicit specialization before instantiating the primary template.
+	// This handles cases like: template<> int identity<int>(int val) { return val + 1; }
+	// being called as identity(5) where T=int is deduced from the argument.
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args_as_type_args);
+	if (specialization_opt.has_value()) {
+		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found explicit specialization for deduced args of '", template_name, "'");
+		return *specialization_opt;
+	}
+
 	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
 	FLASH_LOG(Templates, Debug, "Checking requires clause for template function '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
 	if (template_func.has_requires_clause()) {
