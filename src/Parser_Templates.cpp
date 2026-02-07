@@ -1312,6 +1312,19 @@ ParseResult Parser::parse_template_declaration() {
 							advance(); // consume struct name
 						}
 						
+						// Skip template arguments if present (e.g., struct Wrapper<int>)
+						if (peek() == "<"_tok) {
+							parse_explicit_template_arguments();
+						}
+						
+						// Skip base class list if present (e.g., struct Frame : public Base)
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+								advance();
+							}
+						}
+						
 						// Skip to body or semicolon
 						if (peek() == "{"_tok) {
 							skip_balanced_braces();
