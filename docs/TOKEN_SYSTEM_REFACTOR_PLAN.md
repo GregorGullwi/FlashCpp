@@ -39,6 +39,7 @@
   - `"{“_tok -> TokenKind::OpenBrace`, `"}"_tok -> TokenKind::CloseBrace`, `"("_tok -> TokenKind::OpenParen`, `")"_tok -> TokenKind::CloseParen`, `","_tok -> TokenKind::Comma`, etc.
   - normalize alternate tokens: `"||"_tok` and `"or"_tok -> `TokenKind::LogicalOr`; `"&&"_tok` and `"and"_tok -> `TokenKind::LogicalAnd`; `"!"_tok` and `"not"_tok -> `TokenKind::Not`; `"~"_tok` and `"compl"_tok -> `TokenKind::BitNot`; `"|"`/`"bitor"`, `"&"`/`"bitand"`, `"^"`/`"xor"` get paired; `"^="`/`"xor_eq"` etc.
   - keyword spellings map directly (e.g., `"template"_tok -> TokenKind::Template`).
+- Because the domain is fixed at compile time, implement the literal with a `constexpr` perfect hash (e.g., FNV-1a over the spelling + length) to avoid linear string compares; dispatch on the hash to a `switch` with `[[likely]]` buckets so the mapping remains branch-efficient and constexpr-friendly.
 - Parsing code can stay readable (`if (peekKind() == "requires"_tok)`) without string-view equality checks.
 
 ## Migration Plan
