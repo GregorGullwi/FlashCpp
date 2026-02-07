@@ -2912,10 +2912,10 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			}
 			
 			advance();  // consume '(' or '{'
-			std::string_view close_delim = is_paren ? ")" : "}";
+			auto close_kind = is_paren ? ")"_tok : "}"_tok;
 			
 			std::vector<ASTNode> init_args;
-			if (peek().is_eof() || peek_info().value() != close_delim) {
+			if (peek() != close_kind) {
 				do {
 					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
@@ -2928,10 +2928,11 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 				} while (peek() == ","_tok && (advance(), true));
 			}
 			
-			if (!consume_punctuator(close_delim)) {
+			if (!consume(close_kind)) {
 				member_function_context_stack_.pop_back();
-				return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
-				                         "' after initializer arguments", peek_info());
+				return ParseResult::error(is_paren ?
+				    "Expected ')' after initializer arguments" :
+				    "Expected '}' after initializer arguments", peek_info());
 			}
 			
 			// Add member initializer to constructor
