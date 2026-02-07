@@ -8483,16 +8483,38 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 	// Check if we have only variadic parameters - they can be empty
 	bool all_variadic = true;
+	bool has_variadic_pack = false;
 	for (const auto& template_param_node : template_params) {
 		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
 		if (!param.is_variadic()) {
 			all_variadic = false;
-			break;
+		} else {
+			has_variadic_pack = true;
 		}
 	}
 
 	if (arg_types.empty() && !all_variadic) {
 		return std::nullopt;  // No arguments to deduce from
+	}
+
+	// SFINAE: Check function parameter count against call argument count
+	// For non-variadic templates, argument count must match parameter count exactly
+	// For variadic templates, argument count must be >= non-pack parameter count
+	size_t func_param_count = func_decl.parameter_nodes().size();
+	if (!has_variadic_pack) {
+		if (arg_types.size() != func_param_count) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} != parameter count {} for non-variadic template '{}'",
+				recursion_depth, arg_types.size(), func_param_count, template_name);
+			return std::nullopt;
+		}
+	} else {
+		// Variadic: count non-pack parameters (all params except the pack expansion)
+		size_t non_pack_params = func_param_count > 0 ? func_param_count - 1 : 0;
+		if (arg_types.size() < non_pack_params) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < non-pack parameter count {} for variadic template '{}'",
+				recursion_depth, arg_types.size(), non_pack_params, template_name);
+			return std::nullopt;
+		}
 	}
 
 	// Build template argument list

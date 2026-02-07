@@ -7530,16 +7530,11 @@ private:
 		flushAllDirtyRegisters();
 
 		// Call malloc(size)
-		// Windows x64 calling convention: RCX = first parameter (size)
+		// Use platform-correct first parameter register (RDI on Linux, RCX on Windows)
+		constexpr X64Register alloc_param_reg = getIntParamReg<TWriterClass>(0);
 
-		// Move size into RCX (first parameter)
-		// MOV RCX, size_in_bytes
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0xC7); // MOV r/m64, imm32
-		textSectionData.push_back(0xC1); // ModR/M for RCX
-		for (int i = 0; i < 4; ++i) {
-			textSectionData.push_back(static_cast<uint8_t>((op.size_in_bytes >> (i * 8)) & 0xFF));
-		}
+		// Move size into first parameter register
+		emitMovImm64(alloc_param_reg, static_cast<uint64_t>(op.size_in_bytes));
 
 		// Call malloc
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
@@ -7611,11 +7606,10 @@ private:
 			textSectionData.push_back(static_cast<uint8_t>((op.size_in_bytes >> (i * 8)) & 0xFF));
 		}
 
-		// Move result to RCX (first parameter for malloc)
-		// MOV RCX, RAX
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x89); // MOV r/m64, r64
-		textSectionData.push_back(0xC1); // ModR/M: RCX, RAX
+		// Move result to first parameter register for malloc
+		// Use platform-correct register (RDI on Linux, RCX on Windows)
+		constexpr X64Register alloc_param_reg = getIntParamReg<TWriterClass>(0);
+		emitMovRegReg(alloc_param_reg, X64Register::RAX);
 
 		// Call malloc
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
@@ -7660,8 +7654,10 @@ private:
 			return;
 		}
 
-		// Load pointer from stack into RCX (first parameter for free)
-		emitMovFromFrame(X64Register::RCX, ptr_offset);
+		// Load pointer from stack into first parameter register for free
+		// Use platform-correct register (RDI on Linux, RCX on Windows)
+		constexpr X64Register free_param_reg = getIntParamReg<TWriterClass>(0);
+		emitMovFromFrame(free_param_reg, ptr_offset);
 
 		// Call free
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
@@ -7702,8 +7698,10 @@ private:
 			return;
 		}
 
-		// Load pointer from stack into RCX (first parameter for free)
-		emitMovFromFrame(X64Register::RCX, ptr_offset);
+		// Load pointer from stack into first parameter register for free
+		// Use platform-correct register (RDI on Linux, RCX on Windows)
+		constexpr X64Register free_param_reg = getIntParamReg<TWriterClass>(0);
+		emitMovFromFrame(free_param_reg, ptr_offset);
 
 		// Call free
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
