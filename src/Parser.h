@@ -765,6 +765,17 @@ public:  // Public methods for template instantiation
         // Helper function for counting pack elements in template parameter packs
         size_t count_pack_elements(std::string_view pack_name) const;
 
+        // Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
+        size_t get_pack_size(std::string_view pack_name) const {
+            for (const auto& info : pack_param_info_) {
+                if (info.original_name == pack_name) {
+                    return info.pack_size;
+                }
+            }
+            // Fallback: if not found in pack_param_info_, pack is empty (0 elements)
+            return 0;
+        }
+
         // Phase 3: Expression context tracking for template disambiguation
         enum class ExpressionContext {
             Normal,              // Regular expression context

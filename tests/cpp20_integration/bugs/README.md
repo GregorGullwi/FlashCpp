@@ -10,7 +10,7 @@ This directory contains minimal reproduction cases for bugs discovered during C+
 | 2 | Binary literals (0b prefix) | *(moved to tests/)* | **FIXED** | ~~Compile~~ |
 | 3 | Namespace symbol lookup | *(moved to tests/)* | **FIXED** | ~~Link~~ |
 | 4 | CTAD (deduction guides) | *(moved to tests/)* | **FIXED** | ~~Link~~ |
-| 5 | if constexpr + sizeof... | `bug_if_constexpr.cpp` | Open | Link |
+| 5 | if constexpr + sizeof... | *(moved to tests/)* | **FIXED** | ~~Link~~ |
 | 6 | Template specialization | *(moved to tests/)* | **FIXED** | ~~Runtime~~ |
 | 7 | Variadic template recursion | *(moved to tests/)* | **FIXED** | ~~Runtime~~ |
 | 8 | Digit separators | *(moved to tests/)* | **FIXED** | ~~Runtime~~ |
@@ -26,25 +26,15 @@ This directory contains minimal reproduction cases for bugs discovered during C+
 - ~~CTAD~~ -- **FIXED** (implicit CTAD now deduces template arguments from constructor parameter types)
 - ~~new/delete in large files~~ -- **FIXED** (heap alloc/free now uses platform-correct calling convention register)
 - ~~Variadic template recursion~~ -- **FIXED** (pack parameter names added to scope during body re-parse, pack expansion in function call arguments)
+- ~~if constexpr + sizeof...~~ -- **FIXED** (compile-time evaluation of sizeof... from pack_param_info_ during template body re-parse, if constexpr branch elimination)
 
-## Remaining Open Bugs
+## All Bugs Fixed!
 
-### 5. if constexpr + sizeof... (Link Error)
-**File**: `bug_if_constexpr.cpp`
-**Severity**: High -- key C++17/20 pattern for compile-time branching in templates
+All 9 originally reported bugs have been fixed.
 
-## Testing These Bugs
+## Testing
 
-Each file can be tested independently:
-
-```bash
-# Verify with standard clang++ (should compile and return 0)
-clang++ -std=c++20 bug_if_constexpr.cpp -o test && ./test
-echo $?  # Should print 0
-
-# Test with FlashCpp (will demonstrate the bug)
-../../x64/Debug/FlashCpp bug_if_constexpr.cpp -o test.o
-```
+All bug fix regression tests have been moved to the `tests/` directory with the naming convention `test_*_ret*.cpp`.
 
 ## Contributing
 

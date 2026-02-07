@@ -9550,6 +9550,80 @@ ParseResult Parser::parse_if_statement() {
         return ParseResult::error("Expected ')' after if condition", current_token_);
     }
 
+    // For if constexpr during template body re-parsing, evaluate the condition at compile time
+    // and skip the dead branch (which may contain ill-formed code like unexpanded parameter packs)
+    if (is_constexpr && parsing_template_body_ && condition.node().has_value()) {
+        ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+        eval_ctx.parser = this;
+        auto eval_result = ConstExpr::Evaluator::evaluate(*condition.node(), eval_ctx);
+        if (eval_result.success()) {
+            bool condition_value = eval_result.as_int() != 0;
+            FLASH_LOG(Templates, Debug, "if constexpr condition evaluated to ", condition_value ? "true" : "false", " during template body re-parse");
+            
+            if (condition_value) {
+                // Parse the then-branch normally
+                ParseResult then_stmt_result;
+                if (peek() == "{"_tok) {
+                    then_stmt_result = parse_block();
+                } else {
+                    then_stmt_result = parse_statement_or_declaration();
+                    consume(";"_tok);
+                }
+                // Skip the else-branch if present
+                if (peek() == "else"_tok) {
+                    consume("else"_tok);
+                    if (peek() == "{"_tok) {
+                        skip_balanced_braces();
+                    } else if (peek() == "if"_tok) {
+                        // Skip else-if chain: consume 'if', skip condition parens, skip then block, optionally skip else
+                        advance(); // consume 'if'
+                        if (peek() == "constexpr"_tok) advance();
+                        skip_balanced_parens();
+                        if (peek() == "{"_tok) skip_balanced_braces();
+                        if (peek() == "else"_tok) {
+                            advance();
+                            if (peek() == "{"_tok) skip_balanced_braces();
+                        }
+                    } else {
+                        // Single statement else - skip to semicolon
+                        while (!peek().is_eof() && peek() != ";"_tok) advance();
+                        consume(";"_tok);
+                    }
+                }
+                // Return just the then-branch content
+                if (!then_stmt_result.is_error() && then_stmt_result.node().has_value()) {
+                    return then_stmt_result;
+                }
+            } else {
+                // Skip the then-branch
+                if (peek() == "{"_tok) {
+                    skip_balanced_braces();
+                } else {
+                    while (!peek().is_eof() && peek() != ";"_tok) advance();
+                    consume(";"_tok);
+                }
+                // Parse the else-branch if present
+                if (peek() == "else"_tok) {
+                    consume("else"_tok);
+                    ParseResult else_result;
+                    if (peek() == "{"_tok) {
+                        else_result = parse_block();
+                    } else if (peek() == "if"_tok) {
+                        else_result = parse_if_statement();
+                    } else {
+                        else_result = parse_statement_or_declaration();
+                        consume(";"_tok);
+                    }
+                    if (!else_result.is_error() && else_result.node().has_value()) {
+                        return else_result;
+                    }
+                }
+                // No else branch and condition is false - return empty block
+                return ParseResult::success(emplace_node<BlockNode>());
+            }
+        }
+    }
+
     // Parse then-statement (can be a block or a single statement)
     ParseResult then_stmt;
     if (peek() == "{"_tok) {

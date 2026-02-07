@@ -9397,7 +9397,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 
 		// Parse the function body
+		bool saved_parsing_template_body = parsing_template_body_;
+		parsing_template_body_ = true;
 		auto block_result = parse_block();
+		parsing_template_body_ = saved_parsing_template_body;
+
+
 		
 		// Restore the template parameter substitutions
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
@@ -17816,8 +17821,31 @@ ASTNode Parser::substituteTemplateParameters(
 			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
 			std::string_view pack_name = sizeof_pack.pack_name();
 			
-			// Count pack elements using the helper function
+			// Count pack elements using the helper function (works when symbol table scope is active)
 			size_t num_pack_elements = count_pack_elements(pack_name);
+			
+			// Fallback: if count_pack_elements returns 0 (scope may have been exited),
+			// try to calculate from template_params/template_args by finding the variadic parameter
+			if (num_pack_elements == 0 && !template_args.empty()) {
+				// The pack_name is the function parameter name (e.g., "rest")
+				// We need to find the corresponding variadic template parameter (e.g., "Rest")
+				// The mapping: function param type uses the template param name
+				size_t non_variadic_count = 0;
+				bool found_variadic = false;
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					if (template_params[i].is<TemplateParameterNode>()) {
+						const auto& tparam = template_params[i].as<TemplateParameterNode>();
+						if (tparam.is_variadic()) {
+							found_variadic = true;
+						} else {
+							non_variadic_count++;
+						}
+					}
+				}
+				if (found_variadic && template_args.size() >= non_variadic_count) {
+					num_pack_elements = template_args.size() - non_variadic_count;
+				}
+			}
 			
 			// Create an integer literal with the pack size
 			StringBuilder pack_size_builder;
@@ -18013,12 +18041,34 @@ ASTNode Parser::substituteTemplateParameters(
 		const IfStatementNode& if_stmt = node.as<IfStatementNode>();
 		
 		ASTNode substituted_condition = substituteTemplateParameters(if_stmt.get_condition(), template_params, template_args);
+		
+		// For if constexpr, evaluate the condition at compile time and eliminate the dead branch
+		if (if_stmt.is_constexpr()) {
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_condition, eval_ctx);
+			if (eval_result.success()) {
+				bool condition_value = eval_result.as_int() != 0;
+				FLASH_LOG(Templates, Debug, "if constexpr condition evaluated to ", condition_value ? "true" : "false");
+				if (condition_value) {
+					return substituteTemplateParameters(if_stmt.get_then_statement(), template_params, template_args);
+				} else if (if_stmt.has_else()) {
+					return substituteTemplateParameters(*if_stmt.get_else_statement(), template_params, template_args);
+				} else {
+					// No else branch and condition is false - return empty block
+					return emplace_node<BlockNode>();
+				}
+			}
+		}
+		
 		ASTNode substituted_then = substituteTemplateParameters(if_stmt.get_then_statement(), template_params, template_args);
 		auto substituted_else = if_stmt.get_else_statement().has_value() ?
 			std::optional<ASTNode>(substituteTemplateParameters(*if_stmt.get_else_statement(), template_params, template_args)) :
 			std::nullopt;
+		auto substituted_init = if_stmt.get_init_statement().has_value() ?
+			std::optional<ASTNode>(substituteTemplateParameters(*if_stmt.get_init_statement(), template_params, template_args)) :
+			std::nullopt;
 		
-		return emplace_node<IfStatementNode>(substituted_condition, substituted_then, substituted_else);
+		return emplace_node<IfStatementNode>(substituted_condition, substituted_then, substituted_else, substituted_init, if_stmt.is_constexpr());
 
 	} else if (node.is<WhileStatementNode>()) {
 		// Handle while statements
