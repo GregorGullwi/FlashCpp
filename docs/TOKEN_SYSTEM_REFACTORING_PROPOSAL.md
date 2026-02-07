@@ -228,21 +228,41 @@ Key properties:
 
 ### TokenInfo — full token data (replaces `Token`)
 
+The current `Token` stores a `std::string_view` for the token text.
+Downstream code (parser, codegen, AST nodes) frequently converts that
+view into a `StringHandle` via `StringTable::getOrInternStringHandle()` —
+there are **~123 such call sites** today.  By interning at lex time and
+storing a `StringHandle` directly in `TokenInfo`, we:
+
+* **Eliminate ~123 redundant intern calls** — the handle is ready to use.
+* **Shrink `TokenInfo`** — `StringHandle` is 4 bytes vs `string_view`'s
+  16 bytes (pointer + length).  Total struct drops from 40 → 28 bytes
+  (after alignment: 32 bytes).
+* **Make handle equality the default** — comparing two tokens' text is a
+  single `uint32_t` compare instead of `memcmp`.
+* **Guarantee identity** — two tokens with the same text always share
+  the same `StringHandle`, which is useful for symbol table lookups
+  without rehashing.
+
+The original `string_view` is still recoverable via
+`StringHandle::view()` for diagnostics or string operations.
+
 ```cpp
 // TokenInfo.h
 #include "TokenKind.h"
-#include <string_view>
+#include "StringTable.h"
 
 class TokenInfo {
 public:
 	TokenInfo() = default;
-	TokenInfo(TokenKind kind, std::string_view spelling,
+	TokenInfo(TokenKind kind, StringHandle spelling,
 	          size_t line, size_t column, size_t file_index)
 		: kind_(kind), spelling_(spelling),
 		  line_(line), column_(column), file_index_(file_index) {}
 
 	TokenKind        kind()       const { return kind_; }
-	std::string_view spelling()   const { return spelling_; }
+	StringHandle     spelling()   const { return spelling_; }
+	std::string_view text()      const { return spelling_.view(); }
 	size_t           line()       const { return line_; }
 	size_t           column()     const { return column_; }
 	size_t           file_index() const { return file_index_; }
@@ -252,17 +272,23 @@ public:
 	bool operator!=(TokenKind k) const { return kind_ != k; }
 
 private:
-	TokenKind        kind_;
-	std::string_view spelling_;
-	size_t           line_   = 0;
-	size_t           column_ = 0;
-	size_t           file_index_ = 0;
+	TokenKind    kind_;            // 4 bytes
+	StringHandle spelling_;        // 4 bytes
+	size_t       line_   = 0;      // 8 bytes
+	size_t       column_ = 0;      // 8 bytes
+	size_t       file_index_ = 0;  // 8 bytes
+	// Total: 32 bytes (with alignment)
 };
 ```
 
-`TokenInfo` is the full replacement for the old `Token` class. It carries
-location info and the original spelling, but can be compared cheaply via
-its `TokenKind`.
+`TokenInfo` is the full replacement for the old `Token` class.  It
+carries location info and the interned spelling handle, but can be
+compared cheaply via its `TokenKind`.
+
+The `spelling()` accessor returns a `StringHandle` that can be passed
+directly to symbol tables, AST nodes, and codegen without re-interning.
+The `text()` convenience accessor returns a `string_view` for when you
+need the actual characters (error messages, debug output, etc.).
 
 ## New Parser API
 
@@ -311,17 +337,26 @@ class Parser {
 | 5 | Consume keyword | `consume_keyword("return")` | `consume("return"_tok)` |
 | 6 | Get token for diagnostics | `auto tok = consume_token(); use tok->line()` | `auto info = advance(); use info.line()` |
 | 7 | EOF loop | `while (peek_token().has_value())` | `while (!peek().is_eof())` |
-| 8 | Operator precedence | `peek_token().has_value() && peek_token()->type() == Token::Type::Operator && get_operator_precedence(peek_token()->value()) >= prec` | `peek().is_operator() && get_operator_precedence(peek_info().spelling()) >= prec` |
+| 8 | Operator precedence | `peek_token().has_value() && peek_token()->type() == Token::Type::Operator && get_operator_precedence(peek_token()->value()) >= prec` | `peek().is_operator() && get_operator_precedence(peek_info().text()) >= prec` |
 | 9 | Alternative spellings | `value == "||"` (misses `or`) | `"||"_tok` (equals `"or"_tok` automatically) |
 | 10 | Lookahead | `auto next = peek_token(1); if (next.has_value() && next->value() == "[")` | `if (peek(1) == "["_tok)` |
+| 11 | Intern for symbol table | `StringHandle h = StringTable::getOrInternStringHandle(token.value())` | `StringHandle h = info.spelling()` (already interned) |
 
 ## Lexer Changes
 
 The Lexer's `next_token()` will return `TokenInfo` instead of `Token`.
-During lexing, after recognizing the string spelling, the Lexer calls a
-`spell_to_kind()` lookup (a `constexpr` hash table or switch) to compute
-the `TokenKind`.  This runs once per token, at lex time — all subsequent
-comparisons are integer-only.
+During lexing, after recognizing the string spelling, the Lexer:
+
+1. Calls `spell_to_kind()` (a `constexpr` hash table or switch) to
+   compute the `TokenKind`.  This runs once per token, at lex time —
+   all subsequent comparisons are integer-only.
+
+2. Interns the spelling via `StringTable::getOrInternStringHandle()` to
+   produce a `StringHandle`.  For fixed tokens (keywords, operators,
+   punctuators) the handles are stable and could be pre-interned at
+   startup for zero-cost lookup.  For identifiers and literals, the
+   interning happens once here rather than being scattered across 123
+   call sites in the parser and codegen.
 
 The Lexer must also map alternative keyword spellings to the canonical
 `TokenKind`:
@@ -429,14 +464,18 @@ namespace tok {
 ### Phase 0 — Add new types alongside old ones (non-breaking)
 
 1. Add `TokenKind.h` with `TokenKind`, `tok::` constants, `operator""_tok`.
-2. Add `TokenInfo.h` wrapping `TokenKind` + location.
-3. Add a `TokenKind kind_` field to the **existing** `Token` class.
-4. Make the Lexer populate `kind_` during lexing.
-5. Add `Token::kind()` accessor.
+2. Add `TokenInfo.h` wrapping `TokenKind` + `StringHandle` + location.
+3. Add `TokenKind kind_` and `StringHandle spelling_handle_` fields to
+   the **existing** `Token` class.
+4. Make the Lexer populate both `kind_` and `spelling_handle_` during
+   lexing (intern via `StringTable::getOrInternStringHandle()`).
+5. Add `Token::kind()` and `Token::spelling_handle()` accessors.
 6. Add `peek()`, `peek_info()`, `advance()`, `consume(TokenKind)` to
    Parser **alongside** the existing methods.
 
 At this point both APIs work and all existing code still compiles.
+Call sites can start using `token.spelling_handle()` instead of
+`StringTable::getOrInternStringHandle(token.value())` immediately.
 
 ### Phase 1 — Migrate Parser files one at a time
 
@@ -479,16 +518,25 @@ Once every call site is migrated:
 
 Identifiers don't have a fixed token string so they all share
 `TokenKind::ident()`.  To compare identifier names, use
-`peek_info().spelling()`:
+`peek_info().spelling()` (returns a `StringHandle`) or
+`peek_info().text()` (returns a `string_view`):
 
 ```cpp
 // Before
 if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
     peek_token()->value() == "__pragma") {
 
-// After
-if (peek() == TokenKind::ident() && peek_info().spelling() == "__pragma") {
+// After — using StringHandle comparison (uint32_t compare, fastest)
+if (peek() == TokenKind::ident() && peek_info().spelling() == pragma_handle) {
+
+// After — using text() for ad-hoc string comparison
+if (peek() == TokenKind::ident() && peek_info().text() == "__pragma") {
 ```
+
+Note: `StringHandle` already has `operator==(std::string_view)`, so
+`peek_info().spelling() == "__pragma"` works directly.  But for
+frequently compared identifiers, caching the `StringHandle` is
+preferred since it reduces the comparison to a single integer check.
 
 This is intentional — identifiers *should* require an explicit spelling
 check because there are unboundedly many of them.
@@ -504,7 +552,8 @@ numbers.
 
 Numeric, string, and character literals each have a category but no
 fixed identity.  Like identifiers, comparing their value requires
-`peek_info().spelling()`.  The category check is simplified:
+`peek_info().text()` (for the string content) or `peek_info().spelling()`
+(for the interned handle).  The category check is simplified:
 
 ```cpp
 // Before
@@ -520,12 +569,24 @@ peek().category() == TokenKind::Category::StringLiteral
 | Type | Size | Notes |
 |------|------|-------|
 | `TokenKind` | 4 bytes | category (1 byte) + id (2 bytes) + padding |
-| `TokenInfo` | 40 bytes | Same as current `Token` (+ 4 bytes for kind, but could be reduced by dropping the old `type_` field) |
-| `Token` (current) | 40 bytes | type (4) + padding (4) + string_view (16) + line (8) + column (8) + file_index (8) — due to alignment |
+| `StringHandle` | 4 bytes | packed uint32_t (chunk index + offset) |
+| `TokenInfo` | 32 bytes | kind (4) + spelling (4) + line (8) + column (8) + file_index (8) |
+| `Token` (current) | 40 bytes | type (4) + padding (4) + string_view (16) + line (8) + column (8) + file_index (8) |
+
+Switching from `string_view` (16 bytes) to `StringHandle` (4 bytes)
+shrinks `TokenInfo` by 8 bytes compared to the current `Token` (32 vs
+40 bytes).  This also means `std::optional<TokenInfo>` (during the
+transition) is smaller than the current `std::optional<Token>`.
 
 The hot-path comparison (`peek() == "{"_tok`) compiles to a single 32-bit
 compare instruction.  The current path (`peek_token()->value() == "{"`)
 performs a `string_view` comparison (pointer + length + memcmp).
+
+Interning at lex time adds a one-time cost per token (hash + lookup),
+but this is offset by eliminating ~123 `getOrInternStringHandle()` calls
+that currently happen later in the pipeline.  For fixed tokens
+(keywords, operators, punctuators) the Lexer can pre-intern a static
+table at startup, making the per-token cost a simple table lookup.
 
 ## Open Questions
 
@@ -546,3 +607,15 @@ performs a `string_view` comparison (pointer + length + memcmp).
    `tok::KW_*` identity, or remain identifiers?  Currently they are
    listed in `is_keyword()`, so giving them a `KW_` constant seems
    consistent.
+
+5. **Pre-interned fixed tokens**: Should the Lexer maintain a static
+   table of pre-interned `StringHandle`s for all keywords, operators,
+   and punctuators?  This would make the per-token intern cost for
+   fixed tokens a simple array lookup instead of a hash table probe.
+
+6. **AST node storage**: AST nodes currently store full `Token` objects
+   (e.g. `identifier_token()` returns `const Token&`).  With
+   `StringHandle` in `TokenInfo`, those AST nodes could store just
+   the `StringHandle` + location where they don't need the
+   `TokenKind`, or the full `TokenInfo` where they do.  This is a
+   follow-up optimization worth considering after the core migration.
