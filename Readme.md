@@ -276,7 +276,32 @@ x64/          # Generated binaries (untracked)
 
 ## 📈 Performance
 
-- **Compile speed**: Optimized for fast compilation
+### Compilation Speed Benchmarks
+
+End-to-end compile time for the C++20 integration test (~860 lines, 490 test points)
+on Linux x86-64. Source to object file, 20 iterations each.
+
+| Compiler | Avg (ms) | Min (ms) | Max (ms) |
+|----------|----------|----------|----------|
+| **FlashCpp (release, -O3)** | **91** | **84** | **107** |
+| Clang++ 18.1.3 -O0 | 97 | 90 | 112 |
+| Clang++ 18.1.3 -O2 | 117 | 110 | 124 |
+| FlashCpp (debug, -g) | 124 | 115 | 136 |
+| GCC 13.3.0 -O0 | 131 | 117 | 142 |
+
+FlashCpp release is the **fastest compiler tested** -- 6% faster than Clang -O0 and
+30% faster than GCC -O0. Internal timing shows ~45ms of actual compilation work with
+the remaining time being process/ELF overhead.
+
+To reproduce: `tests/cpp20_integration/run_benchmark.sh`
+
+### C++20 Integration Test Results
+
+FlashCpp passes **~450/490 test points** across 11 feature categories when tested
+section-by-section. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.md) for detailed results.
+
+### Summary
+- **Compile speed**: Fastest compiler tested in release mode
 - **Code quality**: Efficient x86-64 assembly generation
 - **Test coverage**: 600+ test cases ensuring correctness
 
