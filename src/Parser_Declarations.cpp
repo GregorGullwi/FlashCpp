@@ -2056,6 +2056,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				break;
 			}
 		}
+		
+		// Skip trailing requires clause for out-of-line definitions
+		// (the constraint was already recorded during the in-class declaration)
+		skip_trailing_requires_clause();
 
 		// Apply parsed parameters to the function
 		for (const auto& param : params.parameters) {
@@ -2748,6 +2752,9 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	
 	// Skip optional qualifiers (noexcept, const, etc.) using existing helper
 	skip_function_trailing_specifiers();
+	
+	// Skip trailing requires clause for out-of-line constructor/destructor definitions
+	skip_trailing_requires_clause();
 	
 	// Find the matching constructor/destructor declaration in the struct
 	StructMemberFunction* existing_member = nullptr;
@@ -8825,6 +8832,9 @@ ParseResult Parser::parse_friend_declaration()
 
 	// Skip optional qualifiers after parameter list using existing helper
 	skip_function_trailing_specifiers();
+
+	// Skip trailing requires clause on friend functions
+	skip_trailing_requires_clause();
 
 	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
 	if (peek() == "{"_tok) {

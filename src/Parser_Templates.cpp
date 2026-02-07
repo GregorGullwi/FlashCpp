@@ -4673,6 +4673,10 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Example: template<typename T> auto func(T x) const noexcept -> decltype(x + 1)
 	skip_function_trailing_specifiers();
 
+	// Skip trailing requires clause during template instantiation
+	// (the constraint was already evaluated during template argument deduction)
+	skip_trailing_requires_clause();
+
 	// Handle trailing return type for auto return type
 	// This must be done AFTER skipping cv-qualifiers/noexcept but BEFORE semicolon/body
 	// Example: template<typename T> auto func(T x) -> decltype(x + 1)

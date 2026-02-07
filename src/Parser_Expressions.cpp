@@ -1851,26 +1851,12 @@ void Parser::skip_function_trailing_specifiers()
 			continue;
 		}
 		
-		// Handle trailing requires clause: noexcept(...) requires Concept<T>
-		// Parse the constraint expression properly so it can be evaluated at compile time
-		// during template instantiation via the existing evaluateConstraint() infrastructure.
+		// Stop before trailing requires clause - don't consume it here.
+		// Callers like parse_static_member_function need to handle requires clauses
+		// themselves so they can set up proper function parameter scope first.
+		// This allows requires clauses referencing function parameters to work correctly.
 		if (token.type() == Token::Type::Keyword && token.value() == "requires") {
-			advance(); // consume 'requires'
-			// Parse the constraint expression using the full expression parser.
-			// This handles both simple (requires Concept<T>) and compound
-			// (requires requires { ... }) forms, producing proper AST nodes.
-			auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (constraint_result.is_error()) {
-				FLASH_LOG(Parser, Warning, "Failed to parse trailing requires clause: ", constraint_result.error_message());
-				// On failure, don't propagate - the function can still be parsed
-			} else {
-				// Store the parsed requires clause for compile-time evaluation
-				last_parsed_requires_clause_ = emplace_node<RequiresClauseNode>(
-					*constraint_result.node(),
-					token);
-				FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for compile-time evaluation");
-			}
-			continue;
+			break;
 		}
 		
 		// Handle pure virtual (= 0), default (= default), delete (= delete)
@@ -1885,6 +1871,22 @@ void Parser::skip_function_trailing_specifiers()
 		
 		// Not a trailing specifier, stop
 		break;
+	}
+}
+
+// Parse and discard a trailing requires clause if present.
+// Used by call sites that don't need to enforce the constraint (e.g., out-of-line definitions
+// where the constraint was already recorded during the in-class declaration).
+// For call sites that need parameter scope (e.g., parse_static_member_function),
+// handle the requires clause directly instead of using this helper.
+void Parser::skip_trailing_requires_clause()
+{
+	if (peek() == "requires"_tok) {
+		advance(); // consume 'requires'
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (constraint_result.is_error()) {
+			FLASH_LOG(Parser, Warning, "Failed to parse trailing requires clause: ", constraint_result.error_message());
+		}
 	}
 }
 
