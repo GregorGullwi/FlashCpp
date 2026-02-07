@@ -272,7 +272,7 @@ ParseResult Parser::parse_statement_or_declaration()
 		// Templates need to be parsed as variable declarations
 		// UNLESS the next token is '(' (which indicates a function template call)
 		bool is_template = gTemplateRegistry.lookupTemplate(type_name_handle).has_value();
-		bool is_alias_template = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(type_name_handle)).has_value();
+		bool is_alias_template = gTemplateRegistry.lookup_alias_template(type_name_handle).has_value();
 		
 		if (is_template || is_alias_template) {
 			// We need to consume the identifier to peek at what comes after
