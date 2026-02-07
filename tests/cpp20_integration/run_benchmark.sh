@@ -61,7 +61,6 @@ benchmark() {
             elapsed=$(( (end - start) / 1000000 ))
             times+=($elapsed)
         else
-            end=$(date +%s%N)
             failures=$((failures + 1))
         fi
     done
