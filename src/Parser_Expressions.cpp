@@ -8750,7 +8750,7 @@ ParseResult Parser::parse_lambda_expression() {
         // Parse capture list
         while (true) {
             auto token = peek_info();
-            if (false) {
+            if (peek().is_eof()) {
                 return ParseResult::error("Unexpected end of file in lambda capture list", *current_token_);
             }
 
