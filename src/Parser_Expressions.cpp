@@ -1195,11 +1195,6 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		precedence, static_cast<int>(context), recursion_depth, 
 		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	
-	// Add a specific check for the problematic case
-	if (!peek().is_eof() && peek_info().value() == "ns" && precedence == 2) {
-		FLASH_LOG(Parser, Error, "UNEXPECTED: parse_expression called with token 'ns' and precedence=2 (initializer context)");
-	}
-	
 	ParseResult result = parse_unary_expression(context);
 	if (result.is_error()) {
 		FLASH_LOG(Parser, Debug, "parse_expression: parse_unary_expression failed: ", result.error_message());
