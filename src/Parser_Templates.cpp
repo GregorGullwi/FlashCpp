@@ -1303,6 +1303,32 @@ ParseResult Parser::parse_template_declaration() {
 							return static_result;
 						}
 						continue;
+					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
+						// Handle nested struct/class declarations inside full specialization body
+						advance(); // consume 'struct' or 'class'
+						
+						// Skip struct name if present
+						if (peek().is_identifier()) {
+							advance(); // consume struct name
+						}
+						
+						// Skip to body or semicolon
+						if (peek() == "{"_tok) {
+							skip_balanced_braces();
+						}
+						
+						// Consume trailing semicolon
+						if (peek() == ";"_tok) {
+							advance();
+						}
+						continue;
+					} else if (peek() == "friend"_tok) {
+						// Handle friend declarations inside full specialization body
+						auto friend_result = parse_friend_declaration();
+						if (friend_result.is_error()) {
+							return friend_result;
+						}
+						continue;
 					}
 				}
 
