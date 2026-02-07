@@ -2205,6 +2205,12 @@ ParseResult Parser::parse_template_declaration() {
 			// Create struct type info early so we can add base classes
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 			
+			// Mark as template instantiation with the base template name
+			// This allows constructor detection (e.g., template<typename U> allocator(const allocator<U>&))
+			// to find the base template name and match it against the constructor name
+			struct_type_info.setTemplateInstantiationInfo(
+				StringTable::getOrInternStringHandle(template_name), {});
+			
 			// Create StructTypeInfo for this specialization
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
 			struct_info->is_union = is_union;

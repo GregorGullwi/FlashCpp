@@ -2536,8 +2536,8 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			continue;
 		}
 		
-		// Check for -> member access
-		if (peek().is_operator() && peek() == "->"_tok) {
+		// Check for -> member access (-> is a punctuator, not an operator)
+		if (peek() == "->"_tok) {
 			Token arrow_token = peek_info();
 			advance(); // consume '->'
 			
@@ -2556,9 +2556,35 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			Token member_name_token = peek_info();
 			advance();
 			
-			// Create arrow access node
-			result = emplace_node<ExpressionNode>(
-				MemberAccessNode(*result, member_name_token, true)); // true = arrow access
+			// Check if this is a member function call (followed by '(')
+			if (peek() == "("_tok) {
+				advance(); // consume '('
+				
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = false
+				});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+				}
+				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after arrow member function call arguments", current_token_);
+				}
+				
+				auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
+				auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
+				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+				
+				result = emplace_node<ExpressionNode>(
+					MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_name_token));
+			} else {
+				// Create arrow access node
+				result = emplace_node<ExpressionNode>(
+					MemberAccessNode(*result, member_name_token, true)); // true = arrow access
+			}
 			continue;
 		}
 		
