@@ -526,6 +526,22 @@ private:
         std::optional<Token> peek_token();
         std::optional<Token> peek_token(size_t lookahead);  // Peek ahead N tokens (0 = current, 1 = next, etc.)
 
+        // ---- New TokenKind-based API (Phase 0) ----
+        // Returns the TokenKind of the current token. Returns TokenKind::eof() at end.
+        TokenKind peek() const;
+        // Returns the TokenKind of the token at +lookahead positions.
+        TokenKind peek(size_t lookahead);
+        // Returns the full Token of the current token (always valid, returns EOF token at end).
+        const Token& peek_info() const;
+        // Like peek(lookahead) but returns full info.
+        Token peek_info(size_t lookahead);
+        // Consumes the current token and returns it.
+        Token advance();
+        // Consumes the current token only if it matches `kind`. Returns true if consumed.
+        bool consume(TokenKind kind);
+        // Consumes the current token if it matches; otherwise emits a diagnostic.
+        Token expect(TokenKind kind);
+
         // Phase 5: >> token splitting for nested templates (e.g., Foo<Bar<int>>)
         // When we encounter >> and need just >, this splits it by consuming first > and injecting second >
         void split_right_shift_token();  // Split >> into > and > (for nested templates)

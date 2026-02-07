@@ -458,6 +458,84 @@ void Parser::split_right_shift_token() {
     injected_token_ = second_gt;
 }
 
+// ---- New TokenKind-based API (Phase 0) ----
+
+// Static EOF token returned by peek_info() when at end of input
+static const Token eof_token_sentinel(Token::Type::EndOfFile, ""sv, 0, 0, 0);
+
+TokenKind Parser::peek() const {
+    if (!current_token_.has_value()) {
+        // Force lazy init — cast away const for internal lazy-init pattern
+        const_cast<Parser*>(this)->current_token_.emplace(lexer_.next_token());
+    }
+    return current_token_->kind();
+}
+
+TokenKind Parser::peek(size_t lookahead) {
+    if (lookahead == 0) {
+        return peek();
+    }
+    auto tok = peek_token(lookahead);
+    if (!tok.has_value()) return TokenKind::eof();
+    return tok->kind();
+}
+
+const Token& Parser::peek_info() const {
+    if (!current_token_.has_value()) {
+        const_cast<Parser*>(this)->current_token_.emplace(lexer_.next_token());
+    }
+    return *current_token_;
+}
+
+Token Parser::peek_info(size_t lookahead) {
+    if (lookahead == 0) {
+        return peek_info();
+    }
+    auto tok = peek_token(lookahead);
+    if (!tok.has_value()) return eof_token_sentinel;
+    return *tok;
+}
+
+Token Parser::advance() {
+    Token result = peek_info();  // ensure current_token_ is populated
+    
+    // Phase 5: Check if we have an injected token (from >> splitting)
+    if (injected_token_.has_value()) {
+        current_token_ = injected_token_;
+        injected_token_.reset();
+    } else {
+        Token next = lexer_.next_token();
+        current_token_.emplace(next);
+    }
+    return result;
+}
+
+bool Parser::consume(TokenKind kind) {
+    if (peek() == kind) {
+        advance();
+        return true;
+    }
+    return false;
+}
+
+Token Parser::expect(TokenKind kind) {
+    if (peek() == kind) {
+        return advance();
+    }
+    // Emit diagnostic — find the spelling for the expected kind
+    std::string_view expected_spelling = "?";
+    for (const auto& entry : all_fixed_tokens) {
+        if (entry.kind == kind) {
+            expected_spelling = entry.spelling;
+            break;
+        }
+    }
+    const Token& cur = peek_info();
+    FLASH_LOG(Parser, Error, "Expected '", expected_spelling, "' but got '", cur.value(), 
+              "' at line ", cur.line(), " column ", cur.column());
+    return eof_token_sentinel;
+}
+
 Parser::SaveHandle Parser::save_token_position() {
     // Generate unique handle using static incrementing counter
     // This prevents collisions even when multiple saves happen at the same cursor position
