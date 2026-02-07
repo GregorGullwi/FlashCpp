@@ -1398,10 +1398,10 @@ ParseResult Parser::parse_template_declaration() {
 								}
 								
 								advance();  // consume '(' or '{'
-								std::string_view close_delim = is_paren ? ")" : "}";
+								auto close_kind = is_paren ? ")"_tok : "}"_tok;
 								
 								std::vector<ASTNode> init_args;
-								if (peek().is_eof() || peek_info().value() != close_delim) {
+								if (peek() != close_kind) {
 									do {
 										ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (arg_result.is_error()) {
@@ -1418,9 +1418,10 @@ ParseResult Parser::parse_template_declaration() {
 									} while (consume(","_tok));
 								}
 								
-								if (!consume_punctuator(close_delim)) {
-									return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
-									                         "' after initializer arguments", peek_info());
+								if (!consume(close_kind)) {
+									return ParseResult::error(is_paren ?
+									    "Expected ')' after initializer arguments" :
+									    "Expected '}' after initializer arguments", peek_info());
 								}
 								
 								// Member initializer
@@ -2614,10 +2615,10 @@ ParseResult Parser::parse_template_declaration() {
 								}
 								
 								advance();  // consume '(' or '{'
-								std::string_view close_delim = is_paren ? ")" : "}";
+								auto close_kind = is_paren ? ")"_tok : "}"_tok;
 								
 								std::vector<ASTNode> init_args;
-								if (peek().is_eof() || peek_info().value() != close_delim) {
+								if (peek() != close_kind) {
 									do {
 										ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (arg_result.is_error()) {
@@ -2634,9 +2635,10 @@ ParseResult Parser::parse_template_declaration() {
 									} while (consume(","_tok));
 								}
 								
-								if (!consume_punctuator(close_delim)) {
-									return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
-									                         "' after initializer arguments", peek_info());
+								if (!consume(close_kind)) {
+									return ParseResult::error(is_paren ?
+									    "Expected ')' after initializer arguments" :
+									    "Expected '}' after initializer arguments", peek_info());
 								}
 								
 								// Member initializer
