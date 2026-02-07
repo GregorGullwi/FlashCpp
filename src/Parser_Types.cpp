@@ -3221,6 +3221,11 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 
 				std::string_view init_name = init_name_token->value();
 
+				// Check for template arguments: Base<T>(...) in base class initializer
+				if (peek_token().has_value() && peek_token()->value() == "<") {
+					skip_template_arguments();
+				}
+
 				// Expect '(' or '{'
 				bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
 				bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
@@ -3294,6 +3299,17 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 								StringHandle base_name_handle = StringTable::getOrInternStringHandle(init_name);
 								delayed.ctor_node->add_base_initializer(base_name_handle, std::move(init_args));
 								break;
+							}
+						}
+						// Also check deferred template base classes (e.g., Base<T> in template<T> struct Derived : Base<T>)
+						if (!is_base_init) {
+							StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
+							for (const auto& deferred_base : delayed.struct_node->deferred_template_base_classes()) {
+								if (deferred_base.base_template_name == init_name_handle) {
+									is_base_init = true;
+									delayed.ctor_node->add_base_initializer(init_name_handle, std::move(init_args));
+									break;
+								}
 							}
 						}
 					}

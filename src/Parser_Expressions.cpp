@@ -267,16 +267,18 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					// Parse the expression to cast
 					ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
 					if (expr_result.is_error() || !expr_result.node().has_value()) {
-						return ParseResult::error("Expected expression after C-style cast", *current_token_);
+						// Failed to parse expression after what looked like a cast.
+						// This means (identifier) was actually a parenthesized expression,
+						// not a C-style cast. Fall through to line 291 which restores position.
+					} else {
+						discard_saved_token(saved_pos);
+						// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
+						auto cast_expr = emplace_node<ExpressionNode>(
+							StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+						
+						// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
+						return apply_postfix_operators(cast_expr);
 					}
-
-					discard_saved_token(saved_pos);
-					// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
-					auto cast_expr = emplace_node<ExpressionNode>(
-						StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
-					
-					// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
-					return apply_postfix_operators(cast_expr);
 				}
 				// If not a valid type, fall through to restore position and try as expression
 			}
@@ -1375,6 +1377,61 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 				// We need to re-parse to get the actual template arguments
 				auto template_args = parse_explicit_template_arguments();
 				
+				// Check if followed by '::' for qualified member access
+				// This handles patterns like: Base<T>::member(args)
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+				    peek_token()->value() == "::") {
+					consume_token(); // consume '::'
+					
+					// Expect member name
+					if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+						return ParseResult::error("Expected identifier after '::'", *current_token_);
+					}
+					Token member_token = *peek_token();
+					consume_token(); // consume member name
+					
+					// Build the qualified name for lookup
+					std::string_view base_name;
+					if (result.node()->is<ExpressionNode>()) {
+						const auto& expr = result.node()->as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(expr)) {
+							base_name = std::get<IdentifierNode>(expr).name();
+						}
+					}
+					
+					// Check if followed by '(' for function call
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						consume_token(); // consume '('
+						
+						auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+							.handle_pack_expansion = true,
+							.collect_types = true,
+							.expand_simple_packs = false
+						});
+						if (!args_result.success) {
+							return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+						}
+						
+						if (!consume_punctuator(")")) {
+							return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+						}
+						
+						// Create forward declaration and function call
+						auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+						auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
+						DeclarationNode& decl_ref = forward_decl.as<DeclarationNode>();
+						auto call_node = emplace_node<ExpressionNode>(
+							FunctionCallNode(decl_ref, std::move(args_result.args), member_token));
+						result = ParseResult::success(call_node);
+						continue;
+					}
+					
+					// Not a function call - just a qualified identifier access
+					auto ident_node = emplace_node<ExpressionNode>(IdentifierNode(member_token));
+					result = ParseResult::success(ident_node);
+					continue;
+				}
+				
 				// Note: We don't directly use template_args here because the postfix operator loop
 				// will handle function calls with template arguments. We just needed to prevent
 				// the binary operator loop from consuming '<' as a comparison operator.
@@ -2258,43 +2315,76 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 	
 	// Try to parse as type-id (e.g., alignas(Point) or alignas(double))
 	if (token.has_value() && (token->type() == Token::Type::Keyword || token->type() == Token::Type::Identifier)) {
+		// Save position before type specifier attempt to allow fallback to expression
+		SaveHandle pre_type_pos = save_token_position();
 		// Try to parse a full type specifier to handle all type variations
 		ParseResult type_result = parse_type_specifier();
 		
 		if (!type_result.is_error() && type_result.node().has_value()) {
-			// Successfully parsed a type specifier
-			if (!consume_punctuator(")")) {
-				restore_token_position(saved_pos);
-				return std::nullopt;
-			}
-			
-			const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-			Type parsed_type = type_spec.type();
-			
-			// Use existing get_type_alignment function for consistency
-			int type_size_bits = get_type_size_bits(parsed_type);
-			size_t type_size_bytes = type_size_bits / 8;
-			
-			// For struct types, look up alignment from struct info
-			if (parsed_type == Type::Struct || parsed_type == Type::UserDefined) {
-				TypeIndex type_index = type_spec.type_index();
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
-					if (type_info.isStruct()) {
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info) {
-							alignment = struct_info->alignment;
-							discard_saved_token(saved_pos);
-							return alignment;
+			// Successfully parsed a type specifier - check if followed by ')'
+			if (consume_punctuator(")")) {
+				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+				Type parsed_type = type_spec.type();
+				
+				// Use existing get_type_alignment function for consistency
+				int type_size_bits = get_type_size_bits(parsed_type);
+				size_t type_size_bytes = type_size_bits / 8;
+				
+				// For struct types, look up alignment from struct info
+				if (parsed_type == Type::Struct || parsed_type == Type::UserDefined) {
+					TypeIndex type_index = type_spec.type_index();
+					if (type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_info.isStruct()) {
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info) {
+								alignment = struct_info->alignment;
+								discard_saved_token(pre_type_pos);
+								discard_saved_token(saved_pos);
+								return alignment;
+							}
 						}
 					}
 				}
+				
+				// For other types, use the standard alignment function
+				alignment = get_type_alignment(parsed_type, type_size_bytes);
+				discard_saved_token(pre_type_pos);
+				discard_saved_token(saved_pos);
+				return alignment;
 			}
-			
-			// For other types, use the standard alignment function
-			alignment = get_type_alignment(parsed_type, type_size_bytes);
-			discard_saved_token(saved_pos);
-			return alignment;
+			// Type parsed but ')' not found - fall through to expression parsing
+		}
+		// Type parsing failed or ')' not found - restore and try expression
+		restore_token_position(pre_type_pos);
+	}
+
+	// Try to parse as a constant expression (e.g., alignas(__alignof__(_Tp2::_M_t)))
+	// This handles cases where the argument is a complex expression like alignof, sizeof, etc.
+	{
+		// Restore to just after the '(' for a fresh parse attempt
+		restore_token_position(saved_pos);
+		saved_pos = save_token_position();
+		consume_token(); // consume "alignas"
+		consume_punctuator("(");
+
+		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (!expr_result.is_error() && expr_result.node().has_value()) {
+			if (consume_punctuator(")")) {
+				// Try to evaluate the expression as a constant
+				auto eval_result = try_evaluate_constant_expression(*expr_result.node());
+				if (eval_result.has_value()) {
+					alignment = static_cast<size_t>(eval_result->value);
+					if (alignment > 0 && (alignment & (alignment - 1)) == 0) {
+						discard_saved_token(saved_pos);
+						return alignment;
+					}
+				}
+				// Expression parsed but couldn't evaluate (template-dependent) - use default alignment
+				// In template contexts, actual alignment will be resolved at instantiation time
+				discard_saved_token(saved_pos);
+				return static_cast<size_t>(8); // Default to 8-byte alignment
+			}
 		}
 	}
 
@@ -4000,6 +4090,71 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	// Check for global namespace scope operator :: at the beginning
 	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
 		consume_token(); // consume ::
+
+		// Handle ::operator new(...) and ::operator delete(...) as function call expressions
+		// Used by libstdc++ allocators: static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)))
+		if (current_token_.has_value() && current_token_->type() == Token::Type::Keyword &&
+		    current_token_->value() == "operator") {
+			Token operator_token = *current_token_;
+			consume_token(); // consume 'operator'
+
+			// Expect 'new' or 'delete'
+			if (!current_token_.has_value() || current_token_->type() != Token::Type::Keyword ||
+			    (current_token_->value() != "new" && current_token_->value() != "delete")) {
+				return ParseResult::error("Expected 'new' or 'delete' after '::operator'", current_token_.value_or(Token()));
+			}
+
+			StringBuilder op_name_sb;
+			op_name_sb.append("operator ");
+			op_name_sb.append(current_token_->value());
+			consume_token(); // consume 'new' or 'delete'
+
+			// Check for array variant: operator new[] or operator delete[]
+			if (current_token_.has_value() && current_token_->value() == "[") {
+				consume_token(); // consume '['
+				if (current_token_.has_value() && current_token_->value() == "]") {
+					consume_token(); // consume ']'
+					op_name_sb.append("[]");
+				}
+			}
+
+			std::string_view op_name = op_name_sb.commit();
+			Token op_identifier(Token::Type::Identifier, op_name,
+			                    operator_token.line(), operator_token.column(), operator_token.file_index());
+
+			// Expect '(' for function call
+			if (!current_token_.has_value() || current_token_->value() != "(") {
+				return ParseResult::error("Expected '(' after '::operator new/delete'", current_token_.value_or(Token()));
+			}
+			consume_token(); // consume '('
+
+			// Parse function arguments
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after operator new/delete arguments", *current_token_);
+			}
+
+			// Create a forward declaration for the operator (returns void* for new, void for delete)
+			bool is_new = op_name.find("new") != std::string_view::npos;
+			auto type_node = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0, Token());
+			if (is_new) {
+				type_node.as<TypeSpecifierNode>().add_pointer_level(); // void* return type for new
+			}
+			auto forward_decl = emplace_node<DeclarationNode>(type_node, op_identifier);
+			DeclarationNode& decl_ref = forward_decl.as<DeclarationNode>();
+
+			auto call_node = emplace_node<ExpressionNode>(
+				FunctionCallNode(decl_ref, std::move(args_result.args), op_identifier));
+			return ParseResult::success(call_node);
+		}
 
 		// Expect an identifier after ::
 		if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
@@ -9805,6 +9960,49 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			member_name,
 			*member_template_args
 		);
+	}
+	
+	// Trigger lazy member function instantiation if needed
+	if (!instantiated_func.has_value()) {
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
+			FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for qualified call: ", instantiated_class_name, "::", member_name);
+			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
+			if (lazy_info_opt.has_value()) {
+				instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
+				LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle);
+			}
+		}
+		// If the hash-based name didn't match (dependent vs concrete hash mismatch),
+		// try to find the correct instantiation by looking up gTypesByName for a matching
+		// template instantiation with the same base template name.
+		if (!instantiated_func.has_value()) {
+			size_t dollar_pos = instantiated_class_name.find('$');
+			if (dollar_pos != std::string_view::npos) {
+				std::string_view base_tmpl = instantiated_class_name.substr(0, dollar_pos);
+				// Search all types to find a matching template instantiation
+				for (const auto& [name_handle, type_info_ptr] : gTypesByName) {
+					if (type_info_ptr->isTemplateInstantiation() &&
+					    StringTable::getStringView(type_info_ptr->baseTemplateName()) == base_tmpl &&
+					    StringTable::getStringView(name_handle) != instantiated_class_name) {
+						StringHandle alt_class_handle = name_handle;
+						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(alt_class_handle, member_name_handle)) {
+							FLASH_LOG(Templates, Debug, "Lazy instantiation triggered via base template match: ", 
+							          StringTable::getStringView(alt_class_handle), "::", member_name);
+							auto lazy_info_opt2 = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(alt_class_handle, member_name_handle);
+							if (lazy_info_opt2.has_value()) {
+								instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt2);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(alt_class_handle, member_name_handle);
+								// Update instantiated_class_name to the correct one for mangling
+								instantiated_class_name = StringTable::getStringView(alt_class_handle);
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 	
 	// Build qualified function name including template args

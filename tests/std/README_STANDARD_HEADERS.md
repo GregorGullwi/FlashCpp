@@ -17,13 +17,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Blocked by missing features in allocator/string includes |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `static_assert` failed in `uses_allocator.h:106` |
 | `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Unnamed `in_place_t` parameter at `optional:564` |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | `alignas` in type specifier at `aligned_buffer.h:56` |
+| `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~300ms (2026-02-06: Fixed `alignas` expression parsing) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Expected type specifier at `any:583` (out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | `::operator new()` in `static_cast` at `new_allocator.h:148` |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Blocked by `Base<T>::member()` call in allocator |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Blocked by `Base<T>::member()` call in allocator (2026-02-06: progressed past `::operator new`, `__attribute__`, destructor, template ctor) |
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | Blocked by allocator includes |
 | `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Blocked by allocator includes |
 | `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | `static_assert` failed in `uses_allocator.h:106` |
@@ -32,7 +32,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ❌ Parse Error | Blocked by allocator includes |
 | `<span>` | `test_std_span.cpp` | ❌ Parse Error | Blocked by allocator includes |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | `::operator new()` in `static_cast` at `new_allocator.h:148` (2026-02-06: progressed past `__attribute__`, `__ATOMIC_ACQ_REL`, `__is_single_threaded`) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Blocked by `Base<T>::member()` call in allocator (2026-02-06: progressed past `::operator new`, `__attribute__`, destructor) |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
 | `<atomic>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (2026-02-06: progressed past `static_assert sizeof`) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
@@ -68,13 +68,34 @@ The following parser issues were fixed to unblock standard header compilation:
 
 6. **Improved `static_assert` deferral in template contexts**: `parse_static_assert()` now always defers evaluation when the condition contains template-dependent expressions (regardless of parsing context), and also defers in template struct bodies when evaluation fails for any reason. This unblocks `<atomic>` and `<barrier>` past the `static_assert(sizeof(__waiter_type) == sizeof(__waiter_pool_base))` check.
 
+### Recent Fixes (2026-02-06, PR #2)
+
+The following parser issues were fixed to unblock standard header compilation:
+
+1. **`::operator new()` and `::operator delete()` in expressions and statements**: Added handling for `::operator new(...)`, `::operator delete(...)`, and array variants in both expression context (e.g., `static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)))`) and statement context. This unblocks `new_allocator.h` which is included by all container headers.
+
+2. **`alignas` with expression arguments**: `parse_alignas_specifier()` now falls back to parsing a constant expression when literal and type parsing fail. This handles patterns like `alignas(__alignof__(_Tp2::_M_t))` used in `aligned_buffer.h`. Unblocks `<variant>`.
+
+3. **C-style cast backtracking**: When a C-style cast is attempted but the expression after the cast fails to parse (e.g., `(__p)` followed by `,`), the parser now backtracks instead of returning an error. This fixes function arguments like `::operator delete((__p), (__n) * sizeof(_Tp))`.
+
+4. **`__attribute__` between `using` alias name and `=`**: `parse_member_type_alias()` now calls `skip_gcc_attributes()` after the alias name, handling patterns like `using is_always_equal __attribute__((__deprecated__("..."))) = true_type;`.
+
+5. **Destructor in full template specializations**: Added destructor parsing (`~ClassName()`) in the full template specialization body loop, matching the existing handling in partial specializations.
+
+6. **Template constructor detection in full specializations**: Constructor detection in `parse_member_function_template()` now also checks the base template name (via `TypeInfo::baseTemplateName()`), not just the instantiated name. This correctly detects `allocator(...)` as a constructor in `template<> struct allocator<void>`.
+
+7. **Delayed function body processing for constructors/destructors**: Fixed null pointer dereference in full specialization delayed body processing when `func_node` is null (which it is for constructors/destructors). Now correctly handles constructor/destructor bodies and template parameter restoration.
+
+8. **Template base class in member initializer lists**: Added `skip_template_arguments()` handling in ALL initializer list parsing locations (4 files) for patterns like `: Base<T>(args)`.
+
+9. **`Base<T>::member(args)` qualified call expressions**: Statement parser now recognizes `Type<Args>::member(args)` as an expression (not a variable declaration) when `::` follows template arguments. Expression parser handles `::member(args)` after template argument disambiguation.
+
 ### Current Blockers for Major Headers
 
 | Blocker | Affected Headers | Details |
 |---------|-----------------|---------|
-| `::operator new()` in expressions | `<string>`, `<iostream>`, many others | `static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)))` — global scope `operator new` call in expressions |
+| `Base<T>::member()` call pattern | `<string>`, `<iostream>`, many others | `__allocator_base<_Tp>::deallocate(p, n)` — expression parser needs deeper template qualified call support |
 | `__cmpexch_failure_order2` overload | `<atomic>`, `<barrier>` | Constexpr function using bitwise ops on `memory_order` enum |
-| `alignas` in type specifier | `<variant>` | `alignas(...)` used inside `aligned_buffer.h` struct |
 | Unnamed `in_place_t` parameter | `<optional>` | `_Optional_base(in_place_t, _Args&&...)` unnamed parameter |
 | Memory corruption | `<ratio>`, `<chrono>` | glibc malloc assertion failure during parsing |
 

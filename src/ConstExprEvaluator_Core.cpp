@@ -246,8 +246,11 @@ private:
 				if (type_spec.size_in_bits() == 0 && type_spec.token().type() == Token::Type::Identifier && context.symbols) {
 					std::string_view identifier = type_spec.token().value();
 					
-					// Look up the identifier in the symbol table
+					// Look up the identifier in the symbol table (local first, then global)
 					std::optional<ASTNode> symbol = context.symbols->lookup(identifier);
+					if (!symbol.has_value() && context.global_symbols) {
+						symbol = context.global_symbols->lookup(identifier);
+					}
 					if (symbol.has_value()) {
 						const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 						if (decl) {
@@ -448,9 +451,12 @@ private:
 				if (std::holds_alternative<IdentifierNode>(expr)) {
 					const auto& id_node = std::get<IdentifierNode>(expr);
 					
-					// Look up the identifier in the symbol table
+					// Look up the identifier in the symbol table (local first, then global)
 					if (context.symbols) {
 						auto symbol = context.symbols->lookup(id_node.name());
+						if (!symbol.has_value() && context.global_symbols) {
+							symbol = context.global_symbols->lookup(id_node.name());
+						}
 						if (symbol.has_value()) {
 							// Get the declaration and extract the type
 							const DeclarationNode* decl = get_decl_from_symbol(*symbol);

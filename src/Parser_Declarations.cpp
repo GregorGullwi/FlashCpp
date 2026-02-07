@@ -2919,6 +2919,11 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			
 			std::string_view init_name = init_name_token->value();
 			
+			// Check for template arguments: Base<T>(...) in base class initializer
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				skip_template_arguments();
+			}
+			
 			bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
 			bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
 			
@@ -3106,6 +3111,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		
 		StringHandle alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 		consume_token(); // consume alias name
+		
+		// Skip GCC __attribute__ that may appear between alias name and '='
+		// e.g., using is_always_equal __attribute__((__deprecated__("..."))) = true_type;
+		skip_gcc_attributes();
 		
 		// Check for '='
 		if (!peek_token().has_value() || peek_token()->value() != "=") {
@@ -5317,6 +5326,11 @@ ParseResult Parser::parse_struct_declaration()
 					       peek_token()->value() != ";") {
 						// Skip initializer name
 						consume_token();
+						
+						// Skip template arguments if present: Base<T>(...)
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							skip_template_arguments();
+						}
 						
 						// Expect '(' or '{'
 						if (peek_token().has_value() && peek_token()->value() == "(") {

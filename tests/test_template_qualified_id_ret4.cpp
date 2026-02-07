@@ -3,12 +3,12 @@
 
 template<typename T>
 struct Box {
-    int data;
+    T data;
 };
 
 // Don't use it in an expression yet, just see if we can parse the declaration
 Box<int> global_box;
 
 int main() {
-    return 0;
+    return sizeof(global_box);
 }

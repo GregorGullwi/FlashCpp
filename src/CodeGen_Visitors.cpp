@@ -926,6 +926,11 @@ private:
 		// Try to evaluate as a constant expression first
 		ConstExpr::EvaluationContext ctx(symbol_table);
 		
+		// Pass global symbol table for resolving global variables in sizeof etc.
+		if (global_symbol_table_) {
+			ctx.global_symbols = global_symbol_table_;
+		}
+		
 		// If we're in a member function, set the struct_info in the context
 		// This allows sizeof(T) to resolve template parameters from the struct
 		if (current_struct_name_.isValid()) {
@@ -3407,9 +3412,20 @@ private:
 					// Check if there's an explicit base initializer
 					const BaseInitializer* base_init = nullptr;
 					for (const auto& init : node.base_initializers()) {
-						if (init.getBaseClassName() == StringTable::getOrInternStringHandle(base.name)) {
+						StringHandle base_name_handle = StringTable::getOrInternStringHandle(base.name);
+						if (init.getBaseClassName() == base_name_handle) {
 							base_init = &init;
 							break;
+						}
+						// For template instantiations, the base initializer stores the un-substituted
+						// name (e.g., "Base") but struct_info has the instantiated name (e.g., "Base$hash").
+						// Also match against the base template name.
+						if (base.type_index < gTypeInfo.size()) {
+							const TypeInfo& base_ti = gTypeInfo[base.type_index];
+							if (base_ti.isTemplateInstantiation() && init.getBaseClassName() == base_ti.baseTemplateName()) {
+								base_init = &init;
+								break;
+							}
 						}
 					}
 

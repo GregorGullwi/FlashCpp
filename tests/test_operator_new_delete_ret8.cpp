@@ -28,6 +28,9 @@ inline void operator delete[](void*, void*, MyTag) noexcept {
 }
 
 int main() {
-    // Basic test - operator new/delete declarations should parse without error
-    return 0;
+    // Use the custom placement new/delete defined above via ::operator syntax
+    unsigned char buffer[sizeof(double)];
+    void* p = ::operator new(sizeof(double), buffer, MyTag{});
+    ::operator delete(p, buffer, MyTag{});
+    return sizeof(double);
 }

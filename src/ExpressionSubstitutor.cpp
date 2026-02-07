@@ -474,7 +474,80 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		}
 	}
 	
-	// If not a template function call or instantiation failed, return as-is
+	// If not a template function call or instantiation failed, check for dependent qualified names
+	// Pattern: Base$dependentHash::member(args) — needs re-instantiation with concrete types
+	// This happens when a template body is re-parsed: Base<T>::member() creates Base$hash1::member
+	// during initial template parsing, but the actual instantiation is Base$hash2.
+	size_t dollar_pos = func_name.find('$');
+	size_t scope_pos = func_name.find("::");
+	if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
+		std::string_view base_template_name = func_name.substr(0, dollar_pos);
+		std::string_view member_name = func_name.substr(scope_pos + 2);
+		
+		// Collect concrete template arguments from param_map_
+		std::vector<TemplateTypeArg> inst_args;
+		if (!template_param_order_.empty()) {
+			for (std::string_view param_name : template_param_order_) {
+				auto it = param_map_.find(param_name);
+				if (it != param_map_.end()) {
+					inst_args.push_back(it->second);
+				}
+			}
+		} else {
+			for (const auto& [param_name, param_arg] : param_map_) {
+				inst_args.push_back(param_arg);
+			}
+		}
+		for (const auto& [pack_name, pack_args] : pack_map_) {
+			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
+		}
+		
+		if (!inst_args.empty()) {
+			// Instantiate the template with concrete types
+			parser_.try_instantiate_class_template(base_template_name, inst_args, true);
+			std::string_view instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
+			
+			// Build the corrected qualified function name
+			StringBuilder new_func_name_builder;
+			new_func_name_builder.append(instantiated_name).append("::").append(member_name);
+			std::string_view new_func_name = new_func_name_builder.commit();
+			
+			FLASH_LOG(Templates, Debug, "  Substituted qualified function name: ", func_name, " -> ", new_func_name);
+			
+			// Create a new token with the corrected name
+			Token new_func_token(Token::Type::Identifier, new_func_name,
+				call.called_from().line(), call.called_from().column(), call.called_from().file_index());
+			
+			// Substitute arguments
+			ChunkedVector<ASTNode> substituted_args;
+			for (size_t i = 0; i < call.arguments().size(); ++i) {
+				substituted_args.push_back(substitute(call.arguments()[i]));
+			}
+			
+			// Create new forward declaration with corrected name
+			auto& fwd_type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+			ASTNode fwd_type_ast(&fwd_type_node);
+			auto& new_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(fwd_type_ast, new_func_token);
+			
+			// Try to trigger lazy member function instantiation for the target
+			StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+			StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+			auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+			if (lazy_registry.needsInstantiation(inst_name_handle, member_handle)) {
+				auto lazy_info = lazy_registry.getLazyMemberInfo(inst_name_handle, member_handle);
+				if (lazy_info.has_value()) {
+					parser_.instantiateLazyMemberFunction(*lazy_info);
+				}
+			}
+			
+			FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
+				new_decl, std::move(substituted_args), new_func_token);
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
+			return ASTNode(&new_expr);
+		}
+	}
+	
+	// Return as-is
 	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
 	return ASTNode(&new_expr);

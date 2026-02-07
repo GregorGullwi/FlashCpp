@@ -445,6 +445,60 @@
 				}
 			}
 		}
+
+		// Handle dependent qualified function names: Base$dependentHash::member
+		// These occur when a template body contains Base<T>::member() and T is substituted
+		// but the hash was computed with the dependent type, not the concrete type.
+		if (!matched_func_decl) {
+			size_t dollar_pos = func_name_view.find('$');
+			size_t scope_pos = func_name_view.find("::");
+			if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
+				std::string_view base_template_name = func_name_view.substr(0, dollar_pos);
+				std::string_view member_name = func_name_view.substr(scope_pos + 2);
+				
+				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving dependent qualified call: base_template='{}', member='{}'", base_template_name, member_name);
+				
+				// Search current struct's base classes for a matching template instantiation
+				if (current_struct_name_.isValid()) {
+					auto type_it = gTypesByName.find(current_struct_name_);
+					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+						const StructTypeInfo* curr_struct = type_it->second->getStructInfo();
+						if (curr_struct) {
+							for (const auto& base_spec : curr_struct->base_classes) {
+								if (base_spec.type_index < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+									if (base_type_info.isTemplateInstantiation() && 
+									    StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
+									    base_type_info.isStruct()) {
+										const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+										if (base_struct_info) {
+											for (const auto& member_func : base_struct_info->member_functions) {
+												if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+													const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+													std::string_view func_id = func_decl.decl_node().identifier_token().value();
+													if (func_id == member_name) {
+														matched_func_decl = &func_decl;
+														if (!has_precomputed_mangled) {
+															if (matched_func_decl->has_mangled_name()) {
+																function_name = matched_func_decl->mangled_name();
+															} else if (matched_func_decl->linkage() != Linkage::C) {
+																function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
+															}
+														}
+														break;
+													}
+												}
+											}
+											if (matched_func_decl) break;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 	
 		// Always add the return variable and function name (mangled for overload resolution)
 		FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
@@ -4070,9 +4124,17 @@
 							if (type_index < gTypeInfo.size()) {
 								const TypeInfo& type_info = gTypeInfo[type_index];
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
-								if (struct_info) {
+								if (struct_info && struct_info->total_size > 0) {
 									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(struct_info->total_size) };
 								}
+								// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
+								if (type_info.type_size_ > 0) {
+									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(type_info.type_size_) };
+								}
+							}
+							// Fallback: use size_in_bits from the type specifier node
+							if (var_type.size_in_bits() > 0) {
+								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(var_type.size_in_bits() / 8) };
 							}
 						} else {
 							// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set

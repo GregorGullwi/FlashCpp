@@ -1572,6 +1572,94 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				if (found_constructor) continue;
 
+				// Check for destructor (~StructName followed by '(')
+				if (peek_token().has_value() && peek_token()->value() == "~") {
+					consume_token();  // consume '~'
+					
+					auto name_token_opt = consume_token();
+					if (!name_token_opt.has_value() || name_token_opt->type() != Token::Type::Identifier ||
+					    name_token_opt->value() != template_name) {
+						return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt.value_or(Token()));
+					}
+					Token dtor_name_token = name_token_opt.value();
+					std::string_view dtor_name = dtor_name_token.value();
+					
+					if (!consume_punctuator("(")) {
+						return ParseResult::error("Expected '(' after destructor name", *peek_token());
+					}
+					
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Destructor cannot have parameters", *peek_token());
+					}
+					
+					auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(dtor_name));
+					
+					// Parse trailing specifiers (noexcept, override, final, = default, = delete, etc.)
+					FlashCpp::MemberQualifiers dtor_member_quals;
+					FlashCpp::FunctionSpecifiers dtor_func_specs;
+					auto dtor_specs_result = parse_function_trailing_specifiers(dtor_member_quals, dtor_func_specs);
+					if (dtor_specs_result.is_error()) {
+						return dtor_specs_result;
+					}
+					
+					// Apply specifiers
+					if (dtor_func_specs.is_noexcept) {
+						dtor_ref.set_noexcept(true);
+					}
+					
+					bool is_defaulted = dtor_func_specs.is_defaulted;
+					bool is_deleted = dtor_func_specs.is_deleted;
+					
+					// Handle defaulted destructors
+					if (is_defaulted) {
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= default'", *peek_token());
+						}
+						
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
+						dtor_ref.set_mangled_name(mangled);
+						dtor_ref.set_definition(block_node);
+						
+						struct_ref.add_destructor(dtor_node, current_access);
+						continue;
+					}
+					
+					// Handle deleted destructors
+					if (is_deleted) {
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+						}
+						continue;
+					}
+					
+					// Parse function body if present
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						SaveHandle body_start = save_token_position();
+						skip_balanced_braces();
+						
+						delayed_function_bodies_.push_back({
+							nullptr,  // member_func_ref
+							body_start,
+							{},       // initializer_list_start (not used)
+							instantiated_name,
+							struct_type_info.type_index_,
+							&struct_ref,
+							false,    // has_initializer_list
+							false,    // is_constructor
+							true,     // is_destructor
+							nullptr,  // ctor_node
+							&dtor_ref,  // dtor_node
+							{}  // no template parameter names for specializations
+						});
+					} else if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected '{' or ';' after destructor declaration", *peek_token());
+					}
+					
+					struct_ref.add_destructor(dtor_node, current_access);
+					continue;
+				}
+
 				// Special handling for conversion operators: operator type()
 				// Conversion operators don't have a return type, so we need to detect them early
 				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
@@ -1954,16 +2042,41 @@ ParseResult Parser::parse_template_declaration() {
 					nullptr  // local_struct_info - not needed for delayed function bodies
 				});
 
-				// Add function parameters to scope
-				for (const auto& param : delayed.func_node->parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& param_decl = param.as<DeclarationNode>();
-						gSymbolTable.insert(param_decl.identifier_token().value(), param);
+				// Set up template parameter names if this is a template member
+				std::vector<StringHandle> saved_param_names;
+				if (!delayed.template_param_names.empty()) {
+					saved_param_names = std::move(current_template_param_names_);
+					current_template_param_names_ = delayed.template_param_names;
+					parsing_template_body_ = true;
+				}
+
+				// Add function parameters to scope (handling constructors, destructors, and regular functions)
+				if (delayed.is_constructor && delayed.ctor_node) {
+					for (const auto& param : delayed.ctor_node->parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							gSymbolTable.insert(param_decl.identifier_token().value(), param);
+						}
+					}
+				} else if (!delayed.is_destructor && delayed.func_node) {
+					for (const auto& param : delayed.func_node->parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							gSymbolTable.insert(param_decl.identifier_token().value(), param);
+						}
 					}
 				}
+				// Destructors have no parameters
 
 				// Parse the function body
 				auto block_result = parse_block();
+
+				// Restore template parameter names
+				if (!delayed.template_param_names.empty()) {
+					current_template_param_names_ = std::move(saved_param_names);
+					parsing_template_body_ = false;
+				}
+
 				if (block_result.is_error()) {
 					member_function_context_stack_.pop_back();
 					gSymbolTable.exit_scope();
@@ -1971,7 +2084,13 @@ ParseResult Parser::parse_template_declaration() {
 				}
 
 				if (auto block = block_result.node()) {
-					delayed.func_node->set_definition(*block);
+					if (delayed.is_constructor && delayed.ctor_node) {
+						delayed.ctor_node->set_definition(*block);
+					} else if (delayed.is_destructor && delayed.dtor_node) {
+						delayed.dtor_node->set_definition(*block);
+					} else if (delayed.func_node) {
+						delayed.func_node->set_definition(*block);
+					}
 				}
 
 				member_function_context_stack_.pop_back();
@@ -4783,8 +4902,22 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		}
 		
 		// Check if next identifier is the struct name
+		// Also check the base template name for template specializations
+		// E.g., in template<> struct allocator<void>, the struct name is "allocator_void"
+		// but the constructor is still named "allocator"
+		bool is_base_template_ctor = false;
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
-		    peek_token()->value() == struct_node.name()) {
+		    peek_token()->value() != struct_node.name()) {
+			auto type_it = gTypesByName.find(struct_node.name());
+			if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
+				std::string_view base_name = StringTable::getStringView(type_it->second->baseTemplateName());
+				if (peek_token()->value() == base_name) {
+					is_base_template_ctor = true;
+				}
+			}
+		}
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+		    (peek_token()->value() == struct_node.name() || is_base_template_ctor)) {
 			[[maybe_unused]] Token name_token = *peek_token();
 			consume_token();
 			
@@ -4870,6 +5003,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						}
 						
 						consume_token();
+						
+						// Check for template arguments: Base<T>(...)
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							skip_template_arguments();
+						}
 						
 						// Expect '(' or '{'
 						bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
@@ -17489,6 +17627,74 @@ ASTNode Parser::substituteTemplateParameters(
 			for (size_t i = 0; i < func_call.arguments().size(); ++i) {
 				substituted_args.push_back(substituteTemplateParameters(func_call.arguments()[i], template_params, template_args));
 			}
+			
+			// Check if function name contains a dependent template hash (Base$hash::member)
+			// that needs to be resolved with concrete template arguments
+			std::string_view func_name = func_call.called_from().value();
+			if (func_name.empty()) func_name = func_call.function_declaration().identifier_token().value();
+			size_t dollar_pos = func_name.empty() ? std::string_view::npos : func_name.find('$');
+			size_t scope_pos = func_name.empty() ? std::string_view::npos : func_name.find("::");
+			if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
+				std::string_view base_template_name = func_name.substr(0, dollar_pos);
+				std::string_view member_name = func_name.substr(scope_pos + 2);
+				
+				// Build concrete template arguments from the substitution context
+				std::vector<TemplateTypeArg> inst_args;
+				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+					const TemplateArgument& arg = template_args[i];
+					if (arg.kind == TemplateArgument::Kind::Type) {
+						TemplateTypeArg type_arg;
+						type_arg.base_type = arg.type_value;
+						type_arg.type_index = 0;
+						type_arg.is_value = false;
+						inst_args.push_back(type_arg);
+					} else if (arg.kind == TemplateArgument::Kind::Value) {
+						TemplateTypeArg val_arg;
+						val_arg.is_value = true;
+						val_arg.value = arg.int_value;
+						val_arg.base_type = arg.value_type;
+						inst_args.push_back(val_arg);
+					}
+				}
+				
+				if (!inst_args.empty()) {
+					try_instantiate_class_template(base_template_name, inst_args, true);
+					std::string_view correct_inst_name = get_instantiated_class_name(base_template_name, inst_args);
+					
+					if (correct_inst_name != func_name.substr(0, scope_pos)) {
+						// Build corrected function name
+						StringBuilder new_name_builder;
+						new_name_builder.append(correct_inst_name).append("::").append(member_name);
+						std::string_view new_func_name = new_name_builder.commit();
+						
+						FLASH_LOG(Templates, Debug, "Resolved dependent qualified call: ", func_name, " -> ", new_func_name);
+						
+						// Trigger lazy member function instantiation
+						StringHandle inst_handle = StringTable::getOrInternStringHandle(correct_inst_name);
+						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(inst_handle, member_handle)) {
+							auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(inst_handle, member_handle);
+							if (lazy_info_opt.has_value()) {
+								instantiateLazyMemberFunction(*lazy_info_opt);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(inst_handle, member_handle);
+							}
+						}
+						
+						// Create new forward declaration with corrected name.
+						// The placeholder return type (Int/32) is safe because the codegen
+						// resolves the actual return type from the matched FunctionDeclarationNode,
+						// not from this forward declaration's type node.
+						Token new_token(Token::Type::Identifier, new_func_name,
+							func_call.called_from().line(), func_call.called_from().column(), func_call.called_from().file_index());
+						auto type_node_ast = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+						auto fwd_decl = emplace_node<DeclarationNode>(type_node_ast, new_token);
+						ASTNode new_func_call_node = emplace_node<ExpressionNode>(
+							FunctionCallNode(fwd_decl.as<DeclarationNode>(), std::move(substituted_args), new_token));
+						return new_func_call_node;
+					}
+				}
+			}
+			
 			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
 			// Copy mangled name if present (important for template instantiation)
 			if (func_call.has_mangled_name()) {
