@@ -1798,6 +1798,9 @@ bool Parser::parse_constructor_exception_specifier()
 // and __attribute__((...))
 void Parser::skip_function_trailing_specifiers()
 {
+	// Clear any previously parsed requires clause
+	last_parsed_requires_clause_.reset();
+	
 	while (!peek().is_eof()) {
 		auto token = peek_info();
 		
@@ -1849,39 +1852,23 @@ void Parser::skip_function_trailing_specifiers()
 		}
 		
 		// Handle trailing requires clause: noexcept(...) requires Concept<T>
-		// Also handles: requires requires { ... } (compound requires-expression)
+		// Parse the constraint expression properly so it can be evaluated at compile time
+		// during template instantiation via the existing evaluateConstraint() infrastructure.
 		if (token.type() == Token::Type::Keyword && token.value() == "requires") {
 			advance(); // consume 'requires'
-			// Check for 'requires requires { ... }' compound form
-			if (peek() == "requires"_tok) {
-				advance(); // consume second 'requires'
-				// Skip the requires-expression body: { ... }
-				if (peek() == "("_tok) {
-					skip_balanced_parens(); // parameter list for requires(T t) { ... }
-				}
-				if (peek() == "{"_tok) {
-					skip_balanced_braces();
-				}
+			// Parse the constraint expression using the full expression parser.
+			// This handles both simple (requires Concept<T>) and compound
+			// (requires requires { ... }) forms, producing proper AST nodes.
+			auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (constraint_result.is_error()) {
+				FLASH_LOG(Parser, Warning, "Failed to parse trailing requires clause: ", constraint_result.error_message());
+				// On failure, don't propagate - the function can still be parsed
 			} else {
-				// Simple requires clause: requires Concept<T>
-				int paren_depth = 0;
-				int angle_depth = 0;
-				while (!peek().is_eof()) {
-					auto tk = peek();
-					if (tk == "("_tok) paren_depth++;
-					else if (tk == ")"_tok) {
-						if (paren_depth == 0) break;
-						paren_depth--;
-					}
-					else if (tk == "<"_tok) angle_depth++;
-					else if (tk == ">"_tok) { if (angle_depth > 0) angle_depth--; else break; }
-					else if (tk == ">>"_tok) { angle_depth -= 2; if (angle_depth < 0) { angle_depth = 0; break; } }
-					
-					if (paren_depth == 0 && angle_depth == 0) {
-						if (tk == "{"_tok || tk == ";"_tok || tk == "="_tok) break;
-					}
-					advance();
-				}
+				// Store the parsed requires clause for compile-time evaluation
+				last_parsed_requires_clause_ = emplace_node<RequiresClauseNode>(
+					*constraint_result.node(),
+					token);
+				FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for compile-time evaluation");
 			}
 			continue;
 		}
@@ -1972,6 +1959,7 @@ bool Parser::parse_static_member_function(
 	// Check for trailing requires clause: static int func(int x) requires constraint { ... }
 	// This is common in C++20 code, e.g., requires requires { expr; } 
 	if (peek() == "requires"_tok) {
+		Token requires_token = peek_info(); // Preserve source location
 		advance(); // consume 'requires'
 		
 		// Enter a temporary scope and add function parameters so they're visible in the requires clause
@@ -1995,10 +1983,12 @@ bool Parser::parse_static_member_function(
 			return true;
 		}
 		
-		// Note: For now, we store the requires clause but don't enforce it at compile time.
-		// This allows us to parse the code correctly; constraint checking would be done during
-		// template instantiation or in the type system.
-		FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for static member function");
+		// Store the parsed requires clause - it will be evaluated at compile time
+		// during template instantiation via the evaluateConstraint() infrastructure.
+		last_parsed_requires_clause_ = emplace_node<RequiresClauseNode>(
+			*constraint_result.node(),
+			requires_token);
+		FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for static member function (compile-time evaluation)");
 	}
 
 	// Parse function body if present

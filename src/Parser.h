@@ -443,6 +443,10 @@ private:
         // When true, type resolution errors should be treated as substitution failures instead of hard errors
         bool in_sfinae_context_ = false;
 
+        // Last parsed trailing requires clause from skip_function_trailing_specifiers()
+        // Allows callers to retrieve the parsed constraint for compile-time evaluation
+        std::optional<ASTNode> last_parsed_requires_clause_;
+
         // Track nesting of inline namespaces (parallel to parse_namespace recursion)
         std::vector<bool> inline_namespace_stack_;
         

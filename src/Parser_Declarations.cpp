@@ -8886,30 +8886,18 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		advance();
 	}
 
-	// Skip optional requires clause between template parameters and 'friend'
+	// Parse optional requires clause between template parameters and 'friend'
 	// e.g., template<typename _It2, sentinel_for<_It> _Sent2>
 	//         requires sentinel_for<_Sent, _It2>
 	//         friend constexpr bool operator==(...) { ... }
 	if (peek() == "requires"_tok) {
 		advance(); // consume 'requires'
-		// Skip the constraint expression
-		int paren_depth = 0;
-		int angle_depth = 0;
-		while (!peek().is_eof()) {
-			auto tk = peek();
-			if (tk == "("_tok) paren_depth++;
-			else if (tk == ")"_tok) paren_depth--;
-			else if (tk == "<"_tok) angle_depth++;
-			else if (tk == ">"_tok) { if (angle_depth > 0) angle_depth--; }
-			else if (tk == ">>"_tok) { angle_depth -= 2; if (angle_depth < 0) angle_depth = 0; }
-			
-			if (paren_depth == 0 && angle_depth == 0 && peek().is_keyword()) {
-				if (tk == "friend"_tok || tk == "constexpr"_tok || tk == "const"_tok ||
-				    tk == "static"_tok || tk == "inline"_tok || tk == "virtual"_tok) {
-					break;
-				}
-			}
-			advance();
+		// Parse the constraint expression properly for compile-time evaluation
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (constraint_result.is_error()) {
+			FLASH_LOG(Parser, Warning, "Failed to parse requires clause in friend template: ", constraint_result.error_message());
+		} else {
+			FLASH_LOG(Parser, Debug, "Parsed requires clause in friend template for compile-time evaluation");
 		}
 	}
 
