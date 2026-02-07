@@ -1848,6 +1848,44 @@ void Parser::skip_function_trailing_specifiers()
 			continue;
 		}
 		
+		// Handle trailing requires clause: noexcept(...) requires Concept<T>
+		// Also handles: requires requires { ... } (compound requires-expression)
+		if (token.type() == Token::Type::Keyword && token.value() == "requires") {
+			advance(); // consume 'requires'
+			// Check for 'requires requires { ... }' compound form
+			if (peek() == "requires"_tok) {
+				advance(); // consume second 'requires'
+				// Skip the requires-expression body: { ... }
+				if (peek() == "("_tok) {
+					skip_balanced_parens(); // parameter list for requires(T t) { ... }
+				}
+				if (peek() == "{"_tok) {
+					skip_balanced_braces();
+				}
+			} else {
+				// Simple requires clause: requires Concept<T>
+				int paren_depth = 0;
+				int angle_depth = 0;
+				while (!peek().is_eof()) {
+					auto tk = peek();
+					if (tk == "("_tok) paren_depth++;
+					else if (tk == ")"_tok) {
+						if (paren_depth == 0) break;
+						paren_depth--;
+					}
+					else if (tk == "<"_tok) angle_depth++;
+					else if (tk == ">"_tok) { if (angle_depth > 0) angle_depth--; else break; }
+					else if (tk == ">>"_tok) { angle_depth -= 2; if (angle_depth < 0) { angle_depth = 0; break; } }
+					
+					if (paren_depth == 0 && angle_depth == 0) {
+						if (tk == "{"_tok || tk == ";"_tok || tk == "="_tok) break;
+					}
+					advance();
+				}
+			}
+			continue;
+		}
+		
 		// Handle pure virtual (= 0), default (= default), delete (= delete)
 		if (token.type() == Token::Type::Punctuator && token.value() == "=") {
 			auto next = peek_info(1);
@@ -4402,13 +4440,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// For now, we'll treat it as an identity function that preserves references
 			// Skip template arguments if present
 			if (current_token_.value() == "<") {
-				// Skip template arguments: <T>
+				// Skip template arguments: <T> or <iter_reference_t<_It>>
 				int angle_bracket_depth = 1;
 				advance(); // consume <
 				
 				while (angle_bracket_depth > 0 && !current_token_.kind().is_eof()) {
 					if (current_token_.value() == "<") angle_bracket_depth++;
 					else if (current_token_.value() == ">") angle_bracket_depth--;
+					else if (current_token_.value() == ">>") angle_bracket_depth -= 2;
 					advance();
 				}
 			}

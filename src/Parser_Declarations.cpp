@@ -7345,6 +7345,20 @@ ParseResult Parser::parse_static_assert()
 
 	// Check if the assertion failed
 	if (!eval_result.as_bool()) {
+		// In template contexts, static_assert may evaluate to false because
+		// type traits like is_constructible<_Tp, _Args...> return false_type
+		// for unknown/dependent types. Defer instead of failing.
+		if (is_in_template_definition || is_in_template_struct) {
+			FLASH_LOG(Templates, Debug, "Deferring static_assert that evaluated to false in template context");
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& struct_ctx = struct_parsing_context_stack_.back();
+				if (struct_ctx.struct_node) {
+					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+				}
+			}
+			return saved_position.success();
+		}
 		std::string error_msg = "static_assert failed";
 		if (!message.empty()) {
 			error_msg += ": " + message;
@@ -8857,6 +8871,33 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 			angle_bracket_depth--;
 		}
 		advance();
+	}
+
+	// Skip optional requires clause between template parameters and 'friend'
+	// e.g., template<typename _It2, sentinel_for<_It> _Sent2>
+	//         requires sentinel_for<_Sent, _It2>
+	//         friend constexpr bool operator==(...) { ... }
+	if (peek() == "requires"_tok) {
+		advance(); // consume 'requires'
+		// Skip the constraint expression
+		int paren_depth = 0;
+		int angle_depth = 0;
+		while (!peek().is_eof()) {
+			auto tk = peek();
+			if (tk == "("_tok) paren_depth++;
+			else if (tk == ")"_tok) paren_depth--;
+			else if (tk == "<"_tok) angle_depth++;
+			else if (tk == ">"_tok) { if (angle_depth > 0) angle_depth--; }
+			else if (tk == ">>"_tok) { angle_depth -= 2; if (angle_depth < 0) angle_depth = 0; }
+			
+			if (paren_depth == 0 && angle_depth == 0 && peek().is_keyword()) {
+				if (tk == "friend"_tok || tk == "constexpr"_tok || tk == "const"_tok ||
+				    tk == "static"_tok || tk == "inline"_tok || tk == "virtual"_tok) {
+					break;
+				}
+			}
+			advance();
+		}
 	}
 
 	// Now we should see 'friend'
