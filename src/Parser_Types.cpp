@@ -46,7 +46,7 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 // This consolidates the logic for parsing functional casts from both keyword and identifier contexts
 ParseResult Parser::parse_functional_cast(std::string_view type_name, const Token& type_token) {
 	// Expect '(' after type name
-	if (!current_token_.has_value() || current_token_->value() != "(") {
+	if (current_token_.kind().is_eof() || current_token_.value() != "(") {
 		return ParseResult::error("Expected '(' for functional cast", type_token);
 	}
 	
@@ -80,7 +80,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	}
 	
 	// Check for empty parentheses: Type() is value initialization (zero for scalar types)
-	if (current_token_.has_value() && current_token_->value() == ")") {
+	if (current_token_.value() == ")") {
 		advance(); // consume ')'
 		
 		// Create a zero literal of the appropriate type (value initialization)
@@ -121,7 +121,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	}
 	
 	if (!consume(")"_tok)) {
-		return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
+		return ParseResult::error("Expected ')' after functional cast expression", current_token_);
 	}
 	
 	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token);
@@ -191,8 +191,8 @@ ParseResult Parser::parse_type_specifier()
 	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
 		--parsing_depth_;
 		FLASH_LOG(Parser, Error, "Maximum parsing depth (", MAX_PARSING_DEPTH, ") exceeded in parse_type_specifier()");
-		FLASH_LOG(Parser, Error, "Current token: ", current_token_ ? current_token_->value() : "none");
-		return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", *current_token_);
+		FLASH_LOG(Parser, Error, "Current token: ", current_token_.value());
+		return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", current_token_);
 	}
 	
 	// RAII guard to decrement depth on all exit paths
@@ -269,7 +269,7 @@ ParseResult Parser::parse_type_specifier()
 
 		// Expect ')'
 		if (peek() != ")"_tok) {
-			return ParseResult::error("Expected ')' after type in __underlying_type", *current_token_);
+			return ParseResult::error("Expected ')' after type in __underlying_type", current_token_);
 		}
 		advance(); // consume ')'
 
@@ -2073,7 +2073,7 @@ ParseResult Parser::parse_decltype_specifier()
 
 	// Expect '('
 	if (!consume("("_tok)) {
-		return ParseResult::error(std::string("Expected '(' after '") + std::string(keyword) + "'", *current_token_);
+		return ParseResult::error(std::string("Expected '(' after '") + std::string(keyword) + "'", current_token_);
 	}
 
 	// C++14: Check for decltype(auto) - special case for deduced return types
@@ -2081,7 +2081,7 @@ ParseResult Parser::parse_decltype_specifier()
 	if (keyword == "decltype" && peek() == "auto"_tok) {
 		advance();  // consume 'auto'
 		if (!consume(")"_tok)) {
-			return ParseResult::error("Expected ')' after 'decltype(auto)'", *current_token_);
+			return ParseResult::error("Expected ')' after 'decltype(auto)'", current_token_);
 		}
 		// Return Type::Auto to indicate deduced return type
 		// The semantics of decltype(auto) vs auto differ during instantiation,
@@ -2113,7 +2113,7 @@ ParseResult Parser::parse_decltype_specifier()
 			}
 			// Consume the final ')'
 			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after decltype expression", *current_token_);
+				return ParseResult::error("Expected ')' after decltype expression", current_token_);
 			}
 			// Create a placeholder type for the dependent decltype expression
 			TypeSpecifierNode dependent_type(Type::Auto, TypeQualifier::None, 0);
@@ -2124,7 +2124,7 @@ ParseResult Parser::parse_decltype_specifier()
 
 	// Expect ')'
 	if (!consume(")"_tok)) {
-		return ParseResult::error("Expected ')' after decltype expression", *current_token_);
+		return ParseResult::error("Expected ')' after decltype expression", current_token_);
 	}
 
 	// Deduce the type from the expression
@@ -2162,7 +2162,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 	out_params.is_variadic = false;
 
 	if (!consume("("_tok)) {
-		return ParseResult::error("Expected '(' for parameter list", *current_token_);
+		return ParseResult::error("Expected '(' for parameter list", current_token_);
 	}
 
 	while (!consume(")"_tok)) {
@@ -2195,11 +2195,11 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				return ParseResult::error(
 					"Variadic functions must use __cdecl or __vectorcall calling convention "
 					"(other conventions use callee cleanup which is incompatible with variadic arguments)",
-					*current_token_);
+					current_token_);
 			}
 
 			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after variadic '...'", *current_token_);
+				return ParseResult::error("Expected ')' after variadic '...'", current_token_);
 			}
 			break;
 		}
@@ -2279,11 +2279,11 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 					return ParseResult::error(
 						"Variadic functions must use __cdecl or __vectorcall calling convention "
 						"(other conventions use callee cleanup which is incompatible with variadic arguments)",
-						*current_token_);
+						current_token_);
 				}
 
 				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after variadic '...'", *current_token_);
+					return ParseResult::error("Expected ')' after variadic '...'", current_token_);
 				}
 				break;
 			}
@@ -2293,7 +2293,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			break;
 		}
 		else {
-			return ParseResult::error("Expected ',' or ')' in parameter list", *current_token_);
+			return ParseResult::error("Expected ',' or ')' in parameter list", current_token_);
 		}
 	}
 
@@ -2435,14 +2435,14 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 							}
 						}
 						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type), 
-							current_token_.value_or(Token()));
+							current_token_);
 					}
 				}
 			}
 		}
 		
 		if (peek().is_eof()) {
-			return ParsedFunctionArguments::make_error("Expected ',' or ')' in function call", *current_token_);
+			return ParsedFunctionArguments::make_error("Expected ',' or ')' in function call", current_token_);
 		}
 		
 		if (peek() == ")"_tok) {
@@ -2450,7 +2450,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 		}
 		
 		if (!consume(","_tok)) {
-			return ParsedFunctionArguments::make_error("Expected ',' between function arguments", *current_token_);
+			return ParsedFunctionArguments::make_error("Expected ',' between function arguments", current_token_);
 		}
 	}
 	
@@ -2601,7 +2601,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				}
 
 				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after noexcept expression", *current_token_);
+					return ParseResult::error("Expected ')' after noexcept expression", current_token_);
 				}
 			}
 			continue;
@@ -2776,12 +2776,12 @@ ParseResult Parser::parse_function_header(
 			advance();
 			// Operator symbol parsing would continue here in full implementation
 		} else {
-			return ParseResult::error("Expected 'operator' keyword", *current_token_);
+			return ParseResult::error("Expected 'operator' keyword", current_token_);
 		}
 	} else if (ctx.kind == FlashCpp::FunctionKind::Constructor) {
 		// Constructor name must match the parent struct name
 		if (!peek().is_identifier()) {
-			return ParseResult::error("Expected constructor name", *current_token_);
+			return ParseResult::error("Expected constructor name", current_token_);
 		}
 		if (peek_info().value() != ctx.parent_struct_name) {
 			return ParseResult::error("Constructor name must match class name", peek_info());
@@ -2791,11 +2791,11 @@ ParseResult Parser::parse_function_header(
 	} else if (ctx.kind == FlashCpp::FunctionKind::Destructor) {
 		// Destructor must start with '~'
 		if (peek() != "~"_tok) {
-			return ParseResult::error("Expected '~' for destructor", *current_token_);
+			return ParseResult::error("Expected '~' for destructor", current_token_);
 		}
 		advance();  // consume '~'
 		if (!peek().is_identifier()) {
-			return ParseResult::error("Expected destructor name", *current_token_);
+			return ParseResult::error("Expected destructor name", current_token_);
 		}
 		if (peek_info().value() != ctx.parent_struct_name) {
 			return ParseResult::error("Destructor name must match class name", peek_info());
@@ -2805,7 +2805,7 @@ ParseResult Parser::parse_function_header(
 	} else {
 		// Regular function name
 		if (!peek().is_identifier()) {
-			return ParseResult::error("Expected function name", *current_token_);
+			return ParseResult::error("Expected function name", current_token_);
 		}
 		out_header.name_token = peek_info();
 		advance();
@@ -3001,7 +3001,7 @@ ParseResult Parser::parse_function_body_with_context(
 
 	// Expect function body with '{'
 	if (peek() != "{"_tok) {
-		return ParseResult::error("Expected '{' or ';' after function declaration", *current_token_);
+		return ParseResult::error("Expected '{' or ';' after function declaration", current_token_);
 	}
 
 	// Set up function scope using RAII guard (Phase 3)

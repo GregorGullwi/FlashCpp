@@ -16,7 +16,7 @@ ParseResult Parser::parse_top_level_node()
 	if (peek_info().type() == Token::Type::Identifier && peek_info().value() == "__pragma") {
 		advance(); // consume '__pragma'
 		if (!consume("("_tok)) {
-			return ParseResult::error("Expected '(' after '__pragma'", *current_token_);
+			return ParseResult::error("Expected '(' after '__pragma'", current_token_);
 		}
 		
 		// Now parse what's inside - it could be pack(...) or something else
@@ -24,7 +24,7 @@ ParseResult Parser::parse_top_level_node()
 		    peek_info().value() == "pack") {
 			advance(); // consume 'pack'
 			if (!consume("("_tok)) {
-				return ParseResult::error("Expected '(' after '__pragma(pack'", *current_token_);
+				return ParseResult::error("Expected '(' after '__pragma(pack'", current_token_);
 			}
 			
 			// Reuse the pack parsing logic by calling parse_pragma_pack_inner
@@ -35,7 +35,7 @@ ParseResult Parser::parse_top_level_node()
 			
 			// Consume the outer closing ')'
 			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after '__pragma(...)'", *current_token_);
+				return ParseResult::error("Expected ')' after '__pragma(...)'", current_token_);
 			}
 			return saved_position.success();
 		} else {
@@ -64,7 +64,7 @@ ParseResult Parser::parse_top_level_node()
 				advance(); // consume 'pack'
 
 				if (!consume("("_tok)) {
-					return ParseResult::error("Expected '(' after '#pragma pack'", *current_token_);
+					return ParseResult::error("Expected '(' after '#pragma pack'", current_token_);
 				}
 
 				// Use the shared helper function to parse the pack contents
@@ -244,7 +244,7 @@ ParseResult Parser::parse_top_level_node()
 			} else if (linkage_str == "C++") {
 				linkage = Linkage::CPlusPlus;
 			} else {
-				return ParseResult::error("Unknown linkage specification: " + std::string(linkage_str), *current_token_);
+				return ParseResult::error("Unknown linkage specification: " + std::string(linkage_str), current_token_);
 			}
 
 			advance(); // consume linkage string
@@ -321,7 +321,7 @@ ParseResult Parser::parse_type_and_name() {
         --parsing_depth_;
         FLASH_LOG(Parser, Error, "Maximum parsing depth (", MAX_PARSING_DEPTH, ") exceeded in parse_type_and_name()");
         FLASH_LOG(Parser, Error, "This indicates an infinite loop in type parsing");
-        return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", *current_token_);
+        return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", current_token_);
     }
     
     // RAII guard to decrement depth on all exit paths
@@ -344,7 +344,7 @@ ParseResult Parser::parse_type_and_name() {
     }
 
     if (!type_specifier_result.node().has_value()) {
-        return ParseResult::error("Expected type specifier", *current_token_);
+        return ParseResult::error("Expected type specifier", current_token_);
     }
 
     // Get the type specifier node to modify it with pointer levels
@@ -411,12 +411,12 @@ ParseResult Parser::parse_type_and_name() {
     // Also handle calling convention: type (__cdecl *identifier)(params)
     if (peek() == "("_tok) {
         FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Found '(' - checking for function pointer. current_token={}",
-            current_token_.has_value() ? std::string(current_token_->value()) : "N/A");
+            std::string(current_token_.value()));
         // Save position in case this isn't a function pointer or reference declarator
         SaveHandle saved_pos = save_token_position();
         advance(); // consume '('
         FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: After consuming '(', current_token={}, peek={}",
-            current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+            std::string(current_token_.value()),
             !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 
         parse_calling_convention();
@@ -535,8 +535,8 @@ ParseResult Parser::parse_type_and_name() {
                     } else {
                         // Unnamed pointer-to-member-function parameter
                         identifier_token = Token(Token::Type::Identifier, ""sv,
-                            current_token_->line(), current_token_->column(),
-                            current_token_->file_index());
+                            current_token_.line(), current_token_.column(),
+                            current_token_.file_index());
                     }
                     
                     // Expect ')'
@@ -600,10 +600,10 @@ ParseResult Parser::parse_type_and_name() {
         } else {
             // Not a function pointer or reference declarator, restore and continue with regular parsing
             FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Not a function pointer, restoring. Before restore: current_token={}", 
-                current_token_.has_value() ? std::string(current_token_->value()) : "N/A");
+                std::string(current_token_.value()));
             restore_token_position(saved_pos);
             FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: After restore: current_token={}, peek={}", 
-                current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                std::string(current_token_.value()),
                 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
         }
     }
@@ -1030,7 +1030,7 @@ ParseResult Parser::parse_type_and_name() {
         } else {
             // Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
             FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}", 
-                current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                std::string(current_token_.value()),
                 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
             if (!peek().is_eof()) {
                 auto next = peek_info().value();
@@ -1040,8 +1040,8 @@ ParseResult Parser::parse_type_and_name() {
                     // ':' handles unnamed bitfields (e.g., int :32;) and ';' handles unnamed members
                     FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
                     identifier_token = Token(Token::Type::Identifier, ""sv,
-                                            current_token_->line(), current_token_->column(),
-                                            current_token_->file_index());
+                                            current_token_.line(), current_token_.column(),
+                                            current_token_.file_index());
                 } else {
                     // Regular identifier
                     FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consuming token as identifier, peek={}", std::string(next));
@@ -1052,7 +1052,7 @@ ParseResult Parser::parse_type_and_name() {
                     identifier_token = id_token;
                     FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consumed identifier={}, now current_token={}, peek={}", 
                         std::string(identifier_token.value()),
-                        current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                        std::string(current_token_.value()),
                         !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
                 }
             } else {
@@ -1074,7 +1074,7 @@ ParseResult Parser::parse_type_and_name() {
                 // Empty brackets - array size will be inferred from initializer
                 is_unsized_array = true;
             } else {
-                return ParseResult::error("Only the first array dimension can be unsized", *current_token_);
+                return ParseResult::error("Only the first array dimension can be unsized", current_token_);
             }
         } else {
             // Parse the array size expression
@@ -1088,7 +1088,7 @@ ParseResult Parser::parse_type_and_name() {
         // Expect closing ']'
         if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
             peek() != "]"_tok) {
-            return ParseResult::error("Expected ']' after array size", *current_token_);
+            return ParseResult::error("Expected ']' after array size", current_token_);
         }
         advance(); // consume ']'
     }
@@ -1129,7 +1129,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
     // At this point, we've already parsed 'auto' (and optional &/&&) and confirmed the next token is '['
     // Consume the '['
     if (peek() != "["_tok) {
-        return ParseResult::error("Expected '[' for structured binding", *current_token_);
+        return ParseResult::error("Expected '[' for structured binding", current_token_);
     }
     advance(); // consume '['
     
@@ -1139,7 +1139,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
     while (true) {
         // Expect an identifier
         if (!peek().is_identifier()) {
-            return ParseResult::error("Expected identifier in structured binding", *current_token_);
+            return ParseResult::error("Expected identifier in structured binding", current_token_);
         }
         
         Token id_token = peek_info();
@@ -1157,13 +1157,13 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
             // End of identifier list
             break;
         } else {
-            return ParseResult::error("Expected ',' or ']' in structured binding identifier list", *current_token_);
+            return ParseResult::error("Expected ',' or ']' in structured binding identifier list", current_token_);
         }
     }
     
     // Consume the ']'
     if (peek() != "]"_tok) {
-        return ParseResult::error("Expected ']' after structured binding identifiers", *current_token_);
+        return ParseResult::error("Expected ']' after structured binding identifiers", current_token_);
     }
     advance(); // consume ']'
     
@@ -1173,7 +1173,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
     // For C++17, we support '=' and '{}' 
     // C++20 adds '()' but let's keep it simple for now
     if (peek().is_eof()) {
-        return ParseResult::error("Expected initializer after structured binding identifiers", *current_token_);
+        return ParseResult::error("Expected initializer after structured binding identifiers", current_token_);
     }
     
     std::optional<ASTNode> initializer;
@@ -1198,11 +1198,11 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
         initializer = init_result.node();
         
     } else {
-        return ParseResult::error("Expected '=' or '{' after structured binding identifiers", *current_token_);
+        return ParseResult::error("Expected '=' or '{' after structured binding identifiers", current_token_);
     }
     
     if (!initializer.has_value()) {
-        return ParseResult::error("Failed to parse structured binding initializer", *current_token_);
+        return ParseResult::error("Failed to parse structured binding initializer", current_token_);
     }
     
     FLASH_LOG(Parser, Debug, "parse_structured_binding: Successfully parsed initializer");
@@ -1258,7 +1258,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
         // Expect '*' for function pointer
         if (peek() != "*"_tok) {
-            return ParseResult::error("Expected '*' in function pointer declarator", *current_token_);
+            return ParseResult::error("Expected '*' in function pointer declarator", current_token_);
         }
         advance(); // consume '*'
 
@@ -1281,7 +1281,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
         // Parse identifier
         if (!peek().is_identifier()) {
-            return ParseResult::error("Expected identifier in function pointer declarator", *current_token_);
+            return ParseResult::error("Expected identifier in function pointer declarator", current_token_);
         }
         Token identifier_token = peek_info();
         advance();
@@ -1301,7 +1301,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
             // Now expect closing ')' for the (*func(...)) part
             if (!consume(")"_tok)) {
-                return ParseResult::error("Expected ')' after function declarator", *current_token_);
+                return ParseResult::error("Expected ')' after function declarator", current_token_);
             }
 
             // Check for array declarator: '[' size ']' after the function declarator
@@ -1318,7 +1318,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
                 array_size_expr = size_result.node();
 
                 if (!consume("]"_tok)) {
-                    return ParseResult::error("Expected ']' after array size", *current_token_);
+                    return ParseResult::error("Expected ']' after array size", current_token_);
                 }
 
                 // The return type is: base_type (*)[array_size] = pointer to array of base_type
@@ -1354,7 +1354,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
         // Case 1: Expect closing ')' for function pointer variable pattern
         if (peek() != ")"_tok) {
-            return ParseResult::error("Expected ')' after function pointer identifier", *current_token_);
+            return ParseResult::error("Expected ')' after function pointer identifier", current_token_);
         }
         advance(); // consume ')'
 
@@ -1387,7 +1387,7 @@ ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
     // Parse identifier
     if (!peek().is_identifier()) {
         return ParseResult::error("Expected identifier in declarator",
-                                 *current_token_);
+                                 current_token_);
     }
 
     out_identifier = peek_info();
@@ -1464,7 +1464,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
         if (!consume(")"_tok)) {
             return ParseResult::error("Expected ')' after function parameters",
-                                     *current_token_);
+                                     current_token_);
         }
 
         // Check for noexcept specifier on function pointer type
@@ -1774,10 +1774,10 @@ ParseResult Parser::parse_declaration(FlashCpp::DeclarationContext context)
 		case FlashCpp::DeclarationContext::ClassMember:
 			// Class member declarations are handled by parse_struct_declaration
 			// This shouldn't be called directly for class members
-			return ParseResult::error("Class member declarations should use parse_struct_declaration", *current_token_);
+			return ParseResult::error("Class member declarations should use parse_struct_declaration", current_token_);
 			
 		default:
-			return ParseResult::error("Unknown declaration context", *current_token_);
+			return ParseResult::error("Unknown declaration context", current_token_);
 	}
 }
 
@@ -1878,7 +1878,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	}
 
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name succeeded. current_token={}, peek={}", 
-		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		std::string(current_token_.value()),
 		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 
 	// Check for out-of-line member function definition: ClassName::functionName(...)
@@ -1886,7 +1886,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: Got decl_node, identifier={}. About to check for '::', current_token={}, peek={}", 
 		std::string(decl_node.identifier_token().value()),
-		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		std::string(current_token_.value()),
 		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	if (peek() == "::"_tok) {
 		// This is an out-of-line member function definition
@@ -2181,13 +2181,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	// First, try to parse as a function definition
 	// Save position before attempting function parse so we can backtrack if it's actually a variable
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to try parse_function_declaration. current_token={}, peek={}", 
-		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		std::string(current_token_.value()),
 		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	SaveHandle before_function_parse = save_token_position();
 	ParseResult function_definition_result = parse_function_declaration(decl_node, attr_info.calling_convention);
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_declaration returned. is_error={}, current_token={}, peek={}", 
 		function_definition_result.is_error(),
-		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		std::string(current_token_.value()),
 		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	if (!function_definition_result.is_error()) {
 		// Successfully parsed as function - discard saved position
@@ -2212,12 +2212,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		FlashCpp::MemberQualifiers member_quals;
 		FlashCpp::FunctionSpecifiers func_specs;
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse_function_trailing_specifiers. current_token={}, peek={}", 
-			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			std::string(current_token_.value()),
 			!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 		auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_trailing_specifiers returned. is_error={}, current_token={}, peek={}", 
 			specs_result.is_error(),
-			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			std::string(current_token_.value()),
 			!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 		if (specs_result.is_error()) {
 			return specs_result;
@@ -2359,7 +2359,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 		// Is only function declaration
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: Checking for ';' vs function body. current_token={}, peek={}", 
-			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			std::string(current_token_.value()),
 			!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 		if (consume(";"_tok)) {
 			// Return the function declaration node (needed for templates)
@@ -2371,7 +2371,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 		// Add function parameters to the symbol table within a function scope (Phase 3: RAII)
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse function body. current_token={}, peek={}", 
-			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			std::string(current_token_.value()),
 			!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 		FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
 
@@ -2393,7 +2393,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			// Parse function body
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to call parse_block. current_token={}, peek={}", 
-				current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+				std::string(current_token_.value()),
 				!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 			auto block_result = parse_block();
 			if (block_result.is_error()) {
@@ -2447,7 +2447,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			if (init_result.has_value()) {
 				initializer = init_result;
 			} else {
-				return ParseResult::error("Failed to parse initializer expression", *current_token_);
+				return ParseResult::error("Failed to parse initializer expression", current_token_);
 			}
 		} else if (peek() == "{"_tok) {
 			// Direct list initialization: Type var{args}
@@ -2484,7 +2484,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 			
 			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+				return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 			}
 			
 			// Create a ConstructorCallNode representing the constructor call
@@ -2583,7 +2583,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				// Parse the next variable name
 				auto next_identifier_token = advance();
 				if (!next_identifier_token.kind().is_identifier()) {
-					return ParseResult::error("Expected identifier after comma in declaration list", *current_token_);
+					return ParseResult::error("Expected identifier after comma in declaration list", current_token_);
 				}
 
 				// Create a new DeclarationNode with the same type
@@ -2600,7 +2600,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					if (init_result.has_value()) {
 						next_initializer = init_result;
 					} else {
-						return ParseResult::error("Failed to parse initializer expression", *current_token_);
+						return ParseResult::error("Failed to parse initializer expression", current_token_);
 					}
 				} else if (peek() == "("_tok) {
 					// Constructor-style initialization for comma-separated declaration: Type var1, var2(args)
@@ -2627,7 +2627,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					}
 					
 					if (!consume(")"_tok)) {
-						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+						return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 					}
 					
 					// Create a ConstructorCallNode representing the constructor call
@@ -2667,7 +2667,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			// Expect semicolon after all declarations
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after declaration", *current_token_);
+				return ParseResult::error("Expected ';' after declaration", current_token_);
 			}
 
 			return saved_position.success(block_node);
@@ -2675,14 +2675,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 		// Single declaration - expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after declaration", *current_token_);
+			return ParseResult::error("Expected ';' after declaration", current_token_);
 		}
 
 		return saved_position.success(global_var_node);
 	}
 
 	// This should not be reached
-	return ParseResult::error("Unexpected parsing state", *current_token_);
+	return ParseResult::error("Unexpected parsing state", current_token_);
 }
 
 // Parse out-of-line constructor or destructor definition
@@ -2699,13 +2699,13 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	advance();  // consume first class name
 	
 	if (!consume("::"_tok)) {
-		return ParseResult::error("Expected '::' in out-of-line constructor/destructor definition", *current_token_);
+		return ParseResult::error("Expected '::' in out-of-line constructor/destructor definition", current_token_);
 	}
 	
 	if (is_destructor) {
 		// Check for ~ (might be operator type, not punctuator)
 		if (peek() != "~"_tok) {
-			return ParseResult::error("Expected '~' for destructor definition", *current_token_);
+			return ParseResult::error("Expected '~' for destructor definition", current_token_);
 		}
 		advance();  // consume ~
 	}
@@ -2949,7 +2949,7 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	// Parse function body
 	if (peek() != "{"_tok) {
 		member_function_context_stack_.pop_back();
-		return ParseResult::error("Expected '{' in constructor/destructor definition", *current_token_);
+		return ParseResult::error("Expected '{' in constructor/destructor definition", current_token_);
 	}
 	
 	// Parse function body
@@ -3098,7 +3098,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		
 		// Check for '='
 		if (peek() != "="_tok) {
-			return ParseResult::error("Expected '=' after alias name", *current_token_);
+			return ParseResult::error("Expected '=' after alias name", current_token_);
 		}
 		advance(); // consume '='
 		
@@ -3109,7 +3109,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 		
 		if (!type_result.node().has_value()) {
-			return ParseResult::error("Expected type after '=' in type alias", *current_token_);
+			return ParseResult::error("Expected type after '=' in type alias", current_token_);
 		}
 
 		// Parse pointer/reference modifiers after the base type
@@ -3269,7 +3269,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		
 		// Consume semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after type alias", *current_token_);
+			return ParseResult::error("Expected ';' after type alias", current_token_);
 		}
 		
 		// Store the alias in the struct (if struct_ref provided)
@@ -3382,7 +3382,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				}
 				
 				if (!member_type_result.node().has_value()) {
-					return ParseResult::error("Expected type specifier in struct member", *current_token_);
+					return ParseResult::error("Expected type specifier in struct member", current_token_);
 				}
 				
 				// Handle pointer declarators with CV-qualifiers (e.g., "unsigned short const* _locale_pctype")
@@ -3417,7 +3417,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					advance(); // consume ','
 					auto next_name = advance();
 					if (!next_name.kind().is_identifier()) {
-						return ParseResult::error("Expected member name after comma", *current_token_);
+						return ParseResult::error("Expected member name after comma", current_token_);
 					}
 					auto next_decl = emplace_node<DeclarationNode>(
 						emplace_node<TypeSpecifierNode>(member_type_spec),
@@ -3428,12 +3428,12 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				
 				// Expect semicolon
 				if (!consume(";"_tok)) {
-					return ParseResult::error("Expected ';' after struct member", *current_token_);
+					return ParseResult::error("Expected ';' after struct member", current_token_);
 				}
 			}
 			
 			if (member_count >= MAX_MEMBERS) {
-				return ParseResult::error("Struct has too many members (possible infinite loop detected)", *current_token_);
+				return ParseResult::error("Struct has too many members (possible infinite loop detected)", current_token_);
 			}
 			
 			// Expect closing brace
@@ -3495,13 +3495,13 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Parse the typedef alias name
 			auto alias_token = advance();
 			if (!alias_token.kind().is_identifier()) {
-				return ParseResult::error("Expected alias name after struct definition", *current_token_);
+				return ParseResult::error("Expected alias name after struct definition", current_token_);
 			}
 			auto alias_name = StringTable::getOrInternStringHandle(alias_token.value());
 			
 			// Consume semicolon
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after typedef", *current_token_);
+				return ParseResult::error("Expected ';' after typedef", current_token_);
 			}
 			
 			// Create type specifier for the typedef
@@ -3643,7 +3643,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			if (enumerator_count >= MAX_ENUMERATORS) {
-				return ParseResult::error("Enum has too many enumerators (possible infinite loop detected)", *current_token_);
+				return ParseResult::error("Enum has too many enumerators (possible infinite loop detected)", current_token_);
 			}
 			
 			// Expect closing brace
@@ -3657,13 +3657,13 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Parse the typedef alias name
 			auto alias_token = advance();
 			if (!alias_token.kind().is_identifier()) {
-				return ParseResult::error("Expected alias name after enum definition", *current_token_);
+				return ParseResult::error("Expected alias name after enum definition", current_token_);
 			}
 			auto alias_name = StringTable::getOrInternStringHandle(alias_token.value());
 			
 			// Consume semicolon
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after typedef", *current_token_);
+				return ParseResult::error("Expected ';' after typedef", current_token_);
 			}
 			
 			// Create type specifier for the typedef
@@ -3692,7 +3692,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	}
 	
 	if (!type_result.node().has_value()) {
-		return ParseResult::error("Expected type after 'typedef'", *current_token_);
+		return ParseResult::error("Expected type after 'typedef'", current_token_);
 	}
 	
 	ASTNode type_node = *type_result.node();
@@ -3774,7 +3774,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	
 	// Consume semicolon
 	if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after typedef", *current_token_);
+		return ParseResult::error("Expected ';' after typedef", current_token_);
 	}
 	
 	// Update type_node with modified type_spec (with pointers)
@@ -4124,12 +4124,12 @@ ParseResult Parser::parse_struct_declaration()
 					// Check for member type access (e.g., ::type) BEFORE deciding to defer
 					// We need to consume this even if deferring
 					std::optional<StringHandle> member_type_name;
-					if (current_token_.has_value() && current_token_->value() == "::") {
+					if (current_token_.value() == "::") {
 						advance(); // consume ::
-						if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
-							return ParseResult::error("Expected member name after ::", current_token_.value_or(Token()));
+						if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected member name after ::", current_token_);
 						}
-						StringHandle member_name = StringTable::getOrInternStringHandle(current_token_->value());
+						StringHandle member_name = StringTable::getOrInternStringHandle(current_token_.value());
 						advance(); // consume member name
 						
 						member_type_name = member_name;
@@ -4643,12 +4643,12 @@ ParseResult Parser::parse_struct_declaration()
 
 				// Expect semicolon
 				if (!consume(";"_tok)) {
-					return ParseResult::error("Expected ';' after static member declaration", *current_token_);
+					return ParseResult::error("Expected ';' after static member declaration", current_token_);
 				}
 
 				// Get the declaration and type specifier
 				if (!type_and_name_result.node().has_value()) {
-					return ParseResult::error("Expected static member declaration", *current_token_);
+					return ParseResult::error("Expected static member declaration", current_token_);
 				}
 				const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
@@ -4745,7 +4745,7 @@ ParseResult Parser::parse_struct_declaration()
 							}
 							
 							if (!member_type_result.node().has_value()) {
-								return ParseResult::error("Expected type specifier in named anonymous struct/union", *current_token_);
+								return ParseResult::error("Expected type specifier in named anonymous struct/union", current_token_);
 							}
 							
 							// Handle pointer declarators
@@ -4793,7 +4793,7 @@ ParseResult Parser::parse_struct_declaration()
 							
 							// Expect semicolon
 							if (!consume(";"_tok)) {
-								return ParseResult::error("Expected ';' after member in named anonymous struct/union", *current_token_);
+								return ParseResult::error("Expected ';' after member in named anonymous struct/union", current_token_);
 							}
 						}
 						
@@ -4849,7 +4849,7 @@ ParseResult Parser::parse_struct_declaration()
 							// Parse variable name
 							auto var_name_token = advance();
 							if (!var_name_token.kind().is_identifier()) {
-								return ParseResult::error("Expected identifier for named anonymous struct/union member", *current_token_);
+								return ParseResult::error("Expected identifier for named anonymous struct/union member", current_token_);
 							}
 							
 							// Create a TypeSpecifierNode for the anonymous type
@@ -4871,7 +4871,7 @@ ParseResult Parser::parse_struct_declaration()
 						
 						// Expect semicolon after the member declarations
 						if (!consume(";"_tok)) {
-							return ParseResult::error("Expected ';' after named anonymous struct/union member", *current_token_);
+							return ParseResult::error("Expected ';' after named anonymous struct/union member", current_token_);
 						}
 						
 						discard_saved_token(saved_pos);
@@ -4907,7 +4907,7 @@ ParseResult Parser::parse_struct_declaration()
 									}
 									
 									if (!nested_member_type_result.node().has_value()) {
-										return ParseResult::error("Expected type specifier in nested anonymous union", *current_token_);
+										return ParseResult::error("Expected type specifier in nested anonymous union", current_token_);
 									}
 									
 									// Handle pointer declarators
@@ -4940,7 +4940,7 @@ ParseResult Parser::parse_struct_declaration()
 										// Expect closing ']'
 										if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
 										    peek() != "]"_tok) {
-											return ParseResult::error("Expected ']' after array size", *current_token_);
+											return ParseResult::error("Expected ']' after array size", current_token_);
 										}
 										advance(); // consume ']'
 									}
@@ -4957,7 +4957,7 @@ ParseResult Parser::parse_struct_declaration()
 									
 									// Expect semicolon
 									if (!consume(";"_tok)) {
-										return ParseResult::error("Expected ';' after nested anonymous union member", *current_token_);
+										return ParseResult::error("Expected ';' after nested anonymous union member", current_token_);
 									}
 								}
 								
@@ -4968,7 +4968,7 @@ ParseResult Parser::parse_struct_declaration()
 								
 								// Expect semicolon after nested anonymous union
 								if (!consume(";"_tok)) {
-									return ParseResult::error("Expected ';' after nested anonymous union", *current_token_);
+									return ParseResult::error("Expected ';' after nested anonymous union", current_token_);
 								}
 								
 								discard_saved_token(nested_saved_pos);
@@ -4986,7 +4986,7 @@ ParseResult Parser::parse_struct_declaration()
 						}
 						
 						if (!anon_member_type_result.node().has_value()) {
-							return ParseResult::error("Expected type specifier in anonymous union", *current_token_);
+							return ParseResult::error("Expected type specifier in anonymous union", current_token_);
 						}
 						
 						// Handle pointer declarators
@@ -5019,7 +5019,7 @@ ParseResult Parser::parse_struct_declaration()
 							// Expect closing ']'
 							if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
 							    peek() != "]"_tok) {
-								return ParseResult::error("Expected ']' after array size", *current_token_);
+								return ParseResult::error("Expected ']' after array size", current_token_);
 							}
 							advance(); // consume ']'
 						}
@@ -5094,7 +5094,7 @@ ParseResult Parser::parse_struct_declaration()
 						
 						// Expect semicolon
 						if (!consume(";"_tok)) {
-							return ParseResult::error("Expected ';' after anonymous union member", *current_token_);
+							return ParseResult::error("Expected ';' after anonymous union member", current_token_);
 						}
 					}
 					
@@ -5105,7 +5105,7 @@ ParseResult Parser::parse_struct_declaration()
 					
 					// Expect semicolon after true anonymous union
 					if (!consume(";"_tok)) {
-						return ParseResult::error("Expected ';' after anonymous union", *current_token_);
+						return ParseResult::error("Expected ';' after anonymous union", current_token_);
 					}
 					
 					discard_saved_token(saved_pos);
@@ -5915,7 +5915,7 @@ ParseResult Parser::parse_struct_declaration()
 								} while (peek() == ","_tok && (advance(), true));
 							}
 							if (!consume(")"_tok)) {
-								return ParseResult::error("Expected ')' after initializer arguments", *current_token_);
+								return ParseResult::error("Expected ')' after initializer arguments", current_token_);
 							}
 
 							// Create an InitializerListNode with the arguments
@@ -5968,7 +5968,7 @@ ParseResult Parser::parse_struct_declaration()
 				// Parse the identifier (name) - reuse the same type
 				auto identifier_token = advance();
 				if (!identifier_token.kind().is_identifier()) {
-					return ParseResult::error("Expected identifier after comma in member declaration list", *current_token_);
+					return ParseResult::error("Expected identifier after comma in member declaration list", current_token_);
 				}
 
 				// Create a new DeclarationNode with the same type
@@ -7226,7 +7226,7 @@ ParseResult Parser::parse_static_assert()
 
 	// Expect opening parenthesis
 	if (!consume("("_tok)) {
-		return ParseResult::error("Expected '(' after 'static_assert'", *current_token_);
+		return ParseResult::error("Expected '(' after 'static_assert'", current_token_);
 	}
 
 	// Parse the condition expression
@@ -7249,18 +7249,18 @@ ParseResult Parser::parse_static_assert()
 			}
 		}
 		if (message.empty()) {
-			return ParseResult::error("Expected string literal for static_assert message", *current_token_);
+			return ParseResult::error("Expected string literal for static_assert message", current_token_);
 		}
 	}
 
 	// Expect closing parenthesis
 	if (!consume(")"_tok)) {
-		return ParseResult::error("Expected ')' after static_assert", *current_token_);
+		return ParseResult::error("Expected ')' after static_assert", current_token_);
 	}
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after static_assert", *current_token_);
+		return ParseResult::error("Expected ';' after static_assert", current_token_);
 	}
 
 	// If we're inside a template body during template DEFINITION (not instantiation),
@@ -7559,7 +7559,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				
 				// Expect semicolon
 				if (!consume(";"_tok)) {
-					return ParseResult::error("Expected ';' after nested anonymous struct/union member", *current_token_);
+					return ParseResult::error("Expected ';' after nested anonymous struct/union member", current_token_);
 				}
 				
 				discard_saved_token(nested_saved_pos);
@@ -7577,7 +7577,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		}
 		
 		if (!member_type_result.node().has_value()) {
-			return ParseResult::error("Expected type specifier in anonymous struct/union", *current_token_);
+			return ParseResult::error("Expected type specifier in anonymous struct/union", current_token_);
 		}
 		
 		// Handle pointer declarators
@@ -7617,7 +7617,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			// Expect closing ']'
 			if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
 			    peek() != "]"_tok) {
-				return ParseResult::error("Expected ']' after array size", *current_token_);
+				return ParseResult::error("Expected ']' after array size", current_token_);
 			}
 			advance(); // consume ']'
 		}
@@ -7645,7 +7645,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after member in anonymous struct/union", *current_token_);
+			return ParseResult::error("Expected ';' after member in anonymous struct/union", current_token_);
 		}
 	}
 	
@@ -8061,7 +8061,7 @@ ParseResult Parser::parse_typedef_declaration()
 						
 						// Expect semicolon after the member declarations
 						if (!consume(";"_tok)) {
-							return ParseResult::error("Expected ';' after named anonymous union/struct member in typedef", *current_token_);
+							return ParseResult::error("Expected ';' after named anonymous union/struct member in typedef", current_token_);
 						}
 						
 						discard_saved_token(saved_pos);
@@ -8092,7 +8092,7 @@ ParseResult Parser::parse_typedef_declaration()
 									}
 									
 									if (!nested_member_type_result.node().has_value()) {
-										return ParseResult::error("Expected type specifier in nested anonymous union", *current_token_);
+										return ParseResult::error("Expected type specifier in nested anonymous union", current_token_);
 									}
 									
 									// Handle pointer declarators
@@ -8125,7 +8125,7 @@ ParseResult Parser::parse_typedef_declaration()
 										// Expect closing ']'
 										if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
 										    peek() != "]"_tok) {
-											return ParseResult::error("Expected ']' after array size", *current_token_);
+											return ParseResult::error("Expected ']' after array size", current_token_);
 										}
 										advance(); // consume ']'
 									}
@@ -8142,7 +8142,7 @@ ParseResult Parser::parse_typedef_declaration()
 									
 									// Expect semicolon
 									if (!consume(";"_tok)) {
-										return ParseResult::error("Expected ';' after nested anonymous union member", *current_token_);
+										return ParseResult::error("Expected ';' after nested anonymous union member", current_token_);
 									}
 								}
 								
@@ -8153,7 +8153,7 @@ ParseResult Parser::parse_typedef_declaration()
 								
 								// Expect semicolon after nested anonymous union
 								if (!consume(";"_tok)) {
-									return ParseResult::error("Expected ';' after nested anonymous union", *current_token_);
+									return ParseResult::error("Expected ';' after nested anonymous union", current_token_);
 								}
 								
 								discard_saved_token(nested_saved_pos);
@@ -8171,7 +8171,7 @@ ParseResult Parser::parse_typedef_declaration()
 						}
 						
 						if (!anon_member_type_result.node().has_value()) {
-							return ParseResult::error("Expected type specifier in anonymous union", *current_token_);
+							return ParseResult::error("Expected type specifier in anonymous union", current_token_);
 						}
 						
 						// Handle pointer declarators
@@ -8204,7 +8204,7 @@ ParseResult Parser::parse_typedef_declaration()
 							// Expect closing ']'
 							if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
 							    peek() != "]"_tok) {
-								return ParseResult::error("Expected ']' after array size", *current_token_);
+								return ParseResult::error("Expected ']' after array size", current_token_);
 							}
 							advance(); // consume ']'
 						}
@@ -8220,7 +8220,7 @@ ParseResult Parser::parse_typedef_declaration()
 						
 						// Expect semicolon
 						if (!consume(";"_tok)) {
-							return ParseResult::error("Expected ';' after anonymous union member", *current_token_);
+							return ParseResult::error("Expected ';' after anonymous union member", current_token_);
 						}
 					}
 					
@@ -8231,7 +8231,7 @@ ParseResult Parser::parse_typedef_declaration()
 					
 					// Expect semicolon after anonymous union
 					if (!consume(";"_tok)) {
-						return ParseResult::error("Expected ';' after anonymous union", *current_token_);
+						return ParseResult::error("Expected ';' after anonymous union", current_token_);
 					}
 					
 					// Flatten anonymous union members into parent struct
@@ -8256,7 +8256,7 @@ ParseResult Parser::parse_typedef_declaration()
 			}
 
 			if (!member_type_result.node().has_value()) {
-				return ParseResult::error("Expected type specifier in struct member", *current_token_);
+				return ParseResult::error("Expected type specifier in struct member", current_token_);
 			}
 
 			// Handle pointer declarators with CV-qualifiers (e.g., "unsigned short const* _locale_pctype")
@@ -8294,7 +8294,7 @@ ParseResult Parser::parse_typedef_declaration()
 				// Expect closing ']'
 				if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
 				    peek() != "]"_tok) {
-					return ParseResult::error("Expected ']' after array size", *current_token_);
+					return ParseResult::error("Expected ']' after array size", current_token_);
 				}
 				advance(); // consume ']'
 			}
@@ -8316,7 +8316,7 @@ ParseResult Parser::parse_typedef_declaration()
 				// Parse the next member name
 				auto next_member_name = advance();
 				if (!next_member_name.kind().is_identifier()) {
-					return ParseResult::error("Expected member name after comma", *current_token_);
+					return ParseResult::error("Expected member name after comma", current_token_);
 				}
 
 				// Create declaration with same type
@@ -8330,7 +8330,7 @@ ParseResult Parser::parse_typedef_declaration()
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after struct member", *current_token_);
+				return ParseResult::error("Expected ';' after struct member", current_token_);
 			}
 		}
 
@@ -8418,7 +8418,7 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		if (!type_result.node().has_value()) {
-			return ParseResult::error("Expected type specifier after 'typedef'", *current_token_);
+			return ParseResult::error("Expected type specifier after 'typedef'", current_token_);
 		}
 
 		type_node = *type_result.node();
@@ -8633,7 +8633,7 @@ ParseResult Parser::parse_typedef_declaration()
 			
 			// Expect closing ']'
 			if (!consume("]"_tok)) {
-				return ParseResult::error("Expected ']' after array size in typedef", *current_token_);
+				return ParseResult::error("Expected ']' after array size in typedef", current_token_);
 			}
 		}
 		
@@ -8647,7 +8647,7 @@ ParseResult Parser::parse_typedef_declaration()
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after typedef declaration", *current_token_);
+		return ParseResult::error("Expected ';' after typedef declaration", current_token_);
 	}
 
 	// Build the qualified name for the typedef if we're in a namespace
@@ -8694,12 +8694,12 @@ ParseResult Parser::parse_friend_declaration()
 		// Parse class name
 		auto class_name_token = advance();
 		if (!class_name_token.kind().is_identifier()) {
-			return ParseResult::error("Expected class name after 'friend class'", *current_token_);
+			return ParseResult::error("Expected class name after 'friend class'", current_token_);
 		}
 
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after friend class declaration", *current_token_);
+			return ParseResult::error("Expected ';' after friend class declaration", current_token_);
 		}
 
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, StringTable::getOrInternStringHandle(class_name_token.value()));
@@ -8746,7 +8746,7 @@ ParseResult Parser::parse_friend_declaration()
 		while (!peek().is_eof()) {
 			auto name_token = advance();
 			if (!name_token.kind().is_identifier()) {
-				return ParseResult::error("Expected function name in friend declaration", *current_token_);
+				return ParseResult::error("Expected function name in friend declaration", current_token_);
 			}
 
 			// Check for :: (qualified name)
@@ -8772,7 +8772,7 @@ ParseResult Parser::parse_friend_declaration()
 
 	// Parse function parameters
 	if (!consume("("_tok)) {
-		return ParseResult::error("Expected '(' after friend function name", *current_token_);
+		return ParseResult::error("Expected '(' after friend function name", current_token_);
 	}
 
 	// Parse parameter list (simplified - just skip to closing paren)
@@ -8800,10 +8800,10 @@ ParseResult Parser::parse_friend_declaration()
 			advance(); // consume 'default' or 'delete'
 		}
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
+			return ParseResult::error("Expected ';' after friend function declaration", current_token_);
 		}
 	} else if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
+		return ParseResult::error("Expected ';' after friend function declaration", current_token_);
 	}
 
 	// Create friend declaration node
@@ -8998,7 +8998,7 @@ ParseResult Parser::parse_namespace() {
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after namespace alias", *current_token_);
+				return ParseResult::error("Expected ';' after namespace alias", current_token_);
 			}
 
 			// Convert namespace path to handle and add the alias to the symbol table
@@ -9129,7 +9129,7 @@ ParseResult Parser::parse_namespace() {
 					if (!is_anonymous) {
 						gSymbolTable.exit_scope();
 					}
-					return ParseResult::error("Unknown linkage specification: " + std::string(linkage_str), *current_token_);
+					return ParseResult::error("Unknown linkage specification: " + std::string(linkage_str), current_token_);
 				}
 
 				advance(); // consume linkage string
@@ -9243,12 +9243,12 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			// Parse alias name
 			auto alias_token = advance();
 			if (!alias_token.kind().is_identifier()) {
-				return ParseResult::error("Expected alias name after 'using'", *current_token_);
+				return ParseResult::error("Expected alias name after 'using'", current_token_);
 			}
 
 			// Consume '='
 			if (peek().is_eof() || peek_info().type() != Token::Type::Operator || peek() != "="_tok) {
-				return ParseResult::error("Expected '=' after alias name", *current_token_);
+				return ParseResult::error("Expected '=' after alias name", current_token_);
 			}
 			advance(); // consume '='
 
@@ -9408,7 +9408,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					
 					// This is a type alias
 					if (!consume(";"_tok)) {
-						return ParseResult::error("Expected ';' after type alias", *current_token_);
+						return ParseResult::error("Expected ';' after type alias", current_token_);
 					}
 
 					// Register the type alias in gTypesByName
@@ -9442,7 +9442,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				
 				// If we didn't get a node from parse_type_specifier, just check for semicolon
 				if (!consume(";"_tok)) {
-					return ParseResult::error("Expected ';' after type alias", *current_token_);
+					return ParseResult::error("Expected ';' after type alias", current_token_);
 				}
 				return saved_position.success();
 			} else if (parsing_template_body_ || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
@@ -9460,7 +9460,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					// Successfully skipped the template-dependent using declaration
 					return saved_position.success();
 				}
-				return ParseResult::error("Expected ';' after using declaration", *current_token_);
+				return ParseResult::error("Expected ';' after using declaration", current_token_);
 			}
 
 			// Not a type alias, try parsing as namespace path for namespace alias
@@ -9482,7 +9482,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after namespace alias", *current_token_);
+				return ParseResult::error("Expected ';' after namespace alias", current_token_);
 			}
 
 			// Convert namespace path to handle and add the alias to the symbol table
@@ -9519,7 +9519,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after using directive", *current_token_);
+			return ParseResult::error("Expected ';' after using directive", current_token_);
 		}
 
 		// Convert namespace path to handle and add the using directive to the symbol table
@@ -9558,7 +9558,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after 'using enum' declaration", *current_token_);
+			return ParseResult::error("Expected ';' after 'using enum' declaration", current_token_);
 		}
 
 		// Create the using enum node - CodeGen will also handle this for its local scope
@@ -9645,7 +9645,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after using declaration", *current_token_);
+		return ParseResult::error("Expected ';' after using declaration", current_token_);
 	}
 
 	// Convert namespace path to handle and add the using declaration to the symbol table

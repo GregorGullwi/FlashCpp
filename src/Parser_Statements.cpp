@@ -1,7 +1,7 @@
 ParseResult Parser::parse_block()
 {
 	if (!consume("{"_tok)) {
-		return ParseResult::error("Expected '{' for block", *current_token_);
+		return ParseResult::error("Expected '{' for block", current_token_);
 	}
 
 	// Enter a new scope for this block (C++ standard: each block creates a scope)
@@ -46,7 +46,7 @@ ParseResult Parser::parse_statement_or_declaration()
 
 	if (peek().is_eof()) {
 		return ParseResult::error("Expected a statement or declaration",
-			*current_token_);
+			current_token_);
 	}
 	const Token& current_token = peek_info();
 
@@ -411,17 +411,17 @@ ParseResult Parser::parse_variable_declaration()
 		
 		// Validate: structured bindings cannot have storage class specifiers
 		if (storage_class != StorageClass::None) {
-			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", *current_token_);
+			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", current_token_);
 		}
 		
 		// Validate: structured bindings cannot be constexpr
 		if (is_constexpr) {
-			return ParseResult::error("Structured bindings cannot be constexpr", *current_token_);
+			return ParseResult::error("Structured bindings cannot be constexpr", current_token_);
 		}
 		
 		// Validate: structured bindings cannot be constinit
 		if (is_constinit) {
-			return ParseResult::error("Structured bindings cannot be constinit", *current_token_);
+			return ParseResult::error("Structured bindings cannot be constinit", current_token_);
 		}
 		
 		FLASH_LOG(Parser, Debug, "parse_variable_declaration: Handling structured binding");
@@ -578,7 +578,7 @@ ParseResult Parser::parse_variable_declaration()
 			// e.g., void func() noexcept; or void func() const;
 			skip_function_trailing_specifiers();
 		} else {
-			return ParseResult::error("Expected ')' after direct initialization arguments", *current_token_);
+			return ParseResult::error("Expected ')' after direct initialization arguments", current_token_);
 		}
 	}
 	// Check for copy initialization: Type var = expr or Type var = {args}
@@ -587,7 +587,7 @@ ParseResult Parser::parse_variable_declaration()
 		if (init_result.has_value()) {
 			first_init_expr = init_result;
 		} else {
-			return ParseResult::error("Failed to parse initializer expression", *current_token_);
+			return ParseResult::error("Failed to parse initializer expression", current_token_);
 		}
 	}
 	// Check for direct brace initialization: Type var{args}
@@ -658,7 +658,7 @@ ParseResult Parser::parse_variable_declaration()
 				if (init_result.has_value()) {
 					init_expr = init_result;
 				} else {
-					return ParseResult::error("Failed to parse direct initialization", *current_token_);
+					return ParseResult::error("Failed to parse direct initialization", current_token_);
 				}
 			} else if (peek() == "{"_tok) {
 				// Direct list initialization for comma-separated declaration: Type var1, var2{args}
@@ -931,7 +931,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// or for array initialization like: int arr[5] = {1, 2, 3, 4, 5};
 
 	if (!consume("{"_tok)) {
-		return ParseResult::error("Expected '{' for brace initializer", *current_token_);
+		return ParseResult::error("Expected '{' for brace initializer", current_token_);
 	}
 
 	// Create an InitializerListNode to hold the initializer expressions
@@ -952,7 +952,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Check if we have too many initializers
 			if (array_size.has_value() && element_count >= *array_size) {
-				return ParseResult::error("Too many initializers for array", *current_token_);
+				return ParseResult::error("Too many initializers for array", current_token_);
 			}
 
 			// Parse the initializer expression with precedence > comma operator (precedence 1)
@@ -966,7 +966,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				init_list_ref.add_initializer(*init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 
 			element_count++;
@@ -986,7 +986,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		}
 
 		if (!consume("}"_tok)) {
-			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 
 		return ParseResult::success(init_list_node);
@@ -1033,16 +1033,16 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		}
 
 		if (!init_expr_result.node().has_value()) {
-			return ParseResult::error("Expected initializer expression", *current_token_);
+			return ParseResult::error("Expected initializer expression", current_token_);
 		}
 
 		// For scalar types, only allow a single initializer (no comma)
 		if (peek() == ","_tok) {
-			return ParseResult::error("Too many initializers for scalar type", *current_token_);
+			return ParseResult::error("Too many initializers for scalar type", current_token_);
 		}
 
 		if (!consume("}"_tok)) {
-			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 
 		// For scalar types, unwrap the expression from the brace initializer
@@ -1052,12 +1052,12 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 	TypeIndex type_index = type_specifier.type_index();
 	if (type_index >= gTypeInfo.size()) {
-		return ParseResult::error("Invalid struct type index", *current_token_);
+		return ParseResult::error("Invalid struct type index", current_token_);
 	}
 
 	const TypeInfo& type_info = gTypeInfo[type_index];
 	if (!type_info.struct_info_) {
-		return ParseResult::error("Type is not a struct", *current_token_);
+		return ParseResult::error("Type is not a struct", current_token_);
 	}
 
 	const StructTypeInfo& struct_info = *type_info.struct_info_;
@@ -1069,7 +1069,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// This struct has an initializer_list constructor
 		// Parse all the brace elements first
 		std::vector<ASTNode> elements;
-		Token brace_token = *current_token_;  // Save the '{' token location
+		Token brace_token = current_token_;  // Save the '{' token location
 		
 		while (true) {
 			// Check if we've reached the end of the initializer list
@@ -1086,7 +1086,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				elements.push_back(*init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 			
 			// Check for comma or end of list
@@ -1104,7 +1104,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		}
 		
 		if (!consume("}"_tok)) {
-			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 		
 		// Get element type from the initializer_list type
@@ -1222,7 +1222,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// No data members - must use constructor initialization
 		// Parse all the brace elements first
 		std::vector<ASTNode> elements;
-		Token brace_token = *current_token_;  // Save location for error reporting
+		Token brace_token = current_token_;  // Save location for error reporting
 		
 		while (true) {
 			// Check if we've reached the end of the initializer list
@@ -1239,7 +1239,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				elements.push_back(*init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 			
 			// Check for comma or end of list
@@ -1257,7 +1257,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		}
 		
 		if (!consume("}"_tok)) {
-			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 		
 		// Check if there's a constructor that matches the argument count and types
@@ -1399,7 +1399,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Parse member name
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected member name after '.' in designated initializer", *current_token_);
+				return ParseResult::error("Expected member name after '.' in designated initializer", current_token_);
 			}
 			std::string_view member_name = peek_info().value();
 			advance();
@@ -1417,18 +1417,18 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				}
 			}
 			if (!member_found) {
-				return ParseResult::error("Unknown member '" + std::string(member_name) + "' in designated initializer", *current_token_);
+				return ParseResult::error("Unknown member '" + std::string(member_name) + "' in designated initializer", current_token_);
 			}
 
 			// Check for duplicate member initialization
 			if (used_members.count(member_name)) {
-				return ParseResult::error("Member '" + std::string(member_name) + "' already initialized", *current_token_);
+				return ParseResult::error("Member '" + std::string(member_name) + "' already initialized", current_token_);
 			}
 			used_members.insert(member_name);
 
 			// Expect '='
 			if (peek() != "="_tok) {
-				return ParseResult::error("Expected '=' after member name in designated initializer", *current_token_);
+				return ParseResult::error("Expected '=' after member name in designated initializer", current_token_);
 			}
 			advance();  // consume '='
 
@@ -1462,17 +1462,17 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				init_list_ref.add_designated_initializer(StringTable::getOrInternStringHandle(member_name), *init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 		} else {
 			// Positional initializer
 			if (has_designated) {
-				return ParseResult::error("Positional initializers cannot follow designated initializers", *current_token_);
+				return ParseResult::error("Positional initializers cannot follow designated initializers", current_token_);
 			}
 
 			// Check if we have too many initializers
 			if (member_index >= struct_info.members.size()) {
-				return ParseResult::error("Too many initializers for struct", *current_token_);
+				return ParseResult::error("Too many initializers for struct", current_token_);
 			}
 
 			FLASH_LOG(Parser, Debug, "Parsing positional initializer for member index: ", member_index);
@@ -1508,7 +1508,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				init_list_ref.add_initializer(*init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 
 			member_index++;
@@ -1529,7 +1529,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	}
 
 	if (!consume("}"_tok)) {
-		return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 	}
 
 	// Check if we have too few initializers

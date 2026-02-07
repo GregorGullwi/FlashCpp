@@ -21,14 +21,14 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Re-check that we still have 'template'
 			if (peek() != "template"_tok) {
-				return ParseResult::error("Expected 'template' after 'extern'", *current_token_);
+				return ParseResult::error("Expected 'template' after 'extern'", current_token_);
 			}
 			advance(); // consume second 'template'
 		}
 		
 		// Now peek at what type of explicit instantiation this is
 		if (peek().is_eof()) {
-			return ParseResult::error("Unexpected end after 'template' keyword", *current_token_);
+			return ParseResult::error("Unexpected end after 'template' keyword", current_token_);
 		}
 		
 		std::string_view next_token = peek_info().value();
@@ -39,7 +39,7 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Parse the template name and arguments
 			if (peek().is_eof()) {
-				return ParseResult::error("Expected template name after 'template class'", *current_token_);
+				return ParseResult::error("Expected template name after 'template class'", current_token_);
 			}
 			
 			Token name_token = peek_info();
@@ -50,13 +50,13 @@ ParseResult Parser::parse_template_declaration() {
 			if (peek() == "<"_tok) {
 				template_args = parse_explicit_template_arguments();
 				if (!template_args.has_value()) {
-					return ParseResult::error("Failed to parse template arguments in explicit instantiation", *current_token_);
+					return ParseResult::error("Failed to parse template arguments in explicit instantiation", current_token_);
 				}
 			}
 			
 			// Expect ';'
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after explicit template instantiation", *current_token_);
+				return ParseResult::error("Expected ';' after explicit template instantiation", current_token_);
 			}
 			
 			// For explicit instantiation DEFINITION (not extern), force instantiation even in lazy mode
@@ -117,7 +117,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Expect '>' to end template parameter list
 		// Note: '>' is an operator, not a punctuator
 		if (peek() != ">"_tok) {
-			return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+			return ParseResult::error("Expected '>' after template parameter list", current_token_);
 		}
 		advance(); // consume '>'
 	}
@@ -345,14 +345,14 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Parse the concept name
 		if (!peek().is_identifier()) {
-			return ParseResult::error("Expected concept name after 'concept' in template", *current_token_);
+			return ParseResult::error("Expected concept name after 'concept' in template", current_token_);
 		}
 		Token concept_name_token = peek_info();
 		advance();
 		
 		// Expect '=' before the constraint expression
 		if (peek() != "="_tok) {
-			return ParseResult::error("Expected '=' after concept name", *current_token_);
+			return ParseResult::error("Expected '=' after concept name", current_token_);
 		}
 		advance(); // consume '='
 		
@@ -364,7 +364,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Expect ';' at the end
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after concept definition", *current_token_);
+			return ParseResult::error("Expected ';' after concept definition", current_token_);
 		}
 		
 		// Convert template_params (ASTNode vector) to TemplateParameterNode vector
@@ -405,7 +405,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Parse alias name
 		if (!peek().is_identifier()) {
-			return ParseResult::error("Expected alias name after 'using' in template", *current_token_);
+			return ParseResult::error("Expected alias name after 'using' in template", current_token_);
 		}
 		Token alias_name_token = peek_info();
 		std::string_view alias_name = alias_name_token.value();
@@ -413,7 +413,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Expect '='
 		if (peek() != "="_tok) {
-			return ParseResult::error("Expected '=' after alias name in template", *current_token_);
+			return ParseResult::error("Expected '=' after alias name in template", current_token_);
 		}
 		advance(); // consume '='
 		
@@ -565,7 +565,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after alias template declaration", *current_token_);
+			return ParseResult::error("Expected ';' after alias template declaration", current_token_);
 		}
 		
 		// Create TemplateAliasNode - use deferred constructor if we have unresolved parameters
@@ -640,7 +640,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Parse variable name
 		if (!peek().is_identifier()) {
-			return ParseResult::error("Expected variable name in variable template", *current_token_);
+			return ParseResult::error("Expected variable name in variable template", current_token_);
 		}
 		Token var_name_token = peek_info();
 		advance();
@@ -749,7 +749,7 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			
 			if (peek() != ">"_tok) {
-				return ParseResult::error("Expected '>' after variable template specialization pattern", *current_token_);
+				return ParseResult::error("Expected '>' after variable template specialization pattern", current_token_);
 			}
 			advance(); // consume '>'
 		}
@@ -784,7 +784,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after variable template declaration", *current_token_);
+			return ParseResult::error("Expected ';' after variable template declaration", current_token_);
 		}
 		
 		// Create VariableDeclarationNode
@@ -962,7 +962,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Parse class name
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected class name after 'class' keyword", *current_token_);
+				return ParseResult::error("Expected class name after 'class' keyword", current_token_);
 			}
 
 			Token class_name_token = peek_info();
@@ -972,7 +972,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Parse template arguments: <int>, <float>, etc.
 			auto template_args_opt = parse_explicit_template_arguments();
 			if (!template_args_opt.has_value()) {
-				return ParseResult::error("Expected template arguments in specialization", *current_token_);
+				return ParseResult::error("Expected template arguments in specialization", current_token_);
 			}
 
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
@@ -1117,7 +1117,7 @@ ParseResult Parser::parse_template_declaration() {
 							}
 						
 							// Handle member access when current_token_ already points to '::'
-							if (current_token_.has_value() && current_token_->value() == "::" && !member_type_name.has_value()) {
+							if (current_token_.value() == "::" && !member_type_name.has_value()) {
 								if (!peek().is_identifier()) {
 									return ParseResult::error("Expected member name after ::", peek_info());
 								}
@@ -2138,7 +2138,7 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Parse class name
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected class name", *current_token_);
+				return ParseResult::error("Expected class name", current_token_);
 			}
 			
 			Token class_name_token = peek_info();
@@ -2148,7 +2148,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Parse the specialization pattern: <T&>, <T*, U>, etc.
 			auto pattern_args_opt = parse_explicit_template_arguments();
 			if (!pattern_args_opt.has_value()) {
-				return ParseResult::error("Expected template argument pattern in partial specialization", *current_token_);
+				return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);
 			}
 			
 			std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
@@ -2325,9 +2325,9 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			
 			// Handle stray member access tokens (e.g., ::type) that weren't consumed earlier
-			while ((current_token_.has_value() && current_token_->value() == "::") ||
+			while ((current_token_.value() == "::") ||
 			       (peek() == "::"_tok)) {
-				if (current_token_.has_value() && current_token_->value() == "::") {
+				if (current_token_.value() == "::") {
 					// Current token is '::' - consume following identifier
 					if (peek().is_identifier()) {
 						advance(); // consume identifier
@@ -3313,14 +3313,14 @@ if (struct_type_info.getStructInfo()) {
 			// Parse: ClassName(params) -> ClassName<args>;
 			// class name
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected class name in deduction guide", *current_token_);
+				return ParseResult::error("Expected class name in deduction guide", current_token_);
 			}
 			std::string_view class_name = peek_info().value();
 			advance();
 			
 			// Parse parameter list
 			if (peek() != "("_tok) {
-				return ParseResult::error("Expected '(' in deduction guide", *current_token_);
+				return ParseResult::error("Expected '(' in deduction guide", current_token_);
 			}
 			advance(); // consume '('
 			
@@ -3370,19 +3370,19 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			if (peek() != ")"_tok) {
-				return ParseResult::error("Expected ')' in deduction guide", *current_token_);
+				return ParseResult::error("Expected ')' in deduction guide", current_token_);
 			}
 			advance(); // consume ')'
 			
 			// Expect ->
 			if (peek() != "->"_tok) {
-				return ParseResult::error("Expected '->' in deduction guide", *current_token_);
+				return ParseResult::error("Expected '->' in deduction guide", current_token_);
 			}
 			advance(); // consume '->'
 			
 			// Parse deduced type: ClassName<args>
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected class name after '->' in deduction guide", *current_token_);
+				return ParseResult::error("Expected class name after '->' in deduction guide", current_token_);
 			}
 			advance(); // consume class name (should match)
 			
@@ -3390,15 +3390,15 @@ if (struct_type_info.getStructInfo()) {
 			std::vector<ASTNode> deduced_type_nodes;
 			auto deduced_args_opt = parse_explicit_template_arguments(&deduced_type_nodes);
 			if (!deduced_args_opt.has_value()) {
-				return ParseResult::error("Expected template arguments in deduction guide", *current_token_);
+				return ParseResult::error("Expected template arguments in deduction guide", current_token_);
 			}
 			if (deduced_type_nodes.size() != deduced_args_opt->size()) {
-				return ParseResult::error("Unsupported deduction guide arguments", *current_token_);
+				return ParseResult::error("Unsupported deduction guide arguments", current_token_);
 			}
 			
 			// Expect semicolon
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after deduction guide", *current_token_);
+				return ParseResult::error("Expected ';' after deduction guide", current_token_);
 			}
 			
 			// Create DeductionGuideNode
@@ -3435,7 +3435,7 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
-				return ParseResult::error("Expected function name in template specialization", *current_token_);
+				return ParseResult::error("Expected function name in template specialization", current_token_);
 			}
 			
 			DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
@@ -3446,7 +3446,7 @@ if (struct_type_info.getStructInfo()) {
 			if (peek() == "<"_tok) {
 				auto template_args_opt = parse_explicit_template_arguments();
 				if (!template_args_opt.has_value()) {
-					return ParseResult::error("Failed to parse template arguments in function specialization", *current_token_);
+					return ParseResult::error("Failed to parse template arguments in function specialization", current_token_);
 				}
 				spec_template_args = *template_args_opt;
 			}
@@ -3458,7 +3458,7 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			if (!func_result.node().has_value() || !func_result.node()->is<FunctionDeclarationNode>()) {
-				return ParseResult::error("Failed to parse function in template specialization", *current_token_);
+				return ParseResult::error("Failed to parse function in template specialization", current_token_);
 			}
 			
 			FunctionDeclarationNode& func_node = func_result.node()->as<FunctionDeclarationNode>();
@@ -3481,7 +3481,7 @@ if (struct_type_info.getStructInfo()) {
 				if (!peek().is_eof()) {
 					error_msg += ", found '" + std::string(peek_info().value()) + "'";
 				}
-				return ParseResult::error(error_msg, *current_token_);
+				return ParseResult::error(error_msg, current_token_);
 			}
 			
 			// Enter function scope for parsing the body
@@ -3644,7 +3644,7 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	if (!decl_result.node().has_value()) {
-		return ParseResult::error("Expected function or class declaration after template parameter list", *current_token_);
+		return ParseResult::error("Expected function or class declaration after template parameter list", current_token_);
 	}
 
 	ASTNode decl_node = *decl_result.node();
@@ -3697,7 +3697,7 @@ if (struct_type_info.getStructInfo()) {
 		// Return success with no node so the caller doesn't add it to ast_nodes_
 		return saved_position.success();
 	} else {
-		return ParseResult::error("Unsupported template declaration type", *current_token_);
+		return ParseResult::error("Unsupported template declaration type", current_token_);
 	}
 }
 
@@ -3715,7 +3715,7 @@ ParseResult Parser::parse_concept_declaration() {
 
 	// Parse the concept name
 	if (!peek().is_identifier()) {
-		return ParseResult::error("Expected concept name after 'concept'", *current_token_);
+		return ParseResult::error("Expected concept name after 'concept'", current_token_);
 	}
 	Token concept_name_token = peek_info();
 	advance(); // consume concept name
@@ -3727,7 +3727,7 @@ ParseResult Parser::parse_concept_declaration() {
 
 	// Expect '=' before the constraint expression
 	if (peek() != "="_tok) {
-		return ParseResult::error("Expected '=' after concept name", *current_token_);
+		return ParseResult::error("Expected '=' after concept name", current_token_);
 	}
 	advance(); // consume '='
 
@@ -3741,7 +3741,7 @@ ParseResult Parser::parse_concept_declaration() {
 
 	// Expect ';' at the end
 	if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after concept definition", *current_token_);
+		return ParseResult::error("Expected ';' after concept definition", current_token_);
 	}
 
 	// Create the ConceptDeclarationNode
@@ -3767,9 +3767,9 @@ ParseResult Parser::parse_requires_expression() {
 	ScopedTokenPosition saved_position(*this);
 
 	// Consume 'requires' keyword
-	Token requires_token = *current_token_;
+	Token requires_token = current_token_;
 	if (!consume("requires"_tok)) {
-		return ParseResult::error("Expected 'requires' keyword", *current_token_);
+		return ParseResult::error("Expected 'requires' keyword", current_token_);
 	}
 
 	// Enter a new scope for the requires expression parameters
@@ -3810,24 +3810,24 @@ ParseResult Parser::parse_requires_expression() {
 					advance(); // consume '*'
 					type_spec.add_pointer_level(CVQualifier::None);
 				} else {
-					return ParseResult::error("Expected '&' or '*' in function declarator", *current_token_);
+					return ParseResult::error("Expected '&' or '*' in function declarator", current_token_);
 				}
 				
 				// Parse parameter name
 				if (!peek().is_identifier()) {
-					return ParseResult::error("Expected identifier in function declarator", *current_token_);
+					return ParseResult::error("Expected identifier in function declarator", current_token_);
 				}
 				Token param_name = peek_info();
 				advance();
 				
 				// Expect closing ')'
 				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after function declarator name", *current_token_);
+					return ParseResult::error("Expected ')' after function declarator name", current_token_);
 				}
 				
 				// Parse function parameter list: (params)
 				if (!consume("("_tok)) {
-					return ParseResult::error("Expected '(' for function parameter list", *current_token_);
+					return ParseResult::error("Expected '(' for function parameter list", current_token_);
 				}
 				
 				// Skip function parameters (we don't need them for requires expressions)
@@ -3842,7 +3842,7 @@ ParseResult Parser::parse_requires_expression() {
 				}
 				
 				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after function parameter list", *current_token_);
+					return ParseResult::error("Expected ')' after function parameter list", current_token_);
 				}
 				
 				// Create a declaration node for the parameter
@@ -3881,7 +3881,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Parse parameter name
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected parameter name in requires expression", *current_token_);
+				return ParseResult::error("Expected parameter name in requires expression", current_token_);
 			}
 			Token param_name = peek_info();
 			advance();
@@ -3905,7 +3905,7 @@ ParseResult Parser::parse_requires_expression() {
 				}
 				
 				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after function declarator parameter list", *current_token_);
+					return ParseResult::error("Expected ')' after function declarator parameter list", current_token_);
 				}
 			}
 			
@@ -3923,13 +3923,13 @@ ParseResult Parser::parse_requires_expression() {
 		}
 		
 		if (!consume(")"_tok)) {
-			return ParseResult::error("Expected ')' after requires expression parameters", *current_token_);
+			return ParseResult::error("Expected ')' after requires expression parameters", current_token_);
 		}
 	}
 
 	// Expect '{'
 	if (!consume("{"_tok)) {
-		return ParseResult::error("Expected '{' to begin requires expression body", *current_token_);
+		return ParseResult::error("Expected '{' to begin requires expression body", current_token_);
 	}
 
 	// Enable SFINAE context for the requires expression body
@@ -3956,7 +3956,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Parse the type name - can be identifier, qualified name, or template instantiation
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected type name after 'typename' in requires expression", *current_token_);
+				return ParseResult::error("Expected type name after 'typename' in requires expression", current_token_);
 			}
 			Token type_name = peek_info();
 			advance();
@@ -3994,7 +3994,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after type requirement
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after type requirement in requires expression", *current_token_);
+				return ParseResult::error("Expected ';' after type requirement in requires expression", current_token_);
 			}
 			continue;
 		}
@@ -4012,7 +4012,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect '}'
 			if (!consume("}"_tok)) {
-				return ParseResult::error("Expected '}' after compound requirement expression", *current_token_);
+				return ParseResult::error("Expected '}' after compound requirement expression", current_token_);
 			}
 			
 			// Check for optional noexcept specifier
@@ -4047,7 +4047,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after compound requirement
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after compound requirement in requires expression", *current_token_);
+				return ParseResult::error("Expected ';' after compound requirement in requires expression", current_token_);
 			}
 			continue;
 		}
@@ -4072,7 +4072,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after nested requirement
 			if (!consume(";"_tok)) {
-				return ParseResult::error("Expected ';' after nested requirement in requires expression", *current_token_);
+				return ParseResult::error("Expected ';' after nested requirement in requires expression", current_token_);
 			}
 			continue;
 		}
@@ -4086,13 +4086,13 @@ ParseResult Parser::parse_requires_expression() {
 		
 		// Expect ';' after each requirement
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after requirement in requires expression", *current_token_);
+			return ParseResult::error("Expected ';' after requirement in requires expression", current_token_);
 		}
 	}
 
 	// Expect '}'
 	if (!consume("}"_tok)) {
-		return ParseResult::error("Expected '}' to end requires expression", *current_token_);
+		return ParseResult::error("Expected '}' to end requires expression", current_token_);
 	}
 
 	// Scope will be exited automatically by scope_guard
@@ -4175,7 +4175,7 @@ ParseResult Parser::parse_template_parameter() {
 		if (peek() != "<"_tok) {
 			FLASH_LOG(Parser, Error, "Expected '<' after 'template', got: ",
 				(!peek().is_eof() ? std::string("'") + std::string(peek_info().value()) + "'" : "<EOF>"));
-			return ParseResult::error("Expected '<' after 'template' keyword in template template parameter", *current_token_);
+			return ParseResult::error("Expected '<' after 'template' keyword in template template parameter", current_token_);
 		}
 		advance(); // consume '<'
 
@@ -4191,7 +4191,7 @@ ParseResult Parser::parse_template_parameter() {
 		if (peek() != ">"_tok) {
 			FLASH_LOG(Parser, Error, "Expected '>' after nested template parameter list, got: ",
 				(!peek().is_eof() ? std::string("'") + std::string(peek_info().value()) + "'" : "<EOF>"));
-			return ParseResult::error("Expected '>' after nested template parameter list", *current_token_);
+			return ParseResult::error("Expected '>' after nested template parameter list", current_token_);
 		}
 		advance(); // consume '>'
 
@@ -4200,7 +4200,7 @@ ParseResult Parser::parse_template_parameter() {
 		    (peek() != "class"_tok && peek() != "typename"_tok)) {
 			FLASH_LOG(Parser, Error, "Expected 'class' or 'typename' after template parameter list, got: ",
 				(!peek().is_eof() ? std::string("'") + std::string(peek_info().value()) + "'" : "<EOF>"));
-			return ParseResult::error("Expected 'class' or 'typename' after template parameter list in template template parameter", *current_token_);
+			return ParseResult::error("Expected 'class' or 'typename' after template parameter list in template template parameter", current_token_);
 		}
 		advance(); // consume 'class' or 'typename'
 
@@ -4208,7 +4208,7 @@ ParseResult Parser::parse_template_parameter() {
 		if (!peek().is_identifier()) {
 			FLASH_LOG(Parser, Error, "Expected identifier for template template parameter name, got: ",
 				(!peek().is_eof() ? std::string("'") + std::string(peek_info().value()) + "'" : "<EOF>"));
-			return ParseResult::error("Expected identifier for template template parameter name", *current_token_);
+			return ParseResult::error("Expected identifier for template template parameter name", current_token_);
 		}
 
 		Token param_name_token = peek_info();
@@ -4280,7 +4280,7 @@ ParseResult Parser::parse_template_parameter() {
 			
 			// Expect identifier (parameter name)
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected identifier after concept constraint", *current_token_);
+				return ParseResult::error("Expected identifier after concept constraint", current_token_);
 			}
 			
 			Token param_name_token = peek_info();
@@ -4306,7 +4306,7 @@ ParseResult Parser::parse_template_parameter() {
 				// Parse the default type
 				auto default_type_result = parse_type_specifier();
 				if (default_type_result.is_error()) {
-					return ParseResult::error("Expected type after '=' in template parameter default", *current_token_);
+					return ParseResult::error("Expected type after '=' in template parameter default", current_token_);
 				}
 				
 				if (default_type_result.node().has_value()) {
@@ -4369,9 +4369,9 @@ ParseResult Parser::parse_template_parameter() {
 					param_name = StringBuilder().append("__anon_type_"sv).append(static_cast<int64_t>(anonymous_type_counter++)).commit();
 					
 					// Use the current token as the token reference
-					param_name_token = *current_token_;
+					param_name_token = current_token_;
 				} else {
-					return ParseResult::error("Expected identifier after 'typename' or 'class'", *current_token_);
+					return ParseResult::error("Expected identifier after 'typename' or 'class'", current_token_);
 				}
 			}
 
@@ -4391,7 +4391,7 @@ ParseResult Parser::parse_template_parameter() {
 				// Parse the default type
 				auto default_type_result = parse_type_specifier();
 				if (default_type_result.is_error()) {
-					return ParseResult::error("Expected type after '=' in template parameter default", *current_token_);
+					return ParseResult::error("Expected type after '=' in template parameter default", current_token_);
 				}
 				
 				if (default_type_result.node().has_value()) {
@@ -4422,7 +4422,7 @@ ParseResult Parser::parse_template_parameter() {
 	}
 
 	if (!type_result.node().has_value()) {
-		return ParseResult::error("Expected type specifier for non-type template parameter", *current_token_);
+		return ParseResult::error("Expected type specifier for non-type template parameter", current_token_);
 	}
 
 	// Check for ellipsis (parameter pack): int... Ns
@@ -4455,10 +4455,10 @@ ParseResult Parser::parse_template_parameter() {
 			
 			// Store the anonymous name in a way that persists
 			// We'll use the current token as the token reference
-			param_name_token = *current_token_;
+			param_name_token = current_token_;
 			is_anonymous = true;
 		} else {
-			return ParseResult::error("Expected identifier for non-type template parameter", *current_token_);
+			return ParseResult::error("Expected identifier for non-type template parameter", current_token_);
 		}
 	}
 
@@ -4479,7 +4479,7 @@ ParseResult Parser::parse_template_parameter() {
 		// This context tells parse_expression to stop at '>' and ',' which delimit template arguments
 		auto default_value_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateArgument);
 		if (default_value_result.is_error()) {
-			return ParseResult::error("Expected expression after '=' in template parameter default", *current_token_);
+			return ParseResult::error("Expected expression after '=' in template parameter default", current_token_);
 		}
 		
 		if (default_value_result.node().has_value()) {
@@ -4557,7 +4557,7 @@ ParseResult Parser::parse_template_template_parameter_form() {
 		}
 	}
 
-	return ParseResult::error("Expected 'typename' or 'class' in template template parameter form", *current_token_);
+	return ParseResult::error("Expected 'typename' or 'class' in template template parameter form", current_token_);
 }
 
 // Phase 6: Shared helper for template function declaration parsing
@@ -4662,7 +4662,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		
 		// Verify we got a TypeSpecifierNode
 		if (!trailing_type_specifier.node().has_value() || !trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
-			return ParseResult::error("Expected type specifier for trailing return type", *current_token_);
+			return ParseResult::error("Expected type specifier for trailing return type", current_token_);
 		}
 		
 		// Apply pointer and reference qualifiers to the trailing return type (e.g., T*, T&, T&&)
@@ -4755,7 +4755,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		}
 		// Expect semicolon after = delete or = default
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after '= delete' or '= default'", *current_token_);
+			return ParseResult::error("Expected ';' after '= delete' or '= default'", current_token_);
 		}
 	} else if (peek() == "{"_tok) {
 		// Has a body - save positions for re-parsing during instantiation
@@ -4787,7 +4787,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Expect '<' to start template parameter list
 	if (peek() != "<"_tok) {
-		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+		return ParseResult::error("Expected '<' after 'template' keyword", current_token_);
 	}
 	advance(); // consume '<'
 
@@ -4801,7 +4801,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Expect '>' to close template parameter list
 	if (peek() != ">"_tok) {
-		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+		return ParseResult::error("Expected '>' after template parameter list", current_token_);
 	}
 	advance(); // consume '>'
 
@@ -5119,7 +5119,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Expect '<' to start template parameter list
 	if (peek() != "<"_tok) {
-		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+		return ParseResult::error("Expected '<' after 'template' keyword", current_token_);
 	}
 	advance(); // consume '<'
 
@@ -5141,7 +5141,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Expect '>' to close template parameter list
 	if (peek() != ">"_tok) {
-		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+		return ParseResult::error("Expected '>' after template parameter list", current_token_);
 	}
 	advance(); // consume '>'
 
@@ -5199,7 +5199,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	if (!peek().is_identifier()) {
 		current_template_param_names_ = saved_template_param_names;
 		parsing_template_body_ = saved_parsing_template_body;
-		return ParseResult::error("Expected alias name after 'using' in member template alias", *current_token_);
+		return ParseResult::error("Expected alias name after 'using' in member template alias", current_token_);
 	}
 	Token alias_name_token = peek_info();
 	std::string_view alias_name = alias_name_token.value();
@@ -5209,7 +5209,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	if (peek() != "="_tok) {
 		current_template_param_names_ = saved_template_param_names;
 		parsing_template_body_ = saved_parsing_template_body;
-		return ParseResult::error("Expected '=' after alias name in member template alias", *current_token_);
+		return ParseResult::error("Expected '=' after alias name in member template alias", current_token_);
 	}
 	advance(); // consume '='
 
@@ -5255,7 +5255,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	if (!consume(";"_tok)) {
 		current_template_param_names_ = saved_template_param_names;
 		parsing_template_body_ = saved_parsing_template_body;
-		return ParseResult::error("Expected ';' after member template alias declaration", *current_token_);
+		return ParseResult::error("Expected ';' after member template alias declaration", current_token_);
 	}
 
 	// Create TemplateAliasNode
@@ -5293,7 +5293,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Expect '<' to start template parameter list
 	if (peek() != "<"_tok) {
-		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+		return ParseResult::error("Expected '<' after 'template' keyword", current_token_);
 	}
 	advance(); // consume '<'
 
@@ -5315,7 +5315,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Expect '>' to close template parameter list
 	if (peek() != ">"_tok) {
-		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+		return ParseResult::error("Expected '>' after template parameter list", current_token_);
 	}
 	advance(); // consume '>'
 
@@ -5354,7 +5354,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	// Expect 'struct' or 'class' or 'union' keyword
 	if (!peek().is_keyword() ||
 	    (peek() != "struct"_tok && peek() != "class"_tok && peek() != "union"_tok)) {
-		return ParseResult::error("Expected 'struct' or 'class' or 'union' after template parameter list", *current_token_);
+		return ParseResult::error("Expected 'struct' or 'class' or 'union' after template parameter list", current_token_);
 	}
 	
 	bool is_class = (peek() == "class"_tok);
@@ -5367,7 +5367,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Parse the struct name
 	if (!peek().is_identifier()) {
-		return ParseResult::error("Expected struct/class name after 'struct'/'class' keyword", *current_token_);
+		return ParseResult::error("Expected struct/class name after 'struct'/'class' keyword", current_token_);
 	}
 	Token struct_name_token = peek_info();
 	std::string_view struct_name = struct_name_token.value();
@@ -5428,7 +5428,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		current_template_param_names_ = std::move(saved_template_param_names);
 		
 		if (!pattern_args_opt.has_value()) {
-			return ParseResult::error("Expected template argument pattern in partial specialization", *current_token_);
+			return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);
 		}
 		
 		std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
@@ -5513,7 +5513,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		
 		// Expect '{' to start struct body
 		if (peek() != "{"_tok) {
-			return ParseResult::error("Expected '{' to start struct body", *current_token_);
+			return ParseResult::error("Expected '{' to start struct body", current_token_);
 		}
 		advance(); // consume '{'
 		
@@ -5527,7 +5527,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				if (keyword == "public" || keyword == "private" || keyword == "protected") {
 					advance(); // consume access specifier
 					if (!consume(":"_tok)) {
-						return ParseResult::error("Expected ':' after access specifier", *current_token_);
+						return ParseResult::error("Expected ':' after access specifier", current_token_);
 					}
 					if (keyword == "public") current_access = AccessSpecifier::Public;
 					else if (keyword == "private") current_access = AccessSpecifier::Private;
@@ -5562,7 +5562,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					
 					// Parse the alias name
 					if (!peek().is_identifier()) {
-						return ParseResult::error("Expected alias name after 'using'", *current_token_);
+						return ParseResult::error("Expected alias name after 'using'", current_token_);
 					}
 					std::string_view alias_name = peek_info().value();
 					advance(); // consume alias name
@@ -5606,7 +5606,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					
 					// Expect '=' for type alias
 					if (peek() != "="_tok) {
-						return ParseResult::error("Expected '=' after alias name", *current_token_);
+						return ParseResult::error("Expected '=' after alias name", current_token_);
 					}
 					advance(); // consume '='
 					
@@ -5638,7 +5638,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					
 					// Expect ';'
 					if (!consume(";"_tok)) {
-						return ParseResult::error("Expected ';' after using declaration", *current_token_);
+						return ParseResult::error("Expected ';' after using declaration", current_token_);
 					}
 					
 					// Store the type alias in the struct
@@ -5702,7 +5702,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					
 					// Expect semicolon (for static data member)
 					if (!consume(";"_tok)) {
-						return ParseResult::error("Expected ';' after static member declaration", *current_token_);
+						return ParseResult::error("Expected ';' after static member declaration", current_token_);
 					}
 					
 					// Store the static member in the struct (as a pattern for instantiation)
@@ -5802,7 +5802,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					return init_result;
 				}
 				if (!consume(";"_tok)) {
-					return ParseResult::error("Expected ';' after member initializer", *current_token_);
+					return ParseResult::error("Expected ';' after member initializer", current_token_);
 				}
 				member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
 			} else {
@@ -5831,7 +5831,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		
 		// Expect '}' to close struct body
 		if (peek() != "}"_tok) {
-			return ParseResult::error("Expected '}' to close struct body", *current_token_);
+			return ParseResult::error("Expected '}' to close struct body", current_token_);
 		}
 		advance(); // consume '}'
 		
@@ -5840,7 +5840,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		
 		// Expect ';' to end struct declaration
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after struct declaration", *current_token_);
+			return ParseResult::error("Expected ';' after struct declaration", current_token_);
 		}
 		
 		// Register the partial specialization pattern FIRST (before moving template_params)
@@ -5903,7 +5903,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Expect '{' to start struct body
 	if (peek() != "{"_tok) {
-		return ParseResult::error("Expected '{' to start struct body", *current_token_);
+		return ParseResult::error("Expected '{' to start struct body", current_token_);
 	}
 	advance(); // consume '{'
 
@@ -5919,7 +5919,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			if (keyword == "public" || keyword == "private" || keyword == "protected") {
 				advance(); // consume access specifier
 				if (!consume(":"_tok)) {
-					return ParseResult::error("Expected ':' after access specifier", *current_token_);
+					return ParseResult::error("Expected ':' after access specifier", current_token_);
 				}
 				if (keyword == "public") current_access = AccessSpecifier::Public;
 				else if (keyword == "private") current_access = AccessSpecifier::Private;
@@ -5974,7 +5974,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				
 				// Expect semicolon (for static data member)
 				if (!consume(";"_tok)) {
-					return ParseResult::error("Expected ';' after static member declaration", *current_token_);
+					return ParseResult::error("Expected ';' after static member declaration", current_token_);
 				}
 				
 				// For member templates, we just skip static members
@@ -6117,7 +6117,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Expect '}' to close struct body
 	if (peek() != "}"_tok) {
-		return ParseResult::error("Expected '}' to close struct body", *current_token_);
+		return ParseResult::error("Expected '}' to close struct body", current_token_);
 	}
 	advance(); // consume '}'
 
@@ -6126,7 +6126,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Expect ';' to end struct declaration
 	if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after struct declaration", *current_token_);
+		return ParseResult::error("Expected ';' after struct declaration", current_token_);
 	}
 
 	// Create template struct node (using TemplateClassDeclarationNode which handles both struct and class)
@@ -6161,7 +6161,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	
 	// Parse template parameter list
 	if (peek() != "<"_tok) {
-		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+		return ParseResult::error("Expected '<' after 'template' keyword", current_token_);
 	}
 	advance(); // consume '<'
 	
@@ -6182,7 +6182,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	
 	// Expect '>'
 	if (peek() != ">"_tok) {
-		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+		return ParseResult::error("Expected '>' after template parameter list", current_token_);
 	}
 	advance(); // consume '>'
 	
@@ -6225,7 +6225,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	
 	// Parse variable name
 	if (!peek().is_identifier()) {
-		return ParseResult::error("Expected variable name in member variable template", *current_token_);
+		return ParseResult::error("Expected variable name in member variable template", current_token_);
 	}
 	Token var_name_token = peek_info();
 	std::string_view var_name = var_name_token.value();
@@ -6252,7 +6252,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	
 	// Expect semicolon
 	if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after member variable template declaration", *current_token_);
+		return ParseResult::error("Expected ';' after member variable template declaration", current_token_);
 	}
 	
 	// Create VariableDeclarationNode
@@ -7872,39 +7872,39 @@ std::optional<QualifiedIdParseResult> Parser::parse_qualified_identifier_with_te
 	FLASH_LOG(Parser, Debug, "parse_qualified_identifier_with_templates: starting");
 	
 	// Must start with an identifier
-	if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+	if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 		return std::nullopt;
 	}
 	
 	std::vector<StringHandle> namespaces;
-	Token final_identifier = *current_token_;
+	Token final_identifier = current_token_;
 	advance(); // consume first identifier
 	
 	// Check if followed by ::
-	if (!current_token_.has_value() || current_token_->value() != "::") {
+	if (current_token_.kind().is_eof() || current_token_.value() != "::") {
 		// Single identifier, no qualification - not a qualified identifier
 		// Restore position for caller to handle
 		return std::nullopt;
 	}
 	
 	// Collect namespace parts
-	while (current_token_.has_value() && current_token_->value() == "::") {
+	while (current_token_.value() == "::") {
 		// Current identifier becomes a namespace part - intern into string table
 		namespaces.emplace_back(StringTable::getOrInternStringHandle(final_identifier.value()));
 		advance(); // consume ::
 		
 		// Get next identifier
-		if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+		if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 			// Error: expected identifier after ::
 			return std::nullopt;
 		}
-		final_identifier = *current_token_;
+		final_identifier = current_token_;
 		advance(); // consume the identifier
 	}
 	
 	// At this point: current_token_ is the token after final identifier
 	// Check for template arguments: A::B::C<Args>
-	if (current_token_.has_value() && current_token_->value() == "<") {
+	if (current_token_.value() == "<") {
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_qualified_identifier_with_templates: parsing template args for '{}'", 
 		                final_identifier.value());
 		auto template_args = parse_explicit_template_arguments();
@@ -8839,14 +8839,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// Re-parse the return type with template parameters in scope
 		auto return_type_result = parse_type_specifier();
 		
-		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value(), ", current_token=", current_token_->value(), ", token_type=", (int)current_token_->type());
+		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value(), ", current_token=", current_token_.value(), ", token_type=", (int)current_token_.type());
 		if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
 			auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
 			
 			// Check if there are reference qualifiers after the type specifier
-			bool is_punctuator_or_operator = current_token_->type() == Token::Type::Punctuator || current_token_->type() == Token::Type::Operator;
-			bool is_ampamp = current_token_->value() == "&&";
-			bool is_amp = current_token_->value() == "&";
+			bool is_punctuator_or_operator = current_token_.type() == Token::Type::Punctuator || current_token_.type() == Token::Type::Operator;
+			bool is_ampamp = current_token_.value() == "&&";
+			bool is_amp = current_token_.value() == "&";
 			
 			if (is_punctuator_or_operator && is_ampamp) {
 				advance();  // Consume &&
