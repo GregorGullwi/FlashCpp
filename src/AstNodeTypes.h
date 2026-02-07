@@ -1517,7 +1517,7 @@ public:
 
 	std::optional<Token> try_get_parent_token() { return parent_token_; }
 	std::string_view name() const { return identifier_.value(); }
-	StringHandle nameHandle() const { return StringTable::getOrInternStringHandle(identifier_.value()); }
+	StringHandle nameHandle() const { return identifier_.handle(); }
 
 private:
 	Token identifier_;
@@ -1532,7 +1532,7 @@ public:
 
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	std::string_view name() const { return identifier_.value(); }
-	StringHandle nameHandle() const { return StringTable::getOrInternStringHandle(identifier_.value()); }
+	StringHandle nameHandle() const { return identifier_.handle(); }
 	const Token& identifier_token() const { return identifier_; }
 
 	// Get the full qualified name as a string (e.g., "std::print")

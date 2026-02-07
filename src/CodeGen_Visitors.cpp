@@ -2652,7 +2652,7 @@ private:
 		}
 		
 		// Function name
-		func_decl_op.function_name = StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
+		func_decl_op.function_name = func_decl.identifier_token().handle();
 
 		// Add struct/class name for member functions
 		// Use current_struct_name_ if set (for instantiated template specializations),
@@ -2789,7 +2789,7 @@ private:
 		// Store cached parameter info keyed by mangled function name
 		StringHandle cache_key = func_decl_op.mangled_name.isValid()
 			? func_decl_op.mangled_name
-			: StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
+			: func_decl.identifier_token().handle();
 		function_param_cache_[cache_key] = std::move(cached_params);
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), func_decl.identifier_token()));

@@ -1449,7 +1449,7 @@
 				constructor_name = gTypeInfo[type_spec.type_index()].name();
 			} else {
 				// Otherwise, use the token value (the identifier name)
-				constructor_name = StringTable::getOrInternStringHandle(type_spec.token().value());
+				constructor_name = type_spec.token().handle();
 			}
 		} else {
 			// For basic types, constructors might not exist, but we can handle them as value construction

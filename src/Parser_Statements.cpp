@@ -1,28 +1,25 @@
 ParseResult Parser::parse_block()
 {
-	if (!consume_punctuator("{")) {
-		return ParseResult::error("Expected '{' for block", *current_token_);
+	if (!consume("{"_tok)) {
+		return ParseResult::error("Expected '{' for block", current_token_);
 	}
 
 	// Enter a new scope for this block (C++ standard: each block creates a scope)
 	FlashCpp::SymbolTableScope block_scope(ScopeType::Block);
 
-	FLASH_LOG_FORMAT(Parser, Debug, "parse_block: Entered block. current_token={}, peek={}", 
-		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_block: Entered block. peek={}", 
+		std::string(peek_info().value()));
 
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 
-	while (!consume_punctuator("}")) {
+	while (!consume("}"_tok)) {
 		// Parse statements or declarations
-		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: About to parse_statement_or_declaration. current_token={}, peek={}", 
-			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
-			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: About to parse_statement_or_declaration. peek={}", 
+			std::string(peek_info().value()));
 		ParseResult parse_result = parse_statement_or_declaration();
-		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: parse_statement_or_declaration returned. is_error={}, current_token={}, peek={}", 
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: parse_statement_or_declaration returned. is_error={}, peek={}", 
 			parse_result.is_error(),
-			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
-			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+			std::string(peek_info().value()));
 		if (parse_result.is_error())
 			return parse_result;
 
@@ -36,7 +33,7 @@ ParseResult Parser::parse_block()
 		}
 		pending_struct_variables_.clear();
 
-		consume_punctuator(";");
+		consume(";"_tok);
 	}
 
 	return ParseResult::success(block_node);
@@ -47,12 +44,11 @@ ParseResult Parser::parse_statement_or_declaration()
 	// Define a function pointer type for parsing functions
 	using ParsingFunction = ParseResult(Parser::*)();
 
-	auto current_token_opt = peek_token();
-	if (!current_token_opt.has_value()) {
+	if (peek().is_eof()) {
 		return ParseResult::error("Expected a statement or declaration",
-			*current_token_);
+			current_token_);
 	}
-	const Token& current_token = current_token_opt.value();
+	const Token& current_token = peek_info();
 
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_statement_or_declaration: current_token={}, type={}", 
 		std::string(current_token.value()),
@@ -60,16 +56,15 @@ ParseResult Parser::parse_statement_or_declaration()
 		current_token.type() == Token::Type::Identifier ? "Identifier" : "Other");
 
 	// Handle nested blocks
-	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
+	if (peek() == "{"_tok) {
 		// parse_block() creates its own scope, so no need to create one here
 		return parse_block();
 	}
 
 	// Handle ::new, ::delete, and ::operator new/delete expressions at statement level
-	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "::") {
-		auto next = peek_token(1);
-		if (next.has_value() && next->type() == Token::Type::Keyword &&
-			(next->value() == "new" || next->value() == "delete" || next->value() == "operator")) {
+	if (peek() == "::"_tok) {
+		auto next_kind = peek(1);
+		if (next_kind == "new"_tok || next_kind == "delete"_tok || next_kind == "operator"_tok) {
 			// This is a globally qualified new/delete/operator expression
 			return parse_expression_statement();
 		}
@@ -147,7 +142,7 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 
 		// Unknown keyword - consume token to avoid infinite loop and return error
-		consume_token();
+		advance();
 		return ParseResult::error("Unknown keyword: " + std::string(current_token.value()),
 			current_token);
 	}
@@ -155,9 +150,8 @@ ParseResult Parser::parse_statement_or_declaration()
 		// Check if this is a label (identifier followed by ':')
 		// We need to look ahead to see if there's a colon
 		SaveHandle saved_pos = save_token_position();
-		consume_token(); // consume the identifier
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-		    peek_token()->value() == ":") {
+		advance(); // consume the identifier
+		if (peek() == ":"_tok) {
 			// This is a label statement
 			restore_token_position(saved_pos);
 			return parse_label_statement();
@@ -166,25 +160,26 @@ ParseResult Parser::parse_statement_or_declaration()
 		restore_token_position(saved_pos);
 
 		// Check if this identifier is a registered struct/class/enum/typedef type
-		std::string type_name(current_token.value());
+		StringBuilder type_name_builder;
+		type_name_builder.append(current_token.value());
 		
 		// Check for qualified name (e.g., std::size_t, ns::MyClass)
 		// Need to look ahead to see if there's a :: following
 		saved_pos = save_token_position();
-		consume_token(); // consume first identifier
-		while (peek_token().has_value() && peek_token()->value() == "::") {
-			consume_token(); // consume '::'
-			auto next = peek_token();
-			if (next.has_value() && next->type() == Token::Type::Identifier) {
-				type_name += "::" + std::string(next->value());
-				consume_token(); // consume next identifier
+		advance(); // consume first identifier
+		while (peek() == "::"_tok) {
+			advance(); // consume '::'
+			if (peek().is_identifier()) {
+				type_name_builder.append("::").append(peek_info().value());
+				advance(); // consume next identifier
 			} else {
 				break;
 			}
 		}
 		restore_token_position(saved_pos);
 		
-		auto type_info_ctx = lookupTypeInCurrentContext(StringTable::getOrInternStringHandle(type_name));
+		auto type_name_handle = StringTable::getOrInternStringHandle(type_name_builder);
+		auto type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
 		if (type_info_ctx) {
 			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
 			bool is_typedef = (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
@@ -193,37 +188,36 @@ ParseResult Parser::parse_statement_or_declaration()
 				// followed by a member access, like: TypeName(args).member()
 				// vs a variable declaration: TypeName varname(args);
 				SaveHandle check_pos = save_token_position();
-				consume_token();  // consume type name
+				advance();  // consume type name
 				
 				// Handle qualified names and template args
-				while (peek_token().has_value() && peek_token()->value() == "::") {
-					consume_token();  // consume '::'
-					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-						consume_token();  // consume next identifier
+				while (peek() == "::"_tok) {
+					advance();  // consume '::'
+					if (peek().is_identifier()) {
+						advance();  // consume next identifier
 					} else {
 						break;
 					}
 				}
 				// Handle template arguments if any
-				if (peek_token().has_value() && peek_token()->value() == "<") {
+				if (peek() == "<"_tok) {
 					int angle_depth = 1;
-					consume_token();  // consume '<'
-					while (angle_depth > 0 && peek_token().has_value()) {
-						auto tok = peek_token();
-						if (tok->value() == "<") {
-							consume_token();
+					advance();  // consume '<'
+					while (angle_depth > 0 && !peek().is_eof()) {
+						if (peek() == "<"_tok) {
+							advance();
 							angle_depth++;
-						} else if (tok->value() == ">") {
-							consume_token();
+						} else if (peek() == ">"_tok) {
+							advance();
 							angle_depth--;
-						} else if (tok->value() == ">>") {
+						} else if (peek() == ">>"_tok) {
 							// Split >> into two > tokens for nested templates
 							split_right_shift_token();
-							consume_token();  // consume first >
+							advance();  // consume first >
 							angle_depth--;
 						} else {
 							// Some other token inside template args, just consume it
-							consume_token();
+							advance();
 						}
 					}
 				}
@@ -231,12 +225,12 @@ ParseResult Parser::parse_statement_or_declaration()
 				// If followed by '::member(' after type/template args, this is a qualified member function call
 				// e.g., Base<T>::deallocate(args) is a static member function call
 				// But Type<T>::type is a type alias used in a variable declaration
-				if (peek_token().has_value() && peek_token()->value() == "::") {
+				if (peek() == "::"_tok) {
 					SaveHandle scope_check = save_token_position();
-					consume_token(); // consume '::'
-					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-						consume_token(); // consume member name
-						if (peek_token().has_value() && peek_token()->value() == "(") {
+					advance(); // consume '::'
+					if (peek().is_identifier()) {
+						advance(); // consume member name
+						if (peek() == "("_tok) {
 							// This is Type<T>::member(...) - a function call expression
 							restore_token_position(scope_check);
 							restore_token_position(check_pos);
@@ -246,20 +240,20 @@ ParseResult Parser::parse_statement_or_declaration()
 					restore_token_position(scope_check);
 				}
 				
-				if (peek_token().has_value() && peek_token()->value() == "(") {
+				if (peek() == "("_tok) {
 					// TypeName(...) - could be declaration or functional cast
 					// Skip to matching )
-					consume_token();  // consume '('
+					advance();  // consume '('
 					int paren_depth = 1;
-					while (paren_depth > 0 && peek_token().has_value()) {
-						auto tok = consume_token();
-						if (tok->value() == "(") paren_depth++;
-						else if (tok->value() == ")") paren_depth--;
+					while (paren_depth > 0 && !peek().is_eof()) {
+						auto tok = advance();
+						if (tok.value() == "(") paren_depth++;
+						else if (tok.value() == ")") paren_depth--;
 					}
 					
 					// Check what follows the )
-					if (peek_token().has_value()) {
-						auto next_val = peek_token()->value();
+					if (!peek().is_eof()) {
+						auto next_val = peek_info().value();
 						// If followed by . or ->, this is an expression (temporary construction)
 						if (next_val == "." || next_val == "->") {
 							restore_token_position(check_pos);
@@ -277,16 +271,16 @@ ParseResult Parser::parse_statement_or_declaration()
 		// Check if this is a template identifier (e.g., Container<int>::Iterator)
 		// Templates need to be parsed as variable declarations
 		// UNLESS the next token is '(' (which indicates a function template call)
-		bool is_template = gTemplateRegistry.lookupTemplate(type_name).has_value();
-		bool is_alias_template = gTemplateRegistry.lookup_alias_template(type_name).has_value();
+		bool is_template = gTemplateRegistry.lookupTemplate(type_name_handle).has_value();
+		bool is_alias_template = gTemplateRegistry.lookup_alias_template(type_name_handle).has_value();
 		
 		if (is_template || is_alias_template) {
 			// We need to consume the identifier to peek at what comes after
-			consume_token(); // consume the identifier
+			advance(); // consume the identifier
 			// Peek ahead to see if this is a function call (template_name(...))
 			// or a variable declaration (template_name<...> var)
-			if (peek_token().has_value()) {
-				if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+			if (!peek().is_eof()) {
+				if (peek() == "("_tok) {
 					// Restore position before the identifier so parse_expression can handle it
 					restore_token_position(saved_pos);
 					// This is a function call, parse as expression
@@ -295,15 +289,15 @@ ParseResult Parser::parse_statement_or_declaration()
 				// Check for template<args>::member( pattern (e.g., Base<T>::deallocate(args))
 				// This is a qualified member function call expression, not a variable declaration
 				// But template<args>::type is a type alias - only treat as expression if followed by '('
-				if (peek_token()->value() == "<") {
+				if (peek() == "<"_tok) {
 					// Lookahead: skip template args to check if ::member( follows
 					SaveHandle template_check = save_token_position();
 					skip_template_arguments();
-					if (peek_token().has_value() && peek_token()->value() == "::") {
-						consume_token(); // consume '::'
-						if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-							consume_token(); // consume member name
-							if (peek_token().has_value() && peek_token()->value() == "(") {
+					if (peek() == "::"_tok) {
+						advance(); // consume '::'
+						if (peek().is_identifier()) {
+							advance(); // consume member name
+							if (peek() == "("_tok) {
 								// This is Base<T>::member(...) - a function call expression
 								restore_token_position(template_check);
 								restore_token_position(saved_pos);
@@ -324,7 +318,7 @@ ParseResult Parser::parse_statement_or_declaration()
 		// Template parameters can be used as types in variable declarations like "T result = value;"
 		if (!current_template_param_names_.empty()) {
 			for (const auto& param_name : current_template_param_names_) {
-				if (param_name == type_name) {
+				if (param_name == type_name_handle) {
 					// This is a template parameter being used as a type
 					// Parse as variable declaration
 					return parse_variable_declaration();
@@ -344,7 +338,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		}
 		// Unknown operator - consume token to avoid infinite loop and return error
-		consume_token();
+		advance();
 		return ParseResult::error("Unexpected operator: " + std::string(current_token.value()),
 			current_token);
 	}
@@ -354,11 +348,11 @@ ParseResult Parser::parse_statement_or_declaration()
 		if (punct == ";") {
 			// Empty statement (null statement) - just consume the semicolon
 			Token semi_token = current_token;
-			consume_token();
+			advance();
 			
 			// Warning: Check if this empty statement comes after a loop and is followed by a block
 			// This is a common mistake: for(...); { ... } where the block is not part of the loop
-			if (peek_token().has_value() && peek_token()->value() == "{") {
+			if (peek() == "{"_tok) {
 				// Check if we just parsed a loop by looking at recent context
 				// This is heuristic: if the semicolon is on the same line or very close,
 				// it's likely an accidental empty statement after a loop
@@ -378,7 +372,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		}
 		// Unknown punctuator - consume token to avoid infinite loop and return error
-		consume_token();
+		advance();
 		return ParseResult::error("Unexpected punctuator: " + std::string(current_token.value()),
 			current_token);
 	}
@@ -388,7 +382,7 @@ ParseResult Parser::parse_statement_or_declaration()
 	}
 	else {
 		// Unknown token type - consume token to avoid infinite loop and return error
-		consume_token();
+		advance();
 		return ParseResult::error("Expected a statement or declaration",
 			current_token);
 	}
@@ -419,17 +413,17 @@ ParseResult Parser::parse_variable_declaration()
 		
 		// Validate: structured bindings cannot have storage class specifiers
 		if (storage_class != StorageClass::None) {
-			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", *current_token_);
+			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", current_token_);
 		}
 		
 		// Validate: structured bindings cannot be constexpr
 		if (is_constexpr) {
-			return ParseResult::error("Structured bindings cannot be constexpr", *current_token_);
+			return ParseResult::error("Structured bindings cannot be constexpr", current_token_);
 		}
 		
 		// Validate: structured bindings cannot be constinit
 		if (is_constinit) {
-			return ParseResult::error("Structured bindings cannot be constinit", *current_token_);
+			return ParseResult::error("Structured bindings cannot be constinit", current_token_);
 		}
 		
 		FLASH_LOG(Parser, Debug, "parse_variable_declaration: Handling structured binding");
@@ -477,7 +471,7 @@ ParseResult Parser::parse_variable_declaration()
 	// Phase 2 Consolidation: Check if this looks like a function declaration
 	// before trying to parse as direct initialization
 	// e.g., `static int func() { return 0; }` in block scope should be parsed as function
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+	if (peek() == "("_tok) {
 		if (looks_like_function_parameters()) {
 			// This is a function declaration, delegate to parse_function_declaration
 			FLASH_LOG(Parser, Debug, "parse_variable_declaration: Detected function declaration, delegating to parse_function_declaration");
@@ -521,7 +515,7 @@ ParseResult Parser::parse_variable_declaration()
 				
 				// Register function in symbol table
 				const Token& identifier_token = first_decl.identifier_token();
-				StringHandle func_name = StringTable::getOrInternStringHandle(identifier_token.value());
+				StringHandle func_name = identifier_token.handle();
 				if (auto func_node = function_result.node()) {
 					if (!gSymbolTable.insert(func_name, *func_node)) {
 						return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
@@ -529,12 +523,12 @@ ParseResult Parser::parse_variable_declaration()
 				}
 				
 				// Check for declaration-only (;) vs function definition ({)
-				if (consume_punctuator(";")) {
+				if (consume(";"_tok)) {
 					return function_result;
 				}
 				
 				// Parse function body
-				if (peek_token().has_value() && peek_token()->value() == "{") {
+				if (peek() == "{"_tok) {
 					// Enter function scope
 					FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
 					
@@ -578,7 +572,7 @@ ParseResult Parser::parse_variable_declaration()
 
 	// Phase 3 Consolidation: Use shared initialization helpers
 	// Check for direct initialization with parentheses: Type var(args)
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+	if (peek() == "("_tok) {
 		auto init_result = parse_direct_initialization();
 		if (init_result.has_value()) {
 			first_init_expr = init_result;
@@ -586,20 +580,20 @@ ParseResult Parser::parse_variable_declaration()
 			// e.g., void func() noexcept; or void func() const;
 			skip_function_trailing_specifiers();
 		} else {
-			return ParseResult::error("Expected ')' after direct initialization arguments", *current_token_);
+			return ParseResult::error("Expected ')' after direct initialization arguments", current_token_);
 		}
 	}
 	// Check for copy initialization: Type var = expr or Type var = {args}
-	else if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
+	else if (peek() == "="_tok) {
 		auto init_result = parse_copy_initialization(first_decl, type_specifier);
 		if (init_result.has_value()) {
 			first_init_expr = init_result;
 		} else {
-			return ParseResult::error("Failed to parse initializer expression", *current_token_);
+			return ParseResult::error("Failed to parse initializer expression", current_token_);
 		}
 	}
 	// Check for direct brace initialization: Type var{args}
-	else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+	else if (peek() == "{"_tok) {
 		// Direct list initialization: Type var{args}
 		ParseResult init_list_result = parse_brace_initializer(type_specifier);
 		if (init_list_result.is_error()) {
@@ -613,7 +607,7 @@ ParseResult Parser::parse_variable_declaration()
 	}
 
 	// Check if there are more declarations (comma-separated)
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+	if (peek() == ","_tok) {
 		// Create a block to hold multiple declarations
 		auto [block_node, block_ref] = create_node_ref(BlockNode());
 
@@ -625,26 +619,26 @@ ParseResult Parser::parse_variable_declaration()
 		block_ref.add_statement_node(*first_result.node());
 
 		// Parse additional declarations
-		while (consume_punctuator(",")) {
+		while (consume(","_tok)) {
 			// Parse the identifier (name) - reuse the same type
-			auto identifier_token = consume_token();
-			if (!identifier_token || identifier_token->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected identifier after comma in declaration list", *identifier_token);
+			Token identifier_tok = advance();
+			if (identifier_tok.type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after comma in declaration list", identifier_tok);
 			}
 
 			// Create a new DeclarationNode with the same type
 			DeclarationNode& new_decl = emplace_node<DeclarationNode>(
 				emplace_node<TypeSpecifierNode>(type_specifier),
-				*identifier_token
+				identifier_tok
 			).as<DeclarationNode>();
 
 			// Check for initialization
 			std::optional<ASTNode> init_expr;
-			if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
-				consume_token(); // consume the '=' operator
+			if (peek() == "="_tok) {
+				advance(); // consume the '=' operator
 
 				// Check if this is a brace initializer
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+				if (peek() == "{"_tok) {
 					ParseResult init_list_result = parse_brace_initializer(type_specifier);
 					if (init_list_result.is_error()) {
 						return init_list_result;
@@ -653,22 +647,22 @@ ParseResult Parser::parse_variable_declaration()
 				} else {
 					// Parse expression with precedence > comma operator (precedence 1)
 					// This prevents comma from being treated as an operator in declaration lists
-					FLASH_LOG(Parser, Debug, "parse_variable_declaration: About to parse initializer expression, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+					FLASH_LOG(Parser, Debug, "parse_variable_declaration: About to parse initializer expression, current token: ", std::string(peek_info().value()));
 					ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
 					if (init_expr_result.is_error()) {
 						return init_expr_result;
 					}
 					init_expr = init_expr_result.node();
 				}
-			} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+			} else if (peek() == "("_tok) {
 				// Constructor-style initialization for comma-separated declaration: Type var1, var2(args)
 				auto init_result = parse_direct_initialization();
 				if (init_result.has_value()) {
 					init_expr = init_result;
 				} else {
-					return ParseResult::error("Failed to parse direct initialization", *current_token_);
+					return ParseResult::error("Failed to parse direct initialization", current_token_);
 				}
-			} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+			} else if (peek() == "{"_tok) {
 				// Direct list initialization for comma-separated declaration: Type var1, var2{args}
 				ParseResult init_list_result = parse_brace_initializer(type_specifier);
 				if (init_list_result.is_error()) {
@@ -700,11 +694,11 @@ ParseResult Parser::parse_variable_declaration()
 std::optional<ASTNode> Parser::parse_direct_initialization()
 {
 	// Must be at '('
-	if (!peek_token().has_value() || peek_token()->value() != "(") {
+	if (peek() != "("_tok) {
 		return std::nullopt;
 	}
 	
-	consume_token(); // consume '('
+	advance(); // consume '('
 
 	// Create an InitializerListNode to hold the arguments
 	auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
@@ -712,7 +706,7 @@ std::optional<ASTNode> Parser::parse_direct_initialization()
 	// Parse argument list
 	while (true) {
 		// Check if we've reached the end
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ")") {
+		if (peek() == ")"_tok) {
 			break;
 		}
 
@@ -727,13 +721,13 @@ std::optional<ASTNode> Parser::parse_direct_initialization()
 		}
 
 		// Check for comma (more arguments) or closing paren
-		if (!consume_punctuator(",")) {
+		if (!consume(","_tok)) {
 			// No comma, so we expect a closing paren on the next iteration
 			break;
 		}
 	}
 
-	if (!consume_punctuator(")")) {
+	if (!consume(")"_tok)) {
 		// Return nullopt on error - caller should handle
 		return std::nullopt;
 	}
@@ -747,14 +741,14 @@ std::optional<ASTNode> Parser::parse_direct_initialization()
 std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier)
 {
 	// Must be at '='
-	if (!peek_token().has_value() || peek_token()->value() != "=") {
+	if (peek() != "="_tok) {
 		return std::nullopt;
 	}
 	
-	consume_token(); // consume '='
+	advance(); // consume '='
 
 	// Check if this is a brace initializer (e.g., Point p = {10, 20} or int arr[5] = {1, 2, 3, 4, 5})
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+	if (peek() == "{"_tok) {
 		// If this is an array declaration, set the array info on type_specifier
 		if (decl_node.is_array()) {
 			std::optional<size_t> array_size_val;
@@ -938,8 +932,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// This is used for struct initialization like: Point p = {10, 20};
 	// or for array initialization like: int arr[5] = {1, 2, 3, 4, 5};
 
-	if (!consume_punctuator("{")) {
-		return ParseResult::error("Expected '{' for brace initializer", *current_token_);
+	if (!consume("{"_tok)) {
+		return ParseResult::error("Expected '{' for brace initializer", current_token_);
 	}
 
 	// Create an InitializerListNode to hold the initializer expressions
@@ -954,13 +948,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// Parse comma-separated initializer expressions
 		while (true) {
 			// Check if we've reached the end of the initializer list
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+			if (peek() == "}"_tok) {
 				break;
 			}
 
 			// Check if we have too many initializers
 			if (array_size.has_value() && element_count >= *array_size) {
-				return ParseResult::error("Too many initializers for array", *current_token_);
+				return ParseResult::error("Too many initializers for array", current_token_);
 			}
 
 			// Parse the initializer expression with precedence > comma operator (precedence 1)
@@ -974,17 +968,17 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				init_list_ref.add_initializer(*init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 
 			element_count++;
 
 			// Check for comma or end of list
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
-				consume_token(); // consume the comma
+			if (peek() == ","_tok) {
+				advance(); // consume the comma
 
 				// Allow trailing comma before '}'
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				if (peek() == "}"_tok) {
 					break;
 				}
 			} else {
@@ -993,8 +987,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			}
 		}
 
-		if (!consume_punctuator("}")) {
-			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 
 		return ParseResult::success(init_list_node);
@@ -1013,9 +1007,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	}
 	if (!is_struct_like_type) {
 		// Check if this is an empty brace initializer: int x{};
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
-			// Empty braces mean value initialization (zero for scalar types)
-			consume_token(); // consume '}'
+		if (peek() == "}"_tok) {
+			advance(); // consume '}'
 			
 			// Create a zero literal of the appropriate type
 			Token zero_token(Token::Type::Literal, "0"sv, 0, 0, 0);
@@ -1042,17 +1035,16 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		}
 
 		if (!init_expr_result.node().has_value()) {
-			return ParseResult::error("Expected initializer expression", *current_token_);
+			return ParseResult::error("Expected initializer expression", current_token_);
 		}
 
 		// For scalar types, only allow a single initializer (no comma)
-		auto next = peek_token();
-		if (next.has_value() && next->type() == Token::Type::Punctuator && next->value() == ",") {
-			return ParseResult::error("Too many initializers for scalar type", *current_token_);
+		if (peek() == ","_tok) {
+			return ParseResult::error("Too many initializers for scalar type", current_token_);
 		}
 
-		if (!consume_punctuator("}")) {
-			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 
 		// For scalar types, unwrap the expression from the brace initializer
@@ -1062,12 +1054,12 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 	TypeIndex type_index = type_specifier.type_index();
 	if (type_index >= gTypeInfo.size()) {
-		return ParseResult::error("Invalid struct type index", *current_token_);
+		return ParseResult::error("Invalid struct type index", current_token_);
 	}
 
 	const TypeInfo& type_info = gTypeInfo[type_index];
 	if (!type_info.struct_info_) {
-		return ParseResult::error("Type is not a struct", *current_token_);
+		return ParseResult::error("Type is not a struct", current_token_);
 	}
 
 	const StructTypeInfo& struct_info = *type_info.struct_info_;
@@ -1079,11 +1071,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// This struct has an initializer_list constructor
 		// Parse all the brace elements first
 		std::vector<ASTNode> elements;
-		Token brace_token = *current_token_;  // Save the '{' token location
+		Token brace_token = current_token_;  // Save the '{' token location
 		
 		while (true) {
 			// Check if we've reached the end of the initializer list
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+			if (peek() == "}"_tok) {
 				break;
 			}
 			
@@ -1096,15 +1088,15 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				elements.push_back(*init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 			
 			// Check for comma or end of list
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
-				consume_token(); // consume the comma
+			if (peek() == ","_tok) {
+				advance(); // consume the comma
 				
 				// Allow trailing comma before '}'
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				if (peek() == "}"_tok) {
 					break;
 				}
 			} else {
@@ -1113,8 +1105,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			}
 		}
 		
-		if (!consume_punctuator("}")) {
-			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 		
 		// Get element type from the initializer_list type
@@ -1232,11 +1224,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// No data members - must use constructor initialization
 		// Parse all the brace elements first
 		std::vector<ASTNode> elements;
-		Token brace_token = *current_token_;  // Save location for error reporting
+		Token brace_token = current_token_;  // Save location for error reporting
 		
 		while (true) {
 			// Check if we've reached the end of the initializer list
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+			if (peek() == "}"_tok) {
 				break;
 			}
 			
@@ -1249,15 +1241,15 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				elements.push_back(*init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 			
 			// Check for comma or end of list
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
-				consume_token(); // consume the comma
+			if (peek() == ","_tok) {
+				advance(); // consume the comma
 				
 				// Allow trailing comma before '}'
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				if (peek() == "}"_tok) {
 					break;
 				}
 			} else {
@@ -1266,8 +1258,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			}
 		}
 		
-		if (!consume_punctuator("}")) {
-			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 		
 		// Check if there's a constructor that matches the argument count and types
@@ -1398,21 +1390,21 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 	while (true) {
 		// Check if we've reached the end of the initializer list
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+		if (peek() == "}"_tok) {
 			break;
 		}
 
 		// Check for designated initializer syntax: .member = value
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ".") {
+		if (peek() == "."_tok) {
 			has_designated = true;
-			consume_token();  // consume '.'
+			advance();  // consume '.'
 
 			// Parse member name
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected member name after '.' in designated initializer", *current_token_);
+			if (!peek().is_identifier()) {
+				return ParseResult::error("Expected member name after '.' in designated initializer", current_token_);
 			}
-			std::string_view member_name = peek_token()->value();
-			consume_token();
+			std::string_view member_name = peek_info().value();
+			advance();
 
 			FLASH_LOG(Parser, Debug, "Parsing designated initializer for member: ", member_name);
 
@@ -1427,24 +1419,24 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				}
 			}
 			if (!member_found) {
-				return ParseResult::error("Unknown member '" + std::string(member_name) + "' in designated initializer", *current_token_);
+				return ParseResult::error("Unknown member '" + std::string(member_name) + "' in designated initializer", current_token_);
 			}
 
 			// Check for duplicate member initialization
 			if (used_members.count(member_name)) {
-				return ParseResult::error("Member '" + std::string(member_name) + "' already initialized", *current_token_);
+				return ParseResult::error("Member '" + std::string(member_name) + "' already initialized", current_token_);
 			}
 			used_members.insert(member_name);
 
 			// Expect '='
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator || peek_token()->value() != "=") {
-				return ParseResult::error("Expected '=' after member name in designated initializer", *current_token_);
+			if (peek() != "="_tok) {
+				return ParseResult::error("Expected '=' after member name in designated initializer", current_token_);
 			}
-			consume_token();  // consume '='
+			advance();  // consume '='
 
 			// Check if the next token is a brace - if so, we need to parse it as a nested brace initializer
 			ParseResult init_expr_result;
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+			if (peek() == "{"_tok) {
 				FLASH_LOG(Parser, Debug, "Detected nested brace initializer for member: ", member_name);
 				// Create a type specifier for the member's type to properly parse the nested brace initializer
 				if (target_member && target_member->type_index > 0 && target_member->type_index < gTypeInfo.size()) {
@@ -1472,24 +1464,24 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				init_list_ref.add_designated_initializer(StringTable::getOrInternStringHandle(member_name), *init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 		} else {
 			// Positional initializer
 			if (has_designated) {
-				return ParseResult::error("Positional initializers cannot follow designated initializers", *current_token_);
+				return ParseResult::error("Positional initializers cannot follow designated initializers", current_token_);
 			}
 
 			// Check if we have too many initializers
 			if (member_index >= struct_info.members.size()) {
-				return ParseResult::error("Too many initializers for struct", *current_token_);
+				return ParseResult::error("Too many initializers for struct", current_token_);
 			}
 
 			FLASH_LOG(Parser, Debug, "Parsing positional initializer for member index: ", member_index);
 
 			// Check if the next token is a brace - if so, we need to parse it as a nested brace initializer
 			ParseResult init_expr_result;
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+			if (peek() == "{"_tok) {
 				FLASH_LOG(Parser, Debug, "Detected nested brace initializer for positional member at index: ", member_index);
 				// Create a type specifier for the member's type to properly parse the nested brace initializer
 				const StructMember& target_member = struct_info.members[member_index];
@@ -1518,18 +1510,18 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (init_expr_result.node().has_value()) {
 				init_list_ref.add_initializer(*init_expr_result.node());
 			} else {
-				return ParseResult::error("Expected initializer expression", *current_token_);
+				return ParseResult::error("Expected initializer expression", current_token_);
 			}
 
 			member_index++;
 		}
 
 		// Check for comma or end of list
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
-			consume_token(); // consume the comma
+		if (peek() == ","_tok) {
+			advance(); // consume the comma
 
 			// Allow trailing comma before '}'
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+			if (peek() == "}"_tok) {
 				break;
 			}
 		} else {
@@ -1538,8 +1530,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		}
 	}
 
-	if (!consume_punctuator("}")) {
-		return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+	if (!consume("}"_tok)) {
+		return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 	}
 
 	// Check if we have too few initializers

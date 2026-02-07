@@ -1,31 +1,29 @@
 ParseResult Parser::parse_return_statement()
 {
-	auto current_token_opt = peek_token();
-	if (!current_token_opt.has_value() ||
-		current_token_opt.value().type() != Token::Type::Keyword ||
-		current_token_opt.value().value() != "return") {
+	auto current_token_opt = peek_info();
+	if (current_token_opt.type() != Token::Type::Keyword ||
+		current_token_opt.value() != "return") {
 		return ParseResult::error(ParserError::UnexpectedToken,
-			current_token_opt.value_or(Token()));
+			current_token_opt);
 	}
-	Token return_token = current_token_opt.value();
+	Token return_token = current_token_opt;
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to consume 'return'. current_token={}, peek={}", 
-		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-	consume_token(); // Consume the 'return' keyword
+		std::string(current_token_.value()),
+		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+	advance(); // Consume the 'return' keyword
 
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: Consumed 'return'. current_token={}, peek={}", 
-		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+		std::string(current_token_.value()),
+		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 
 	// Parse the return expression (if any)
 	ParseResult return_expr_result;
-	auto next_token_opt = peek_token();
-	if (!next_token_opt.has_value() ||
-		(next_token_opt.value().type() != Token::Type::Punctuator ||
-			next_token_opt.value().value() != ";")) {
+	auto next_token_opt = peek_info();
+	if ((next_token_opt.type() != Token::Type::Punctuator ||
+			next_token_opt.value() != ";")) {
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to parse_expression. current_token={}, peek={}", 
-			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
-			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+			std::string(current_token_.value()),
+			!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 		return_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (return_expr_result.is_error()) {
 			return return_expr_result;
@@ -33,9 +31,9 @@ ParseResult Parser::parse_return_statement()
 	}
 
 	// Consume the semicolon
-	if (!consume_punctuator(";")) {
+	if (!consume(";"_tok)) {
 		return ParseResult::error(ParserError::MissingSemicolon,
-			peek_token().value_or(Token()));
+			peek_info());
 	}
 
 	if (return_expr_result.has_value()) {
@@ -52,23 +50,21 @@ ParseResult Parser::parse_return_statement()
 ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token)
 {
 	// Expect '<'
-	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-	    peek_token()->value() != "<") {
-		return ParseResult::error(std::string(StringBuilder().append("Expected '<' after '").append(cast_name).append("'").commit()), *current_token_);
+	if (peek() != "<"_tok) {
+		return ParseResult::error(std::string(StringBuilder().append("Expected '<' after '").append(cast_name).append("'").commit()), current_token_);
 	}
-	consume_token(); // consume '<'
+	advance(); // consume '<'
 
 	// Parse the target type
 	ParseResult type_result = parse_type_specifier();
 	if (type_result.is_error() || !type_result.node().has_value()) {
-		return ParseResult::error(std::string(StringBuilder().append("Expected type in ").append(cast_name).commit()), *current_token_);
+		return ParseResult::error(std::string(StringBuilder().append("Expected type in ").append(cast_name).commit()), current_token_);
 	}
 
 	// Parse pointer declarators: * [const] [volatile] *...
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-	while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-	       peek_token()->value() == "*") {
-		consume_token(); // consume '*'
+	while (peek() == "*"_tok) {
+		advance(); // consume '*'
 
 		// Check for CV-qualifiers after the *
 		CVQualifier ptr_cv = parse_cv_qualifiers();
@@ -85,26 +81,25 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 	}
 
 	// Expect '>'
-	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-	    peek_token()->value() != ">") {
-		return ParseResult::error(std::string(StringBuilder().append("Expected '>' after type in ").append(cast_name).commit()), *current_token_);
+	if (peek() != ">"_tok) {
+		return ParseResult::error(std::string(StringBuilder().append("Expected '>' after type in ").append(cast_name).commit()), current_token_);
 	}
-	consume_token(); // consume '>'
+	advance(); // consume '>'
 
 	// Expect '('
-	if (!consume_punctuator("(")) {
-		return ParseResult::error(std::string(StringBuilder().append("Expected '(' after ").append(cast_name).append("<Type>").commit()), *current_token_);
+	if (!consume("("_tok)) {
+		return ParseResult::error(std::string(StringBuilder().append("Expected '(' after ").append(cast_name).append("<Type>").commit()), current_token_);
 	}
 
 	// Parse the expression to cast
 	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	if (expr_result.is_error() || !expr_result.node().has_value()) {
-		return ParseResult::error(std::string(StringBuilder().append("Expected expression in ").append(cast_name).commit()), *current_token_);
+		return ParseResult::error(std::string(StringBuilder().append("Expected expression in ").append(cast_name).commit()), current_token_);
 	}
 
 	// Expect ')'
-	if (!consume_punctuator(")")) {
-		return ParseResult::error(std::string(StringBuilder().append("Expected ')' after ").append(cast_name).append(" expression").commit()), *current_token_);
+	if (!consume(")"_tok)) {
+		return ParseResult::error(std::string(StringBuilder().append("Expected ')' after ").append(cast_name).append(" expression").commit()), current_token_);
 	}
 
 	// Create the appropriate cast node based on the kind
@@ -136,39 +131,39 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 {
 	
 	// Check for 'static_cast' keyword
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "static_cast") {
-		Token cast_token = *current_token_;
-		consume_token(); // consume 'static_cast'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "static_cast") {
+		Token cast_token = current_token_;
+		advance(); // consume 'static_cast'
 		return parse_cpp_cast_expression(CppCastKind::Static, "static_cast", cast_token);
 	}
 
 	// Check for 'dynamic_cast' keyword
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "dynamic_cast") {
-		Token cast_token = *current_token_;
-		consume_token(); // consume 'dynamic_cast'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "dynamic_cast") {
+		Token cast_token = current_token_;
+		advance(); // consume 'dynamic_cast'
 		return parse_cpp_cast_expression(CppCastKind::Dynamic, "dynamic_cast", cast_token);
 	}
 
 	// Check for 'const_cast' keyword
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "const_cast") {
-		Token cast_token = *current_token_;
-		consume_token(); // consume 'const_cast'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "const_cast") {
+		Token cast_token = current_token_;
+		advance(); // consume 'const_cast'
 		return parse_cpp_cast_expression(CppCastKind::Const, "const_cast", cast_token);
 	}
 
 	// Check for 'reinterpret_cast' keyword
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "reinterpret_cast") {
-		Token cast_token = *current_token_;
-		consume_token(); // consume 'reinterpret_cast'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "reinterpret_cast") {
+		Token cast_token = current_token_;
+		advance(); // consume 'reinterpret_cast'
 		return parse_cpp_cast_expression(CppCastKind::Reinterpret, "reinterpret_cast", cast_token);
 	}
 
 	// Check for C-style cast: (Type)expression
 	// This must be checked before parse_primary_expression() which handles parenthesized expressions
-	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "(") {
+	if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == "(") {
 		// Save position to potentially backtrack if this isn't a cast
 		SaveHandle saved_pos = save_token_position();
-		consume_token(); // consume '('
+		advance(); // consume '('
 
 		// Save the position and build the qualified type name for concept checking
 		// This is needed because parse_type_specifier() may parse a qualified name
@@ -177,14 +172,14 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		StringBuilder qualified_type_name;
 		
 		// Build qualified name by collecting identifiers and :: tokens
-		while (peek_token().has_value()) {
-			if (peek_token()->type() == Token::Type::Identifier) {
-				qualified_type_name.append(peek_token()->value());
-				consume_token();
+		while (!peek().is_eof()) {
+			if (peek().is_identifier()) {
+				qualified_type_name.append(peek_info().value());
+				advance();
 				// Check for :: to continue qualified name
-				if (peek_token().has_value() && peek_token()->value() == "::") {
+				if (peek() == "::"_tok) {
 					qualified_type_name.append("::");
-					consume_token();
+					advance();
 				} else {
 					break;
 				}
@@ -204,9 +199,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 			
 			// Parse pointer declarators: * (potentially with const/volatile)
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && 
-			       peek_token()->value() == "*") {
-				consume_token(); // consume '*'
+			while (peek() == "*"_tok) {
+				advance(); // consume '*'
 				
 				// Check for cv-qualifiers after the pointer
 				CVQualifier ptr_cv = parse_cv_qualifiers();
@@ -223,7 +217,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			}
 
 			// Check if followed by ')'
-			if (consume_punctuator(")")) {
+			if (consume(")"_tok)) {
 				// Before treating this as a C-style cast, verify that the type is actually valid.
 				// If type_spec is UserDefined with type_index 0, it means parse_type_specifier()
 				// found an unknown identifier and created a placeholder. This is likely a variable
@@ -261,8 +255,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				if (is_valid_type) {
 					// This is a C-style cast: (Type)expression
 					Token cast_token = Token(Token::Type::Punctuator, "cast"sv,
-											current_token_->line(), current_token_->column(),
-											current_token_->file_index());
+											current_token_.line(), current_token_.column(),
+											current_token_.file_index());
 
 					// Parse the expression to cast
 					ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
@@ -291,12 +285,12 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// Check for '::new' or '::delete' - globally qualified new/delete
 	// This is used in standard library (e.g., concepts header) to call global operator new/delete
 	[[maybe_unused]] bool is_global_scope_qualified = false;
-	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
+	if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == "::") {
 		// Check if the NEXT token is 'new' or 'delete' (use peek_token(1) to look ahead)
-		auto next = peek_token(1);
-		if (next.has_value() && next->type() == Token::Type::Keyword &&
-			(next->value() == "new" || next->value() == "delete")) {
-			consume_token(); // consume '::'
+		auto next = peek_info(1);
+		if (next.type() == Token::Type::Keyword &&
+			(next.value() == "new" || next.value() == "delete")) {
+			advance(); // consume '::'
 			is_global_scope_qualified = true;
 			// Fall through to handle 'new' or 'delete' below
 		}
@@ -304,16 +298,15 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 	// Check for 'throw' keyword - throw expressions are valid unary expressions
 	// Handles patterns like: (throw bad_optional_access()) or expr ? throw : value
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "throw") {
-		Token throw_token = *current_token_;
-		consume_token(); // consume 'throw'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "throw") {
+		Token throw_token = current_token_;
+		advance(); // consume 'throw'
 		
 		// Check if this is a rethrow (throw followed by non-expression punctuator)
 		// Rethrow: throw; or throw ) or throw : etc.
-		auto next = peek_token();
-		if (!next.has_value() || 
-		    (next->type() == Token::Type::Punctuator && 
-		     (next->value() == ";" || next->value() == ")" || next->value() == ":" || next->value() == ","))) {
+		auto next = peek_info();
+		if ((next.type() == Token::Type::Punctuator && 
+		     (next.value() == ";" || next.value() == ")" || next.value() == ":" || next.value() == ","))) {
 			// Rethrow expression - no operand
 			return ParseResult::success(emplace_node<ExpressionNode>(
 				ThrowExpressionNode(throw_token)));
@@ -331,14 +324,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	}
 
 	// Check for 'new' keyword (handles both 'new' and '::new')
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "new") {
-		consume_token(); // consume 'new'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "new") {
+		advance(); // consume 'new'
 
 		// Check for placement new: new (args...) Type
 		// Placement new can have multiple arguments: new (arg1, arg2, ...) Type
 		std::optional<ASTNode> placement_address;
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-		    peek_token()->value() == "(") {
+		if (peek() == "("_tok) {
 			// This could be placement new or constructor call
 			// We need to look ahead to distinguish:
 			// - new (expr) Type      -> placement new (single arg)
@@ -351,13 +343,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// If yes, it's placement new; otherwise, backtrack
 
 			ScopedTokenPosition saved_position(*this);
-			consume_token(); // consume '('
+			advance(); // consume '('
 
 			// Parse placement arguments (comma-separated expressions)
 			ChunkedVector<ASTNode, 128, 256> placement_args;
 			bool parse_error = false;
 			
-			if (!peek_token().has_value() || peek_token()->value() != ")") {
+			if (peek() != ")"_tok) {
 				while (true) {
 					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
@@ -369,8 +361,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						placement_args.push_back(*arg_node);
 					}
 					
-					if (peek_token().has_value() && peek_token()->value() == ",") {
-						consume_token(); // consume ','
+					if (peek() == ","_tok) {
+						advance(); // consume ','
 					} else {
 						break;
 					}
@@ -379,13 +371,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			
 			// Check for closing ')' and then a type
 			if (!parse_error &&
-			    peek_token().has_value() && peek_token()->value() == ")") {
-				consume_token(); // consume ')'
+			    peek() == ")"_tok) {
+				advance(); // consume ')'
 
 				// Check if next token looks like a type (not end of expression)
-				if (peek_token().has_value() &&
-				    (peek_token()->type() == Token::Type::Keyword ||
-				     peek_token()->type() == Token::Type::Identifier)) {
+				if (!peek().is_eof() &&
+				    (peek().is_keyword() ||
+				     peek().is_identifier())) {
 					// This is placement new - commit the parse
 					// For now, we only support single placement argument in NewExpressionNode
 					// For multiple args, create a comma expression or handle specially
@@ -422,13 +414,12 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 		auto type_node = type_result.node();
 		if (!type_node.has_value()) {
-			return ParseResult::error("Expected type after 'new'", *current_token_);
+			return ParseResult::error("Expected type after 'new'", current_token_);
 		}
 
 		// Check for array allocation: new Type[size] or new Type[size]{initializers}
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-		    peek_token()->value() == "[") {
-			consume_token(); // consume '['
+		if (peek() == "["_tok) {
+			advance(); // consume '['
 
 			// Parse the size expression
 			ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -436,21 +427,21 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				return size_result;
 			}
 
-			if (!consume_punctuator("]")) {
-				return ParseResult::error("Expected ']' after array size", *current_token_);
+			if (!consume("]"_tok)) {
+				return ParseResult::error("Expected ']' after array size", current_token_);
 			}
 
 			// C++11: Check for initializer list after array size: new Type[n]{init...}
 			// This allows aggregate initialization of array elements
 			ChunkedVector<ASTNode, 128, 256> array_initializers;
-			if (peek_token().has_value() && peek_token()->value() == "{") {
-				consume_token(); // consume '{'
+			if (peek() == "{"_tok) {
+				advance(); // consume '{'
 				
 				// Parse initializer list (comma-separated expressions or nested braces)
-				if (!peek_token().has_value() || peek_token()->value() != "}") {
+				if (peek() != "}"_tok) {
 					while (true) {
 						// Check for nested braces (aggregate initializers for each element)
-						if (peek_token().has_value() && peek_token()->value() == "{") {
+						if (peek() == "{"_tok) {
 							// Parse nested brace initializer
 							ParseResult init_result = parse_brace_initializer(type_node->as<TypeSpecifierNode>());
 							if (init_result.is_error()) {
@@ -470,16 +461,16 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 							}
 						}
 						
-						if (peek_token().has_value() && peek_token()->value() == ",") {
-							consume_token(); // consume ','
+						if (peek() == ","_tok) {
+							advance(); // consume ','
 						} else {
 							break;
 						}
 					}
 				}
 				
-				if (!consume_punctuator("}")) {
-					return ParseResult::error("Expected '}' after array initializer list", *current_token_);
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after array initializer list", current_token_);
 				}
 			}
 
@@ -489,14 +480,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			return ParseResult::success(new_expr);
 		}
 		// Check for constructor call: new Type(args)
-		else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-		         peek_token()->value() == "(") {
-			consume_token(); // consume '('
+		else if (peek() == "("_tok) {
+			advance(); // consume '('
 
 			ChunkedVector<ASTNode, 128, 256> args;
 
 			// Parse constructor arguments
-			if (!peek_token().has_value() || peek_token()->value() != ")") {
+			if (peek() != ")"_tok) {
 				while (true) {
 					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
@@ -506,9 +496,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					if (auto arg_node = arg_result.node()) {
 						// Check for pack expansion (...) after the argument
 						// This handles patterns like: new Type(__args...) in decltype contexts
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							Token ellipsis_token = *peek_token();
-							consume_token(); // consume '...'
+						if (peek() == "..."_tok) {
+							Token ellipsis_token = peek_info();
+							advance(); // consume '...'
 							
 							// Wrap the argument in a PackExpansionExprNode
 							auto pack_expr = emplace_node<ExpressionNode>(
@@ -519,16 +509,16 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						}
 					}
 
-					if (peek_token().has_value() && peek_token()->value() == ",") {
-						consume_token(); // consume ','
+					if (peek() == ","_tok) {
+						advance(); // consume ','
 					} else {
 						break;
 					}
 				}
 			}
 
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
@@ -544,16 +534,15 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	}
 
 	// Check for 'delete' keyword
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "delete") {
-		consume_token(); // consume 'delete'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "delete") {
+		advance(); // consume 'delete'
 
 		// Check for array delete: delete[]
 		bool is_array = false;
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-		    peek_token()->value() == "[") {
-			consume_token(); // consume '['
-			if (!consume_punctuator("]")) {
-				return ParseResult::error("Expected ']' after 'delete['", *current_token_);
+		if (peek() == "["_tok) {
+			advance(); // consume '['
+			if (!consume("]"_tok)) {
+				return ParseResult::error("Expected ']' after 'delete['", current_token_);
 			}
 			is_array = true;
 		}
@@ -572,37 +561,37 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	}
 
 	// Check for 'sizeof' keyword
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "sizeof"sv) {
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "sizeof"sv) {
 		// Handle sizeof operator: sizeof(type) or sizeof(expression)
 		// Also handle sizeof... operator: sizeof...(pack_name)
-		Token sizeof_token = *current_token_;
-		consume_token(); // consume 'sizeof'
+		Token sizeof_token = current_token_;
+		advance(); // consume 'sizeof'
 
 		// Check for ellipsis to determine if this is sizeof... (parameter pack)
 		bool is_sizeof_pack = false;
-		if (peek_token().has_value() && 
-		    (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
-		    peek_token()->value() == "...") {
-			consume_token(); // consume '...'
+		if (!peek().is_eof() && 
+		    (peek().is_operator() || peek().is_punctuator()) &&
+		    peek() == "..."_tok) {
+			advance(); // consume '...'
 			is_sizeof_pack = true;
 		}
 
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after 'sizeof'", *current_token_);
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after 'sizeof'", current_token_);
 		}
 
 		if (is_sizeof_pack) {
 			// Parse sizeof...(pack_name)
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected parameter pack name after 'sizeof...('", *current_token_);
+			if (!peek().is_identifier()) {
+				return ParseResult::error("Expected parameter pack name after 'sizeof...('", current_token_);
 			}
 			
-			Token pack_name_token = *peek_token();
+			Token pack_name_token = peek_info();
 			std::string_view pack_name = pack_name_token.value();
-			consume_token(); // consume pack name
+			advance(); // consume pack name
 			
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after sizeof... pack name", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after sizeof... pack name", current_token_);
 			}
 			
 			auto sizeof_pack_expr = emplace_node<ExpressionNode>(SizeofPackNode(pack_name, sizeof_token));
@@ -620,23 +609,23 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				// Parse any pointer (* const * volatile) or reference (& &&) declarators
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				
-				while (peek_token().has_value()) {
-					auto next_token = peek_token();
-					if (next_token->value() == "*") {
+				while (!peek().is_eof()) {
+					auto next_token = peek_info();
+					if (next_token.value() == "*") {
 						// Parse pointer with optional cv-qualifiers
-						consume_token(); // consume '*'
+						advance(); // consume '*'
 						
 						// Check for const/volatile after *
 						CVQualifier ptr_cv = parse_cv_qualifiers();
 						
 						type_spec.add_pointer_level(ptr_cv);
-					} else if (next_token->value() == "&") {
+					} else if (next_token.value() == "&") {
 						// Lvalue reference
-						consume_token();
+						advance();
 						
 						// Check if it's rvalue reference (&&)
-						if (peek_token().has_value() && peek_token()->value() == "&") {
-							consume_token();
+						if (peek() == "&"_tok) {
+							advance();
 							type_spec.set_reference(true); // rvalue reference
 						} else {
 							type_spec.set_lvalue_reference(true);
@@ -650,15 +639,15 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				}
 				
 				// Now check if ')' follows
-				if (peek_token().has_value() && peek_token()->value() == ")") {
+				if (peek() == ")"_tok) {
 					is_complete_type = true;
 				}
 			}
 			
 			if (is_complete_type) {
 				// Successfully parsed as type with declarators and ')' follows
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after sizeof type", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after sizeof type", current_token_);
 				}
 				discard_saved_token(saved_pos);
 				
@@ -679,11 +668,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (expr_result.is_error()) {
 					discard_saved_token(saved_pos);
-					return ParseResult::error("Expected type or expression after 'sizeof('", *current_token_);
+					return ParseResult::error("Expected type or expression after 'sizeof('", current_token_);
 				}
-				if (!consume_punctuator(")")) {
+				if (!consume(")"_tok)) {
 					discard_saved_token(saved_pos);
-					return ParseResult::error("Expected ')' after sizeof expression", *current_token_);
+					return ParseResult::error("Expected ')' after sizeof expression", current_token_);
 				}
 				discard_saved_token(saved_pos);
 				auto sizeof_expr = emplace_node<ExpressionNode>(
@@ -694,17 +683,17 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	}
 
 	// Check for 'alignof' keyword or '__alignof__' identifier (GCC/Clang extension)
-	bool is_alignof_keyword = current_token_->type() == Token::Type::Keyword && current_token_->value() == "alignof"sv;
-	bool is_alignof_extension = current_token_->type() == Token::Type::Identifier && current_token_->value() == "__alignof__"sv;
+	bool is_alignof_keyword = current_token_.type() == Token::Type::Keyword && current_token_.value() == "alignof"sv;
+	bool is_alignof_extension = current_token_.type() == Token::Type::Identifier && current_token_.value() == "__alignof__"sv;
 	
 	if (is_alignof_keyword || is_alignof_extension) {
 		// Handle alignof/alignof operator: alignof(type) or alignof(expression)
-		Token alignof_token = *current_token_;
-		std::string_view alignof_name = current_token_->value();
-		consume_token(); // consume 'alignof' or '__alignof__'
+		Token alignof_token = current_token_;
+		std::string_view alignof_name = current_token_.value();
+		advance(); // consume 'alignof' or '__alignof__'
 
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after '" + std::string(alignof_name) + "'", *current_token_);
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after '" + std::string(alignof_name) + "'", current_token_);
 		}
 
 		// Try to parse as a type first
@@ -718,23 +707,23 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// Parse any pointer (* const * volatile) or reference (& &&) declarators
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 			
-			while (peek_token().has_value()) {
-				auto next_token = peek_token();
-				if (next_token->value() == "*") {
+			while (!peek().is_eof()) {
+				auto next_token = peek_info();
+				if (next_token.value() == "*") {
 					// Parse pointer with optional cv-qualifiers
-					consume_token(); // consume '*'
+					advance(); // consume '*'
 					
 					// Check for const/volatile after *
 					CVQualifier ptr_cv = parse_cv_qualifiers();
 					
 					type_spec.add_pointer_level(ptr_cv);
-				} else if (next_token->value() == "&") {
+				} else if (next_token.value() == "&") {
 					// Lvalue reference
-					consume_token();
+					advance();
 					
 					// Check if it's rvalue reference (&&)
-					if (peek_token().has_value() && peek_token()->value() == "&") {
-						consume_token();
+					if (peek() == "&"_tok) {
+						advance();
 						type_spec.set_reference(true); // rvalue reference
 					} else {
 						type_spec.set_lvalue_reference(true);
@@ -748,15 +737,15 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			}
 			
 			// Now check if ')' follows
-			if (peek_token().has_value() && peek_token()->value() == ")") {
+			if (peek() == ")"_tok) {
 				is_complete_type = true;
 			}
 		}
 		
 		if (is_complete_type) {
 			// Successfully parsed as type with declarators and ')' follows
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " type", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " type", current_token_);
 			}
 			discard_saved_token(saved_pos);
 			
@@ -777,11 +766,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (expr_result.is_error()) {
 				discard_saved_token(saved_pos);
-				return ParseResult::error("Expected type or expression after '" + std::string(alignof_name) + "('", *current_token_);
+				return ParseResult::error("Expected type or expression after '" + std::string(alignof_name) + "('", current_token_);
 			}
-			if (!consume_punctuator(")")) {
+			if (!consume(")"_tok)) {
 				discard_saved_token(saved_pos);
-				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " expression", *current_token_);
+				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " expression", current_token_);
 			}
 			discard_saved_token(saved_pos);
 			auto alignof_expr = emplace_node<ExpressionNode>(
@@ -792,23 +781,23 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 	// Check for 'noexcept' keyword (operator, not specifier)
 	// noexcept(expression) returns true if expression is noexcept, false otherwise
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "noexcept"sv) {
-		Token noexcept_token = *current_token_;
-		consume_token(); // consume 'noexcept'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "noexcept"sv) {
+		Token noexcept_token = current_token_;
+		advance(); // consume 'noexcept'
 
 		// noexcept operator always requires parentheses
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after 'noexcept'", *current_token_);
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after 'noexcept'", current_token_);
 		}
 
 		// Parse the expression inside noexcept(...)
 		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error()) {
-			return ParseResult::error("Expected expression after 'noexcept('", *current_token_);
+			return ParseResult::error("Expected expression after 'noexcept('", current_token_);
 		}
 
-		if (!consume_punctuator(")")) {
-			return ParseResult::error("Expected ')' after noexcept expression", *current_token_);
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after noexcept expression", current_token_);
 		}
 
 		auto noexcept_expr = emplace_node<ExpressionNode>(NoexceptExprNode(*expr_result.node(), noexcept_token));
@@ -816,13 +805,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	}
 
 	// Check for 'typeid' keyword
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "typeid"sv) {
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "typeid"sv) {
 		// Handle typeid operator: typeid(type) or typeid(expression)
-		Token typeid_token = *current_token_;
-		consume_token(); // consume 'typeid'
+		Token typeid_token = current_token_;
+		advance(); // consume 'typeid'
 
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after 'typeid'", *current_token_);
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after 'typeid'", current_token_);
 		}
 
 		// Try to parse as a type first
@@ -833,12 +822,12 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		// This disambiguates between "typeid(int)" and "typeid(x + 1)" where x might be
 		// incorrectly parsed as a user-defined type
 		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
-		                                 peek_token().has_value() && peek_token()->value() == ")";
+		                                 peek() == ")"_tok;
 		
 		if (is_type_followed_by_paren) {
 			// Successfully parsed as type and ')' follows
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after typeid type", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after typeid type", current_token_);
 			}
 			discard_saved_token(saved_pos);
 			auto typeid_expr = emplace_node<ExpressionNode>(TypeidNode(*type_result.node(), true, typeid_token));
@@ -850,11 +839,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (expr_result.is_error()) {
 				discard_saved_token(saved_pos);
-				return ParseResult::error("Expected type or expression after 'typeid('", *current_token_);
+				return ParseResult::error("Expected type or expression after 'typeid('", current_token_);
 			}
-			if (!consume_punctuator(")")) {
+			if (!consume(")"_tok)) {
 				discard_saved_token(saved_pos);
-				return ParseResult::error("Expected ')' after typeid expression", *current_token_);
+				return ParseResult::error("Expected ')' after typeid expression", current_token_);
 			}
 			discard_saved_token(saved_pos);
 			auto typeid_expr = emplace_node<ExpressionNode>(TypeidNode(*expr_result.node(), false, typeid_token));
@@ -866,22 +855,22 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// Returns 1 if the argument can be evaluated at compile time, 0 otherwise
 	// Syntax: __builtin_constant_p(expr)
 	if (NameMangling::g_mangling_style != NameMangling::ManglingStyle::MSVC &&
-	    current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_constant_p"sv) {
-		Token builtin_token = *current_token_;
-		consume_token(); // consume '__builtin_constant_p'
+	    current_token_.type() == Token::Type::Identifier && current_token_.value() == "__builtin_constant_p"sv) {
+		Token builtin_token = current_token_;
+		advance(); // consume '__builtin_constant_p'
 
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after '__builtin_constant_p'", *current_token_);
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after '__builtin_constant_p'", current_token_);
 		}
 
 		// Parse argument: any expression
 		ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (arg_result.is_error()) {
-			return ParseResult::error("Expected expression as argument to __builtin_constant_p", *current_token_);
+			return ParseResult::error("Expected expression as argument to __builtin_constant_p", current_token_);
 		}
 
-		if (!consume_punctuator(")"sv)) {
-			return ParseResult::error("Expected ')' after __builtin_constant_p argument", *current_token_);
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after __builtin_constant_p argument", current_token_);
 		}
 
 		// Try to evaluate the expression at compile time
@@ -905,32 +894,32 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// Check for '__builtin_va_arg' intrinsic
 	// Special handling needed because second argument is a type, not an expression
 	// Syntax: __builtin_va_arg(va_list_var, type)
-	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_va_arg"sv) {
-		Token builtin_token = *current_token_;
-		consume_token(); // consume '__builtin_va_arg'
+	if (current_token_.type() == Token::Type::Identifier && current_token_.value() == "__builtin_va_arg"sv) {
+		Token builtin_token = current_token_;
+		advance(); // consume '__builtin_va_arg'
 
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after '__builtin_va_arg'", *current_token_);
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after '__builtin_va_arg'", current_token_);
 		}
 
 		// Parse first argument: va_list variable (expression)
 		ParseResult first_arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (first_arg_result.is_error()) {
-			return ParseResult::error("Expected va_list variable as first argument to __builtin_va_arg", *current_token_);
+			return ParseResult::error("Expected va_list variable as first argument to __builtin_va_arg", current_token_);
 		}
 
-		if (!consume_punctuator(","sv)) {
-			return ParseResult::error("Expected ',' after first argument to __builtin_va_arg", *current_token_);
+		if (!consume(","_tok)) {
+			return ParseResult::error("Expected ',' after first argument to __builtin_va_arg", current_token_);
 		}
 
 		// Parse second argument: type specifier
 		ParseResult type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
-			return ParseResult::error("Expected type as second argument to __builtin_va_arg", *current_token_);
+			return ParseResult::error("Expected type as second argument to __builtin_va_arg", current_token_);
 		}
 
-		if (!consume_punctuator(")"sv)) {
-			return ParseResult::error("Expected ')' after __builtin_va_arg arguments", *current_token_);
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after __builtin_va_arg arguments", current_token_);
 		}
 
 		// Create a function call node with both arguments
@@ -991,22 +980,22 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// - Minimal AST changes: Just add is_builtin_addressof flag
 	// - Enables other operator overloading (arithmetic, comparison, etc.)
 	// - IR generation remains unchanged (operates on resolved nodes)
-	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_addressof"sv) {
-		Token builtin_token = *current_token_;
-		consume_token(); // consume '__builtin_addressof'
+	if (current_token_.type() == Token::Type::Identifier && current_token_.value() == "__builtin_addressof"sv) {
+		Token builtin_token = current_token_;
+		advance(); // consume '__builtin_addressof'
 
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after '__builtin_addressof'", *current_token_);
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after '__builtin_addressof'", current_token_);
 		}
 
 		// Parse argument: the object to get the address of
 		ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (arg_result.is_error()) {
-			return ParseResult::error("Expected expression as argument to __builtin_addressof", *current_token_);
+			return ParseResult::error("Expected expression as argument to __builtin_addressof", current_token_);
 		}
 
-		if (!consume_punctuator(")"sv)) {
-			return ParseResult::error("Expected ')' after __builtin_addressof argument", *current_token_);
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after __builtin_addressof argument", current_token_);
 		}
 
 		// Create a unary expression with the AddressOf operator
@@ -1026,11 +1015,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// Check for GCC complex number operators: __real__ and __imag__
 	// These extract the real or imaginary part of a complex number (used in libstdc++ <complex>)
 	// Since FlashCpp doesn't support complex arithmetic, treat them as identity operators
-	if (current_token_->type() == Token::Type::Identifier) {
-		std::string_view val = current_token_->value();
+	if (current_token_.type() == Token::Type::Identifier) {
+		std::string_view val = current_token_.value();
 		if (val == "__real__" || val == "__imag__") {
-			Token operator_token = *current_token_;
-			consume_token();
+			Token operator_token = current_token_;
+			advance();
 
 			// Parse the operand
 			ParseResult operand_result = parse_unary_expression(ExpressionContext::Normal);
@@ -1050,14 +1039,14 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	}
 
 	// Check if the current token is a unary operator
-	if (current_token_->type() == Token::Type::Operator) {
-		std::string_view op = current_token_->value();
+	if (current_token_.type() == Token::Type::Operator) {
+		std::string_view op = current_token_.value();
 
 		// Check for unary operators: !, ~, +, -, ++, --, * (dereference), & (address-of)
 		if (op == "!" || op == "~" || op == "+" || op == "-" || op == "++" || op == "--" ||
 		    op == "*" || op == "&") {
-			Token operator_token = *current_token_;
-			consume_token();
+			Token operator_token = current_token_;
+			advance();
 
 			// Parse the operand (recursively handle unary expressions)
 			ParseResult operand_result = parse_unary_expression(ExpressionContext::Normal);
@@ -1199,15 +1188,15 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 	
 	if (recursion_depth > MAX_RECURSION_DEPTH) {
 		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_RECURSION_DEPTH limit ({}) in parse_expression", MAX_RECURSION_DEPTH);
-		return ParseResult::error("Parser error: maximum recursion depth exceeded", *current_token_);
+		return ParseResult::error("Parser error: maximum recursion depth exceeded", current_token_);
 	}
 	
 	FLASH_LOG_FORMAT(Parser, Debug, ">>> parse_expression: Starting with precedence={}, context={}, depth={}, current token: {}", 
 		precedence, static_cast<int>(context), recursion_depth, 
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	
 	// Add a specific check for the problematic case
-	if (peek_token().has_value() && peek_token()->value() == "ns" && precedence == 2) {
+	if (!peek().is_eof() && peek_info().value() == "ns" && precedence == 2) {
 		FLASH_LOG(Parser, Error, "UNEXPECTED: parse_expression called with token 'ns' and precedence=2 (initializer context)");
 	}
 	
@@ -1222,29 +1211,29 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 	while (true) {
 		if (++binary_op_iteration > MAX_BINARY_OP_ITERATIONS) {
 			FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_BINARY_OP_ITERATIONS limit ({}) in parse_expression binary operator loop", MAX_BINARY_OP_ITERATIONS);
-			return ParseResult::error("Parser error: too many binary operator iterations", *current_token_);
+			return ParseResult::error("Parser error: too many binary operator iterations", current_token_);
 		}
 		
 		// Safety check: ensure we have a token to examine
-		if (!peek_token().has_value()) {
+		if (peek().is_eof()) {
 			break;
 		}
 		
 		// Check if the current token is a binary operator or comma (which can be an operator)
-		bool is_operator = peek_token()->type() == Token::Type::Operator;
-		bool is_comma = peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",";
+		bool is_operator = peek().is_operator();
+		bool is_comma = peek().is_punctuator() && peek() == ","_tok;
 
 		if (!is_operator && !is_comma) {
 			break;
 		}
 
 		// Skip pack expansion operator '...' - it should be handled by the caller (e.g., function call argument parsing)
-		if (peek_token()->value() == "...") {
+		if (peek() == "..."_tok) {
 			break;
 		}
 
 		// Skip ternary operator '?' - it's handled separately below
-		if (is_operator && peek_token()->value() == "?") {
+		if (is_operator && peek() == "?"_tok) {
 			break;
 		}
 		
@@ -1252,10 +1241,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		// This allows parsing expressions like "T::value || X::value" while stopping at the
 		// template argument delimiter
 		if (context == ExpressionContext::TemplateArgument) {
-			if (peek_token()->value() == ">" || peek_token()->value() == ">>") {
+			if (peek() == ">"_tok || peek() == ">>"_tok) {
 				break;  // Stop at template closing bracket
 			}
-			if (peek_token()->value() == ",") {
+			if (peek() == ","_tok) {
 				break;  // Stop at template argument separator
 			}
 		}
@@ -1271,7 +1260,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		// - TemplateArgument context: prefer template arguments
 		// - RequiresClause context: prefer template arguments
 		// - Normal context: use regular disambiguation
-		if (is_operator && peek_token()->value() == "<" && result.node().has_value()) {
+		if (is_operator && peek() == "<"_tok && result.node().has_value()) {
 			FLASH_LOG(Parser, Debug, "Binary operator loop: checking if '<' is template arguments, context=", static_cast<int>(context));
 			
 			// Check if the left side could be a template name
@@ -1379,16 +1368,15 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 				
 				// Check if followed by '::' for qualified member access
 				// This handles patterns like: Base<T>::member(args)
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-				    peek_token()->value() == "::") {
-					consume_token(); // consume '::'
+				if (peek() == "::"_tok) {
+					advance(); // consume '::'
 					
 					// Expect member name
-					if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-						return ParseResult::error("Expected identifier after '::'", *current_token_);
+					if (!peek().is_identifier()) {
+						return ParseResult::error("Expected identifier after '::'", current_token_);
 					}
-					Token member_token = *peek_token();
-					consume_token(); // consume member name
+					Token member_token = peek_info();
+					advance(); // consume member name
 					
 					// Build the qualified name for lookup
 					std::string_view base_name;
@@ -1400,8 +1388,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					}
 					
 					// Check if followed by '(' for function call
-					if (peek_token().has_value() && peek_token()->value() == "(") {
-						consume_token(); // consume '('
+					if (peek() == "("_tok) {
+						advance(); // consume '('
 						
 						auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 							.handle_pack_expansion = true,
@@ -1409,11 +1397,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 							.expand_simple_packs = false
 						});
 						if (!args_result.success) {
-							return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+							return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 						}
 						
-						if (!consume_punctuator(")")) {
-							return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+						if (!consume(")"_tok)) {
+							return ParseResult::error("Expected ')' after function call arguments", current_token_);
 						}
 						
 						// Create forward declaration and function call
@@ -1443,7 +1431,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 		// Get the precedence of the current operator
 		int current_operator_precedence =
-			get_operator_precedence(peek_token()->value());
+			get_operator_precedence(peek_info().value());
 
 		// If the current operator has lower precedence than the provided
 		// precedence, stop parsing the expression
@@ -1452,8 +1440,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		}
 
 		// Consume the operator token
-		Token operator_token = *current_token_;
-		consume_token();
+		Token operator_token = current_token_;
+		advance();
 
 		// Parse the right-hand side expression
 		ParseResult rhs_result = parse_expression(current_operator_precedence + 1, context);
@@ -1474,10 +1462,9 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 	// Check for ternary operator (condition ? true_expr : false_expr)
 	// Ternary has precedence 5 (between assignment=3 and logical-or=7)
 	// Only parse ternary if we're at a precedence level that allows it
-	if (precedence <= 5 && peek_token().has_value() && 
-	    peek_token()->type() == Token::Type::Operator && peek_token()->value() == "?") {
-		consume_token();  // Consume '?'
-		Token question_token = *current_token_;  // Save the '?' token
+	if (precedence <= 5 && peek() == "?"_tok) {
+		advance();  // Consume '?'
+		Token question_token = current_token_;  // Save the '?' token
 
 		// Parse the true expression (allow lower precedence on the right)
 		// IMPORTANT: Pass the context to preserve template argument parsing mode
@@ -1489,10 +1476,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		}
 
 		// Expect ':'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator || peek_token()->value() != ":") {
-			return ParseResult::error("Expected ':' in ternary operator", *current_token_);
+		if (peek() != ":"_tok) {
+			return ParseResult::error("Expected ':' in ternary operator", current_token_);
 		}
-		consume_token();  // Consume ':'
+		advance();  // Consume ':'
 
 		// Parse the false expression (use precedence 5 for right-associativity)
 		// IMPORTANT: Pass the context to preserve template argument parsing mode
@@ -1671,9 +1658,9 @@ int Parser::get_operator_precedence(const std::string_view& op)
 
 bool Parser::consume_keyword(const std::string_view& value)
 {
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-		peek_token()->value() == value) {
-		consume_token(); // consume keyword
+	if (peek().is_keyword() &&
+		peek_info().value() == value) {
+		advance(); // consume keyword
 		return true;
 	}
 	return false;
@@ -1681,9 +1668,9 @@ bool Parser::consume_keyword(const std::string_view& value)
 
 bool Parser::consume_punctuator(const std::string_view& value)
 {
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-		peek_token()->value() == value) {
-		consume_token(); // consume punctuator
+	if (peek().is_punctuator() &&
+		peek_info().value() == value) {
+		advance(); // consume punctuator
 		return true;
 	}
 	return false;
@@ -1692,22 +1679,22 @@ bool Parser::consume_punctuator(const std::string_view& value)
 // Skip C++ standard attributes like [[nodiscard]], [[maybe_unused]], etc.
 void Parser::skip_cpp_attributes()
 {
-	while (peek_token().has_value() && peek_token()->value() == "[") {
-		auto next = peek_token(1);
-		if (next.has_value() && next->value() == "[") {
+	while (peek() == "["_tok) {
+		auto next = peek_info(1);
+		if (next.value() == "[") {
 			// Found [[
-			consume_token(); // consume first [
-			consume_token(); // consume second [
+			advance(); // consume first [
+			advance(); // consume second [
 			
 			// Skip everything until ]]
 			int bracket_depth = 2;
-			while (peek_token().has_value() && bracket_depth > 0) {
-				if (peek_token()->value() == "[") {
+			while (!peek().is_eof() && bracket_depth > 0) {
+				if (peek() == "["_tok) {
 					bracket_depth++;
-				} else if (peek_token()->value() == "]") {
+				} else if (peek() == "]"_tok) {
 					bracket_depth--;
 				}
-				consume_token();
+				advance();
 			}
 		} else {
 			break; // Not [[, stop
@@ -1721,29 +1708,29 @@ void Parser::skip_cpp_attributes()
 // Skip GCC-style __attribute__((...)) specifications
 void Parser::skip_gcc_attributes()
 {
-	while (peek_token().has_value() && peek_token()->value() == "__attribute__") {
-		consume_token(); // consume "__attribute__"
+	while (!peek().is_eof() && peek_info().value() == "__attribute__") {
+		advance(); // consume "__attribute__"
 		
 		// Expect ((
-		if (!peek_token().has_value() || peek_token()->value() != "(") {
+		if (peek() != "("_tok) {
 			return; // Invalid __attribute__, return
 		}
-		consume_token(); // consume first (
+		advance(); // consume first (
 		
-		if (!peek_token().has_value() || peek_token()->value() != "(") {
+		if (peek() != "("_tok) {
 			return; // Invalid __attribute__, return
 		}
-		consume_token(); // consume second (
+		advance(); // consume second (
 		
 		// Skip everything until ))
 		int paren_depth = 2;
-		while (peek_token().has_value() && paren_depth > 0) {
-			if (peek_token()->value() == "(") {
+		while (!peek().is_eof() && paren_depth > 0) {
+			if (peek() == "("_tok) {
 				paren_depth++;
-			} else if (peek_token()->value() == ")") {
+			} else if (peek() == ")"_tok) {
 				paren_depth--;
 			}
-			consume_token();
+			advance();
 		}
 	}
 }
@@ -1751,25 +1738,25 @@ void Parser::skip_gcc_attributes()
 // Skip noexcept specifier: noexcept or noexcept(expression)
 void Parser::skip_noexcept_specifier()
 {
-	if (!peek_token().has_value()) return;
+	if (peek().is_eof()) return;
 	
 	// Check for noexcept keyword
-	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "noexcept") {
-		consume_token(); // consume 'noexcept'
+	if (peek().is_keyword() && peek() == "noexcept"_tok) {
+		advance(); // consume 'noexcept'
 		
 		// Check for optional noexcept(expression)
-		if (peek_token().has_value() && peek_token()->value() == "(") {
-			consume_token(); // consume '('
+		if (peek() == "("_tok) {
+			advance(); // consume '('
 			
 			// Skip everything until matching ')'
 			int paren_depth = 1;
-			while (peek_token().has_value() && paren_depth > 0) {
-				if (peek_token()->value() == "(") {
+			while (!peek().is_eof() && paren_depth > 0) {
+				if (peek() == "("_tok) {
 					paren_depth++;
-				} else if (peek_token()->value() == ")") {
+				} else if (peek() == ")"_tok) {
 					paren_depth--;
 				}
-				consume_token();
+				advance();
 			}
 		}
 	}
@@ -1783,23 +1770,21 @@ bool Parser::parse_constructor_exception_specifier()
 	bool is_noexcept = false;
 	
 	// Parse noexcept specifier
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
-	    peek_token()->value() == "noexcept") {
-		consume_token(); // consume 'noexcept'
+	if (peek() == "noexcept"_tok) {
+		advance(); // consume 'noexcept'
 		is_noexcept = true;
 		
 		// Check for noexcept(expr) form
-		if (peek_token().has_value() && peek_token()->value() == "(") {
+		if (peek() == "("_tok) {
 			skip_balanced_parens(); // skip the noexcept expression
 		}
 	}
 	
 	// Parse throw() (old-style exception specification)
 	// throw() is equivalent to noexcept(true) in C++
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
-	    peek_token()->value() == "throw") {
-		consume_token(); // consume 'throw'
-		if (peek_token().has_value() && peek_token()->value() == "(") {
+	if (peek() == "throw"_tok) {
+		advance(); // consume 'throw'
+		if (peek() == "("_tok) {
 			skip_balanced_parens(); // skip throw(...)
 		}
 		is_noexcept = true;
@@ -1813,39 +1798,39 @@ bool Parser::parse_constructor_exception_specifier()
 // and __attribute__((...))
 void Parser::skip_function_trailing_specifiers()
 {
-	while (peek_token().has_value()) {
-		auto token = peek_token();
+	while (!peek().is_eof()) {
+		auto token = peek_info();
 		
 		// Handle cv-qualifiers
-		if (token->type() == Token::Type::Keyword && 
-			(token->value() == "const" || token->value() == "volatile")) {
-			consume_token();
+		if (token.type() == Token::Type::Keyword && 
+			(token.value() == "const" || token.value() == "volatile")) {
+			advance();
 			continue;
 		}
 		
 		// Handle ref-qualifiers (& and &&)
-		if (token->type() == Token::Type::Punctuator &&
-			(token->value() == "&" || token->value() == "&&")) {
-			consume_token();
+		if (token.type() == Token::Type::Punctuator &&
+			(token.value() == "&" || token.value() == "&&")) {
+			advance();
 			continue;
 		}
 		
 		// Handle noexcept
-		if (token->type() == Token::Type::Keyword && token->value() == "noexcept") {
+		if (token.type() == Token::Type::Keyword && token.value() == "noexcept") {
 			skip_noexcept_specifier();
 			continue;
 		}
 		
 		// Handle throw() (old-style exception specification)
-		if (token->type() == Token::Type::Keyword && token->value() == "throw") {
-			consume_token(); // consume 'throw'
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				consume_token(); // consume '('
+		if (token.type() == Token::Type::Keyword && token.value() == "throw") {
+			advance(); // consume 'throw'
+			if (peek() == "("_tok) {
+				advance(); // consume '('
 				int paren_depth = 1;
-				while (peek_token().has_value() && paren_depth > 0) {
-					if (peek_token()->value() == "(") paren_depth++;
-					else if (peek_token()->value() == ")") paren_depth--;
-					consume_token();
+				while (!peek().is_eof() && paren_depth > 0) {
+					if (peek() == "("_tok) paren_depth++;
+					else if (peek() == ")"_tok) paren_depth--;
+					advance();
 				}
 			}
 			continue;
@@ -1858,18 +1843,17 @@ void Parser::skip_function_trailing_specifiers()
 		// these important virtual function specifiers.
 		
 		// Handle __attribute__((...))
-		if (token->value() == "__attribute__") {
+		if (token.value() == "__attribute__") {
 			skip_gcc_attributes();
 			continue;
 		}
 		
 		// Handle pure virtual (= 0), default (= default), delete (= delete)
-		if (token->type() == Token::Type::Punctuator && token->value() == "=") {
-			auto next = peek_token(1);
-			if (next.has_value() && 
-				(next->value() == "0" || next->value() == "default" || next->value() == "delete")) {
-				consume_token(); // consume '='
-				consume_token(); // consume 0/default/delete
+		if (token.type() == Token::Type::Punctuator && token.value() == "=") {
+			auto next = peek_info(1);
+			if ((next.value() == "0" || next.value() == "default" || next.value() == "delete")) {
+				advance(); // consume '='
+				advance(); // consume 0/default/delete
 				continue;
 			}
 		}
@@ -1882,13 +1866,13 @@ void Parser::skip_function_trailing_specifiers()
 // Apply reference qualifiers (& or &&) to a type specifier if present
 // This is used when parsing template parameter default types like: typename U = T&&
 void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-		std::string_view op_value = peek_token()->value();
+	if (peek().is_operator()) {
+		std::string_view op_value = peek_info().value();
 		if (op_value == "&&") {
-			consume_token();
+			advance();
 			type_spec.set_reference(true);  // true = rvalue reference
 		} else if (op_value == "&") {
-			consume_token();
+			advance();
 			type_spec.set_reference(false);  // false = lvalue reference
 		}
 	}
@@ -1905,14 +1889,14 @@ bool Parser::parse_static_member_function(
 	const std::vector<StringHandle>& current_template_param_names
 ) {
 	// Check if this is a function (has '(')
-	if (!peek_token().has_value() || peek_token()->value() != "(") {
+	if (peek() != "("_tok) {
 		return false;  // Not a function, caller should handle as static data member
 	}
 
 	// This is a static member function
 	if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
 		// Set error in result
-		type_and_name_result = ParseResult::error("Expected declaration node for static member function", *peek_token());
+		type_and_name_result = ParseResult::error("Expected declaration node for static member function", peek_info());
 		return true;  // We handled it (even though it's an error)
 	}
 
@@ -1926,7 +1910,7 @@ bool Parser::parse_static_member_function(
 	}
 
 	if (!func_result.node().has_value()) {
-		type_and_name_result = ParseResult::error("Failed to create function declaration node", *peek_token());
+		type_and_name_result = ParseResult::error("Failed to create function declaration node", peek_info());
 		return true;
 	}
 
@@ -1949,9 +1933,8 @@ bool Parser::parse_static_member_function(
 
 	// Check for trailing requires clause: static int func(int x) requires constraint { ... }
 	// This is common in C++20 code, e.g., requires requires { expr; } 
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
-		peek_token()->value() == "requires") {
-		consume_token(); // consume 'requires'
+	if (peek() == "requires"_tok) {
+		advance(); // consume 'requires'
 		
 		// Enter a temporary scope and add function parameters so they're visible in the requires clause
 		// Example: static pointer pointer_to(element_type& __r) requires requires { __r; }
@@ -1981,7 +1964,7 @@ bool Parser::parse_static_member_function(
 	}
 
 	// Parse function body if present
-	if (peek_token().has_value() && peek_token()->value() == "{") {
+	if (peek() == "{"_tok) {
 		// DELAYED PARSING: Save the current position (start of '{')
 		SaveHandle body_start = save_token_position();
 
@@ -2010,8 +1993,8 @@ bool Parser::parse_static_member_function(
 			nullptr,  // dtor_node
 			current_template_param_names
 		});
-	} else if (!consume_punctuator(";")) {
-		type_and_name_result = ParseResult::error("Expected '{' or ';' after static member function declaration", *peek_token());
+	} else if (!consume(";"_tok)) {
+		type_and_name_result = ParseResult::error("Expected '{' or ';' after static member function declaration", peek_info());
 		return true;
 	}
 
@@ -2020,7 +2003,7 @@ bool Parser::parse_static_member_function(
 	
 	// Also register in StructTypeInfo
 	struct_info->member_functions.emplace_back(
-		StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
+		decl_node.identifier_token().handle(),
 		member_func_node,
 		current_access,
 		false,  // is_virtual
@@ -2045,16 +2028,16 @@ ParseResult Parser::parse_static_member_block(
 	// Handle optional const and constexpr
 	bool is_const = false;
 	bool is_static_constexpr = false;
-	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-		std::string_view kw = peek_token()->value();
+	while (peek().is_keyword()) {
+		std::string_view kw = peek_info().value();
 		if (kw == "const") {
 			is_const = true;
-			consume_token();
+			advance();
 		} else if (kw == "constexpr") {
 			is_static_constexpr = true;
-			consume_token();
+			advance();
 		} else if (kw == "inline") {
-			consume_token(); // consume 'inline'
+			advance(); // consume 'inline'
 		} else {
 			break;
 		}
@@ -2080,9 +2063,8 @@ ParseResult Parser::parse_static_member_block(
 	// If not a function, handle as static data member
 	// Optional initializer
 	std::optional<ASTNode> init_expr_opt;
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator
-		&& peek_token()->value() == "=") {
-		consume_token(); // consume "="
+	if (peek() == "="_tok) {
+		advance(); // consume "="
 
 		// Push struct context so static member references can be resolved
 		// This enables expressions like `!is_signed` to find `is_signed` as a static member
@@ -2109,13 +2091,13 @@ ParseResult Parser::parse_static_member_block(
 	}
 
 	// Consume semicolon
-	if (!consume_punctuator(";")) {
-		return ParseResult::error("Expected ';' after static member declaration", *peek_token());
+	if (!consume(";"_tok)) {
+		return ParseResult::error("Expected ';' after static member declaration", peek_info());
 	}
 
 	// Get the declaration and type specifier
 	if (!type_and_name.node().has_value()) {
-		return ParseResult::error("Expected static member declaration", *peek_token());
+		return ParseResult::error("Expected static member declaration", peek_info());
 	}
 	const DeclarationNode& decl = type_and_name.node()->as<DeclarationNode>();
 	const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
@@ -2126,7 +2108,7 @@ ParseResult Parser::parse_static_member_block(
 	size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 	// Register the static member
-	StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+	StringHandle static_member_name_handle = decl.identifier_token().handle();
 	
 	// Determine the access specifier to use
 	AccessSpecifier access = current_access;
@@ -2169,42 +2151,42 @@ Linkage Parser::parse_declspec_attributes()
 	Linkage linkage = Linkage::None;
 	
 	// Parse all __declspec attributes
-	while (peek_token().has_value() && peek_token()->value() == "__declspec") {
-		consume_token(); // consume "__declspec"
+	while (peek() == "__declspec"_tok) {
+		advance(); // consume "__declspec"
 		
-		if (!consume_punctuator("(")) {
+		if (!consume("("_tok)) {
 			return linkage; // Invalid __declspec, return what we have
 		}
 		
 		// Parse the declspec specifier(s)
-		while (peek_token().has_value() && peek_token()->value() != ")") {
-			if (peek_token()->type() == Token::Type::Identifier || peek_token()->type() == Token::Type::Keyword) {
-				std::string_view spec = peek_token()->value();
+		while (!peek().is_eof() && peek() != ")"_tok) {
+			if (peek().is_identifier() || peek().is_keyword()) {
+				std::string_view spec = peek_info().value();
 				if (spec == "dllimport") {
 					linkage = Linkage::DllImport;
 				} else if (spec == "dllexport") {
 					linkage = Linkage::DllExport;
 				}
 				// else: ignore other declspec attributes like align, deprecated, allocator, restrict, etc.
-				consume_token();
-			} else if (peek_token()->value() == "(") {
+				advance();
+			} else if (peek() == "("_tok) {
 				// Skip nested parens like __declspec(align(16)) or __declspec(deprecated("..."))
 				int paren_depth = 1;
-				consume_token();
-				while (peek_token().has_value() && paren_depth > 0) {
-					if (peek_token()->value() == "(") {
+				advance();
+				while (!peek().is_eof() && paren_depth > 0) {
+					if (peek() == "("_tok) {
 						paren_depth++;
-					} else if (peek_token()->value() == ")") {
+					} else if (peek() == ")"_tok) {
 						paren_depth--;
 					}
-					consume_token();
+					advance();
 				}
 			} else {
-				consume_token(); // Skip other tokens
+				advance(); // Skip other tokens
 			}
 		}
 		
-		if (!consume_punctuator(")")) {
+		if (!consume(")"_tok)) {
 			return linkage; // Missing closing paren
 		}
 	}
@@ -2217,15 +2199,15 @@ CallingConvention Parser::parse_calling_convention()
 {
 	CallingConvention calling_conv = CallingConvention::Default;
 	
-	while (peek_token().has_value() &&
-	       (peek_token()->type() == Token::Type::Keyword || peek_token()->type() == Token::Type::Identifier)) {
-		std::string_view token_val = peek_token()->value();
+	while (!peek().is_eof() &&
+	       (peek().is_keyword() || peek().is_identifier())) {
+		std::string_view token_val = peek_info().value();
 		
 		// Look up calling convention in the mapping table using ranges
 		auto it = std::ranges::find(calling_convention_map, token_val, &CallingConventionMapping::keyword);
 		if (it != std::end(calling_convention_map)) {
 			calling_conv = it->convention;
-			consume_token();
+			advance();
 		} else {
 			break;
 		}
@@ -2244,7 +2226,7 @@ Parser::AttributeInfo Parser::parse_attributes()
 	info.calling_convention = parse_calling_convention();
 	
 	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
-	if (peek_token().has_value() && (peek_token()->value() == "[" || peek_token()->value() == "__attribute__")) {
+	if (!peek().is_eof() && (peek() == "["_tok || peek_info().value() == "__attribute__")) {
 		// Recurse to handle more attributes (prefer more specific linkage)
 		AttributeInfo more_info = parse_attributes();
 		if (more_info.linkage != Linkage::None) {
@@ -2267,36 +2249,34 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 	// 3. alignas(Point) - user-defined type
 
 	// Check if next token is alignas keyword
-	if (!peek_token().has_value() ||
-	    peek_token()->type() != Token::Type::Keyword ||
-	    peek_token()->value() != "alignas") {
+	if (peek() != "alignas"_tok) {
 		return std::nullopt;
 	}
 
 	// Save position in case parsing fails
 	SaveHandle saved_pos = save_token_position();
 
-	consume_token(); // consume "alignas"
+	advance(); // consume "alignas"
 
-	if (!consume_punctuator("(")) {
+	if (!consume("("_tok)) {
 		restore_token_position(saved_pos);
 		return std::nullopt;
 	}
 
 	size_t alignment = 0;
-	auto token = peek_token();
+	auto token = peek_info();
 	
 	// Try to parse as integer literal first (most common case)
-	if (token.has_value() && token->type() == Token::Type::Literal) {
+	if (token.type() == Token::Type::Literal) {
 		// Parse the numeric literal
-		std::string_view value_str = token->value();
+		std::string_view value_str = token.value();
 
 		// Try to parse as integer
 		auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
 		if (result.ec == std::errc()) {
-			consume_token(); // consume the literal
+			advance(); // consume the literal
 			
-			if (!consume_punctuator(")")) {
+			if (!consume(")"_tok)) {
 				restore_token_position(saved_pos);
 				return std::nullopt;
 			}
@@ -2314,7 +2294,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 	}
 	
 	// Try to parse as type-id (e.g., alignas(Point) or alignas(double))
-	if (token.has_value() && (token->type() == Token::Type::Keyword || token->type() == Token::Type::Identifier)) {
+	if ((token.type() == Token::Type::Keyword || token.type() == Token::Type::Identifier)) {
 		// Save position before type specifier attempt to allow fallback to expression
 		SaveHandle pre_type_pos = save_token_position();
 		// Try to parse a full type specifier to handle all type variations
@@ -2322,7 +2302,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 		
 		if (!type_result.is_error() && type_result.node().has_value()) {
 			// Successfully parsed a type specifier - check if followed by ')'
-			if (consume_punctuator(")")) {
+			if (consume(")"_tok)) {
 				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				Type parsed_type = type_spec.type();
 				
@@ -2365,12 +2345,12 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 		// Restore to just after the '(' for a fresh parse attempt
 		restore_token_position(saved_pos);
 		saved_pos = save_token_position();
-		consume_token(); // consume "alignas"
-		consume_punctuator("(");
+		advance(); // consume "alignas"
+		consume("("_tok);
 
 		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
-			if (consume_punctuator(")")) {
+			if (consume(")"_tok)) {
 				// Try to evaluate the expression as a constant
 				auto eval_result = try_evaluate_constant_expression(*expr_result.node());
 				if (eval_result.has_value()) {
@@ -2403,17 +2383,17 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 	// Handle postfix operators in a loop
 	constexpr int MAX_POSTFIX_ITERATIONS = 100;  // Safety limit to prevent infinite loops
 	int postfix_iteration = 0;
-	while (result.has_value() && peek_token().has_value() && postfix_iteration < MAX_POSTFIX_ITERATIONS) {
+	while (result.has_value() && !peek().is_eof() && postfix_iteration < MAX_POSTFIX_ITERATIONS) {
 		++postfix_iteration;
 		FLASH_LOG_FORMAT(Parser, Debug, "apply_postfix_operators iteration {}: peek token type={}, value='{}'", 
-			postfix_iteration, static_cast<int>(peek_token()->type()), peek_token()->value());
+			postfix_iteration, static_cast<int>(peek_info().type()), peek_info().value());
 		
 		// Check for ++ and -- postfix operators
-		if (peek_token()->type() == Token::Type::Operator) {
-			std::string_view op = peek_token()->value();
+		if (peek().is_operator()) {
+			std::string_view op = peek_info().value();
 			if (op == "++" || op == "--") {
-				Token operator_token = *current_token_;
-				consume_token(); // consume the postfix operator
+				Token operator_token = current_token_;
+				advance(); // consume the postfix operator
 
 				// Create a postfix unary operator node (is_prefix = false)
 				result = emplace_node<ExpressionNode>(
@@ -2423,49 +2403,48 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 		}
 		
 		// Check for member access (. or ->) - these need special handling for .operator<=>()
-		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ".") {
-			Token dot_token = *peek_token();
-			consume_token(); // consume '.'
+		if (peek().is_punctuator() && peek() == "."_tok) {
+			Token dot_token = peek_info();
+			advance(); // consume '.'
 			
 			// Check for .operator
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
-			    peek_token()->value() == "operator") {
-				Token operator_keyword_token = *peek_token();
-				consume_token(); // consume 'operator'
+			if (peek() == "operator"_tok) {
+				Token operator_keyword_token = peek_info();
+				advance(); // consume 'operator'
 				
 				// Parse the operator symbol (can be multiple tokens like ==, <=>, () etc.)
 				StringBuilder operator_name_builder;
 				operator_name_builder.append("operator");
 				
-				if (!peek_token().has_value()) {
+				if (peek().is_eof()) {
 					return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
 				}
 				
 				// Handle various operator symbols including multi-character ones
-				std::string_view op_char = peek_token()->value();
+				std::string_view op_char = peek_info().value();
 				operator_name_builder.append(op_char);
-				consume_token();
+				advance();
 				
 				// Handle multi-character operators like >>=, <<=, <=>, etc.
-				while (peek_token().has_value()) {
-					std::string_view next = peek_token()->value();
+				while (!peek().is_eof()) {
+					std::string_view next = peek_info().value();
 					if (next == "=" || next == ">" || next == "<") {
 						if (op_char == ">" && (next == ">" || next == "=")) {
 							operator_name_builder.append(next);
-							consume_token();
+							advance();
 							op_char = next;
 						} else if (op_char == "<" && (next == "<" || next == "=" || next == ">")) {
 							operator_name_builder.append(next);
-							consume_token();
+							advance();
 							op_char = next;
 						} else if (op_char == "=" && next == ">") {
 							// Complete <=> operator
 							operator_name_builder.append(next);
-							consume_token();
+							advance();
 							break;
 						} else if ((op_char == ">" || op_char == "<" || op_char == "!" || op_char == "=") && next == "=") {
 							operator_name_builder.append(next);
-							consume_token();
+							advance();
 							break;
 						} else {
 							break;
@@ -2481,10 +2460,10 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				                          operator_keyword_token.file_index());
 				
 				// Expect '(' for the operator call
-				if (!peek_token().has_value() || peek_token()->value() != "(") {
-					return ParseResult::error("Expected '(' after operator name in member operator call", *current_token_);
+				if (peek() != "("_tok) {
+					return ParseResult::error("Expected '(' after operator name in member operator call", current_token_);
 				}
-				consume_token(); // consume '('
+				advance(); // consume '('
 				
 				// Parse function arguments
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -2493,12 +2472,12 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 					.expand_simple_packs = false
 				});
 				if (!args_result.success) {
-					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
 				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after member operator call arguments", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
 				}
 				
 				// Create a member function call node for the operator
@@ -2517,16 +2496,16 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			// Actually, we consumed the '.', so we need to handle member access here or error
 			
 			// Simple member access without operator
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected member name after '.'", dot_token);
 			}
 			
-			Token member_name_token = *peek_token();
-			consume_token();
+			Token member_name_token = peek_info();
+			advance();
 			
 			// Check if this is a member function call (followed by '(')
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				consume_token(); // consume '('
+			if (peek() == "("_tok) {
+				advance(); // consume '('
 				
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 					.handle_pack_expansion = true,
@@ -2534,12 +2513,12 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 					.expand_simple_packs = false
 				});
 				if (!args_result.success) {
-					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
 				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after member function call arguments", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after member function call arguments", current_token_);
 				}
 				
 				// Create a member function call node
@@ -2558,25 +2537,24 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 		}
 		
 		// Check for -> member access
-		if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->") {
-			Token arrow_token = *peek_token();
-			consume_token(); // consume '->'
+		if (peek().is_operator() && peek() == "->"_tok) {
+			Token arrow_token = peek_info();
+			advance(); // consume '->'
 			
 			// Check for ->operator
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
-			    peek_token()->value() == "operator") {
+			if (peek() == "operator"_tok) {
 				// Similar handling to .operator - for brevity, just error for now
 				// A full implementation would duplicate the .operator handling
 				return ParseResult::error("->operator syntax not yet implemented in apply_postfix_operators", arrow_token);
 			}
 			
 			// Simple member access via arrow
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected member name after '->'", arrow_token);
 			}
 			
-			Token member_name_token = *peek_token();
-			consume_token();
+			Token member_name_token = peek_info();
+			advance();
 			
 			// Create arrow access node
 			result = emplace_node<ExpressionNode>(
@@ -2589,7 +2567,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 	}
 	
 	if (postfix_iteration >= MAX_POSTFIX_ITERATIONS) {
-		return ParseResult::error("Parser error: too many postfix operator iterations", *current_token_);
+		return ParseResult::error("Parser error: too many postfix operator iterations", current_token_);
 	}
 	
 	if (result.has_value()) {
@@ -2620,15 +2598,15 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 	// Handle postfix operators in a loop
 	constexpr int MAX_POSTFIX_ITERATIONS = 100;  // Safety limit to prevent infinite loops
 	int postfix_iteration = 0;
-	while (result.has_value() && peek_token().has_value() && postfix_iteration < MAX_POSTFIX_ITERATIONS) {
+	while (result.has_value() && !peek().is_eof() && postfix_iteration < MAX_POSTFIX_ITERATIONS) {
 		++postfix_iteration;
 		FLASH_LOG_FORMAT(Parser, Debug, "Postfix operator iteration {}: peek token type={}, value='{}'", 
-			postfix_iteration, static_cast<int>(peek_token()->type()), peek_token()->value());
-		if (peek_token()->type() == Token::Type::Operator) {
-			std::string_view op = peek_token()->value();
+			postfix_iteration, static_cast<int>(peek_info().type()), peek_info().value());
+		if (peek().is_operator()) {
+			std::string_view op = peek_info().value();
 			if (op == "++" || op == "--") {
-				Token operator_token = *current_token_;
-				consume_token(); // consume the postfix operator
+				Token operator_token = current_token_;
+				advance(); // consume the postfix operator
 
 				// Create a postfix unary operator node (is_prefix = false)
 				result = emplace_node<ExpressionNode>(
@@ -2638,7 +2616,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		}
 
 		// Check for function call operator () - for operator() overload or function pointer call
-		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+		if (peek().is_punctuator() && peek() == "("_tok) {
 			// Check if the result is a member access to a function pointer
 			// If so, we should create a function pointer call instead of operator() call
 			bool is_function_pointer_call = false;
@@ -2672,8 +2650,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				}
 			}
 			
-			Token paren_token = *peek_token();
-			consume_token(); // consume '('
+			Token paren_token = peek_info();
+			advance(); // consume '('
 
 			// Parse function arguments using unified helper
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -2682,12 +2660,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				.expand_simple_packs = false
 			});
 			if (!args_result.success) {
-				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 			}
 			ChunkedVector<ASTNode> args = std::move(args_result.args);
 
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
 			if (is_function_pointer_call && member_access) {
@@ -2725,9 +2703,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		}
 
 		// Check for array subscript operator []
-		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "[") {
-			Token bracket_token = *peek_token();
-			consume_token(); // consume '['
+		if (peek().is_punctuator() && peek() == "["_tok) {
+			Token bracket_token = peek_info();
+			advance(); // consume '['
 
 			// Parse the index expression
 			ParseResult index_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -2736,11 +2714,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			}
 
 			// Expect closing ']'
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
-			    peek_token()->value() != "]") {
-				return ParseResult::error("Expected ']' after array index", *current_token_);
+			if (peek() != "]"_tok) {
+				return ParseResult::error("Expected ']' after array index", current_token_);
 			}
-			consume_token(); // consume ']'
+			advance(); // consume ']'
 
 			// Create array subscript node
 			if (auto index_node = index_result.node()) {
@@ -2753,14 +2730,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		}
 
 		// Check for scope resolution operator :: (namespace/class member access)
-		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "::"sv) {
+		if (peek().is_punctuator() && peek() == "::"_tok) {
 			// Handle namespace::member or class::static_member syntax
 			// We have an identifier (in result), now parse :: and the member name
-			consume_token(); // consume '::'
+			advance(); // consume '::'
 			
 			// Expect an identifier after ::
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected identifier after '::'", *current_token_);
+			if (!peek().is_identifier()) {
+				return ParseResult::error("Expected identifier after '::'", current_token_);
 			}
 			
 			// Get the namespace/class name from the current result
@@ -2770,29 +2747,29 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				if (std::holds_alternative<IdentifierNode>(expr)) {
 					namespace_name = std::get<IdentifierNode>(expr).name();
 				} else {
-					return ParseResult::error("Invalid left operand for '::'", *current_token_);
+					return ParseResult::error("Invalid left operand for '::'", current_token_);
 				}
 			} else {
-				return ParseResult::error("Expected identifier before '::'", *current_token_);
+				return ParseResult::error("Expected identifier before '::'", current_token_);
 			}
 			
 			// Now parse the rest as a qualified identifier
 			std::vector<StringType<32>> namespaces;
 			namespaces.emplace_back(StringType<32>(namespace_name));
 			
-			Token final_identifier = *peek_token();
-			consume_token(); // consume the identifier after ::
+			Token final_identifier = peek_info();
+			advance(); // consume the identifier after ::
 			
 			// Check if there are more :: following (e.g., A::B::C)
-			while (peek_token().has_value() && peek_token()->value() == "::"sv) {
+			while (peek() == "::"_tok) {
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
-				consume_token(); // consume ::
+				advance(); // consume ::
 				
-				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected identifier after '::'", *current_token_);
+				if (!peek().is_identifier()) {
+					return ParseResult::error("Expected identifier after '::'", current_token_);
 				}
-				final_identifier = *peek_token();
-				consume_token(); // consume identifier
+				final_identifier = peek_info();
+				advance(); // consume identifier
 			}
 			
 			// Look up the qualified identifier
@@ -2800,13 +2777,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			
 			// Check if this is followed by template arguments: ns::func<Args>
 			std::optional<std::vector<TemplateTypeArg>> template_args;
-			if (peek_token().has_value() && peek_token()->value() == "<") {
+			if (peek() == "<"_tok) {
 				template_args = parse_explicit_template_arguments();
 				// If parsing failed, it might be a less-than operator, continue normally
 			}
 			
 			// Check if this is a brace initialization: ns::Class<Args>{}
-			if (template_args.has_value() && peek_token().has_value() && peek_token()->value() == "{") {
+			if (template_args.has_value() && peek() == "{"_tok) {
 				// Build the qualified name for lookup
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 				
@@ -2825,8 +2802,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			}
 			
 			// Check if this is a function call
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				consume_token(); // consume '('
+			if (peek() == "("_tok) {
+				advance(); // consume '('
 				
 				// Parse function arguments using unified helper (collect types for template deduction)
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -2835,12 +2812,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					.expand_simple_packs = false
 				});
 				if (!args_result.success) {
-					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
 				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 				
 				// Get the DeclarationNode
@@ -2903,16 +2880,16 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			}
 			
 			// DEBUG: Log what we have at this point
-			if (peek_token().has_value()) {
+			if (!peek().is_eof()) {
 				FLASH_LOG(Templates, Info, "After function call check: template_args.has_value()=", template_args.has_value(), 
-				          ", peek='", peek_token()->value(), "', peek.empty()=", peek_token()->value().empty());
+				          ", peek='", peek_info().value(), "', peek.empty()=", peek_info().value().empty());
 			}
 			
-			if (template_args.has_value() && !peek_token()->value().empty() && peek_token()->value() != "(") {
+			if (template_args.has_value() && !peek_info().value().empty() && peek() != "("_tok) {
 				// This might be a variable template usage with qualified name: ns::var_template<Args>
 				// Build the qualified name for lookup
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
-				FLASH_LOG(Templates, Info, "Checking for qualified template: ", qualified_name, ", peek='", peek_token()->value(), "'");
+				FLASH_LOG(Templates, Info, "Checking for qualified template: ", qualified_name, ", peek='", peek_info().value(), "'");
 				
 				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
 				if (var_template_opt.has_value()) {
@@ -3016,14 +2993,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		bool is_arrow_access = false;
 		Token operator_start_token;  // Track the operator token for error reporting
 		
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
-			operator_start_token = *peek_token();
-			consume_token(); // consume '.'
+		if (peek() == "."_tok) {
+			operator_start_token = peek_info();
+			advance(); // consume '.'
 			is_arrow_access = false;
 			
 			// Check for pointer-to-member operator .*
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"sv) {
-				consume_token(); // consume '*'
+			if (peek() == "*"_tok) {
+				advance(); // consume '*'
 				
 				// Parse the RHS expression (pointer to member)
 				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
@@ -3034,7 +3011,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					return member_ptr_result;
 				}
 				if (!member_ptr_result.node().has_value()) {
-					return ParseResult::error("Expected expression after '.*' operator", *current_token_);
+					return ParseResult::error("Expected expression after '.*' operator", current_token_);
 				}
 				
 				// Create PointerToMemberAccessNode
@@ -3042,14 +3019,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, false));
 				continue;  // Check for more postfix operators
 			}
-		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
-			operator_start_token = *peek_token();
-			consume_token(); // consume '->'
+		} else if (peek() == "->"_tok) {
+			operator_start_token = peek_info();
+			advance(); // consume '->'
 			is_arrow_access = true;
 			
 			// Check for pointer-to-member operator ->*
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"sv) {
-				consume_token(); // consume '*'
+			if (peek() == "*"_tok) {
+				advance(); // consume '*'
 				
 				// Parse the RHS expression (pointer to member)
 				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
@@ -3059,7 +3036,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					return member_ptr_result;
 				}
 				if (!member_ptr_result.node().has_value()) {
-					return ParseResult::error("Expected expression after '->*' operator", *current_token_);
+					return ParseResult::error("Expected expression after '->*' operator", current_token_);
 				}
 				
 				// Create PointerToMemberAccessNode
@@ -3073,9 +3050,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			// handle operator-> overload resolution. For raw pointers, it will generate
 			// the equivalent of (*ptr).member; for objects with operator->, it will call that.
 		} else {
-			if (peek_token().has_value()) {
+			if (!peek().is_eof()) {
 				FLASH_LOG_FORMAT(Parser, Debug, "Postfix loop: breaking, peek token type={}, value='{}'",
-					static_cast<int>(peek_token()->type()), peek_token()->value());
+					static_cast<int>(peek_info().type()), peek_info().value());
 			} else {
 				FLASH_LOG(Parser, Debug, "Postfix loop: breaking, no more tokens");
 			}
@@ -3084,41 +3061,41 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 		// Expect an identifier (member name) OR ~ for pseudo-destructor call
 		// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "~") {
-			consume_token(); // consume '~'
+		if (peek() == "~"_tok) {
+			advance(); // consume '~'
 			
 			// The destructor name follows the ~
 			// This can be a simple identifier (e.g., ~int) or a qualified name (e.g., ~std::string)
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected type name after '~' in pseudo-destructor call", *current_token_);
+			if (!peek().is_identifier()) {
+				return ParseResult::error("Expected type name after '~' in pseudo-destructor call", current_token_);
 			}
 			
-			Token destructor_type_token = *peek_token();
-			consume_token(); // consume type name
+			Token destructor_type_token = peek_info();
+			advance(); // consume type name
 			
 			// Build qualified type name if present (e.g., std::string -> handle ~std::string)
 			std::string qualified_type_name(destructor_type_token.value());
-			while (peek_token().has_value() && peek_token()->value() == "::") {
-				consume_token(); // consume '::'
-				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected identifier after '::' in pseudo-destructor type", *current_token_);
+			while (peek() == "::"_tok) {
+				advance(); // consume '::'
+				if (!peek().is_identifier()) {
+					return ParseResult::error("Expected identifier after '::' in pseudo-destructor type", current_token_);
 				}
 				qualified_type_name += "::";
-				qualified_type_name += peek_token()->value();
-				consume_token(); // consume identifier
+				qualified_type_name += peek_info().value();
+				advance(); // consume identifier
 			}
 			
 			// Expect '(' for the destructor call
-			if (!peek_token().has_value() || peek_token()->value() != "(") {
-				return ParseResult::error("Expected '(' after destructor name", *current_token_);
+			if (peek() != "("_tok) {
+				return ParseResult::error("Expected '(' after destructor name", current_token_);
 			}
-			consume_token(); // consume '('
+			advance(); // consume '('
 			
 			// Expect ')' - destructors take no arguments
-			if (!peek_token().has_value() || peek_token()->value() != ")") {
-				return ParseResult::error("Expected ')' - pseudo-destructor takes no arguments", *current_token_);
+			if (peek() != ")"_tok) {
+				return ParseResult::error("Expected ')' - pseudo-destructor takes no arguments", current_token_);
 			}
-			consume_token(); // consume ')'
+			advance(); // consume ')'
 			
 			FLASH_LOG(Parser, Debug, "Parsed pseudo-destructor call: ~", qualified_type_name);
 			
@@ -3131,45 +3108,44 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		
 		// Handle member operator call syntax: obj.operator<=>(...) or ptr->operator++(...)
 		// This is valid C++ syntax for calling an operator as a member function by name
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
-		    peek_token()->value() == "operator") {
-			Token operator_keyword_token = *peek_token();
-			consume_token(); // consume 'operator'
+		if (peek() == "operator"_tok) {
+			Token operator_keyword_token = peek_info();
+			advance(); // consume 'operator'
 			
 			// Parse the operator symbol (can be multiple tokens like ==, <=>, () etc.)
 			StringBuilder operator_name_builder;
 			operator_name_builder.append("operator");
 			
-			if (!peek_token().has_value()) {
+			if (peek().is_eof()) {
 				return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
 			}
 			
 			// Handle various operator symbols including multi-character ones
-			std::string_view op = peek_token()->value();
+			std::string_view op = peek_info().value();
 			operator_name_builder.append(op);
-			consume_token();
+			advance();
 			
 			// Handle multi-character operators like >>=, <<=, <=>, (), [], etc.
-			while (peek_token().has_value()) {
-				std::string_view next = peek_token()->value();
+			while (!peek().is_eof()) {
+				std::string_view next = peek_info().value();
 				if (next == "=" || next == ">" || next == "<") {
 					// Could be part of >>=, <<=, <=>, ==, !=, etc.
 					if (op == ">" && (next == ">" || next == "=")) {
 						operator_name_builder.append(next);
-						consume_token();
+						advance();
 						op = next;
 					} else if (op == "<" && (next == "<" || next == "=" || next == ">")) {
 						operator_name_builder.append(next);
-						consume_token();
+						advance();
 						op = next;
 					} else if (op == "=" && next == ">") {
 						// Complete <=> operator (we already have operator<= from above)
 						operator_name_builder.append(next);
-						consume_token();
+						advance();
 						break;
 					} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
 						operator_name_builder.append(next);
-						consume_token();
+						advance();
 						break;
 					} else {
 						break;
@@ -3177,12 +3153,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				} else if (op == ")" && next == "(") {
 					// operator()
 					operator_name_builder.append(next);
-					consume_token();
+					advance();
 					break;
 				} else if (op == "]" && next == "[") {
 					// operator[]
 					operator_name_builder.append(next);
-					consume_token();
+					advance();
 					break;
 				} else {
 					break;
@@ -3195,10 +3171,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			                                  operator_keyword_token.file_index());
 			
 			// Expect '(' for the operator call
-			if (!peek_token().has_value() || peek_token()->value() != "(") {
-				return ParseResult::error("Expected '(' after operator name in member operator call", *current_token_);
+			if (peek() != "("_tok) {
+				return ParseResult::error("Expected '(' after operator name in member operator call", current_token_);
 			}
-			consume_token(); // consume '('
+			advance(); // consume '('
 			
 			// Parse function arguments
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -3207,12 +3183,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				.expand_simple_packs = false
 			});
 			if (!args_result.success) {
-				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 			}
 			ChunkedVector<ASTNode> args = std::move(args_result.args);
 			
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after member operator call arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
 			}
 			
 			// Create a member function call node for the operator
@@ -3226,27 +3202,27 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			continue;  // Continue checking for more postfix operators
 		}
 		
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected member name after '.' or '->'", *current_token_);
+		if (!peek().is_identifier()) {
+			return ParseResult::error("Expected member name after '.' or '->'", current_token_);
 		}
 
-		Token member_name_token = *peek_token();
-		consume_token(); // consume member name
+		Token member_name_token = peek_info();
+		advance(); // consume member name
 
 		// Check for explicit template arguments: obj.method<T>(args)
 		std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
-		if (peek_token().has_value() && peek_token()->value() == "<") {
+		if (peek() == "<"_tok) {
 			explicit_template_args = parse_explicit_template_arguments();
 			if (!explicit_template_args.has_value()) {
-				return ParseResult::error("Failed to parse template arguments for member function", *current_token_);
+				return ParseResult::error("Failed to parse template arguments for member function", current_token_);
 			}
 		}
 
 		// Check if this is a member function call (followed by '(')
-		if (peek_token().has_value() && peek_token()->value() == "("sv) {
+		if (peek() == "("_tok) {
 			// This is a member function call: obj.method(args)
 
-			consume_token(); // consume '('
+			advance(); // consume '('
 
 			// Parse function arguments using unified helper (collect types for template deduction)
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -3255,13 +3231,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				.expand_simple_packs = false
 			});
 			if (!args_result.success) {
-				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 			}
 			ChunkedVector<ASTNode> args = std::move(args_result.args);
 			std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
 			// Try to get the object's type to check for member function templates
@@ -3416,7 +3392,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 	// Check if we hit the iteration limit (indicates potential infinite loop)
 	if (postfix_iteration >= MAX_POSTFIX_ITERATIONS) {
 		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_POSTFIX_ITERATIONS limit ({}) - possible infinite loop in postfix operator parsing", MAX_POSTFIX_ITERATIONS);
-		return ParseResult::error("Parser error: too many postfix operator iterations", *current_token_);
+		return ParseResult::error("Parser error: too many postfix operator iterations", current_token_);
 	}
 
 	if (result.has_value())
@@ -3433,77 +3409,77 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	// Check for 'typename' keyword in expression context: typename T::type{} or typename T::type()
 	// This handles dependent type constructor calls used as function arguments
 	// Pattern: typename Result::__invoke_type{} creates a temporary of the dependent type
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "typename") {
-		Token typename_token = *current_token_;
-		consume_token(); // consume 'typename'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "typename") {
+		Token typename_token = current_token_;
+		advance(); // consume 'typename'
 		
 		// Parse the dependent type name: T::type or Result::__invoke_type
 		// This should be an identifier followed by :: and more identifiers
-		if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+		if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 			return ParseResult::error("Expected type name after 'typename' keyword", typename_token);
 		}
 		
 		// Build the full qualified type name using StringBuilder
 		StringBuilder type_name_sb;
-		type_name_sb.append(current_token_->value());
-		Token first_type_token = *current_token_;
-		consume_token(); // consume first identifier
+		type_name_sb.append(current_token_.value());
+		Token first_type_token = current_token_;
+		advance(); // consume first identifier
 		
 		// Handle template arguments after identifier: typename __promote<_Tp>::__type(0)
-		if (current_token_.has_value() && current_token_->value() == "<") {
+		if (current_token_.value() == "<") {
 			type_name_sb.append("<");
-			consume_token(); // consume '<'
+			advance(); // consume '<'
 			
 			// Parse template arguments, handling nested template arguments
 			int angle_bracket_depth = 1;
-			while (current_token_.has_value() && angle_bracket_depth > 0) {
-				if (current_token_->value() == "<") {
+			while (!current_token_.kind().is_eof() && angle_bracket_depth > 0) {
+				if (current_token_.value() == "<") {
 					angle_bracket_depth++;
-				} else if (current_token_->value() == ">") {
+				} else if (current_token_.value() == ">") {
 					angle_bracket_depth--;
 					if (angle_bracket_depth == 0) {
 						type_name_sb.append(">");
-						consume_token(); // consume final '>'
+						advance(); // consume final '>'
 						break;
 					}
 				}
-				type_name_sb.append(current_token_->value());
-				consume_token();
+				type_name_sb.append(current_token_.value());
+				advance();
 			}
 		}
 		
 		// Parse :: and subsequent identifiers (with optional template args)
-		while (current_token_.has_value() && current_token_->value() == "::") {
+		while (current_token_.value() == "::") {
 			type_name_sb.append("::");
-			consume_token(); // consume '::'
+			advance(); // consume '::'
 			
-			if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+			if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 				type_name_sb.reset(); // Must reset before early return
 				return ParseResult::error("Expected identifier after '::' in typename", typename_token);
 			}
-			type_name_sb.append(current_token_->value());
-			consume_token(); // consume identifier
+			type_name_sb.append(current_token_.value());
+			advance(); // consume identifier
 			
 			// Handle template arguments after the identifier
-			if (current_token_.has_value() && current_token_->value() == "<") {
+			if (current_token_.value() == "<") {
 				type_name_sb.append("<");
-				consume_token(); // consume '<'
+				advance(); // consume '<'
 				
 				// Parse template arguments, handling nested template arguments
 				int angle_bracket_depth = 1;
-				while (current_token_.has_value() && angle_bracket_depth > 0) {
-					if (current_token_->value() == "<") {
+				while (!current_token_.kind().is_eof() && angle_bracket_depth > 0) {
+					if (current_token_.value() == "<") {
 						angle_bracket_depth++;
-					} else if (current_token_->value() == ">") {
+					} else if (current_token_.value() == ">") {
 						angle_bracket_depth--;
 						if (angle_bracket_depth == 0) {
 							type_name_sb.append(">");
-							consume_token(); // consume final '>'
+							advance(); // consume final '>'
 							break;
 						}
 					}
-					type_name_sb.append(current_token_->value());
-					consume_token();
+					type_name_sb.append(current_token_.value());
+					advance();
 				}
 			}
 		}
@@ -3512,12 +3488,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		ChunkedVector<ASTNode> args;
 		Token init_token = typename_token;
 		
-		if (current_token_.has_value() && current_token_->value() == "{") {
-			init_token = *current_token_;
-			consume_token(); // consume '{'
+		if (current_token_.value() == "{") {
+			init_token = current_token_;
+			advance(); // consume '{'
 			
 			// Parse brace initializer arguments
-			while (current_token_.has_value() && current_token_->value() != "}") {
+			while (current_token_.value() != "}") {
 				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (arg_result.is_error()) {
 					type_name_sb.reset(); // Must reset before early return
@@ -3527,24 +3503,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					args.push_back(*arg);
 				}
 				
-				if (current_token_.has_value() && current_token_->value() == ",") {
-					consume_token(); // consume ','
-				} else if (!current_token_.has_value() || current_token_->value() != "}") {
+				if (current_token_.value() == ",") {
+					advance(); // consume ','
+				} else if (current_token_.kind().is_eof() || current_token_.value() != "}") {
 					type_name_sb.reset(); // Must reset before early return
 					return ParseResult::error("Expected ',' or '}' in brace initializer", typename_token);
 				}
 			}
 			
-			if (!consume_punctuator("}")) {
+			if (!consume("}"_tok)) {
 				type_name_sb.reset(); // Must reset before early return
 				return ParseResult::error("Expected '}' after brace initializer", typename_token);
 			}
-		} else if (current_token_.has_value() && current_token_->value() == "(") {
-			init_token = *current_token_;
-			consume_token(); // consume '('
+		} else if (current_token_.value() == "(") {
+			init_token = current_token_;
+			advance(); // consume '('
 			
 			// Parse parenthesized arguments
-			while (current_token_.has_value() && current_token_->value() != ")") {
+			while (current_token_.value() != ")") {
 				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (arg_result.is_error()) {
 					type_name_sb.reset(); // Must reset before early return
@@ -3554,15 +3530,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					args.push_back(*arg);
 				}
 				
-				if (current_token_.has_value() && current_token_->value() == ",") {
-					consume_token(); // consume ','
-				} else if (!current_token_.has_value() || current_token_->value() != ")") {
+				if (current_token_.value() == ",") {
+					advance(); // consume ','
+				} else if (current_token_.kind().is_eof() || current_token_.value() != ")") {
 					type_name_sb.reset(); // Must reset before early return
 					return ParseResult::error("Expected ',' or ')' in constructor call", typename_token);
 				}
 			}
 			
-			if (!consume_punctuator(")")) {
+			if (!consume(")"_tok)) {
 				type_name_sb.reset(); // Must reset before early return
 				return ParseResult::error("Expected ')' after constructor arguments", typename_token);
 			}
@@ -3587,8 +3563,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	
 	// Check for functional-style cast with keyword type names: bool(x), int(x), etc.
 	// This must come early because these are keywords, not identifiers
-	if (current_token_->type() == Token::Type::Keyword) {
-		std::string_view kw = current_token_->value();
+	if (current_token_.type() == Token::Type::Keyword) {
+		std::string_view kw = current_token_.value();
 		bool is_builtin_type = (kw == "bool" || kw == "char" || kw == "int" || 
 		                        kw == "short" || kw == "long" || kw == "float" || 
 		                        kw == "double" || kw == "void" || kw == "wchar_t" ||
@@ -3596,12 +3572,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		                        kw == "signed" || kw == "unsigned");
 		
 		if (is_builtin_type) {
-			Token type_token = *current_token_;
-			std::string_view type_kw = current_token_->value();
-			consume_token(); // consume the type keyword
+			Token type_token = current_token_;
+			std::string_view type_kw = current_token_.value();
+			advance(); // consume the type keyword
 			
 			// Check if followed by '(' for functional cast
-			if (current_token_.has_value() && current_token_->value() == "(") {
+			if (current_token_.value() == "(") {
 				ParseResult cast_result = parse_functional_cast(type_kw, type_token);
 				if (!cast_result.is_error() && cast_result.node().has_value()) {
 					return cast_result;
@@ -3618,36 +3594,36 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	// Check for 'operator' keyword in expression context: operator==(other), operator+=(x), etc.
 	// This is used to call operators as member functions by name, e.g., return !operator==(other);
 	// This pattern is common in standard library headers like <typeinfo>
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "operator") {
-		Token operator_keyword_token = *current_token_;
-		consume_token(); // consume 'operator'
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "operator") {
+		Token operator_keyword_token = current_token_;
+		advance(); // consume 'operator'
 
 		std::string operator_name = "operator";
 
 		// Check for operator() - function call operator
-		if (current_token_.has_value() && current_token_->type() == Token::Type::Punctuator &&
-		    current_token_->value() == "(") {
-			consume_token(); // consume '('
-			if (!current_token_.has_value() || current_token_->value() != ")") {
+		if (current_token_.type() == Token::Type::Punctuator &&
+		    current_token_.value() == "(") {
+			advance(); // consume '('
+			if (current_token_.kind().is_eof() || current_token_.value() != ")") {
 				return ParseResult::error("Expected ')' after 'operator('", operator_keyword_token);
 			}
-			consume_token(); // consume ')'
+			advance(); // consume ')'
 			operator_name = "operator()";
 		}
 		// Check for operator[] - subscript operator
-		else if (current_token_.has_value() && current_token_->type() == Token::Type::Punctuator &&
-		         current_token_->value() == "[") {
-			consume_token(); // consume '['
-			if (!current_token_.has_value() || current_token_->value() != "]") {
+		else if (current_token_.type() == Token::Type::Punctuator &&
+		         current_token_.value() == "[") {
+			advance(); // consume '['
+			if (current_token_.kind().is_eof() || current_token_.value() != "]") {
 				return ParseResult::error("Expected ']' after 'operator['", operator_keyword_token);
 			}
-			consume_token(); // consume ']'
+			advance(); // consume ']'
 			operator_name = "operator[]";
 		}
 		// Check for other operators
-		else if (current_token_.has_value() && current_token_->type() == Token::Type::Operator) {
-			std::string_view operator_symbol = current_token_->value();
-			consume_token(); // consume operator symbol
+		else if (current_token_.type() == Token::Type::Operator) {
+			std::string_view operator_symbol = current_token_.value();
+			advance(); // consume operator symbol
 			operator_name += std::string(operator_symbol);
 		}
 		else {
@@ -3655,13 +3631,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 
 		// Now expect '(' and arguments
-		if (!consume_punctuator("(")) {
+		if (!consume("("_tok)) {
 			return ParseResult::error("Expected '(' after operator name in expression", operator_keyword_token);
 		}
 
 		// Parse arguments
 		ChunkedVector<ASTNode> args;
-		if (current_token_.has_value() && current_token_->value() != ")") {
+		if (current_token_.value() != ")") {
 			while (true) {
 				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (arg_result.is_error()) {
@@ -3671,21 +3647,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					args.push_back(*arg);
 				}
 
-				if (!current_token_.has_value()) {
+				if (current_token_.kind().is_eof()) {
 					return ParseResult::error("Expected ',' or ')' in operator call", operator_keyword_token);
 				}
 
-				if (current_token_->value() == ")") {
+				if (current_token_.value() == ")") {
 					break;
 				}
 
-				if (!consume_punctuator(",")) {
+				if (!consume(","_tok)) {
 					return ParseResult::error("Expected ',' between operator call arguments", operator_keyword_token);
 				}
 			}
 		}
 
-		if (!consume_punctuator(")")) {
+		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after operator call arguments", operator_keyword_token);
 		}
 
@@ -3772,7 +3748,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	}
 
 	// Check for requires expression: requires(params) { requirements; } or requires { requirements; }
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "requires") {
+	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "requires") {
 		ParseResult requires_result = parse_requires_expression();
 		if (requires_result.is_error()) {
 			return requires_result;
@@ -3781,7 +3757,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Don't return here - continue to handle potential postfix operators
 	}
 	// Check for lambda expression first (starts with '[')
-	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "[") {
+	else if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == "[") {
 		ParseResult lambda_result = parse_lambda_expression();
 		if (lambda_result.is_error()) {
 			return lambda_result;
@@ -3791,34 +3767,34 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// This allows immediately invoked lambdas: []() { ... }()
 	}
 	// Check for offsetof builtin first (before general identifier handling)
-	else if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "offsetof") {
+	else if (current_token_.type() == Token::Type::Identifier && current_token_.value() == "offsetof") {
 		// Handle offsetof builtin: offsetof(struct_type, member)
-		Token offsetof_token = *current_token_;
-		consume_token(); // consume 'offsetof'
+		Token offsetof_token = current_token_;
+		advance(); // consume 'offsetof'
 
-		if (!consume_punctuator("(")) {
-			return ParseResult::error("Expected '(' after 'offsetof'", *current_token_);
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after 'offsetof'", current_token_);
 		}
 
 		// Parse the struct type
 		ParseResult type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
-			return ParseResult::error("Expected struct type in offsetof", *current_token_);
+			return ParseResult::error("Expected struct type in offsetof", current_token_);
 		}
 
-		if (!consume_punctuator(",")) {
-			return ParseResult::error("Expected ',' after struct type in offsetof", *current_token_);
+		if (!consume(","_tok)) {
+			return ParseResult::error("Expected ',' after struct type in offsetof", current_token_);
 		}
 
 		// Parse the member name
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected member name in offsetof", *current_token_);
+		if (!peek().is_identifier()) {
+			return ParseResult::error("Expected member name in offsetof", current_token_);
 		}
-		Token member_name = *peek_token();
-		consume_token(); // consume member name
+		Token member_name = peek_info();
+		advance(); // consume member name
 
-		if (!consume_punctuator(")")) {
-			return ParseResult::error("Expected ')' after offsetof arguments", *current_token_);
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after offsetof arguments", current_token_);
 		}
 
 		result = emplace_node<ExpressionNode>(
@@ -3831,20 +3807,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	// template class name (e.g., __is_swappable<T> from the standard library)
 	// ALSO: Skip if this identifier is already registered as a function template in the template registry
 	// (e.g., __is_complete_or_unbounded is a library function template, not a compiler intrinsic)
-	else if (current_token_->type() == Token::Type::Identifier && 
-	         (current_token_->value().starts_with("__is_") || 
-	          current_token_->value().starts_with("__has_") ||
-	          (current_token_->value().starts_with("__builtin_") && 
-	           (current_token_->value().starts_with("__builtin_is_") || 
-	            current_token_->value().starts_with("__builtin_has_")))) &&
+	else if (current_token_.type() == Token::Type::Identifier && 
+	         (current_token_.value().starts_with("__is_") || 
+	          current_token_.value().starts_with("__has_") ||
+	          (current_token_.value().starts_with("__builtin_") && 
+	           (current_token_.value().starts_with("__builtin_is_") || 
+	            current_token_.value().starts_with("__builtin_has_")))) &&
 	         // Only parse as intrinsic if NEXT token is '(' - otherwise it's a template class name
-	         peek_token(1).has_value() && peek_token(1)->value() == "(" &&
+	         peek(1) == "("_tok &&
 	         // Only parse as intrinsic if the name is a KNOWN type trait.
 	         // This prevents regular functions like __is_single_threaded() from being misidentified.
-	         is_known_type_trait_name(current_token_->value())) {
+	         is_known_type_trait_name(current_token_.value())) {
 		// Check if this is actually a declared function template (library function, not intrinsic)
 		// If so, skip this branch and let it fall through to normal function call parsing
-		std::string_view trait_name = current_token_->value();
+		std::string_view trait_name = current_token_.value();
 		
 		bool is_declared_template = gTemplateRegistry.lookupTemplate(trait_name).has_value();
 		
@@ -3860,8 +3836,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		
 		if (!is_declared_template) {
 			// Parse type trait intrinsics
-			Token trait_token = *current_token_;
-			consume_token(); // consume the trait name
+			Token trait_token = current_token_;
+			advance(); // consume the trait name
 
 			auto it = trait_map.find(normalize_trait_name(trait_name));
 			if (it == trait_map.end()) {
@@ -3875,14 +3851,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			bool is_variadic_trait = it->second.is_variadic;
 			bool is_no_arg_trait = it->second.is_no_arg;
 
-			if (!consume_punctuator("(")) {
-				return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
+			if (!consume("("_tok)) {
+				return ParseResult::error("Expected '(' after type trait intrinsic", current_token_);
 			}
 
 			if (is_no_arg_trait) {
 				// No-argument trait like __is_constant_evaluated()
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' for no-argument type trait", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' for no-argument type trait", current_token_);
 				}
 
 				result = emplace_node<ExpressionNode>(
@@ -3891,7 +3867,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Parse the first type argument
 				ParseResult type_result = parse_type_specifier();
 				if (type_result.is_error() || !type_result.node().has_value()) {
-					return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
+					return ParseResult::error("Expected type in type trait intrinsic", current_token_);
 				}
 
 				// Parse pointer/reference modifiers after the base type
@@ -3899,8 +3875,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				
 				// Parse pointer depth (*)
-				while (peek_token().has_value() && peek_token()->value() == "*") {
-					consume_token();
+				while (peek() == "*"_tok) {
+					advance();
 					type_spec.add_pointer_level();
 				}
 				
@@ -3914,16 +3890,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 
 				// Parse array specifications ([N] or [])
-				if (peek_token().has_value() && peek_token()->value() == "[") {
-					consume_token();  // consume '['
+				if (peek() == "["_tok) {
+					advance();  // consume '['
 					
 					// Check for array size expression or empty brackets
 					std::optional<size_t> array_size_val;
-					if (peek_token().has_value() && peek_token()->value() != "]") {
+					if (!peek().is_eof() && peek() != "]"_tok) {
 						// Parse array size expression
 						ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (size_result.is_error()) {
-							return ParseResult::error("Expected array size expression", *current_token_);
+							return ParseResult::error("Expected array size expression", current_token_);
 						}
 						
 						// Try to evaluate the array size as a constant expression
@@ -3936,33 +3912,33 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 					}
 					
-					if (!consume_punctuator("]")) {
-						return ParseResult::error("Expected ']' after array size", *current_token_);
+					if (!consume("]"_tok)) {
+						return ParseResult::error("Expected ']' after array size", current_token_);
 					}
 					
 					type_spec.set_array(true, array_size_val);
 				}
 
 				// Check for pack expansion (...) after the first type argument
-				if (peek_token().has_value() && peek_token()->value() == "...") {
-					consume_token();  // consume '...'
+				if (peek() == "..."_tok) {
+					advance();  // consume '...'
 					type_spec.set_pack_expansion(true);
 				}
 
 				if (is_variadic_trait) {
 					// Variadic trait: parse comma-separated additional types
 					std::vector<ASTNode> additional_types;
-					while (peek_token().has_value() && peek_token()->value() == ",") {
-						consume_punctuator(",");
+					while (peek() == ","_tok) {
+						consume(","_tok);
 						ParseResult arg_type_result = parse_type_specifier();
 						if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
-							return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
+							return ParseResult::error("Expected type argument in variadic type trait", current_token_);
 						}
 						
 						// Parse pointer/reference modifiers for additional type arguments
 						TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
-						while (peek_token().has_value() && peek_token()->value() == "*") {
-							consume_token();
+						while (peek() == "*"_tok) {
+							advance();
 							arg_type_spec.add_pointer_level();
 						}
 						
@@ -3976,13 +3952,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						
 						// Parse array specifications ([N] or []) for variadic trait additional args
 						std::optional<size_t> array_size_val;
-						if (peek_token().has_value() && peek_token()->value() == "[") {
-							consume_token();  // consume '['
+						if (peek() == "["_tok) {
+							advance();  // consume '['
 							
-							if (peek_token().has_value() && peek_token()->value() != "]") {
+							if (!peek().is_eof() && peek() != "]"_tok) {
 								ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 								if (size_result.is_error()) {
-									return ParseResult::error("Expected array size expression", *current_token_);
+									return ParseResult::error("Expected array size expression", current_token_);
 								}
 								if (size_result.node().has_value()) {
 									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
@@ -3993,65 +3969,65 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 							}
 							
-							if (!consume_punctuator("]")) {
-								return ParseResult::error("Expected ']' after array size", *current_token_);
+							if (!consume("]"_tok)) {
+								return ParseResult::error("Expected ']' after array size", current_token_);
 							}
 							
 							arg_type_spec.set_array(true, array_size_val);
 						}
 
 						// Check for pack expansion (...) after the type argument
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							consume_token();  // consume '...'
+						if (peek() == "..."_tok) {
+							advance();  // consume '...'
 							arg_type_spec.set_pack_expansion(true);
 						}
 						
 						additional_types.push_back(*arg_type_result.node());
 					}
 
-					if (!consume_punctuator(")")) {
-						return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+					if (!consume(")"_tok)) {
+						return ParseResult::error("Expected ')' after type trait arguments", current_token_);
 					}
 
 					result = emplace_node<ExpressionNode>(
 						TypeTraitExprNode(kind, *type_result.node(), std::move(additional_types), trait_token));
 				} else if (is_binary_trait) {
 					// Binary trait: parse comma and second type
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
+					if (!consume(","_tok)) {
+						return ParseResult::error("Expected ',' after first type in binary type trait", current_token_);
 					}
 
 					ParseResult second_type_result = parse_type_specifier();
 					if (second_type_result.is_error() || !second_type_result.node().has_value()) {
-						return ParseResult::error("Expected second type in binary type trait", *current_token_);
+						return ParseResult::error("Expected second type in binary type trait", current_token_);
 					}
 
 					// Parse pointer/reference modifiers for second type
 					TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
-					while (peek_token().has_value() && peek_token()->value() == "*") {
-						consume_token();
+					while (peek() == "*"_tok) {
+						advance();
 						second_type_spec.add_pointer_level();
 					}
-					if (peek_token().has_value()) {
-						std::string_view next_token = peek_token()->value();
+					if (!peek().is_eof()) {
+						std::string_view next_token = peek_info().value();
 						if (next_token == "&&") {
-							consume_token();
+							advance();
 							second_type_spec.set_reference(true);  // rvalue reference
 						} else if (next_token == "&") {
-							consume_token();
+							advance();
 							second_type_spec.set_reference(false);  // lvalue reference
 						}
 					}
 
 					// Parse array specifications ([N] or []) for binary trait second type
 					std::optional<size_t> array_size_val;
-					if (peek_token().has_value() && peek_token()->value() == "[") {
-						consume_token();  // consume '['
+					if (peek() == "["_tok) {
+						advance();  // consume '['
 						
-						if (peek_token().has_value() && peek_token()->value() != "]") {
+						if (!peek().is_eof() && peek() != "]"_tok) {
 							ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (size_result.is_error()) {
-								return ParseResult::error("Expected array size expression", *current_token_);
+								return ParseResult::error("Expected array size expression", current_token_);
 							}
 							if (size_result.node().has_value()) {
 								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
@@ -4062,23 +4038,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 						
-						if (!consume_punctuator("]")) {
-							return ParseResult::error("Expected ']' after array size", *current_token_);
+						if (!consume("]"_tok)) {
+							return ParseResult::error("Expected ']' after array size", current_token_);
 						}
 						
 						second_type_spec.set_array(true, array_size_val);
 					}
 
-					if (!consume_punctuator(")")) {
-						return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+					if (!consume(")"_tok)) {
+						return ParseResult::error("Expected ')' after type trait arguments", current_token_);
 					}
 
 					result = emplace_node<ExpressionNode>(
 						TypeTraitExprNode(kind, *type_result.node(), *second_type_result.node(), trait_token));
 				} else {
 					// Unary trait: just close paren
-					if (!consume_punctuator(")")) {
-						return ParseResult::error("Expected ')' after type trait argument", *current_token_);
+					if (!consume(")"_tok)) {
+						return ParseResult::error("Expected ')' after type trait argument", current_token_);
 					}
 
 					result = emplace_node<ExpressionNode>(
@@ -4088,32 +4064,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		} // end if (!is_declared_template)
 	}
 	// Check for global namespace scope operator :: at the beginning
-	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
-		consume_token(); // consume ::
+	else if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == "::") {
+		advance(); // consume ::
 
 		// Handle ::operator new(...) and ::operator delete(...) as function call expressions
 		// Used by libstdc++ allocators: static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)))
-		if (current_token_.has_value() && current_token_->type() == Token::Type::Keyword &&
-		    current_token_->value() == "operator") {
-			Token operator_token = *current_token_;
-			consume_token(); // consume 'operator'
+		if (current_token_.type() == Token::Type::Keyword &&
+		    current_token_.value() == "operator") {
+			Token operator_token = current_token_;
+			advance(); // consume 'operator'
 
 			// Expect 'new' or 'delete'
-			if (!current_token_.has_value() || current_token_->type() != Token::Type::Keyword ||
-			    (current_token_->value() != "new" && current_token_->value() != "delete")) {
-				return ParseResult::error("Expected 'new' or 'delete' after '::operator'", current_token_.value_or(Token()));
+			if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Keyword ||
+			    (current_token_.value() != "new" && current_token_.value() != "delete")) {
+				return ParseResult::error("Expected 'new' or 'delete' after '::operator'", current_token_);
 			}
 
 			StringBuilder op_name_sb;
 			op_name_sb.append("operator ");
-			op_name_sb.append(current_token_->value());
-			consume_token(); // consume 'new' or 'delete'
+			op_name_sb.append(current_token_.value());
+			advance(); // consume 'new' or 'delete'
 
 			// Check for array variant: operator new[] or operator delete[]
-			if (current_token_.has_value() && current_token_->value() == "[") {
-				consume_token(); // consume '['
-				if (current_token_.has_value() && current_token_->value() == "]") {
-					consume_token(); // consume ']'
+			if (current_token_.value() == "[") {
+				advance(); // consume '['
+				if (current_token_.value() == "]") {
+					advance(); // consume ']'
 					op_name_sb.append("[]");
 				}
 			}
@@ -4123,10 +4099,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			                    operator_token.line(), operator_token.column(), operator_token.file_index());
 
 			// Expect '(' for function call
-			if (!current_token_.has_value() || current_token_->value() != "(") {
-				return ParseResult::error("Expected '(' after '::operator new/delete'", current_token_.value_or(Token()));
+			if (current_token_.kind().is_eof() || current_token_.value() != "(") {
+				return ParseResult::error("Expected '(' after '::operator new/delete'", current_token_);
 			}
-			consume_token(); // consume '('
+			advance(); // consume '('
 
 			// Parse function arguments
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -4135,11 +4111,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				.expand_simple_packs = false
 			});
 			if (!args_result.success) {
-				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 			}
 
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after operator new/delete arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after operator new/delete arguments", current_token_);
 			}
 
 			// Create a forward declaration for the operator (returns void* for new, void for delete)
@@ -4157,12 +4133,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 
 		// Expect an identifier after ::
-		if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+		if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected identifier after '::'", current_token_);
 		}
 
-		Token first_identifier = *current_token_;
-		consume_token(); // consume identifier
+		Token first_identifier = current_token_;
+		advance(); // consume identifier
 
 		// Helper to get DeclarationNode from either DeclarationNode, FunctionDeclarationNode, VariableDeclarationNode, or TemplateFunctionDeclarationNode
 		auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
@@ -4183,17 +4159,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		std::vector<StringType<32>> namespaces;
 		Token final_identifier = first_identifier;
 
-		while (current_token_.has_value() && current_token_->value() == "::"sv) {
+		while (current_token_.value() == "::"sv) {
 			// Current identifier is a namespace part
 			namespaces.emplace_back(StringType<32>(final_identifier.value()));
-			consume_token(); // consume ::
+			advance(); // consume ::
 
 			// Get next identifier
-			if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+			if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after '::'", current_token_);
 			}
-			final_identifier = *current_token_;
-			consume_token(); // consume the identifier
+			final_identifier = current_token_;
+			advance(); // consume the identifier
 		}
 
 		// Create a QualifiedIdentifierNode with namespace handle
@@ -4213,8 +4189,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		identifierType = lookup_symbol_qualified(qual_id.namespace_handle(), qual_id.name());
 
 		// Check if followed by '(' for function call
-		if (current_token_.has_value() && current_token_->value() == "(") {
-			consume_token(); // consume '('
+		if (current_token_.value() == "(") {
+			advance(); // consume '('
 
 			// Parse function arguments using unified helper (collect types for template deduction)
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -4223,12 +4199,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				.expand_simple_packs = false
 			});
 			if (!args_result.success) {
-				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 			}
 			ChunkedVector<ASTNode> args = std::move(args_result.args);
 
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
 			// If not found and we're not in extern "C", try template instantiation
@@ -4283,8 +4259,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (result.has_value())
 			return ParseResult::success(*result);
 	}
-	else if (current_token_->type() == Token::Type::Identifier) {
-		Token idenfifier_token = *current_token_;
+	else if (current_token_.type() == Token::Type::Identifier) {
+		Token idenfifier_token = current_token_;
 
 		// Check for __func__, __PRETTY_FUNCTION__ (compiler builtins)
 		if (idenfifier_token.value() == "__func__"sv ||
@@ -4317,7 +4293,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			                   idenfifier_token.file_index());
 
 			result = emplace_node<ExpressionNode>(StringLiteralNode(string_token));
-			consume_token();
+			advance();
 
 			if (result.has_value())
 				return ParseResult::success(*result);
@@ -4340,7 +4316,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		};
 
 		// We need to consume the identifier first to check what comes after it
-		consume_token();
+		advance();
 		
 		// Check for functional-style cast: Type(expression)
 		// This is needed for patterns like bool(x), int(y), etc.
@@ -4348,8 +4324,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// NOTE: Only treat BUILT-IN types as functional casts here.
 		// User-defined types with Type(args) syntax are constructor calls, not casts,
 		// and should be handled by the normal identifier/function call path below.
-		if (current_token_.has_value() && current_token_->value() == "(" &&
-		    !current_token_->value().starts_with("::")) {
+		if (current_token_.value() == "(" &&
+		    !current_token_.value().starts_with("::")) {
 			std::string_view id_name = idenfifier_token.value();
 			
 			// Only check for built-in type names (not user-defined types)
@@ -4364,23 +4340,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 		}
 		
-		if (current_token_.has_value() && current_token_->value() == "::"sv) {
+		if (current_token_.value() == "::"sv) {
 			// Build the qualified identifier manually
 			std::vector<StringType<32>> namespaces;
 			Token final_identifier = idenfifier_token;
 
 			// Collect namespace parts
-			while (current_token_.has_value() && current_token_->value() == "::"sv) {
+			while (current_token_.value() == "::"sv) {
 				// Current identifier is a namespace part
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
-				consume_token(); // consume ::
+				advance(); // consume ::
 
 				// Get next identifier
-				if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+				if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after '::'", current_token_);
 				}
-				final_identifier = *current_token_;
-				consume_token(); // consume the identifier to check for the next ::
+				final_identifier = current_token_;
+				advance(); // consume the identifier to check for the next ::
 			}
 
 		// current_token_ is now the token after the final identifier
@@ -4399,23 +4375,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Handle std::forward<T>(arg)
 			// For now, we'll treat it as an identity function that preserves references
 			// Skip template arguments if present
-			if (current_token_.has_value() && current_token_->value() == "<") {
+			if (current_token_.value() == "<") {
 				// Skip template arguments: <T>
 				int angle_bracket_depth = 1;
-				consume_token(); // consume <
+				advance(); // consume <
 				
-				while (angle_bracket_depth > 0 && current_token_.has_value()) {
-					if (current_token_->value() == "<") angle_bracket_depth++;
-					else if (current_token_->value() == ">") angle_bracket_depth--;
-					consume_token();
+				while (angle_bracket_depth > 0 && !current_token_.kind().is_eof()) {
+					if (current_token_.value() == "<") angle_bracket_depth++;
+					else if (current_token_.value() == ">") angle_bracket_depth--;
+					advance();
 				}
 			}
 			
 			// Now expect (arg)
-			if (!current_token_.has_value() || current_token_->value() != "(") {
+			if (current_token_.kind().is_eof() || current_token_.value() != "(") {
 				return ParseResult::error("Expected '(' after std::forward", final_identifier);
 			}
-			consume_token(); // consume '('
+			advance(); // consume '('
 			
 			// Parse the single argument
 			auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -4423,10 +4399,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				return arg_result;
 			}
 			
-			if (!current_token_.has_value() || current_token_->value() != ")") {
-				return ParseResult::error("Expected ')' after std::forward argument", *current_token_);
+			if (current_token_.kind().is_eof() || current_token_.value() != ")") {
+				return ParseResult::error("Expected ')' after std::forward argument", current_token_);
 			}
-			consume_token(); // consume ')'
+			advance(); // consume ')'
 			
 			// std::forward<T>(arg) is essentially an identity function
 			// Just return the argument expression itself
@@ -4442,7 +4418,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// to avoid misinterpreting comparisons like _R1::num < _R2::num
 		std::optional<std::vector<TemplateTypeArg>> template_args;
 		std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
-		if (current_token_.has_value() && current_token_->value() == "<") {
+		if (current_token_.value() == "<") {
 			// Build the qualified name from namespace handle
 			std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 			std::string_view member_name = qual_id.name();
@@ -4648,7 +4624,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// If we reach here, instantiation succeeded (returned nullopt)
 				
 				// Check if followed by :: for member access (Template<T>::member)
-				if (current_token_.has_value() && current_token_->value() == "::") {
+				if (current_token_.value() == "::") {
 					// Fill in default template arguments to get the actual instantiated name
 					std::vector<TemplateTypeArg> filled_template_args = *template_args;
 					auto template_lookup_result = gTemplateRegistry.lookupTemplate(qual_id.name());
@@ -4744,25 +4720,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					NamespaceHandle full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(base_ns, instantiated_name_handle);
 					
 					// Parse the :: and the member name
-					consume_token(); // consume ::
-					if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
-						return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+					advance(); // consume ::
+					if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
+						return ParseResult::error("Expected identifier after '::'", current_token_);
 					}
 					
-					Token member_token = *current_token_;
-					consume_token(); // consume member identifier
+					Token member_token = current_token_;
+					advance(); // consume member identifier
 					
 					// Handle additional :: if present (nested member access)
-					while (current_token_.has_value() && current_token_->value() == "::") {
+					while (current_token_.value() == "::") {
 						// Add current member to namespace path
-						StringHandle member_handle = StringTable::getOrInternStringHandle(member_token.value());
+						StringHandle member_handle = member_token.handle();
 						full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(full_ns_handle, member_handle);
-						consume_token(); // consume ::
-						if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
-							return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+						advance(); // consume ::
+						if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected identifier after '::'", current_token_);
 						}
-						member_token = *current_token_;
-						consume_token(); // consume identifier
+						member_token = current_token_;
+						advance(); // consume identifier
 					}
 					
 					// Create QualifiedIdentifierNode with the complete path
@@ -4781,7 +4757,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespace_handle(), qual_id.name());
 		
 		// Check if this is a brace initialization: ns::Template<Args>{}
-		if (template_args.has_value() && current_token_.has_value() && current_token_->value() == "{") {
+		if (template_args.has_value() && current_token_.value() == "{") {
 			// Parse the brace initialization using the helper
 			ParseResult brace_init_result = parse_template_brace_initialization(*template_args, qual_id.name(), final_identifier);
 			if (!brace_init_result.is_error() && brace_init_result.node().has_value()) {
@@ -4791,8 +4767,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 		
 		// Check if followed by '(' for function call
-		if (current_token_.has_value() && current_token_->value() == "(") {
-			consume_token(); // consume '('
+		if (current_token_.value() == "(") {
+			advance(); // consume '('
 
 			// Parse function arguments using unified helper (expand simple packs for qualified calls)
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -4801,12 +4777,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				.expand_simple_packs = true
 			});
 			if (!args_result.success) {
-				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 			}
 			ChunkedVector<ASTNode> args = std::move(args_result.args);
 			
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
 			// If not found OR if it's a template (not an instantiated function), try template instantiation
@@ -4856,7 +4832,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
 			const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 			if (!decl_ptr) {
-				return ParseResult::error("Invalid function declaration (template args path)", *current_token_);
+				return ParseResult::error("Invalid function declaration (template args path)", current_token_);
 			}
 
 				FLASH_LOG(Parser, Debug, "Creating FunctionCallNode for qualified identifier with template args");
@@ -4901,15 +4877,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		std::optional<ASTNode> identifierType;
 		if (!current_template_param_names_.empty()) {
 			// Template-aware lookup: checks if identifier is a template parameter first
-			identifierType = gSymbolTable.lookup(StringTable::getOrInternStringHandle(idenfifier_token.value()), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+			identifierType = gSymbolTable.lookup(idenfifier_token.handle(), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
 			FLASH_LOG_FORMAT(Parser, Debug, "Template-aware lookup for '{}', template_params_count={}", idenfifier_token.value(), current_template_param_names_.size());
 		} else {
-			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(idenfifier_token.value()));
+			identifierType = lookup_symbol(idenfifier_token.handle());
 		}
 
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}', member_function_context_stack_ size={}",
 			idenfifier_token.value(), identifierType.has_value() ? "found" : "not found",
-			peek_token().has_value() ? peek_token()->value() : "N/A",
+			!peek().is_eof() ? peek_info().value() : "N/A",
 			member_function_context_stack_.size());
 
 		// BUGFIX: Check if we're in a member function context and this identifier is a member function
@@ -4918,7 +4894,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Declare this flag here so it's visible throughout the rest of the function
 		bool found_member_function_in_context = false;
 		if (!member_function_context_stack_.empty() && identifierType.has_value() &&
-		    identifierType->is<FunctionDeclarationNode>() && peek_token().has_value() && peek_token()->value() == "(") {
+		    identifierType->is<FunctionDeclarationNode>() && peek() == "("_tok) {
 			const auto& mf_ctx = member_function_context_stack_.back();
 			const StructDeclarationNode* struct_node = mf_ctx.struct_node;
 			if (struct_node) {
@@ -4960,7 +4936,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Check member functions in this base class
 								// StructMemberFunction has function_decl which is an ASTNode
 								for (const auto& member_func : base_struct_info->member_functions) {
-									if (member_func.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
+									if (member_func.getName() == idenfifier_token.handle()) {
 										// Found matching member function in base class
 										if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 											// Update identifierType to point to the base class function
@@ -4996,14 +4972,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 		// BUGFIX: If we detected a member function call with implicit 'this', handle it here
 		// This must be done BEFORE the `if (!identifierType)` block, because identifierType IS set
-		if (found_member_function_in_context && peek_token().has_value() && peek_token()->value() == "(") {
+		if (found_member_function_in_context && peek() == "("_tok) {
 			FLASH_LOG_FORMAT(Parser, Debug, "Handling member function call '{}' with implicit 'this'", idenfifier_token.value());
-			consume_token(); // consume '('
+			advance(); // consume '('
 
 			// Parse function arguments
 			ChunkedVector<ASTNode> args;
-			while (current_token_.has_value() &&
-			       (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")")) {
+			while (!current_token_.kind().is_eof() &&
+			       (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")")) {
 				ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (argResult.is_error()) {
 					return argResult;
@@ -5012,15 +4988,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					args.push_back(*node);
 				}
 
-				if (current_token_.has_value() && current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
-					consume_token(); // consume ','
-				} else if (!current_token_.has_value() || current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-					return ParseResult::error("Expected ',' or ')' in function arguments", *current_token_);
+				if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
+					advance(); // consume ','
+				} else if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
+					return ParseResult::error("Expected ',' or ')' in function arguments", current_token_);
 				}
 			}
 
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after function arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after function arguments", current_token_);
 			}
 
 			// Create implicit 'this' expression
@@ -5043,7 +5019,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Static members should be visible in expressions within the same struct.
 		bool found_as_type_alias = false;
 		if (!identifierType && !struct_parsing_context_stack_.empty()) {
-			StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+			StringHandle identifier_handle = idenfifier_token.handle();
 			const auto& ctx = struct_parsing_context_stack_.back();
 			FLASH_LOG_FORMAT(Parser, Debug, "Checking struct context for '{}': struct_node={}, local_struct_info={}", 
 				idenfifier_token.value(), ctx.struct_node != nullptr, ctx.local_struct_info != nullptr);
@@ -5107,8 +5083,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// we don't break legitimate cases where an identifier should be an error
 		// ENHANCED: In TemplateArgument context, also check for ',' or '>' or '<' because type aliases
 		// and template class names are commonly used as template arguments in <type_traits>
-		if (!identifierType && !found_as_type_alias && peek_token().has_value()) {
-			std::string_view peek = peek_token()->value();
+		if (!identifierType && !found_as_type_alias && !peek().is_eof()) {
+			std::string_view peek = peek_info().value();
 			// Check gTypesByName if identifier is followed by :: (qualified name), ( (constructor call), or { (brace init)
 			bool should_check_types = (peek == "::" || peek == "(" || peek == "{");
 			
@@ -5122,7 +5098,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			
 			if (should_check_types) {
-				StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+				StringHandle identifier_handle = idenfifier_token.handle();
 				auto type_it = gTypesByName.find(identifier_handle);
 				if (type_it != gTypesByName.end()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}', context={})", 
@@ -5231,7 +5207,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// If identifier is followed by '<' and we're inside a struct context, check if it's a member struct template
 		// This handles patterns like: template<typename T> struct Outer<_Tp, Inner<T>> { }
 		// where Inner is a member struct template of the enclosing class
-		if (!identifierType && !found_as_type_alias && peek_token().has_value() && peek_token()->value() == "<") {
+		if (!identifierType && !found_as_type_alias && peek() == "<"_tok) {
 			if (!struct_parsing_context_stack_.empty()) {
 				const auto& ctx = struct_parsing_context_stack_.back();
 				// Build qualified name: EnclosingClass::MemberTemplate
@@ -5251,23 +5227,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// This handles both: 
 		// 1. Identifier not found (might be namespace name)
 		// 2. Identifier found but followed by :: (namespace or class scope resolution)
-		if (peek_token().has_value() && peek_token()->value() == "::") {
+		if (peek() == "::"_tok) {
 			// Parse as qualified identifier: Namespace::identifier
 			// Even if we don't know if it's a namespace, try parsing it as a qualified identifier
 			std::vector<StringType<32>> namespaces;
 			Token final_identifier = idenfifier_token;
 			
 			// Collect the qualified path
-			while (peek_token().has_value() && peek_token()->value() == "::") {
+			while (peek() == "::"_tok) {
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
-				consume_token(); // consume ::
+				advance(); // consume ::
 				
 				// Get next identifier
-				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
+				if (!peek().is_identifier()) {
+					return ParseResult::error("Expected identifier after '::'", peek_info());
 				}
-				final_identifier = *peek_token();
-				consume_token(); // consume the identifier
+				final_identifier = peek_info();
+				advance(); // consume the identifier
 			}
 			
 			FLASH_LOG(Parser, Debug, "Qualified identifier: final name = '{}'", final_identifier.value());
@@ -5275,7 +5251,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Check if final identifier is followed by template arguments: ns::Template<Args>
 			std::optional<std::vector<TemplateTypeArg>> template_args;
 			std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
-			if (peek_token().has_value() && peek_token()->value() == "<") {
+			if (peek() == "<"_tok) {
 				// Before parsing < as template arguments, check if the identifier is actually a template
 				// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
 				
@@ -5382,7 +5358,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					identifierType = gSymbolTable.lookup(StringTable::getStringView(inst_struct.name()));
 					
 					// Check for :: after template arguments (Template<T>::member)
-					if (peek_token().has_value() && peek_token()->value() == "::") {
+					if (peek() == "::"_tok) {
 						auto qualified_result = parse_qualified_identifier_after_template(final_identifier);
 						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
 							auto qualified_node2 = qualified_result.node()->as<QualifiedIdentifierNode>();
@@ -5392,11 +5368,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					
 					// Check if this is a brace initialization: ns::Template<Args>{}
-					if (peek_token().has_value() && peek_token()->value() == "{") {
-						consume_token(); // consume '{'
+					if (peek() == "{"_tok) {
+						advance(); // consume '{'
 						
 						ChunkedVector<ASTNode> args;
-						while (peek_token().has_value() && peek_token()->value() != "}") {
+						while (!peek().is_eof() && peek() != "}"_tok) {
 							auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (argResult.is_error()) {
 								return argResult;
@@ -5405,15 +5381,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								args.push_back(*node);
 							}
 							
-							if (peek_token().has_value() && peek_token()->value() == ",") {
-								consume_token(); // consume ','
-							} else if (!peek_token().has_value() || peek_token()->value() != "}") {
-								return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+							if (peek() == ","_tok) {
+								advance(); // consume ','
+							} else if (peek() != "}"_tok) {
+								return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
 							}
 						}
 						
-						if (!consume_punctuator("}")) {
-							return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+						if (!consume("}"_tok)) {
+							return ParseResult::error("Expected '}' after brace initializer", current_token_);
 						}
 						
 						// Look up the instantiated type
@@ -5463,8 +5439,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			FLASH_LOG(Parser, Debug, "Qualified lookup result: {}", identifierType.has_value() ? "found" : "not found");
 			
 			// Check if this is a function call (even if not found - might be a template)
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				consume_token(); // consume '('
+			if (peek() == "("_tok) {
+				advance(); // consume '('
 				
 				// Parse function arguments using unified helper (collect types for template deduction)
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -5473,12 +5449,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					.expand_simple_packs = false
 				});
 				if (!args_result.success) {
-					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
 				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 				
 				// If not found and we're not in extern "C", try template instantiation
@@ -5551,15 +5527,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// If identifier not found in symbol table, check if it's a class/struct type name
 		// This handles constructor calls like Widget(42)
 		if (!identifierType.has_value()) {
-			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(idenfifier_token.value()));
-			if (type_it != gTypesByName.end() && peek_token().has_value() && peek_token()->value() == "(") {
+			auto type_it = gTypesByName.find(idenfifier_token.handle());
+			if (type_it != gTypesByName.end() && peek() == "("_tok) {
 				// This is a constructor call - handle it directly here
-				consume_token();  // consume '('
+				advance();  // consume '('
 				
 				// Parse constructor arguments
 				ChunkedVector<ASTNode> args;
-				while (current_token_.has_value() && 
-				       (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")")) {
+				while (!current_token_.kind().is_eof() && 
+				       (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")")) {
 					auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (argResult.is_error()) {
 						return argResult;
@@ -5568,15 +5544,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						args.push_back(*node);
 					}
 					
-					if (current_token_.has_value() && current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
-						consume_token();  // consume ','
-					} else if (!current_token_.has_value() || current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-						return ParseResult::error("Expected ',' or ')' in constructor arguments", *current_token_);
+					if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
+						advance();  // consume ','
+					} else if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
+						return ParseResult::error("Expected ',' or ')' in constructor arguments", current_token_);
 					}
 				}
 				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 				}
 				
 				// Create TypeSpecifierNode for the class
@@ -5602,12 +5578,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			const auto& tparam_ref = identifierType->as<TemplateParameterReferenceNode>();
 			
 			// Check for brace initialization: T{} or T{args}
-			if (peek_token().has_value() && peek_token()->value() == "{") {
-				consume_token(); // consume '{'
+			if (peek() == "{"_tok) {
+				advance(); // consume '{'
 				
 				// Parse brace initializer arguments
 				ChunkedVector<ASTNode> args;
-				while (current_token_.has_value() && current_token_->value() != "}") {
+				while (current_token_.value() != "}") {
 					auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (argResult.is_error()) {
 						return argResult;
@@ -5616,15 +5592,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						args.push_back(*node);
 					}
 					
-					if (current_token_.has_value() && current_token_->value() == ",") {
-						consume_token(); // consume ','
-					} else if (!current_token_.has_value() || current_token_->value() != "}") {
-						return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+					if (current_token_.value() == ",") {
+						advance(); // consume ','
+					} else if (current_token_.kind().is_eof() || current_token_.value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
 					}
 				}
 				
-				if (!consume_punctuator("}")) {
-					return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after brace initializer", current_token_);
 				}
 				
 				// Create TypeSpecifierNode for the template parameter (dependent type)
@@ -5644,22 +5620,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// it might be a pack parameter that was expanded (e.g., "args" -> "args_0", "args_1", etc.)
 		// Allow it to proceed so pack expansion can handle it
 		bool is_pack_expansion = false;
-		if (!identifierType.has_value() && peek_token().has_value() && peek_token()->value() == "...") {
+		if (!identifierType.has_value() && peek() == "..."_tok) {
 			is_pack_expansion = true;
 		}
 
 		// Check if this is a template function call
 		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
-		    consume_punctuator("("sv)) {
+		    consume("("_tok)) {
 			
 			// Parse arguments to deduce template parameters
-			if (!peek_token().has_value())
+			if (peek().is_eof())
 				return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
 			ChunkedVector<ASTNode> args;
 			std::vector<TypeSpecifierNode> arg_types;
 			
-			while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+			while (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
 				ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (argResult.is_error()) {
 					return argResult;
@@ -5715,19 +5691,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 				}
 				
-				if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
-					consume_token(); // Consume comma
+				if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
+					advance(); // Consume comma
 				}
-				else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-					return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
+				else if (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
+					return ParseResult::error("Expected ',' or ')' after function argument", current_token_);
 				}
 
-				if (!peek_token().has_value())
+				if (peek().is_eof())
 					return ParseResult::error(ParserError::NotImplemented, Token());
 			}
 
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
 			// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
@@ -5756,7 +5732,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 		if (!identifierType) {
 			// Check if this is a template function before treating it as missing
-			if (current_token_.has_value() && current_token_->value() == "(" &&
+			if (current_token_.value() == "(" &&
 			    gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
 				// Don't set identifierType - fall through to the function call handling below
 				// which will trigger template instantiation
@@ -5803,7 +5779,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							TypeIndex base_type_index = base_type_info->type_index_;
 
 							// Check if the identifier is a member of the base class (recursively)
-							auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+							auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, idenfifier_token.handle());
 							if (member_result) {
 								// This is an inherited member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this"sv,
@@ -5840,7 +5816,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Use findStaticMemberRecursive to also search base classes
 						
 						// Trigger lazy static member instantiation if needed
-						StringHandle member_name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+						StringHandle member_name_handle = idenfifier_token.handle();
 						instantiateLazyStaticMember(struct_info->name, member_name_handle);
 						
 						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
@@ -5863,7 +5839,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						
 						// Check instance members (these use this->)
 						for (const auto& member : struct_info->members) {
-							if (member.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
+							if (member.getName() == idenfifier_token.handle()) {
 								// This is a member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this"sv,
 								                 idenfifier_token.line(), idenfifier_token.column(),
@@ -5880,7 +5856,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						// Also check base class members
-						auto member_result = FlashCpp::gLazyMemberResolver.resolve(member_func_ctx.struct_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+						auto member_result = FlashCpp::gLazyMemberResolver.resolve(member_func_ctx.struct_type_index, idenfifier_token.handle());
 						if (member_result) {
 							// This is an inherited member variable! Transform it into this->member
 							Token this_token(Token::Type::Keyword, "this"sv,
@@ -5902,7 +5878,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Check if this is a member function call (identifier not found but matches a member function)
 			// This handles the complete-class context where member functions declared later can be called
 			// We need to track if we found a member function so we can create MemberFunctionCallNode with implicit 'this'
-			if (!member_function_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
+			if (!member_function_context_stack_.empty() && peek() == "("_tok) {
 				FLASH_LOG_FORMAT(Parser, Debug, "Checking member function context for '{}', stack size: {}",
 					idenfifier_token.value(), member_function_context_stack_.size());
 				const auto& mf_ctx = member_function_context_stack_.back();
@@ -5960,7 +5936,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Check member functions in this base class
 									// StructMemberFunction has function_decl which is an ASTNode
 									for (const auto& member_func : base_struct_info->member_functions) {
-										if (member_func.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
+										if (member_func.getName() == idenfifier_token.handle()) {
 											// Found matching member function in base class
 											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 												gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
@@ -6033,15 +6009,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Check if this is a function call or constructor call (forward reference)
 			// Identifier already consumed at line 1621
 			// Skip this check for lambda variables - they should be handled by postfix operator parsing
-			if (!is_lambda_variable && consume_punctuator("("sv)) {
+			if (!is_lambda_variable && consume("("_tok)) {
 				// First, check if this is a type name (constructor call)
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(idenfifier_token.value()));
+				auto type_it = gTypesByName.find(idenfifier_token.handle());
 				if (type_it != gTypesByName.end()) {
 					// This is a constructor call: TypeName(args)
 					// Parse constructor arguments
 					ChunkedVector<ASTNode> args;
-					while (current_token_.has_value() && 
-					       (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")")) {
+					while (!current_token_.kind().is_eof() && 
+					       (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")")) {
 						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (argResult.is_error()) {
 							return argResult;
@@ -6050,18 +6026,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							args.push_back(*node);
 						}
 						
-						if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
-							consume_token(); // Consume comma
+						if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
+							advance(); // Consume comma
 						}
-						else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-							return ParseResult::error("Expected ',' or ')' after constructor argument", *current_token_);
+						else if (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
+							return ParseResult::error("Expected ',' or ')' after constructor argument", current_token_);
 						}
 					}
 					
-					if (!consume_punctuator(")")) {
+					if (!consume(")"_tok)) {
 						FLASH_LOG(Parser, Error, "Failed to consume ')' after constructor arguments, current token: ", 
-						          current_token_->value());
-						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+						          current_token_.value());
+						return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 					}
 				
 					// Create TypeSpecifierNode for the constructor call
@@ -6086,13 +6062,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				std::optional<ASTNode> template_func_inst;
 				if (gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
 					// Parse arguments to deduce template parameters
-					if (!peek_token().has_value())
+					if (peek().is_eof())
 						return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
 					ChunkedVector<ASTNode> args;
 					std::vector<TypeSpecifierNode> arg_types;
 					
-					while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+					while (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
 						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (argResult.is_error()) {
 							return argResult;
@@ -6132,19 +6108,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 
-						if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
-							consume_token(); // Consume comma
+						if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
+							advance(); // Consume comma
 						}
-						else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-							return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
+						else if (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
+							return ParseResult::error("Expected ',' or ')' after function argument", current_token_);
 						}
 
-						if (!peek_token().has_value())
+						if (peek().is_eof())
 							return ParseResult::error(ParserError::NotImplemented, Token());
 					}
 
-					if (!consume_punctuator(")")) {
-						return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+					if (!consume(")"_tok)) {
+						return ParseResult::error("Expected ')' after function call arguments", current_token_);
 					}
 
 					// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
@@ -6177,19 +6153,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					identifierType = forward_decl;
 				}
 
-				if (!peek_token().has_value())
+				if (peek().is_eof())
 					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
 				ChunkedVector<ASTNode> args;
-				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+				while (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
 					ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (argResult.is_error()) {
 						return argResult;
 					}
 
 					// Check for pack expansion: expr...
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume '...'
+					if (peek() == "..."_tok) {
+						advance(); // consume '...'
 						
 						// Pack expansion: need to expand the expression for each pack element
 						if (auto arg_node = argResult.node()) {
@@ -6254,19 +6230,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 					}
 
-					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
-						consume_token(); // Consume comma
+					if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
+						advance(); // Consume comma
 					}
-					else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-						return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
+					else if (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
+						return ParseResult::error("Expected ',' or ')' after function argument", current_token_);
 					}
 
-					if (!peek_token().has_value())
+					if (peek().is_eof())
 						return ParseResult::error(ParserError::NotImplemented, Token());
 				}
 
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 
 				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
@@ -6322,7 +6298,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				// If identifierType is null (not found), default to true (might be a template)
 				
-				if (should_try_template && peek_token().has_value() && peek_token()->value() == "<") {
+				if (should_try_template && peek() == "<"_tok) {
 					// Try to parse as template instantiation with member access
 					auto explicit_template_args = parse_explicit_template_arguments();
 					
@@ -6330,13 +6306,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Store parsed template args in member variable for cross-function access
 						// ONLY if the next token is '(' (function call) or '::' (qualified name that might lead to function call)
 						// For other cases (brace init, etc.), the args will be consumed locally
-						if (peek_token().has_value() && (peek_token()->value() == "(" || peek_token()->value() == "::")) {
+						if (!peek().is_eof() && (peek() == "("_tok || peek() == "::"_tok)) {
 							pending_explicit_template_args_ = explicit_template_args;
 						}
 						
 						// Successfully parsed template arguments
 						// Now check for :: to handle Template<T>::member syntax
-						if (peek_token().has_value() && peek_token()->value() == "::") {
+						if (peek() == "::"_tok) {
 							// Instantiate the template to get the actual instantiated name
 							std::string_view template_name = idenfifier_token.value();
 							
@@ -6434,27 +6410,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							Token final_identifier = idenfifier_token;
 							
 							// Collect the qualified path after ::
-							while (peek_token().has_value() && peek_token()->value() == "::") {
+							while (peek() == "::"_tok) {
 								// Current identifier becomes a namespace part (but use instantiated name for first part)
 								if (namespaces.empty()) {
 									namespaces.emplace_back(StringType<32>(instantiated_name));
 								} else {
 									namespaces.emplace_back(StringType<32>(final_identifier.value()));
 								}
-								consume_token(); // consume ::
+								advance(); // consume ::
 								
 								// Handle ::template syntax for dependent names (e.g., __xref<T>::template __type)
-								if (peek_token().has_value() && peek_token()->value() == "template") {
-									consume_token(); // consume 'template' keyword
+								if (peek() == "template"_tok) {
+									advance(); // consume 'template' keyword
 								}
 								
 								// Get next identifier
-								if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+								if (!peek().is_identifier()) {
 									pending_explicit_template_args_.reset(); // Clear pending to avoid leaking to unrelated calls
-									return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
+									return ParseResult::error("Expected identifier after '::'", peek_info());
 								}
-								final_identifier = *peek_token();
-								consume_token(); // consume the identifier
+								final_identifier = peek_info();
+								advance(); // consume the identifier
 							}
 							
 							// Try to parse member template function call: Template<T>::member<U>()
@@ -6482,7 +6458,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Template arguments parsed but NOT followed by ::
 						// Check for template class brace initialization: Template<T>{}
 						// This creates a temporary object using value-initialization or aggregate-initialization
-						if (!identifierType && peek_token().has_value() && peek_token()->value() == "{") {
+						if (!identifierType && peek() == "{"_tok) {
 							// This is template class brace initialization (e.g., type_identity<int>{})
 							// Check if any template arguments are dependent
 							bool has_dependent_args = false;
@@ -6500,11 +6476,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								if (has_dependent_args) {
 									// Dependent template arguments - create a placeholder for now
 									// The actual instantiation will happen when the outer template is instantiated
-									consume_token(); // consume '{'
+									advance(); // consume '{'
 									
 									// Skip the brace content - should be empty {} for value-initialization
 									ChunkedVector<ASTNode> args;
-									while (peek_token().has_value() && peek_token()->value() != "}") {
+									while (!peek().is_eof() && peek() != "}"_tok) {
 										auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (argResult.is_error()) {
 											return argResult;
@@ -6513,15 +6489,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											args.push_back(*node);
 										}
 										
-										if (peek_token().has_value() && peek_token()->value() == ",") {
-											consume_token(); // consume ','
-										} else if (!peek_token().has_value() || peek_token()->value() != "}") {
-											return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+										if (peek() == ","_tok) {
+											advance(); // consume ','
+										} else if (peek() != "}"_tok) {
+											return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
 										}
 									}
 									
-									if (!consume_punctuator("}")) {
-										return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+									if (!consume("}"_tok)) {
+										return ParseResult::error("Expected '}' after brace initializer", current_token_);
 									}
 									
 									// For dependent args, create a placeholder ConstructorCallNode
@@ -6543,10 +6519,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								auto type_it = gTypesByName.find(type_handle);
 								if (type_it != gTypesByName.end()) {
 									// Found the instantiated type - now parse the brace initializer
-									consume_token(); // consume '{'
+									advance(); // consume '{'
 									
 									ChunkedVector<ASTNode> args;
-									while (peek_token().has_value() && peek_token()->value() != "}") {
+									while (!peek().is_eof() && peek() != "}"_tok) {
 										auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (argResult.is_error()) {
 											return argResult;
@@ -6555,15 +6531,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											args.push_back(*node);
 										}
 										
-										if (peek_token().has_value() && peek_token()->value() == ",") {
-											consume_token(); // consume ','
-										} else if (!peek_token().has_value() || peek_token()->value() != "}") {
-											return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+										if (peek() == ","_tok) {
+											advance(); // consume ','
+										} else if (peek() != "}"_tok) {
+											return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
 										}
 									}
 									
-									if (!consume_punctuator("}")) {
-										return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+									if (!consume("}"_tok)) {
+										return ParseResult::error("Expected '}' after brace initializer", current_token_);
 									}
 									
 									// Create TypeSpecifierNode for the instantiated class
@@ -6585,7 +6561,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Handle functional-style cast for class templates: Template<Args>()
 						// This creates a temporary object of the instantiated class type
 						// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
-						if (!identifierType && peek_token().has_value() && peek_token()->value() == "(") {
+						if (!identifierType && peek() == "("_tok) {
 							auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
 							if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", idenfifier_token.value());
@@ -6597,11 +6573,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
 								
 								// Consume '(' and parse constructor arguments
-								consume_token(); // consume '('
+								advance(); // consume '('
 								
 								// Parse constructor arguments
 								ChunkedVector<ASTNode> args;
-								if (current_token_.has_value() && current_token_->value() != ")") {
+								if (current_token_.value() != ")") {
 									while (true) {
 										auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (arg_result.is_error()) {
@@ -6611,15 +6587,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											args.push_back(*arg);
 										}
 										
-										if (!current_token_.has_value() || current_token_->value() != ",") {
+										if (current_token_.kind().is_eof() || current_token_.value() != ",") {
 											break;
 										}
-										consume_token(); // consume ','
+										advance(); // consume ','
 									}
 								}
 								
-								if (!consume_punctuator(")")) {
-									return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+								if (!consume(")"_tok)) {
+									return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 								}
 								
 								// Create TypeSpecifierNode for the instantiated template type
@@ -6665,7 +6641,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (!var_template_opt.has_value()) {
 								NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 								if (!current_namespace.isGlobal()) {
-									StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									StringHandle name_handle = idenfifier_token.handle();
 									StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
 									std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 									var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
@@ -6804,11 +6780,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Check for member template function (including current struct and inherited from base classes)
 							// Example: __helper<_Tp>({}) where __helper is in the same struct or base class
 							// Template args already parsed at this point
-							if (!struct_parsing_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
+							if (!struct_parsing_context_stack_.empty() && peek() == "("_tok) {
 								const auto& sp_ctx2 = struct_parsing_context_stack_.back();
 								const StructDeclarationNode* struct_node = sp_ctx2.struct_node;
 								if (struct_node) {
-									StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									StringHandle id_handle = idenfifier_token.handle();
 									
 									// First, check the current struct's member functions (including those parsed so far)
 									for (const auto& member_func_decl : struct_node->member_functions()) {
@@ -6817,7 +6793,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										if (func_node.is<TemplateFunctionDeclarationNode>()) {
 											const TemplateFunctionDeclarationNode& template_func = func_node.as<TemplateFunctionDeclarationNode>();
 											const FunctionDeclarationNode& func_decl = template_func.function_declaration().as<FunctionDeclarationNode>();
-											StringHandle func_name = StringTable::getOrInternStringHandle(func_decl.decl_node().identifier_token().value());
+											StringHandle func_name = func_decl.decl_node().identifier_token().handle();
 											if (func_name == id_handle) {
 												FLASH_LOG(Parser, Debug, "Found member template function '", idenfifier_token.value(), "' in current struct");
 												gSymbolTable.insert(idenfifier_token.value(), func_node);
@@ -6904,7 +6880,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Concepts are used in requires clauses: requires Concept<T>
 				if (!identifierType && gConceptRegistry.hasConcept(idenfifier_token.value())) {
 					// Try to parse template arguments: Concept<T>
-					if (peek_token().has_value() && peek_token()->value() == "<") {
+					if (peek() == "<"_tok) {
 						auto template_args = parse_explicit_template_arguments();
 						if (template_args.has_value()) {
 							// Create a concept check expression
@@ -6931,7 +6907,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Before reporting error, check if this could be a template alias or class template usage
 				// Example: remove_const_t<T> where remove_const_t is defined as "using remove_const_t = typename remove_const<T>::type;"
 				// Or: type_identity<T>{} for template class brace initialization
-				if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
+				if (!identifierType && peek() == "<"_tok) {
 					// Check if this is an alias template
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
 					
@@ -6990,7 +6966,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (!var_template_opt.has_value()) {
 								NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 								if (!current_namespace.isGlobal()) {
-									StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									StringHandle name_handle = idenfifier_token.handle();
 									StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
 									std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 									var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
@@ -7022,7 +6998,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												base_classes_to_search.push_back(base.type_index);
 											}
 											
-											StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+											StringHandle id_handle = idenfifier_token.handle();
 											for (size_t i = 0; i < base_classes_to_search.size() && !found_inherited_template; ++i) {
 												TypeIndex base_idx = base_classes_to_search[i];
 												if (base_idx >= gTypeInfo.size()) continue;
@@ -7071,7 +7047,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									const StructDeclarationNode* struct_node = sp_ctx5.struct_node;
 									if (struct_node) {
 										// Get base classes from the struct AST node
-										StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+										StringHandle id_handle = idenfifier_token.handle();
 										for (const auto& base : struct_node->base_classes()) {
 											// Look up the base class type
 											auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
@@ -7129,7 +7105,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					!identifierType->is<TemplateVariableDeclarationNode>() &&
 					!identifierType->is<TemplateParameterReferenceNode>())) {
 			FLASH_LOG(Parser, Error, "Identifier type check failed, type_name=", identifierType->type_name());
-			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
+			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, current_token_);
 		}
 		else {
 			// Identifier already consumed at line 1621
@@ -7154,12 +7130,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			// If identifierType is null (not found), default to true (might be a template)
 			
-			if (should_try_template_args && peek_token().has_value() && peek_token()->value() == "<") {
+			if (should_try_template_args && peek() == "<"_tok) {
 				explicit_template_args = parse_explicit_template_arguments(&explicit_template_arg_nodes);
 				// If parsing failed, it might be a less-than operator, so continue normally
 				
 				// After template arguments, check for :: to handle Template<T>::member syntax
-				if (explicit_template_args.has_value() && peek_token().has_value() && peek_token()->value() == "::") {
+				if (explicit_template_args.has_value() && peek() == "::"_tok) {
 					// Instantiate the template to ensure defaults are filled in
 					// This returns the instantiated struct node
 					auto instantiation_result = try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
@@ -7203,7 +7179,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// Check if this is a variable template usage (identifier<args> without following '(')
 				if (explicit_template_args.has_value() && 
-				    (!peek_token().has_value() || peek_token()->value() != "(")) {
+				    (peek() != "("_tok)) {
 					// Try to instantiate as variable template
 					// First try unqualified name
 					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(idenfifier_token.value());
@@ -7213,7 +7189,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (!var_template_opt.has_value()) {
 						NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 						if (!current_namespace.isGlobal()) {
-							StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+							StringHandle name_handle = idenfifier_token.handle();
 							StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
 							std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 							var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
@@ -7253,7 +7229,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Handle functional-style cast for class templates: ClassName<Args>()
 			// This creates a temporary object of the instantiated class type
 			// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
-			if (explicit_template_args.has_value() && peek_token().has_value() && peek_token()->value() == "(") {
+			if (explicit_template_args.has_value() && peek() == "("_tok) {
 				// Check if this is a class template
 				auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
 				if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
@@ -7266,11 +7242,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
 					
 					// Consume '(' and parse constructor arguments
-					consume_token(); // consume '('
+					advance(); // consume '('
 					
 					// Parse constructor arguments
 					ChunkedVector<ASTNode> args;
-					if (current_token_.has_value() && current_token_->value() != ")") {
+					if (current_token_.value() != ")") {
 						while (true) {
 							auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (arg_result.is_error()) {
@@ -7280,15 +7256,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								args.push_back(*arg);
 							}
 							
-							if (!current_token_.has_value() || current_token_->value() != ",") {
+							if (current_token_.kind().is_eof() || current_token_.value() != ",") {
 								break;
 							}
-							consume_token(); // consume ','
+							advance(); // consume ','
 						}
 					}
 					
-					if (!consume_punctuator(")")) {
-						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+					if (!consume(")"_tok)) {
+						return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 					}
 					
 					// Create TypeSpecifierNode for the instantiated template type
@@ -7304,12 +7280,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Handle brace initialization for type names: TypeName{} or TypeName{args}
 			// This handles expressions like "throw bad_any_cast{}" where bad_any_cast is a class
-			if (found_as_type_alias && !identifierType && peek_token().has_value() && peek_token()->value() == "{") {
-				consume_token(); // consume '{'
+			if (found_as_type_alias && !identifierType && peek() == "{"_tok) {
+				advance(); // consume '{'
 				
 				// Parse brace initializer arguments
 				ChunkedVector<ASTNode> args;
-				while (current_token_.has_value() && current_token_->value() != "}") {
+				while (current_token_.value() != "}") {
 					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
 						return arg_result;
@@ -7318,15 +7294,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						args.push_back(*arg);
 					}
 					
-					if (current_token_.has_value() && current_token_->value() == ",") {
-						consume_token(); // consume ','
-					} else if (!current_token_.has_value() || current_token_->value() != "}") {
-						return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+					if (current_token_.value() == ",") {
+						advance(); // consume ','
+					} else if (current_token_.kind().is_eof() || current_token_.value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
 					}
 				}
 				
-				if (!consume_punctuator("}")) {
-					return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after brace initializer", current_token_);
 				}
 				
 				// Create TypeSpecifierNode for the type
@@ -7394,18 +7370,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Check if this is a template parameter (for constructor calls like T(...))
 			bool is_template_parameter = identifierType && identifierType->is<TemplateParameterReferenceNode>();
 			
-			bool is_function_call = peek_token().has_value() && peek_token()->value() == "(" &&
+			bool is_function_call = peek() == "("_tok &&
 			                        (is_function_decl || is_function_pointer || has_operator_call || explicit_template_args.has_value() || is_template_parameter);
 
-			if (is_function_call && consume_punctuator("("sv)) {
-				if (!peek_token().has_value())
+			if (is_function_call && consume("("_tok)) {
+				if (peek().is_eof())
 					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
 				ChunkedVector<ASTNode> args;
 				// Check if function call has arguments (not empty parentheses)
-				if (peek_token().has_value() && peek_token()->value() != ")") {
+				if (!peek().is_eof() && peek() != ")"_tok) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Parsing function arguments, peek='{}', current='{}'", 
-						peek_token()->value(), current_token_.has_value() ? current_token_->value() : "N/A");
+						peek_info().value(), !current_token_.kind().is_eof() ? current_token_.value() : "N/A");
 					while (true) {
 						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (argResult.is_error()) {
@@ -7413,11 +7389,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						FLASH_LOG_FORMAT(Parser, Debug, "Parsed one argument, peek='{}', has_node={}", 
-							peek_token().has_value() ? peek_token()->value() : "N/A", argResult.node().has_value());
+							!peek().is_eof() ? peek_info().value() : "N/A", argResult.node().has_value());
 
 						// Check for pack expansion: expr...
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							consume_token(); // consume '...'
+						if (peek() == "..."_tok) {
+							advance(); // consume '...'
 							
 							// Pack expansion: need to expand the expression for each pack element
 							if (auto arg_node = argResult.node()) {
@@ -7491,26 +7467,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 
 						// Check what comes after the argument
-						if (!peek_token().has_value()) {
+						if (peek().is_eof()) {
 							return ParseResult::error(ParserError::NotImplemented, Token());
 						}
 						
-						if (peek_token()->value() == ")") {
+						if (peek() == ")"_tok) {
 							// End of argument list
 							break;
 						}
-						else if (peek_token()->value() == ",") {
+						else if (peek() == ","_tok) {
 							// More arguments follow
-							consume_token(); // Consume comma
+							advance(); // Consume comma
 						}
 						else {
-							return ParseResult::error("Expected ',' or ')' after function argument", *peek_token());
+							return ParseResult::error("Expected ',' or ')' after function argument", peek_info());
 						}
 					}
 				}
 
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 				
 				FLASH_LOG_FORMAT(Parser, Debug, "After parsing args: size={}, has_operator_call={}, is_template_parameter={}, is_function_pointer={}", 
@@ -7840,24 +7816,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 		}
 	}
-	else if (current_token_->type() == Token::Type::Literal) {
-		auto literal_type = get_numeric_literal_type(current_token_->value());
+	else if (current_token_.type() == Token::Type::Literal) {
+		auto literal_type = get_numeric_literal_type(current_token_.value());
 		if (!literal_type) {
-			return ParseResult::error("Expected numeric literal", *current_token_);
+			return ParseResult::error("Expected numeric literal", current_token_);
 		}
-		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_, literal_type->value, literal_type->type, literal_type->typeQualifier, literal_type->sizeInBits));
-		consume_token();
+		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_, literal_type->value, literal_type->type, literal_type->typeQualifier, literal_type->sizeInBits));
+		advance();
 	}
-	else if (current_token_->type() == Token::Type::StringLiteral) {
+	else if (current_token_.type() == Token::Type::StringLiteral) {
 		// Handle adjacent string literal concatenation
 		// C++ allows "Hello " "World" to be concatenated into "Hello World"
-		Token first_string = *current_token_;
+		Token first_string = current_token_;
 		std::string concatenated_value(first_string.value());
-		consume_token();
+		advance();
 
 		// Check for adjacent string literals
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::StringLiteral) {
-			Token next_string = *peek_token();
+		while (peek().is_string_literal()) {
+			Token next_string = peek_info();
 			// Remove quotes from both strings and concatenate
 			// First string: remove trailing quote
 			// Next string: remove leading quote
@@ -7872,7 +7848,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Concatenate: first_content (without trailing ") + next_content (without leading ")
 			concatenated_value = std::string(first_content) + std::string(next_content);
-			consume_token();
+			advance();
 		}
 
 		// Store the concatenated string in CompileContext so it persists
@@ -7885,9 +7861,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 		result = emplace_node<ExpressionNode>(StringLiteralNode(concatenated_token));
 	}
-	else if (current_token_->type() == Token::Type::CharacterLiteral) {
+	else if (current_token_.type() == Token::Type::CharacterLiteral) {
 		// Parse character literal and convert to numeric value
-		std::string_view value = current_token_->value();
+		std::string_view value = current_token_.value();
 
 		// Character literal format:
 		// - Regular: 'x' or '\x' (char_offset = 1)
@@ -7920,14 +7896,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 		// Minimum size check: prefix + quote + char + quote
 		if (value.size() < char_offset + 2) {
-			return ParseResult::error("Invalid character literal", *current_token_);
+			return ParseResult::error("Invalid character literal", current_token_);
 		}
 
 		uint32_t char_value = 0;  // Use uint32_t for wide chars
 		if (value[char_offset] == '\\') {
 			// Escape sequence
 			if (value.size() < char_offset + 3) {
-				return ParseResult::error("Invalid escape sequence in character literal", *current_token_);
+				return ParseResult::error("Invalid escape sequence in character literal", current_token_);
 			}
 			char escape_char = value[char_offset + 1];
 			switch (escape_char) {
@@ -7939,7 +7915,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				case '\'': char_value = '\''; break;
 				case '"': char_value = '"'; break;
 				default:
-					return ParseResult::error("Unknown escape sequence in character literal", *current_token_);
+					return ParseResult::error("Unknown escape sequence in character literal", current_token_);
 			}
 		}
 		else {
@@ -7948,39 +7924,39 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 
 		// Create a numeric literal node with the character's value
-		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
+		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_,
 			static_cast<unsigned long long>(char_value),
 			char_type, TypeQualifier::None, char_size_bits));
-		consume_token();
+		advance();
 	}
-	else if (current_token_->type() == Token::Type::Keyword &&
-			 (current_token_->value() == "true"sv || current_token_->value() == "false"sv)) {
+	else if (current_token_.type() == Token::Type::Keyword &&
+			 (current_token_.value() == "true"sv || current_token_.value() == "false"sv)) {
 		// Handle bool literals
-		bool value = (current_token_->value() == "true");
-		result = emplace_node<ExpressionNode>(BoolLiteralNode(*current_token_, value));
-		consume_token();
+		bool value = (current_token_.value() == "true");
+		result = emplace_node<ExpressionNode>(BoolLiteralNode(current_token_, value));
+		advance();
 	}
-	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "nullptr"sv) {
+	else if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "nullptr"sv) {
 		// Handle nullptr literal - represented as null pointer constant (0)
 		// The actual type will be determined by context (can convert to any pointer type)
-		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
+		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_,
 			0ULL, Type::Int, TypeQualifier::None, 64));
-		consume_token();
+		advance();
 	}
-	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "this"sv) {
+	else if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "this"sv) {
 		// Handle 'this' keyword - represents a pointer to the current object
 		// Only valid inside member functions
 		if (member_function_context_stack_.empty()) {
-			return ParseResult::error("'this' can only be used inside a member function", *current_token_);
+			return ParseResult::error("'this' can only be used inside a member function", current_token_);
 		}
 
-		Token this_token = *current_token_;
-		consume_token();
+		Token this_token = current_token_;
+		advance();
 
 		// Create an identifier node for 'this'
 		result = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 	}
-	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "{") {
+	else if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == "{") {
 		// Handle braced initializer in expression context
 		// Examples:
 		//   return { .a = 5 };  // Aggregate initialization with return type
@@ -7995,25 +7971,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// return statement), just parse it as an empty braced initializer placeholder.
 		// This handles cases like: decltype(func({})) in template default parameters
 		if (!current_function_) {
-			Token brace_token = *current_token_;
-			consume_token(); // consume '{'
+			Token brace_token = current_token_;
+			advance(); // consume '{'
 			
 			// Skip the contents of the braced initializer
 			// We need to match braces to find the closing '}'
 			int brace_depth = 1;
-			while (brace_depth > 0 && current_token_.has_value()) {
-				if (current_token_->value() == "{") {
+			while (brace_depth > 0 && !current_token_.kind().is_eof()) {
+				if (current_token_.value() == "{") {
 					brace_depth++;
-				} else if (current_token_->value() == "}") {
+				} else if (current_token_.value() == "}") {
 					brace_depth--;
 				}
 				if (brace_depth > 0) {
-					consume_token();
+					advance();
 				}
 			}
 			
-			if (!consume_punctuator("}")) {
-				return ParseResult::error("Expected '}' to close braced initializer", *current_token_);
+			if (!consume("}"_tok)) {
+				return ParseResult::error("Expected '}' to close braced initializer", current_token_);
 			}
 			
 			// Create a placeholder literal node - the type will be inferred from context
@@ -8030,7 +8006,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		const ASTNode& return_type_node = func_decl.type_node();
 		
 		if (!return_type_node.is<TypeSpecifierNode>()) {
-			return ParseResult::error("Cannot determine return type for braced initializer", *current_token_);
+			return ParseResult::error("Cannot determine return type for braced initializer", current_token_);
 		}
 		
 		const TypeSpecifierNode& return_type = return_type_node.as<TypeSpecifierNode>();
@@ -8042,14 +8018,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 		
 		if (!init_result.node().has_value()) {
-			return ParseResult::error("Expected initializer expression", *current_token_);
+			return ParseResult::error("Expected initializer expression", current_token_);
 		}
 		
 		// For scalar types, parse_brace_initializer already returns an expression
 		// Just return it directly
 		return init_result;
 	}
-	else if (consume_punctuator("(")) {
+	else if (consume("("_tok)) {
 		// Could be either:
 		// 1. C-style cast: (Type)expression
 		// 2. Parenthesized expression: (expression)
@@ -8060,21 +8036,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		bool is_fold = false;
 		
 		// Pattern 1: Unary left fold: (... op pack)
-		if (peek_token().has_value() && peek_token()->value() == "...") {
-			consume_token(); // consume ...
+		if (peek() == "..."_tok) {
+			advance(); // consume ...
 			
 			// Next should be an operator
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-				std::string_view fold_op = peek_token()->value();
-				Token op_token = *peek_token();
-				consume_token(); // consume operator
+			if (peek().is_operator()) {
+				std::string_view fold_op = peek_info().value();
+				Token op_token = peek_info();
+				advance(); // consume operator
 				
 				// Next should be the pack identifier
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-					std::string_view pack_name = peek_token()->value();
-					consume_token(); // consume pack name
+				if (peek().is_identifier()) {
+					std::string_view pack_name = peek_info().value();
+					advance(); // consume pack name
 					
-					if (consume_punctuator(")")) {
+					if (consume(")"_tok)) {
 						// Valid unary left fold: (... op pack)
 						discard_saved_token(fold_check_pos);
 						result = emplace_node<ExpressionNode>(
@@ -8090,36 +8066,36 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			restore_token_position(fold_check_pos);
 			
 			// Pattern 2 & 4: Check if starts with identifier (could be pack or init)
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-				std::string_view first_id = peek_token()->value();
-				consume_token(); // consume identifier
+			if (peek().is_identifier()) {
+				std::string_view first_id = peek_info().value();
+				advance(); // consume identifier
 				
 				// Check what follows
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-					std::string_view fold_op = peek_token()->value();
-					Token op_token = *peek_token();
-					consume_token(); // consume operator
+				if (peek().is_operator()) {
+					std::string_view fold_op = peek_info().value();
+					Token op_token = peek_info();
+					advance(); // consume operator
 					
 					// Check for ... (fold expression)
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume ...
+					if (peek() == "..."_tok) {
+						advance(); // consume ...
 						
 						// Check if binary fold or unary right fold
-						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-							peek_token()->value() == fold_op) {
+						if (peek().is_operator() &&
+							peek_info().value() == fold_op) {
 							// Binary right fold: (pack op ... op init)
-							consume_token(); // consume second operator
+							advance(); // consume second operator
 							
 							ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (!init_result.is_error() && init_result.node().has_value() &&
-								consume_punctuator(")")) {
+								consume(")"_tok)) {
 								discard_saved_token(fold_check_pos);
 								result = emplace_node<ExpressionNode>(
 									FoldExpressionNode(first_id, fold_op,
 										FoldExpressionNode::Direction::Right, *init_result.node(), op_token));
 								is_fold = true;
 							}
-						} else if (consume_punctuator(")")) {
+						} else if (consume(")"_tok)) {
 							// Unary right fold: (pack op ...)
 							discard_saved_token(fold_check_pos);
 							result = emplace_node<ExpressionNode>(
@@ -8143,23 +8119,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			ParseResult init_result = parse_primary_expression(ExpressionContext::Normal);
 			
 			if (!init_result.is_error() && init_result.node().has_value()) {
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-					std::string_view fold_op = peek_token()->value();
-					Token op_token = *peek_token();
-					consume_token(); // consume operator
+				if (peek().is_operator()) {
+					std::string_view fold_op = peek_info().value();
+					Token op_token = peek_info();
+					advance(); // consume operator
 					
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume ...
+					if (peek() == "..."_tok) {
+						advance(); // consume ...
 						
-						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-							peek_token()->value() == fold_op) {
-							consume_token(); // consume second operator
+						if (peek().is_operator() &&
+							peek_info().value() == fold_op) {
+							advance(); // consume second operator
 							
-							if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-								std::string_view pack_name = peek_token()->value();
-								consume_token(); // consume pack name
+							if (peek().is_identifier()) {
+								std::string_view pack_name = peek_info().value();
+								advance(); // consume pack name
 								
-								if (consume_punctuator(")")) {
+								if (consume(")"_tok)) {
 									// Valid binary left fold: (init op ... op pack)
 									discard_saved_token(fold_check_pos);
 									discard_saved_token(init_pos);
@@ -8169,7 +8145,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									is_fold = true;
 								}
 							}
-						} else if (consume_punctuator(")")) {
+						} else if (consume(")"_tok)) {
 							// Unary right fold with complex expression: (expr op ...)
 							// The expression is a pack expansion that will be folded
 							discard_saved_token(fold_check_pos);
@@ -8208,17 +8184,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Pattern: (expr...) where ... is pack expansion operator
 			// This is needed for patterns like decltype((expr...)) in template contexts
 			if ((context == ExpressionContext::TemplateArgument || context == ExpressionContext::Decltype) &&
-			    peek_token().has_value() && peek_token()->value() == "...") {
+			    peek() == "..."_tok) {
 				// Consume the ... and create a PackExpansionExprNode
-				Token ellipsis_token = *peek_token();
-				consume_token(); // consume '...'
+				Token ellipsis_token = peek_info();
+				advance(); // consume '...'
 				
 				// Wrap the expression in a PackExpansionExprNode
 				if (paren_result.node().has_value()) {
 					result = emplace_node<ExpressionNode>(
 						PackExpansionExprNode(*paren_result.node(), ellipsis_token));
 				} else {
-					return ParseResult::error("Expected expression before '...'", *current_token_);
+					return ParseResult::error("Expected expression before '...'", current_token_);
 				}
 				
 				FLASH_LOG(Parser, Debug, "Created PackExpansionExprNode for parenthesized pack expansion");
@@ -8226,14 +8202,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				result = paren_result.node();
 			}
 			
-			if (!consume_punctuator(")")) {
+			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after parenthesized expression",
-					*current_token_);
+					current_token_);
 			}
 		}  // End of fold expression check
 	}
 	else {
-		return ParseResult::error("Expected primary expression", *current_token_);
+		return ParseResult::error("Expected primary expression", current_token_);
 	}
 
 found_member_variable:  // Label for member variable detection - jump here to skip error checking
@@ -8247,12 +8223,12 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 }
 
 ParseResult Parser::parse_for_loop() {
-    if (!consume_keyword("for"sv)) {
-        return ParseResult::error("Expected 'for' keyword", *current_token_);
+    if (!consume("for"_tok)) {
+        return ParseResult::error("Expected 'for' keyword", current_token_);
     }
 
-    if (!consume_punctuator("("sv)) {
-        return ParseResult::error("Expected '(' after 'for'", *current_token_);
+    if (!consume("("_tok)) {
+        return ParseResult::error("Expected '(' after 'for'", current_token_);
     }
 
     // Enter a new scope for the for loop (C++ standard: for-init-statement creates a scope)
@@ -8262,22 +8238,22 @@ ParseResult Parser::parse_for_loop() {
     std::optional<ASTNode> init_statement;
 
     // Check if init is empty (starts with semicolon)
-    if (!consume_punctuator(";"sv)) {
+    if (!consume(";"_tok)) {
         // Not empty, parse init statement
         bool try_as_declaration = false;
         
-        if (peek_token().has_value()) {
-            if (peek_token()->type() == Token::Type::Keyword) {
+        if (!peek().is_eof()) {
+            if (peek().is_keyword()) {
                 // Check if it's a type keyword or CV-qualifier (variable declaration)
-                if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+                if (type_keywords.find(peek_info().value()) != type_keywords.end()) {
                     try_as_declaration = true;
                 }
-            } else if (peek_token()->type() == Token::Type::Identifier) {
+            } else if (peek().is_identifier()) {
                 // Check if it's a known type name (e.g., size_t, string, etc.) or a qualified type (std::size_t)
-                StringHandle type_handle = StringTable::getOrInternStringHandle(peek_token()->value());
+                StringHandle type_handle = peek_info().handle();
                 if (lookupTypeInCurrentContext(type_handle)) {
                     try_as_declaration = true;
-                } else if (peek_token(1).has_value() && peek_token(1)->value() == "::") {
+                } else if (peek(1) == "::"_tok) {
                     // Treat Identifier followed by :: as a potential qualified type name
                     try_as_declaration = true;
                 }
@@ -8309,10 +8285,10 @@ ParseResult Parser::parse_for_loop() {
         }
 
         // Check for ranged-for syntax: for (declaration : range_expression)
-        if (consume_punctuator(":"sv)) {
+        if (consume(":"_tok)) {
             // This is a ranged for loop (without init-statement)
             if (!init_statement.has_value()) {
-                return ParseResult::error("Ranged for loop requires a loop variable declaration", *current_token_);
+                return ParseResult::error("Ranged for loop requires a loop variable declaration", current_token_);
             }
 
             // Parse the range expression
@@ -8323,16 +8299,16 @@ ParseResult Parser::parse_for_loop() {
 
             auto range_expr = range_result.node();
             if (!range_expr.has_value()) {
-                return ParseResult::error("Expected range expression in ranged for loop", *current_token_);
+                return ParseResult::error("Expected range expression in ranged for loop", current_token_);
             }
 
-            if (!consume_punctuator(")"sv)) {
-                return ParseResult::error("Expected ')' after ranged for loop range expression", *current_token_);
+            if (!consume(")"_tok)) {
+                return ParseResult::error("Expected ')' after ranged for loop range expression", current_token_);
             }
 
             // Parse body (can be a block or a single statement)
             ParseResult body_result;
-            if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+            if (peek() == "{"_tok) {
                 body_result = parse_block();
             } else {
                 body_result = parse_statement_or_declaration();
@@ -8344,7 +8320,7 @@ ParseResult Parser::parse_for_loop() {
 
             auto body_node = body_result.node();
             if (!body_node.has_value()) {
-                return ParseResult::error("Invalid ranged for loop body", *current_token_);
+                return ParseResult::error("Invalid ranged for loop body", current_token_);
             }
 
             return ParseResult::success(emplace_node<RangedForStatementNode>(
@@ -8352,8 +8328,8 @@ ParseResult Parser::parse_for_loop() {
             ));
         }
 
-        if (!consume_punctuator(";"sv)) {
-            return ParseResult::error("Expected ';' after for loop initialization", *current_token_);
+        if (!consume(";"_tok)) {
+            return ParseResult::error("Expected ';' after for loop initialization", current_token_);
         }
     }
 
@@ -8368,14 +8344,13 @@ ParseResult Parser::parse_for_loop() {
     bool is_range_for_with_init = false;
     std::optional<ASTNode> range_decl;
     
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-        type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+    if (peek().is_keyword() &&
+        type_keywords.find(peek_info().value()) != type_keywords.end()) {
         // Try to parse as a range declaration
         ParseResult decl_result = parse_variable_declaration();
         if (!decl_result.is_error() && decl_result.node().has_value()) {
             // Check if followed by ':'
-            if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-                peek_token()->value() == ":") {
+            if (peek() == ":"_tok) {
                 is_range_for_with_init = true;
                 range_decl = decl_result.node();
             }
@@ -8384,7 +8359,7 @@ ParseResult Parser::parse_for_loop() {
     
     if (is_range_for_with_init) {
         // This is a C++20 range-based for with init-statement
-        consume_punctuator(":"sv);  // consume the ':'
+        consume(":"_tok);  // consume the ':'
         
         // Parse the range expression
         ParseResult range_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -8394,16 +8369,16 @@ ParseResult Parser::parse_for_loop() {
 
         auto range_expr = range_result.node();
         if (!range_expr.has_value()) {
-            return ParseResult::error("Expected range expression in ranged for loop", *current_token_);
+            return ParseResult::error("Expected range expression in ranged for loop", current_token_);
         }
 
-        if (!consume_punctuator(")"sv)) {
-            return ParseResult::error("Expected ')' after ranged for loop range expression", *current_token_);
+        if (!consume(")"_tok)) {
+            return ParseResult::error("Expected ')' after ranged for loop range expression", current_token_);
         }
 
         // Parse body (can be a block or a single statement)
         ParseResult body_result;
-        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+        if (peek() == "{"_tok) {
             body_result = parse_block();
         } else {
             body_result = parse_statement_or_declaration();
@@ -8415,7 +8390,7 @@ ParseResult Parser::parse_for_loop() {
 
         auto body_node = body_result.node();
         if (!body_node.has_value()) {
-            return ParseResult::error("Invalid ranged for loop body", *current_token_);
+            return ParseResult::error("Invalid ranged for loop body", current_token_);
         }
 
         // Create ranged for statement with init-statement
@@ -8431,7 +8406,7 @@ ParseResult Parser::parse_for_loop() {
     std::optional<ASTNode> condition;
 
     // Check if condition is empty (next token is semicolon)
-    if (!consume_punctuator(";"sv)) {
+    if (!consume(";"_tok)) {
         // Not empty, parse condition expression
         ParseResult cond_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
         if (cond_result.is_error()) {
@@ -8439,8 +8414,8 @@ ParseResult Parser::parse_for_loop() {
         }
         condition = cond_result.node();
 
-        if (!consume_punctuator(";"sv)) {
-            return ParseResult::error("Expected ';' after for loop condition", *current_token_);
+        if (!consume(";"_tok)) {
+            return ParseResult::error("Expected ';' after for loop condition", current_token_);
         }
     }
 
@@ -8448,7 +8423,7 @@ ParseResult Parser::parse_for_loop() {
     std::optional<ASTNode> update_expression;
 
     // Check if increment is empty (next token is closing paren)
-    if (!consume_punctuator(")"sv)) {
+    if (!consume(")"_tok)) {
         // Not empty, parse increment expression (allow comma operator)
         ParseResult inc_result = parse_expression(MIN_PRECEDENCE, ExpressionContext::Normal);
         if (inc_result.is_error()) {
@@ -8456,14 +8431,14 @@ ParseResult Parser::parse_for_loop() {
         }
         update_expression = inc_result.node();
 
-        if (!consume_punctuator(")")) {
-            return ParseResult::error("Expected ')' after for loop increment", *current_token_);
+        if (!consume(")"_tok)) {
+            return ParseResult::error("Expected ')' after for loop increment", current_token_);
         }
     }
 
     // Parse body (can be a block or a single statement)
     ParseResult body_result;
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+    if (peek() == "{"_tok) {
         body_result = parse_block();
     } else {
         body_result = parse_statement_or_declaration();
@@ -8476,7 +8451,7 @@ ParseResult Parser::parse_for_loop() {
     // Create for statement node with optional components
     auto body_node = body_result.node();
     if (!body_node.has_value()) {
-        return ParseResult::error("Invalid for loop body", *current_token_);
+        return ParseResult::error("Invalid for loop body", current_token_);
     }
 
     return ParseResult::success(emplace_node<ForStatementNode>(
@@ -8485,12 +8460,12 @@ ParseResult Parser::parse_for_loop() {
 }
 
 ParseResult Parser::parse_while_loop() {
-    if (!consume_keyword("while"sv)) {
-        return ParseResult::error("Expected 'while' keyword", *current_token_);
+    if (!consume("while"_tok)) {
+        return ParseResult::error("Expected 'while' keyword", current_token_);
     }
 
-    if (!consume_punctuator("("sv)) {
-        return ParseResult::error("Expected '(' after 'while'", *current_token_);
+    if (!consume("("_tok)) {
+        return ParseResult::error("Expected '(' after 'while'", current_token_);
     }
 
     // Parse condition
@@ -8499,8 +8474,8 @@ ParseResult Parser::parse_while_loop() {
         return condition_result;
     }
 
-    if (!consume_punctuator(")"sv)) {
-        return ParseResult::error("Expected ')' after while condition", *current_token_);
+    if (!consume(")"_tok)) {
+        return ParseResult::error("Expected ')' after while condition", current_token_);
     }
 
     // Parse body (can be a block or a single statement)
@@ -8514,7 +8489,7 @@ ParseResult Parser::parse_while_loop() {
     auto condition_node = condition_result.node();
     auto body_node = body_result.node();
     if (!condition_node.has_value() || !body_node.has_value()) {
-        return ParseResult::error("Invalid while loop construction", *current_token_);
+        return ParseResult::error("Invalid while loop construction", current_token_);
     }
 
     return ParseResult::success(emplace_node<WhileStatementNode>(
@@ -8523,8 +8498,8 @@ ParseResult Parser::parse_while_loop() {
 }
 
 ParseResult Parser::parse_do_while_loop() {
-    if (!consume_keyword("do"sv)) {
-        return ParseResult::error("Expected 'do' keyword", *current_token_);
+    if (!consume("do"_tok)) {
+        return ParseResult::error("Expected 'do' keyword", current_token_);
     }
 
     // Parse body (can be a block or a single statement)
@@ -8534,12 +8509,12 @@ ParseResult Parser::parse_do_while_loop() {
         return body_result;
     }
 
-    if (!consume_keyword("while"sv)) {
-        return ParseResult::error("Expected 'while' after do-while body", *current_token_);
+    if (!consume("while"_tok)) {
+        return ParseResult::error("Expected 'while' after do-while body", current_token_);
     }
 
-    if (!consume_punctuator("("sv)) {
-        return ParseResult::error("Expected '(' after 'while'", *current_token_);
+    if (!consume("("_tok)) {
+        return ParseResult::error("Expected '(' after 'while'", current_token_);
     }
 
     // Parse condition
@@ -8548,19 +8523,19 @@ ParseResult Parser::parse_do_while_loop() {
         return condition_result;
     }
 
-    if (!consume_punctuator(")"sv)) {
-        return ParseResult::error("Expected ')' after do-while condition", *current_token_);
+    if (!consume(")"_tok)) {
+        return ParseResult::error("Expected ')' after do-while condition", current_token_);
     }
 
-    if (!consume_punctuator(";"sv)) {
-        return ParseResult::error("Expected ';' after do-while statement", *current_token_);
+    if (!consume(";"_tok)) {
+        return ParseResult::error("Expected ';' after do-while statement", current_token_);
     }
 
     // Create do-while statement node
     auto body_node = body_result.node();
     auto condition_node = condition_result.node();
     if (!body_node.has_value() || !condition_node.has_value()) {
-        return ParseResult::error("Invalid do-while loop construction", *current_token_);
+        return ParseResult::error("Invalid do-while loop construction", current_token_);
     }
 
     return ParseResult::success(emplace_node<DoWhileStatementNode>(
@@ -8569,57 +8544,57 @@ ParseResult Parser::parse_do_while_loop() {
 }
 
 ParseResult Parser::parse_break_statement() {
-    auto break_token_opt = peek_token();
-    if (!break_token_opt.has_value() || break_token_opt->value() != "break"sv) {
-        return ParseResult::error("Expected 'break' keyword", *current_token_);
+    auto break_token_opt = peek_info();
+    if (break_token_opt.value() != "break"sv) {
+        return ParseResult::error("Expected 'break' keyword", current_token_);
     }
 
-    Token break_token = break_token_opt.value();
-    consume_token(); // Consume the 'break' keyword
+    Token break_token = break_token_opt;
+    advance(); // Consume the 'break' keyword
 
-    if (!consume_punctuator(";"sv)) {
-        return ParseResult::error("Expected ';' after break statement", *current_token_);
+    if (!consume(";"_tok)) {
+        return ParseResult::error("Expected ';' after break statement", current_token_);
     }
 
     return ParseResult::success(emplace_node<BreakStatementNode>(break_token));
 }
 
 ParseResult Parser::parse_continue_statement() {
-    auto continue_token_opt = peek_token();
-    if (!continue_token_opt.has_value() || continue_token_opt->value() != "continue"sv) {
-        return ParseResult::error("Expected 'continue' keyword", *current_token_);
+    auto continue_token_opt = peek_info();
+    if (continue_token_opt.value() != "continue"sv) {
+        return ParseResult::error("Expected 'continue' keyword", current_token_);
     }
 
-    Token continue_token = continue_token_opt.value();
-    consume_token(); // Consume the 'continue' keyword
+    Token continue_token = continue_token_opt;
+    advance(); // Consume the 'continue' keyword
 
-    if (!consume_punctuator(";"sv)) {
-        return ParseResult::error("Expected ';' after continue statement", *current_token_);
+    if (!consume(";"_tok)) {
+        return ParseResult::error("Expected ';' after continue statement", current_token_);
     }
 
     return ParseResult::success(emplace_node<ContinueStatementNode>(continue_token));
 }
 
 ParseResult Parser::parse_goto_statement() {
-    auto goto_token_opt = peek_token();
-    if (!goto_token_opt.has_value() || goto_token_opt->value() != "goto"sv) {
-        return ParseResult::error("Expected 'goto' keyword", *current_token_);
+    auto goto_token_opt = peek_info();
+    if (goto_token_opt.value() != "goto"sv) {
+        return ParseResult::error("Expected 'goto' keyword", current_token_);
     }
 
-    Token goto_token = goto_token_opt.value();
-    consume_token(); // Consume the 'goto' keyword
+    Token goto_token = goto_token_opt;
+    advance(); // Consume the 'goto' keyword
 
     // Parse the label identifier
-    auto label_token_opt = peek_token();
-    if (!label_token_opt.has_value() || label_token_opt->type() != Token::Type::Identifier) {
-        return ParseResult::error("Expected label identifier after 'goto'", *current_token_);
+    auto label_token_opt = peek_info();
+    if (label_token_opt.type() != Token::Type::Identifier) {
+        return ParseResult::error("Expected label identifier after 'goto'", current_token_);
     }
 
-    Token label_token = label_token_opt.value();
-    consume_token(); // Consume the label identifier
+    Token label_token = label_token_opt;
+    advance(); // Consume the label identifier
 
-    if (!consume_punctuator(";"sv)) {
-        return ParseResult::error("Expected ';' after goto statement", *current_token_);
+    if (!consume(";"_tok)) {
+        return ParseResult::error("Expected ';' after goto statement", current_token_);
     }
 
     return ParseResult::success(emplace_node<GotoStatementNode>(label_token, goto_token));
@@ -8628,16 +8603,16 @@ ParseResult Parser::parse_goto_statement() {
 ParseResult Parser::parse_label_statement() {
     // This is called when we've detected identifier followed by ':'
     // The identifier token should be the current token
-    auto label_token_opt = peek_token();
-    if (!label_token_opt.has_value() || label_token_opt->type() != Token::Type::Identifier) {
-        return ParseResult::error("Expected label identifier", *current_token_);
+    auto label_token_opt = peek_info();
+    if (label_token_opt.type() != Token::Type::Identifier) {
+        return ParseResult::error("Expected label identifier", current_token_);
     }
 
-    Token label_token = label_token_opt.value();
-    consume_token(); // Consume the label identifier
+    Token label_token = label_token_opt;
+    advance(); // Consume the label identifier
 
-    if (!consume_punctuator(":"sv)) {
-        return ParseResult::error("Expected ':' after label", *current_token_);
+    if (!consume(":"_tok)) {
+        return ParseResult::error("Expected ':' after label", current_token_);
     }
 
     return ParseResult::success(emplace_node<LabelStatementNode>(label_token));
@@ -8645,13 +8620,13 @@ ParseResult Parser::parse_label_statement() {
 
 ParseResult Parser::parse_try_statement() {
     // Parse: try { block } catch (type identifier) { block } [catch (...) { block }]
-    auto try_token_opt = peek_token();
-    if (!try_token_opt.has_value() || try_token_opt->value() != "try"sv) {
-        return ParseResult::error("Expected 'try' keyword", *current_token_);
+    auto try_token_opt = peek_info();
+    if (try_token_opt.value() != "try"sv) {
+        return ParseResult::error("Expected 'try' keyword", current_token_);
     }
 
-    Token try_token = try_token_opt.value();
-    consume_token(); // Consume the 'try' keyword
+    Token try_token = try_token_opt;
+    advance(); // Consume the 'try' keyword
 
     // Parse the try block
     auto try_block_result = parse_block();
@@ -8664,22 +8639,20 @@ ParseResult Parser::parse_try_statement() {
     // Parse catch clauses (at least one required)
     std::vector<ASTNode> catch_clauses;
 
-    while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-           peek_token()->value() == "catch"sv) {
-        Token catch_token = *peek_token();
-        consume_token(); // Consume the 'catch' keyword
+    while (peek() == "catch"_tok) {
+        Token catch_token = peek_info();
+        advance(); // Consume the 'catch' keyword
 
-        if (!consume_punctuator("("sv)) {
-            return ParseResult::error("Expected '(' after 'catch'", *current_token_);
+        if (!consume("("_tok)) {
+            return ParseResult::error("Expected '(' after 'catch'", current_token_);
         }
 
         std::optional<ASTNode> exception_declaration;
         bool is_catch_all = false;
 
         // Check for catch(...)
-        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-            peek_token()->value() == "...") {
-            consume_token(); // Consume '...'
+        if (peek() == "..."_tok) {
+            advance(); // Consume '...'
             is_catch_all = true;
         } else {
             // Parse exception type and optional identifier
@@ -8690,8 +8663,8 @@ ParseResult Parser::parse_try_statement() {
             exception_declaration = type_result.node();
         }
 
-        if (!consume_punctuator(")"sv)) {
-            return ParseResult::error("Expected ')' after catch declaration", *current_token_);
+        if (!consume(")"_tok)) {
+            return ParseResult::error("Expected ')' after catch declaration", current_token_);
         }
 
         // Enter a new scope for the catch block and add the exception parameter to the symbol table
@@ -8726,7 +8699,7 @@ ParseResult Parser::parse_try_statement() {
     }
 
     if (catch_clauses.empty()) {
-        return ParseResult::error("Expected at least one 'catch' clause after 'try' block", *current_token_);
+        return ParseResult::error("Expected at least one 'catch' clause after 'try' block", current_token_);
     }
 
     return ParseResult::success(emplace_node<TryStatementNode>(try_block, std::move(catch_clauses), try_token));
@@ -8734,18 +8707,17 @@ ParseResult Parser::parse_try_statement() {
 
 ParseResult Parser::parse_throw_statement() {
     // Parse: throw; or throw expression;
-    auto throw_token_opt = peek_token();
-    if (!throw_token_opt.has_value() || throw_token_opt->value() != "throw"sv) {
-        return ParseResult::error("Expected 'throw' keyword", *current_token_);
+    auto throw_token_opt = peek_info();
+    if (throw_token_opt.value() != "throw"sv) {
+        return ParseResult::error("Expected 'throw' keyword", current_token_);
     }
 
-    Token throw_token = throw_token_opt.value();
-    consume_token(); // Consume the 'throw' keyword
+    Token throw_token = throw_token_opt;
+    advance(); // Consume the 'throw' keyword
 
     // Check for rethrow (throw;)
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-        peek_token()->value() == ";") {
-        consume_token(); // Consume ';'
+    if (peek() == ";"_tok) {
+        advance(); // Consume ';'
         return ParseResult::success(emplace_node<ThrowStatementNode>(throw_token));
     }
 
@@ -8755,8 +8727,8 @@ ParseResult Parser::parse_throw_statement() {
         return expr_result;
     }
 
-    if (!consume_punctuator(";"sv)) {
-        return ParseResult::error("Expected ';' after throw expression", *current_token_);
+    if (!consume(";"_tok)) {
+        return ParseResult::error("Expected ';' after throw expression", current_token_);
     }
 
     return ParseResult::success(emplace_node<ThrowStatementNode>(*expr_result.node(), throw_token));
@@ -8764,40 +8736,40 @@ ParseResult Parser::parse_throw_statement() {
 
 ParseResult Parser::parse_lambda_expression() {
     // Expect '['
-    if (!consume_punctuator("[")) {
-        return ParseResult::error("Expected '[' to start lambda expression", *current_token_);
+    if (!consume("["_tok)) {
+        return ParseResult::error("Expected '[' to start lambda expression", current_token_);
     }
 
-    Token lambda_token = *current_token_;
+    Token lambda_token = current_token_;
 
     // Parse captures
     std::vector<LambdaCaptureNode> captures;
 
     // Check for empty capture list
-    if (!peek_token().has_value() || peek_token()->value() != "]") {
+    if (peek() != "]"_tok) {
         // Parse capture list
         while (true) {
-            auto token = peek_token();
-            if (!token.has_value()) {
-                return ParseResult::error("Unexpected end of file in lambda capture list", *current_token_);
+            auto token = peek_info();
+            if (peek().is_eof()) {
+                return ParseResult::error("Unexpected end of file in lambda capture list", current_token_);
             }
 
             // Check for capture-all
-            if (token->value() == "=") {
-                consume_token();
+            if (token.value() == "=") {
+                advance();
                 captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::AllByValue));
-            } else if (token->value() == "&") {
-                consume_token();
+            } else if (token.value() == "&") {
+                advance();
                 // Check if this is capture-all by reference or a specific reference capture
-                auto next_token = peek_token();
-                if (next_token.has_value() && next_token->type() == Token::Type::Identifier) {
+                auto next_token = peek_info();
+                if (next_token.type() == Token::Type::Identifier) {
                     // Could be [&x] or [&x = expr]
-                    Token id_token = *next_token;
-                    consume_token();
+                    Token id_token = next_token;
+                    advance();
                     
                     // Check for init-capture: [&x = expr]
-                    if (peek_token().has_value() && peek_token()->value() == "=") {
-                        consume_token(); // consume '='
+                    if (peek() == "="_tok) {
+                        advance(); // consume '='
                         auto init_expr = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
                         if (init_expr.is_error()) {
                             return init_expr;
@@ -8811,32 +8783,32 @@ ParseResult Parser::parse_lambda_expression() {
                     // Capture-all by reference: [&]
                     captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::AllByReference));
                 }
-            } else if (token->type() == Token::Type::Operator && token->value() == "*") {
+            } else if (token.type() == Token::Type::Operator && token.value() == "*") {
                 // Check for [*this] capture (C++17)
-                consume_token(); // consume '*'
-                auto next_token = peek_token();
-                if (next_token.has_value() && next_token->value() == "this") {
-                    Token this_token = *next_token;
-                    consume_token(); // consume 'this'
+                advance(); // consume '*'
+                auto next_token = peek_info();
+                if (next_token.value() == "this") {
+                    Token this_token = next_token;
+                    advance(); // consume 'this'
                     captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::CopyThis, this_token));
                 } else {
-                    return ParseResult::error("Expected 'this' after '*' in lambda capture", *current_token_);
+                    return ParseResult::error("Expected 'this' after '*' in lambda capture", current_token_);
                 }
-            } else if (token->type() == Token::Type::Identifier || token->type() == Token::Type::Keyword) {
+            } else if (token.type() == Token::Type::Identifier || token.type() == Token::Type::Keyword) {
                 // Check for 'this' keyword first
-                if (token->value() == "this") {
-                    Token this_token = *token;
-                    consume_token();
+                if (token.value() == "this") {
+                    Token this_token = token;
+                    advance();
                     captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::This, this_token));
-                } else if (token->type() == Token::Type::Identifier) {
+                } else if (token.type() == Token::Type::Identifier) {
                     // Could be [x] or [x = expr]
-                    Token id_token = *token;
-                    consume_token();
+                    Token id_token = token;
+                    advance();
                     
                     
                     // Check for init-capture: [x = expr]
-                    if (peek_token().has_value() && peek_token()->value() == "=") {
-                        consume_token(); // consume '='
+                    if (peek() == "="_tok) {
+                        advance(); // consume '='
                         auto init_expr = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
                         if (init_expr.is_error()) {
                             return init_expr;
@@ -8847,15 +8819,15 @@ ParseResult Parser::parse_lambda_expression() {
                         captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token));
                     }
                 } else {
-                    return ParseResult::error("Expected capture specifier in lambda", *token);
+                    return ParseResult::error("Expected capture specifier in lambda", token);
                 }
             } else {
-                return ParseResult::error("Expected capture specifier in lambda", *token);
+                return ParseResult::error("Expected capture specifier in lambda", token);
             }
 
             // Check for comma (more captures) or closing bracket
-            if (peek_token().has_value() && peek_token()->value() == ",") {
-                consume_token(); // consume comma
+            if (peek() == ","_tok) {
+                advance(); // consume comma
             } else {
                 break;
             }
@@ -8863,52 +8835,52 @@ ParseResult Parser::parse_lambda_expression() {
     }
 
     // Expect ']'
-    if (!consume_punctuator("]")) {
-        return ParseResult::error("Expected ']' after lambda captures", *current_token_);
+    if (!consume("]"_tok)) {
+        return ParseResult::error("Expected ']' after lambda captures", current_token_);
     }
 
     // Parse optional template parameter list (C++20): []<typename T>(...) 
     std::vector<std::string_view> template_param_names;
-    if (peek_token().has_value() && peek_token()->value() == "<") {
-        consume_token(); // consume '<'
+    if (peek() == "<"_tok) {
+        advance(); // consume '<'
         
         // Parse template parameters
         while (true) {
             // Expect 'typename' or 'class' keyword
-            if (!peek_token().has_value()) {
-                return ParseResult::error("Expected template parameter", *current_token_);
+            if (peek().is_eof()) {
+                return ParseResult::error("Expected template parameter", current_token_);
             }
             
-            auto keyword_token = peek_token();
-            if (keyword_token->value() != "typename" && keyword_token->value() != "class") {
-                return ParseResult::error("Expected 'typename' or 'class' in template parameter", *keyword_token);
+            auto keyword_token = peek_info();
+            if (keyword_token.value() != "typename" && keyword_token.value() != "class") {
+                return ParseResult::error("Expected 'typename' or 'class' in template parameter", keyword_token);
             }
-            consume_token(); // consume 'typename' or 'class'
+            advance(); // consume 'typename' or 'class'
             
             // Expect identifier (template parameter name)
-            if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-                return ParseResult::error("Expected template parameter name", *current_token_);
+            if (!peek().is_identifier()) {
+                return ParseResult::error("Expected template parameter name", current_token_);
             }
             
-            Token param_name_token = *peek_token();
+            Token param_name_token = peek_info();
             template_param_names.push_back(param_name_token.value());
-            consume_token(); // consume parameter name
+            advance(); // consume parameter name
             
             // Check for comma (more parameters) or closing '>'
-            if (peek_token().has_value() && peek_token()->value() == ",") {
-                consume_token(); // consume comma
-            } else if (peek_token().has_value() && peek_token()->value() == ">") {
-                consume_token(); // consume '>'
+            if (peek() == ","_tok) {
+                advance(); // consume comma
+            } else if (peek() == ">"_tok) {
+                advance(); // consume '>'
                 break;
             } else {
-                return ParseResult::error("Expected ',' or '>' in template parameter list", *current_token_);
+                return ParseResult::error("Expected ',' or '>' in template parameter list", current_token_);
             }
         }
     }
 
     // Parse parameter list (optional) using unified parse_parameter_list (Phase 1)
     std::vector<ASTNode> parameters;
-    if (peek_token().has_value() && peek_token()->value() == "(") {
+    if (peek() == "("_tok) {
         FlashCpp::ParsedParameterList params;
         auto param_result = parse_parameter_list(params);
         if (param_result.is_error()) {
@@ -8920,15 +8892,15 @@ ParseResult Parser::parse_lambda_expression() {
 
     // Parse optional mutable keyword
     bool is_mutable = false;
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "mutable") {
-        consume_token(); // consume 'mutable'
+    if (peek() == "mutable"_tok) {
+        advance(); // consume 'mutable'
         is_mutable = true;
     }
 
     // Parse optional return type (-> type)
     std::optional<ASTNode> return_type;
-    if (peek_token().has_value() && peek_token()->value() == "->") {
-        consume_token(); // consume '->'
+    if (peek() == "->"_tok) {
+        advance(); // consume '->'
         ParseResult type_result = parse_type_specifier();
         if (type_result.is_error()) {
             return type_result;
@@ -8937,8 +8909,8 @@ ParseResult Parser::parse_lambda_expression() {
     }
 
     // Parse body (must be a compound statement)
-    if (!peek_token().has_value() || peek_token()->value() != "{") {
-        return ParseResult::error("Expected '{' for lambda body", *current_token_);
+    if (peek() != "{"_tok) {
+        return ParseResult::error("Expected '{' for lambda body", current_token_);
     }
 
     // Add parameters and captures to symbol table before parsing body
@@ -8976,7 +8948,7 @@ ParseResult Parser::parse_lambda_expression() {
         } else {
             // Regular capture: [x] or [&x]
             // Look up the original variable to get its type
-            auto var_symbol = lookup_symbol(StringTable::getOrInternStringHandle(id_token.value()));
+            auto var_symbol = lookup_symbol(id_token.handle());
             if (var_symbol.has_value()) {
                 const DeclarationNode* decl = get_decl_from_symbol(*var_symbol);
                 if (decl) {
@@ -9143,7 +9115,7 @@ ParseResult Parser::parse_lambda_expression() {
         std::unordered_set<StringHandle> param_names;
         for (const auto& param : parameters) {
             if (param.is<DeclarationNode>()) {
-                param_names.insert(StringTable::getOrInternStringHandle(param.as<DeclarationNode>().identifier_token().value()));
+                param_names.insert(param.as<DeclarationNode>().identifier_token().handle());
             }
         }
 
@@ -9456,20 +9428,19 @@ ParseResult Parser::parse_lambda_expression() {
 }
 
 ParseResult Parser::parse_if_statement() {
-    if (!consume_keyword("if"sv)) {
-        return ParseResult::error("Expected 'if' keyword", *current_token_);
+    if (!consume("if"_tok)) {
+        return ParseResult::error("Expected 'if' keyword", current_token_);
     }
 
     // Check for C++17 'if constexpr'
     bool is_constexpr = false;
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-        peek_token()->value() == "constexpr") {
-        consume_keyword("constexpr"sv);
+    if (peek() == "constexpr"_tok) {
+        consume("constexpr"_tok);
         is_constexpr = true;
     }
 
-    if (!consume_punctuator("("sv)) {
-        return ParseResult::error("Expected '(' after 'if'", *current_token_);
+    if (!consume("("_tok)) {
+        return ParseResult::error("Expected '(' after 'if'", current_token_);
     }
 
     // Check for C++20 if-with-initializer: if (init; condition)
@@ -9478,9 +9449,9 @@ ParseResult Parser::parse_if_statement() {
 
     // Look ahead to see if there's a semicolon (indicating init statement)
     // Only try to parse as initializer if we see a type keyword or CV-qualifier
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+    if (peek().is_keyword()) {
         // Only proceed if this is actually a type keyword or CV-qualifier
-        if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+        if (type_keywords.find(peek_info().value()) != type_keywords.end()) {
             // Could be a declaration like: if (int x = 5; x > 0)
             auto checkpoint = save_token_position();
             
@@ -9490,14 +9461,12 @@ ParseResult Parser::parse_if_statement() {
             
             ParseResult potential_init = parse_variable_declaration();
 
-            if (!potential_init.is_error() && peek_token().has_value() &&
-                peek_token()->type() == Token::Type::Punctuator &&
-                peek_token()->value() == ";") {
+            if (!potential_init.is_error() && peek() == ";"_tok) {
                 // We have an initializer - keep the scope
                 discard_saved_token(checkpoint);
                 init_statement = potential_init.node();
-                if (!consume_punctuator(";")) {
-                    return ParseResult::error("Expected ';' after if initializer", *current_token_);
+                if (!consume(";"_tok)) {
+                    return ParseResult::error("Expected ';' after if initializer", current_token_);
                 }
             } else {
                 // Not an initializer, dismiss the scope and restore position
@@ -9514,18 +9483,18 @@ ParseResult Parser::parse_if_statement() {
         return condition;
     }
 
-    if (!consume_punctuator(")")) {
-        return ParseResult::error("Expected ')' after if condition", *current_token_);
+    if (!consume(")"_tok)) {
+        return ParseResult::error("Expected ')' after if condition", current_token_);
     }
 
     // Parse then-statement (can be a block or a single statement)
     ParseResult then_stmt;
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+    if (peek() == "{"_tok) {
         then_stmt = parse_block();
     } else {
         then_stmt = parse_statement_or_declaration();
         // Consume trailing semicolon if present (expression statements don't consume their ';')
-        consume_punctuator(";");
+        consume(";"_tok);
     }
 
     if (then_stmt.is_error()) {
@@ -9534,22 +9503,20 @@ ParseResult Parser::parse_if_statement() {
 
     // Check for else clause
     std::optional<ASTNode> else_stmt;
-    if (peek_token().has_value() &&
-        peek_token()->type() == Token::Type::Keyword &&
-        peek_token()->value() == "else") {
-        consume_keyword("else");
+    if (peek() == "else"_tok) {
+        consume("else"_tok);
 
         // Parse else-statement (can be a block, another if, or a single statement)
         ParseResult else_result;
-        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+        if (peek() == "{"_tok) {
             else_result = parse_block();
-        } else if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "if") {
+        } else if (peek() == "if"_tok) {
             // Handle else-if chain
             else_result = parse_if_statement();
         } else {
             else_result = parse_statement_or_declaration();
             // Consume trailing semicolon if present
-            consume_punctuator(";");
+            consume(";"_tok);
         }
 
         if (else_result.is_error()) {
@@ -9567,16 +9534,16 @@ ParseResult Parser::parse_if_statement() {
         }
     }
 
-    return ParseResult::error("Invalid if statement construction", *current_token_);
+    return ParseResult::error("Invalid if statement construction", current_token_);
 }
 
 ParseResult Parser::parse_switch_statement() {
-    if (!consume_keyword("switch"sv)) {
-        return ParseResult::error("Expected 'switch' keyword", *current_token_);
+    if (!consume("switch"_tok)) {
+        return ParseResult::error("Expected 'switch' keyword", current_token_);
     }
 
-    if (!consume_punctuator("("sv)) {
-        return ParseResult::error("Expected '(' after 'switch'", *current_token_);
+    if (!consume("("_tok)) {
+        return ParseResult::error("Expected '(' after 'switch'", current_token_);
     }
 
     // Parse the switch condition expression
@@ -9585,25 +9552,25 @@ ParseResult Parser::parse_switch_statement() {
         return condition;
     }
 
-    if (!consume_punctuator(")"sv)) {
-        return ParseResult::error("Expected ')' after switch condition", *current_token_);
+    if (!consume(")"_tok)) {
+        return ParseResult::error("Expected ')' after switch condition", current_token_);
     }
 
     // Parse the switch body (must be a compound statement with braces)
-    if (!consume_punctuator("{"sv)) {
-        return ParseResult::error("Expected '{' for switch body", *current_token_);
+    if (!consume("{"_tok)) {
+        return ParseResult::error("Expected '{' for switch body", current_token_);
     }
 
     // Create a block to hold case/default labels and their statements
     auto [block_node, block_ref] = create_node_ref(BlockNode());
 
     // Parse case and default labels
-    while (peek_token().has_value() && peek_token()->value() != "}") {
-        auto current = peek_token();
+    while (!peek().is_eof() && peek() != "}"_tok) {
+        auto current = peek_info();
 
-        if (current->type() == Token::Type::Keyword && current->value() == "case") {
+        if (current.type() == Token::Type::Keyword && current.value() == "case") {
             // Parse case label
-            consume_token(); // consume 'case'
+            advance(); // consume 'case'
 
             // Parse case value (must be a constant expression)
             auto case_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -9611,21 +9578,21 @@ ParseResult Parser::parse_switch_statement() {
                 return case_value;
             }
 
-            if (!consume_punctuator(":"sv)) {
-                return ParseResult::error("Expected ':' after case value", *current_token_);
+            if (!consume(":"_tok)) {
+                return ParseResult::error("Expected ':' after case value", current_token_);
             }
 
             // Parse statements until next case/default/closing brace
             // We collect all statements for this case into a sub-block
             auto [case_block_node, case_block_ref] = create_node_ref(BlockNode());
 
-            while (peek_token().has_value() &&
-                   peek_token()->value() != "}" &&
-                   !(peek_token()->type() == Token::Type::Keyword &&
-                     (peek_token()->value() == "case" || peek_token()->value() == "default"))) {
+            while (!peek().is_eof() &&
+                   peek() != "}"_tok &&
+                   !(peek().is_keyword() &&
+                     (peek() == "case"_tok || peek() == "default"_tok))) {
                 // Skip stray semicolons (empty statements)
-                if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ";") {
-                    consume_token();
+                if (peek().is_punctuator() && peek() == ";"_tok) {
+                    advance();
                     continue;
                 }
 
@@ -9642,24 +9609,24 @@ ParseResult Parser::parse_switch_statement() {
             auto case_label = emplace_node<CaseLabelNode>(*case_value.node(), case_block_node);
             block_ref.add_statement_node(case_label);
 
-        } else if (current->type() == Token::Type::Keyword && current->value() == "default") {
+        } else if (current.type() == Token::Type::Keyword && current.value() == "default") {
             // Parse default label
-            consume_token(); // consume 'default'
+            advance(); // consume 'default'
 
-            if (!consume_punctuator(":"sv)) {
-                return ParseResult::error("Expected ':' after 'default'", *current_token_);
+            if (!consume(":"_tok)) {
+                return ParseResult::error("Expected ':' after 'default'", current_token_);
             }
 
             // Parse statements until next case/default/closing brace
             auto [default_block_node, default_block_ref] = create_node_ref(BlockNode());
 
-            while (peek_token().has_value() &&
-                   peek_token()->value() != "}" &&
-                   !(peek_token()->type() == Token::Type::Keyword &&
-                     (peek_token()->value() == "case" || peek_token()->value() == "default"))) {
+            while (!peek().is_eof() &&
+                   peek() != "}"_tok &&
+                   !(peek().is_keyword() &&
+                     (peek() == "case"_tok || peek() == "default"_tok))) {
                 // Skip stray semicolons (empty statements)
-                if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ";") {
-                    consume_token();
+                if (peek().is_punctuator() && peek() == ";"_tok) {
+                    advance();
                     continue;
                 }
 
@@ -9679,19 +9646,19 @@ ParseResult Parser::parse_switch_statement() {
         } else {
             // If we're here, we have an unexpected token at the switch body level
             std::string error_msg = "Expected 'case' or 'default' in switch body, but found: ";
-            if (current->type() == Token::Type::Keyword) {
-                error_msg += "keyword '" + std::string(current->value()) + "'";
-            } else if (current->type() == Token::Type::Identifier) {
-                error_msg += "identifier '" + std::string(current->value()) + "'";
+            if (current.type() == Token::Type::Keyword) {
+                error_msg += "keyword '" + std::string(current.value()) + "'";
+            } else if (current.type() == Token::Type::Identifier) {
+                error_msg += "identifier '" + std::string(current.value()) + "'";
             } else {
-                error_msg += "'" + std::string(current->value()) + "'";
+                error_msg += "'" + std::string(current.value()) + "'";
             }
-            return ParseResult::error(error_msg, *current_token_);
+            return ParseResult::error(error_msg, current_token_);
         }
     }
 
-    if (!consume_punctuator("}"sv)) {
-        return ParseResult::error("Expected '}' to close switch body", *current_token_);
+    if (!consume("}"_tok)) {
+        return ParseResult::error("Expected '}' to close switch body", current_token_);
     }
 
     // Create switch statement node
@@ -9699,7 +9666,7 @@ ParseResult Parser::parse_switch_statement() {
         return ParseResult::success(emplace_node<SwitchStatementNode>(*cond_node, block_node));
     }
 
-    return ParseResult::error("Invalid switch statement construction", *current_token_);
+    return ParseResult::error("Invalid switch statement construction", current_token_);
 }
 
 ParseResult Parser::parse_qualified_identifier() {
@@ -9710,26 +9677,26 @@ ParseResult Parser::parse_qualified_identifier() {
 	Token final_identifier;
 
 	// We should already be at an identifier
-	auto first_token = peek_token();
-	if (!first_token.has_value() || first_token->type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected identifier in qualified name", first_token.value_or(Token()));
+	auto first_token = peek_info();
+	if (first_token.type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected identifier in qualified name", first_token);
 	}
 
 	// Collect namespace parts
 	while (true) {
-		auto identifier_token = consume_token();
-		if (!identifier_token.has_value() || identifier_token->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected identifier", identifier_token.value_or(Token()));
+		auto identifier_token = advance();
+		if (identifier_token.type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected identifier", identifier_token);
 		}
 
 		// Check if followed by ::
-		if (peek_token().has_value() && peek_token()->value() == "::") {
+		if (peek() == "::"_tok) {
 			// This is a namespace part
-			namespaces.emplace_back(StringType<>(identifier_token->value()));
-			consume_token(); // consume ::
+			namespaces.emplace_back(StringType<>(identifier_token.value()));
+			advance(); // consume ::
 		} else {
 			// This is the final identifier
-			final_identifier = *identifier_token;
+			final_identifier = identifier_token;
 			break;
 		}
 	}
@@ -9761,13 +9728,13 @@ ParseResult Parser::parse_template_brace_initialization(
 	// Determine which token checking method to use based on what token is '{'
 	// If current_token_ is '{', we use current_token_ style checking
 	// Otherwise, we use peek_token() style checking
-	bool use_current_token = current_token_.has_value() && current_token_->value() == "{";
+	bool use_current_token = current_token_.value() == "{";
 	
 	// Consume the opening '{'
 	if (use_current_token) {
-		consume_token(); // consume '{'
-	} else if (peek_token().has_value() && peek_token()->value() == "{") {
-		consume_token(); // consume '{'
+		advance(); // consume '{'
+	} else if (peek() == "{"_tok) {
+		advance(); // consume '{'
 	} else {
 		return ParseResult::error("Expected '{' for brace initialization", identifier_token);
 	}
@@ -9777,8 +9744,8 @@ ParseResult Parser::parse_template_brace_initialization(
 	while (true) {
 		// Check for closing brace
 		bool at_close = use_current_token 
-			? (current_token_.has_value() && current_token_->value() == "}")
-			: (peek_token().has_value() && peek_token()->value() == "}");
+			? (current_token_.value() == "}")
+			: (peek() == "}"_tok);
 		
 		if (at_close) {
 			break;
@@ -9795,29 +9762,29 @@ ParseResult Parser::parse_template_brace_initialization(
 		
 		// Check for comma or closing brace
 		bool has_comma = use_current_token
-			? (current_token_.has_value() && current_token_->value() == ",")
-			: (peek_token().has_value() && peek_token()->value() == ",");
+			? (current_token_.value() == ",")
+			: (peek() == ","_tok);
 		
 		bool has_close = use_current_token
-			? (current_token_.has_value() && current_token_->value() == "}")
-			: (peek_token().has_value() && peek_token()->value() == "}");
+			? (current_token_.value() == "}")
+			: (peek() == "}"_tok);
 		
 		if (has_comma) {
-			consume_token(); // consume ','
+			advance(); // consume ','
 		} else if (!has_close) {
-			return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+			return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
 		}
 	}
 	
 	// Consume the closing '}'
 	if (use_current_token) {
-		if (!current_token_.has_value() || current_token_->value() != "}") {
-			return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+		if (current_token_.kind().is_eof() || current_token_.value() != "}") {
+			return ParseResult::error("Expected '}' after brace initializer", current_token_);
 		}
-		consume_token();
+		advance();
 	} else {
-		if (!consume_punctuator("}")) {
-			return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' after brace initializer", current_token_);
 		}
 	}
 	
@@ -9846,24 +9813,24 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 	bool encountered_template_keyword = false;
 	
 	// Collect the qualified path after ::
-	while (peek_token().has_value() && peek_token()->value() == "::") {
+	while (peek() == "::"_tok) {
 		// Current identifier becomes a namespace part
 		namespaces.emplace_back(StringType<32>(final_identifier.value()));
-		consume_token(); // consume ::
+		advance(); // consume ::
 		
 		// Handle optional 'template' keyword in dependent contexts
 		// e.g., typename Base<T>::template member<U>
-		if (peek_token().has_value() && peek_token()->value() == "template") {
-			consume_token(); // consume 'template'
+		if (peek() == "template"_tok) {
+			advance(); // consume 'template'
 			encountered_template_keyword = true;  // Track that we saw 'template' keyword
 		}
 		
 		// Get next identifier
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
+		if (!peek().is_identifier()) {
+			return ParseResult::error("Expected identifier after '::'", peek_info());
 		}
-		final_identifier = *peek_token();
-		consume_token(); // consume the identifier
+		final_identifier = peek_info();
+		advance(); // consume the identifier
 	}
 	
 	// Report whether we encountered a 'template' keyword
@@ -9887,7 +9854,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	
 	// Check for member template arguments: Template<T>::member<U>
 	std::optional<std::vector<TemplateTypeArg>> member_template_args;
-	if (peek_token().has_value() && peek_token()->value() == "<") {
+	if (peek() == "<"_tok) {
 		// Before parsing < as template arguments, check if the member is actually a template
 		// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
 		
@@ -9921,15 +9888,15 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	}
 	
 	// Check for function call: Template<T>::member() or Template<T>::member<U>()
-	if (!peek_token().has_value() || peek_token()->value() != "(") {
+	if (peek() != "("_tok) {
 		return std::nullopt;  // Not a function call
 	}
 	
-	consume_token(); // consume '('
+	advance(); // consume '('
 	
 	// Parse function arguments
 	ChunkedVector<ASTNode> args;
-	while (peek_token().has_value() && peek_token()->value() != ")") {
+	while (!peek().is_eof() && peek() != ")"_tok) {
 		ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (argResult.is_error()) {
 			return argResult;
@@ -9940,16 +9907,16 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 		
 		// Check for comma between arguments
-		if (peek_token().has_value() && peek_token()->value() == ",") {
-			consume_token(); // consume ','
-		} else if (peek_token().has_value() && peek_token()->value() != ")") {
-			return ParseResult::error("Expected ',' or ')' in function arguments", *peek_token());
+		if (peek() == ","_tok) {
+			advance(); // consume ','
+		} else if (!peek().is_eof() && peek() != ")"_tok) {
+			return ParseResult::error("Expected ',' or ')' in function arguments", peek_info());
 		}
 	}
 	
 	// Expect closing parenthesis
-	if (!consume_punctuator(")")) {
-		return ParseResult::error("Expected ')' after function arguments", *current_token_);
+	if (!consume(")"_tok)) {
+		return ParseResult::error("Expected ')' after function arguments", current_token_);
 	}
 	
 	// Try to instantiate the member template function if we have explicit template args
@@ -11150,8 +11117,8 @@ size_t Parser::count_pack_elements(std::string_view pack_name) const {
 // Parse extern "C" { ... } block
 ParseResult Parser::parse_extern_block(Linkage linkage) {
 	// Expect '{'
-	if (!consume_punctuator("{")) {
-		return ParseResult::error("Expected '{' after extern linkage specification", *current_token_);
+	if (!consume("{"_tok)) {
+		return ParseResult::error("Expected '{' after extern linkage specification", current_token_);
 	}
 
 	// Save the current linkage and set the new one
@@ -11163,7 +11130,7 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 
 	// Parse declarations until '}' by calling parse_top_level_node() repeatedly
 	// This ensures extern "C" blocks support exactly the same constructs as file scope
-	while (peek_token().has_value() && peek_token()->value() != "}") {
+	while (!peek().is_eof() && peek() != "}"_tok) {
 		
 		ParseResult result = parse_top_level_node();
 		
@@ -11178,8 +11145,8 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 	// Restore the previous linkage
 	current_linkage_ = saved_linkage;
 
-	if (!consume_punctuator("}")) {
-		return ParseResult::error("Expected '}' after extern block", *current_token_);
+	if (!consume("}"_tok)) {
+		return ParseResult::error("Expected '}' after extern block", current_token_);
 	}
 
 	// Create a block node containing all declarations parsed in this extern block

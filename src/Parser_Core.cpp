@@ -190,7 +190,7 @@ static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_se
 	if (node.is<VariableDeclarationNode>()) {
 		const auto& var_decl = node.as<VariableDeclarationNode>();
 		const auto& decl = var_decl.declaration();
-		var_names.insert(StringTable::getOrInternStringHandle(decl.identifier_token().value()));
+		var_names.insert(decl.identifier_token().handle());
 	} else if (node.is<BlockNode>()) {
 		const auto& block = node.as<BlockNode>();
 		const auto& stmts = block.get_statements();
@@ -354,7 +354,7 @@ ParseResult Parser::ScopedTokenPosition::error(std::string_view error_message) {
     discarded_ = true;
     parser_.discard_saved_token(saved_handle_);
     return ParseResult::error(std::string(error_message),
-        *parser_.peek_token());
+        parser_.peek_info());
 }
 
 ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
@@ -365,43 +365,34 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
     return std::move(result);
 }
 
-std::optional<Token> Parser::consume_token() {
-    std::optional<Token> token = peek_token();
+Token Parser::consume_token() {
+    Token token = current_token_;
     
     // Phase 5: Check if we have an injected token (from >> splitting)
-    if (injected_token_.has_value()) {
+    if (injected_token_.type() != Token::Type::Uninitialized) {
         // Use injected token as the next current_token_
         current_token_ = injected_token_;
-        injected_token_.reset();
+        injected_token_ = Token{};  // reset to Uninitialized
         FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from injected='{}'", 
-            token.has_value() ? std::string(token->value()) : "N/A",
-            std::string(current_token_->value()));
+            std::string(token.value()),
+            std::string(current_token_.value()));
     } else {
         // Normal path: get next token from lexer
         Token next = lexer_.next_token();
         FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'", 
-            token.has_value() ? std::string(token->value()) : "N/A",
+            std::string(token.value()),
             std::string(next.value()));
-        current_token_.emplace(next);
+        current_token_ = next;
     }
     return token;
 }
 
-std::optional<Token> Parser::peek_token() {
-    if (!current_token_.has_value()) {
-        // If we have an injected token, that should never happen
-        // because we always set current_token_ when injecting
-        current_token_.emplace(lexer_.next_token());
-    }
-    // Return nullopt for EndOfFile to make loops like
-    // "while (peek_token().has_value())" terminate at EOF
-    if (current_token_->type() == Token::Type::EndOfFile) {
-        return std::nullopt;
-    }
+Token Parser::peek_token() {
+    // Return current token — EndOfFile is a valid token (not nullopt)
     return current_token_;
 }
 
-std::optional<Token> Parser::peek_token(size_t lookahead) {
+Token Parser::peek_token(size_t lookahead) {
     if (lookahead == 0) {
         return peek_token();  // Peek at current token
     }
@@ -410,13 +401,12 @@ std::optional<Token> Parser::peek_token(size_t lookahead) {
     SaveHandle saved_handle = save_token_position();
     
     // Consume tokens to reach the lookahead position
-    std::optional<Token> result;
     for (size_t i = 0; i < lookahead; ++i) {
         consume_token();
     }
     
     // Peek at the token at lookahead position
-    result = peek_token();
+    Token result = peek_token();
     
     // Restore original position
     restore_lexer_position_only(saved_handle);
@@ -430,7 +420,7 @@ std::optional<Token> Parser::peek_token(size_t lookahead) {
 // Phase 5: Split >> token into two > tokens for nested templates
 // This is needed for C++20 maximal munch rules: Foo<Bar<int>> should parse as Foo<Bar<int> >
 void Parser::split_right_shift_token() {
-    if (!current_token_.has_value() || current_token_->value() != ">>") {
+    if (current_token_.kind() != ">>"_tok) {
         FLASH_LOG(Parser, Error, "split_right_shift_token called but current token is not >>");
         return;
     }
@@ -442,20 +432,86 @@ void Parser::split_right_shift_token() {
     static const std::string_view gt_str = ">";
     
     Token first_gt(Token::Type::Operator, gt_str, 
-                   current_token_->line(), 
-                   current_token_->column(),
-                   current_token_->file_index());
+                   current_token_.line(), 
+                   current_token_.column(),
+                   current_token_.file_index());
     
     Token second_gt(Token::Type::Operator, gt_str, 
-                    current_token_->line(), 
-                    current_token_->column() + 1,  // Second > is one character after first
-                    current_token_->file_index());
+                    current_token_.line(), 
+                    current_token_.column() + 1,  // Second > is one character after first
+                    current_token_.file_index());
     
     // Replace current >> with first >
     current_token_ = first_gt;
     
     // Inject second > to be consumed next
     injected_token_ = second_gt;
+}
+
+// ---- New TokenKind-based API (Phase 0) ----
+
+// Static EOF token returned by peek_info() when at end of input
+static const Token eof_token_sentinel(Token::Type::EndOfFile, ""sv, 0, 0, 0);
+
+TokenKind Parser::peek() const {
+    return current_token_.kind();
+}
+
+TokenKind Parser::peek(size_t lookahead) {
+    if (lookahead == 0) {
+        return peek();
+    }
+    return peek_token(lookahead).kind();
+}
+
+const Token& Parser::peek_info() const {
+    return current_token_;
+}
+
+Token Parser::peek_info(size_t lookahead) {
+    if (lookahead == 0) {
+        return peek_info();
+    }
+    return peek_token(lookahead);
+}
+
+Token Parser::advance() {
+    Token result = current_token_;
+    
+    // Phase 5: Check if we have an injected token (from >> splitting)
+    if (injected_token_.type() != Token::Type::Uninitialized) {
+        current_token_ = injected_token_;
+        injected_token_ = Token{};  // reset to Uninitialized
+    } else {
+        current_token_ = lexer_.next_token();
+    }
+    return result;
+}
+
+bool Parser::consume(TokenKind kind) {
+    if (peek() == kind) {
+        advance();
+        return true;
+    }
+    return false;
+}
+
+Token Parser::expect(TokenKind kind) {
+    if (peek() == kind) {
+        return advance();
+    }
+    // Emit diagnostic — find the spelling for the expected kind
+    std::string_view expected_spelling = "?";
+    for (const auto& entry : all_fixed_tokens) {
+        if (entry.kind == kind) {
+            expected_spelling = entry.spelling;
+            break;
+        }
+    }
+    const Token& cur = peek_info();
+    FLASH_LOG(Parser, Error, "Expected '", expected_spelling, "' but got '", cur.value(), 
+              "' at line ", cur.line(), " column ", cur.column());
+    return eof_token_sentinel;
 }
 
 Parser::SaveHandle Parser::save_token_position() {
@@ -467,10 +523,8 @@ Parser::SaveHandle Parser::save_token_position() {
     TokenPosition lexer_pos = lexer_.save_token_position();
     saved_tokens_[handle] = { current_token_, injected_token_, ast_nodes_.size(), lexer_pos };
     
-    if (current_token_.has_value()) {
-        FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}", 
-            static_cast<unsigned long>(handle), std::string(current_token_->value()));
-    }
+    FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}", 
+        static_cast<unsigned long>(handle), std::string(current_token_.value()));
     
     return handle;
 }
@@ -483,9 +537,9 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
     }
     
     const SavedToken& saved_token = it->second;
-    if (saved_token.current_token_.has_value()) {
-        std::string saved_tok = std::string(saved_token.current_token_->value());
-        std::string current_tok = current_token_.has_value() ? std::string(current_token_->value()) : "N/A";
+    {
+        std::string saved_tok = std::string(saved_token.current_token_.value());
+        std::string current_tok = std::string(current_token_.value());
         
         // DEBUGGING: Track if we're restoring to "ns" token
         if (saved_tok == "ns") {
@@ -501,7 +555,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
     current_token_ = saved_token.current_token_;
     
     // Phase 5: Restore injected token state from save point
-    // If the save was made before a >> split, injected_token_ will be nullopt (clearing it).
+    // If the save was made before a >> split, injected_token_ will be Uninitialized (clearing it).
     // If the save was made after a >> split, injected_token_ will contain the second >.
     injected_token_ = saved_token.injected_token_;
 	
@@ -560,7 +614,7 @@ void Parser::discard_saved_token(SaveHandle handle) {
 
 void Parser::skip_balanced_braces() {
 	// Expect the current token to be '{'
-	if (!peek_token().has_value() || peek_token()->value() != "{") {
+	if (peek() != "{"_tok) {
 		return;
 	}
 	
@@ -568,26 +622,26 @@ void Parser::skip_balanced_braces() {
 	size_t token_count = 0;
 	const size_t MAX_TOKENS = 10000;  // Safety limit to prevent infinite loops
 
-	while (peek_token().has_value() && token_count < MAX_TOKENS) {
-		auto token = peek_token();
-		if (token->value() == "{") {
+	while (!peek().is_eof() && token_count < MAX_TOKENS) {
+		auto kind = peek();
+		if (kind == "{"_tok) {
 			brace_depth++;
-		} else if (token->value() == "}") {
+		} else if (kind == "}"_tok) {
 			brace_depth--;
 			if (brace_depth == 0) {
 				// Consume the closing '}' and exit
-				consume_token();
+				advance();
 				break;
 			}
 		}
-		consume_token();
+		advance();
 		token_count++;
 	}
 }
 
 void Parser::skip_balanced_parens() {
 	// Expect the current token to be '('
-	if (!peek_token().has_value() || peek_token()->value() != "(") {
+	if (peek() != "("_tok) {
 		return;
 	}
 	
@@ -595,26 +649,26 @@ void Parser::skip_balanced_parens() {
 	size_t token_count = 0;
 	const size_t MAX_TOKENS = 10000;  // Safety limit to prevent infinite loops
 
-	while (peek_token().has_value() && token_count < MAX_TOKENS) {
-		auto token = peek_token();
-		if (token->value() == "(") {
+	while (!peek().is_eof() && token_count < MAX_TOKENS) {
+		auto kind = peek();
+		if (kind == "("_tok) {
 			paren_depth++;
-		} else if (token->value() == ")") {
+		} else if (kind == ")"_tok) {
 			paren_depth--;
 			if (paren_depth == 0) {
 				// Consume the closing ')' and exit
-				consume_token();
+				advance();
 				break;
 			}
 		}
-		consume_token();
+		advance();
 		token_count++;
 	}
 }
 
 void Parser::skip_template_arguments() {
 	// Expect the current token to be '<'
-	if (!peek_token().has_value() || peek_token()->value() != "<") {
+	if (peek() != "<"_tok) {
 		return;
 	}
 	
@@ -622,10 +676,9 @@ void Parser::skip_template_arguments() {
 	size_t token_count = 0;
 	const size_t MAX_TOKENS = 10000;  // Safety limit to prevent infinite loops
 
-	while (peek_token().has_value() && token_count < MAX_TOKENS) {
-		std::string_view tok = peek_token()->value();
-		update_angle_depth(tok, angle_depth);
-		consume_token();
+	while (!peek().is_eof() && token_count < MAX_TOKENS) {
+		update_angle_depth(peek(), angle_depth);
+		advance();
 		
 		if (angle_depth == 0) {
 			// We've consumed the closing '>' or '>>'
@@ -643,32 +696,32 @@ void Parser::skip_member_declaration_to_semicolon() {
 	int angle_depth = 0;
 	int brace_depth = 0;
 	
-	while (peek_token().has_value()) {
-		std::string_view tok = peek_token()->value();
+	while (!peek().is_eof()) {
+		auto kind = peek();
 		
-		if (tok == "(") {
+		if (kind == "("_tok) {
 			paren_depth++;
-			consume_token();
-		} else if (tok == ")") {
+			advance();
+		} else if (kind == ")"_tok) {
 			paren_depth--;
-			consume_token();
-		} else if (tok == "<" || tok == ">" || tok == ">>") {
-			update_angle_depth(tok, angle_depth);
-			consume_token();
-		} else if (tok == "{") {
+			advance();
+		} else if (kind == "<"_tok || kind == ">"_tok || kind == ">>"_tok) {
+			update_angle_depth(kind, angle_depth);
+			advance();
+		} else if (kind == "{"_tok) {
 			brace_depth++;
-			consume_token();
-		} else if (tok == "}") {
+			advance();
+		} else if (kind == "}"_tok) {
 			if (brace_depth == 0) {
 				break;  // Don't consume - this is end of struct
 			}
 			brace_depth--;
-			consume_token();
-		} else if (tok == ";" && paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
-			consume_token();
+			advance();
+		} else if (kind == ";"_tok && paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
+			advance();
 			break;
 		} else {
-			consume_token();
+			advance();
 		}
 	}
 }
@@ -678,7 +731,7 @@ void Parser::skip_member_declaration_to_semicolon() {
 ParseResult Parser::parse_pragma_pack_inner()
 {
 	// Check if it's empty: pack()
-	if (consume_punctuator(")")) {
+	if (consume(")"_tok)) {
 		context_.setPackAlignment(0); // Reset to default
 		return ParseResult::success();
 	}
@@ -688,14 +741,14 @@ ParseResult Parser::parse_pragma_pack_inner()
 	//   pack(push [, identifier] [, n])
 	//   pack(pop [, {identifier | n}])
 	//   pack(show)
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-		std::string_view pack_action = peek_token()->value();
+	if (peek().is_identifier()) {
+		std::string_view pack_action = peek_info().value();
 		
 		// Handle pack(show)
 		if (pack_action == "show") {
-			consume_token(); // consume 'show'
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after pragma pack show", *current_token_);
+			advance(); // consume 'show'
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after pragma pack show", current_token_);
 			}
 			// Emit a warning showing the current pack alignment
 			size_t current_align = context_.getCurrentPackAlignment();
@@ -708,44 +761,44 @@ ParseResult Parser::parse_pragma_pack_inner()
 		}
 		
 		if (pack_action == "push" || pack_action == "pop") {
-			consume_token(); // consume 'push' or 'pop'
+			advance(); // consume 'push' or 'pop'
 			
 			// Check for optional parameters
-			if (peek_token().has_value() && peek_token()->value() == ",") {
-				consume_token(); // consume ','
+			if (peek() == ","_tok) {
+				advance(); // consume ','
 				
 				// First parameter could be identifier or number
-				if (peek_token().has_value()) {
+				if (!peek().is_eof()) {
 					// Check if it's an identifier (label name)
-					if (peek_token()->type() == Token::Type::Identifier) {
-						std::string_view identifier = peek_token()->value();
-						consume_token(); // consume the identifier
+					if (peek().is_identifier()) {
+						std::string_view identifier = peek_info().value();
+						advance(); // consume the identifier
 						
 						// Check for second comma and alignment value
-						if (peek_token().has_value() && peek_token()->value() == ",") {
-							consume_token(); // consume second ','
+						if (peek() == ","_tok) {
+							advance(); // consume second ','
 							
-							if (peek_token().has_value()) {
-								if (peek_token()->type() == Token::Type::Literal) {
-									std::string_view value_str = peek_token()->value();
+							if (!peek().is_eof()) {
+								if (peek().is_literal()) {
+									std::string_view value_str = peek_info().value();
 									size_t alignment = 0;
 									auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
 									if (result.ec == std::errc()) {
 										if (pack_action == "push") {
 											context_.pushPackAlignment(identifier, alignment);
 										}
-										consume_token(); // consume the number
+										advance(); // consume the number
 									} else {
-										consume_token(); // consume invalid number
+										advance(); // consume invalid number
 										if (pack_action == "push") {
 											context_.pushPackAlignment(identifier);
 										} else {
 											context_.popPackAlignment(identifier);
 										}
 									}
-								} else if (peek_token()->type() == Token::Type::Identifier) {
+								} else if (peek().is_identifier()) {
 									// Another identifier (macro) - treat as no alignment specified
-									consume_token();
+									advance();
 									if (pack_action == "push") {
 										context_.pushPackAlignment(identifier);
 									} else {
@@ -763,17 +816,17 @@ ParseResult Parser::parse_pragma_pack_inner()
 						}
 					}
 					// Check if it's a number directly (no identifier)
-					else if (peek_token()->type() == Token::Type::Literal) {
-						std::string_view value_str = peek_token()->value();
+					else if (peek().is_literal()) {
+						std::string_view value_str = peek_info().value();
 						size_t alignment = 0;
 						auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
 						if (result.ec == std::errc()) {
 							if (pack_action == "push") {
 								context_.pushPackAlignment(alignment);
 							}
-							consume_token(); // consume the number
+							advance(); // consume the number
 						} else {
-							consume_token(); // consume invalid number
+							advance(); // consume invalid number
 							if (pack_action == "push") {
 								context_.pushPackAlignment();
 							} else {
@@ -791,32 +844,32 @@ ParseResult Parser::parse_pragma_pack_inner()
 				}
 			}
 			
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after pragma pack push/pop", *current_token_);
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after pragma pack push/pop", current_token_);
 			}
 			return ParseResult::success();
 		}
 	}
 
 	// Try to parse a number: pack(N)
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Literal) {
-		std::string_view value_str = peek_token()->value();
+	if (peek().is_literal()) {
+		std::string_view value_str = peek_info().value();
 		size_t alignment = 0;
 		auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
 		if (result.ec == std::errc() &&
 		    (alignment == 0 || alignment == 1 || alignment == 2 ||
 		     alignment == 4 || alignment == 8 || alignment == 16)) {
 			context_.setPackAlignment(alignment);
-			consume_token(); // consume the number
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after pack alignment value", *current_token_);
+			advance(); // consume the number
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after pack alignment value", current_token_);
 			}
 			return ParseResult::success();
 		}
 	}
 
 	// If we get here, it's an unsupported pragma pack format
-	return ParseResult::error("Unsupported pragma pack format", *current_token_);
+	return ParseResult::error("Unsupported pragma pack format", current_token_);
 }
 
 void Parser::register_builtin_functions() {

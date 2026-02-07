@@ -1102,6 +1102,10 @@ public:
 		return std::nullopt;
 	}
 
+	std::optional<ASTNode> lookup_alias_template(StringHandle name) const {
+		return lookup_alias_template(StringTable::getStringView(name));
+	}
+
 	// Get all alias template names with a given prefix (for template instantiation)
 	// Used to copy member template aliases from primary template to instantiated template
 	std::vector<std::string_view> get_alias_templates_with_prefix(std::string_view prefix) const {

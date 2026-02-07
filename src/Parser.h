@@ -272,9 +272,8 @@ public:
                 size_t top_level_count = 0;
                 auto start_time = std::chrono::high_resolution_clock::now();
 #endif
-                // Note: peek_token() returns std::nullopt for EndOfFile tokens,
-                // so this loop terminates naturally at EOF without explicit check
-                while (peek_token().has_value() && !parseResult.is_error()) {
+                // The main parse loop: process top-level nodes until EOF or error
+                while (!peek().is_eof() && !parseResult.is_error()) {
                         parseResult = parse_top_level_node();
 #if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
                         ++top_level_count;
@@ -332,8 +331,8 @@ public:
 private:
         Lexer& lexer_;
         CompileContext& context_;
-        std::optional<Token> current_token_;
-        std::optional<Token> injected_token_;  // Phase 5: For >> splitting in nested templates
+        Token current_token_;
+        Token injected_token_;  // Phase 5: For >> splitting in nested templates (Uninitialized = empty)
         std::vector<ASTNode> ast_nodes_;
         std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
         std::string last_error_;
@@ -512,8 +511,8 @@ private:
         };
 
         struct SavedToken {
-                std::optional<Token> current_token_;
-                std::optional<Token> injected_token_;  // Phase 5: Save injected token state for >> splitting
+                Token current_token_;
+                Token injected_token_;  // Phase 5: Save injected token state for >> splitting
                 size_t ast_nodes_size_ = 0;
                 TokenPosition lexer_position_;  // Store the lexer position with each save
         };
@@ -521,10 +520,26 @@ private:
         std::unordered_map<SaveHandle, SavedToken> saved_tokens_;
         size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
 
-        std::optional<Token> consume_token();
+        Token consume_token();
 
-        std::optional<Token> peek_token();
-        std::optional<Token> peek_token(size_t lookahead);  // Peek ahead N tokens (0 = current, 1 = next, etc.)
+        Token peek_token();
+        Token peek_token(size_t lookahead);  // Peek ahead N tokens (0 = current, 1 = next, etc.)
+
+        // ---- New TokenKind-based API (Phase 0) ----
+        // Returns the TokenKind of the current token. Returns TokenKind::eof() at end.
+        TokenKind peek() const;
+        // Returns the TokenKind of the token at +lookahead positions.
+        TokenKind peek(size_t lookahead);
+        // Returns the full Token of the current token (always valid, returns EOF token at end).
+        const Token& peek_info() const;
+        // Like peek(lookahead) but returns full info.
+        Token peek_info(size_t lookahead);
+        // Consumes the current token and returns it.
+        Token advance();
+        // Consumes the current token only if it matches `kind`. Returns true if consumed.
+        bool consume(TokenKind kind);
+        // Consumes the current token if it matches; otherwise emits a diagnostic.
+        Token expect(TokenKind kind);
 
         // Phase 5: >> token splitting for nested templates (e.g., Foo<Bar<int>>)
         // When we encounter >> and need just >, this splits it by consuming first > and injecting second >
@@ -954,6 +969,17 @@ public:  // Public methods for template instantiation
             } else if (tok == ">>") {
                 angle_depth -= 2;  // Handle nested templates (e.g., vector<vector<int>>)
             } else if (tok == ">") {
+                angle_depth--;
+            }
+        }
+
+        // TokenKind-based overload — avoids string comparison
+        inline void update_angle_depth(TokenKind kind, int& angle_depth) {
+            if (kind == tok::Less) {
+                angle_depth++;
+            } else if (kind == tok::ShiftRight) {
+                angle_depth -= 2;
+            } else if (kind == tok::Greater) {
                 angle_depth--;
             }
         }

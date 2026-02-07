@@ -1200,7 +1200,7 @@
 			// Store mapping from simple name to mangled name for later lookups
 			// This is needed for anonymous namespace variables
 			// Phase 4: Using StringHandle for both key and value
-			StringHandle simple_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+			StringHandle simple_name_handle = decl.identifier_token().handle();
 			if (var_name_view != decl.identifier_token().value()) {
 				global_variable_names_[simple_name_handle] = var_name;
 			}
@@ -1349,7 +1349,7 @@
 				info.type = type_node.type();
 				info.size_in_bits = static_cast<int>(type_node.size_in_bits());
 				// Phase 4: Using StringHandle for key
-				StringHandle key = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle key = decl.identifier_token().handle();
 				static_local_names_[key] = info;
 			}
 
@@ -1385,7 +1385,7 @@
 					VariableDeclOp decl_op;
 					decl_op.type = type_node.type();
 					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
-					decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 					decl_op.is_reference = type_node.is_reference();
 					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
@@ -1428,7 +1428,7 @@
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
 		int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 		operands.emplace_back(size_in_bits);
-		operands.emplace_back(StringTable::getOrInternStringHandle(decl.identifier_token().value()));
+		operands.emplace_back(decl.identifier_token().handle());
 		operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
 		operands.emplace_back(type_node.is_reference());
 		operands.emplace_back(type_node.is_rvalue_reference());
@@ -1507,7 +1507,7 @@
 					VariableDeclOp decl_op;
 					decl_op.type = type_node.type();
 					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
-					decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 					decl_op.is_reference = type_node.is_reference();
 					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
@@ -1530,7 +1530,7 @@
 					VariableDeclOp decl_op;
 					decl_op.type = type_node.type();
 					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
-					decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 					decl_op.is_reference = type_node.is_reference();
 					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
@@ -1719,7 +1719,7 @@
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = type_info.name();
-								ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+								ctor_op.object = decl.identifier_token().handle();
 
 								// Get constructor parameter types for reference handling
 								const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
@@ -1872,7 +1872,7 @@
 													generateNestedMemberStores(
 													    *nested_member_type_info.struct_info_,
 													    nested_init_list,
-													    StringTable::getOrInternStringHandle(decl.identifier_token().value()),
+													    decl.identifier_token().handle(),
 													    static_cast<int>(member.offset),
 													    decl.identifier_token()
 													);
@@ -1913,7 +1913,7 @@
 									member_store.value.type = member.type;
 									member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 									member_store.value.value = member_value;
-									member_store.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+									member_store.object = decl.identifier_token().handle();
 									member_store.member_name = member.getName();
 									member_store.offset = static_cast<int>(member.offset);
 									member_store.is_reference = member.is_reference;
@@ -2151,7 +2151,7 @@
 		decl_op.type = type_node.type();
 		// References and pointers are both 64-bit (pointer size on x64)
 		decl_op.size_in_bits = (type_node.pointer_depth() > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits());
-		decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+		decl_op.var_name = decl.identifier_token().handle();
 		decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 		decl_op.is_reference = type_node.is_reference();
 		decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
@@ -2190,7 +2190,7 @@
 					ArrayStoreOp store_op;
 					store_op.element_type = type_node.type();
 					store_op.element_size_in_bits = size_in_bits;
-					store_op.array = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+					store_op.array = decl.identifier_token().handle();
 					store_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
 					store_op.value = toTypedValue(init_operands);
 					store_op.member_offset = 0;
@@ -2336,7 +2336,7 @@
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();
-							ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+							ctor_op.object = decl.identifier_token().handle();
 							
 							// Get constructor parameter types for reference handling
 							const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
@@ -2441,7 +2441,7 @@
 							// Generate copy constructor call
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();
-							ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+							ctor_op.object = decl.identifier_token().handle();
 
 							// Add initializer as copy constructor parameter
 							// Copy constructors take const lvalue reference parameters
@@ -2562,7 +2562,7 @@
 										ConstructorCallOp ctor_op;
 										ctor_op.struct_name = type_info.name();
 										// For arrays, we need to specify the element to construct
-										ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+										ctor_op.object = decl.identifier_token().handle();
 										ctor_op.array_index = i;  // Mark this as an array element constructor call
 										
 										// If the constructor has parameters with default values, generate the default arguments
@@ -2594,7 +2594,7 @@
 									// Single object (non-array) - generate single constructor call
 									ConstructorCallOp ctor_op;
 									ctor_op.struct_name = type_info.name();
-									ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+									ctor_op.object = decl.identifier_token().handle();
 									
 									// If the constructor has parameters with default values, generate the default arguments
 									if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
