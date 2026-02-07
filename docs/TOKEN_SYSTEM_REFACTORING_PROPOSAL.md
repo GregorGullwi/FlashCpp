@@ -124,32 +124,32 @@ inline constexpr TokenSpelling all_fixed_tokens[] = {
 	{ "+",   tok::Plus },      { "-",   tok::Minus },
 	{ "*",   tok::Star },      { "/",   tok::Slash },
 	{ "%",   tok::Percent },   { "=",   tok::Assign },
-	{ "==",  tok::EqEq },      { "!=",  tok::NotEq },
+	{ "==",  tok::Equal },      { "!=",  tok::NotEqual },
 	{ "<",   tok::Less },      { ">",   tok::Greater },
 	{ "<=",  tok::LessEq },    { ">=",  tok::GreaterEq },
 	{ "<=>", tok::Spaceship },
-	{ "&&",  tok::AmpAmp },    { "||",  tok::PipePipe },
-	{ "!",   tok::Exclaim },   { "&",   tok::Amp },
-	{ "|",   tok::Pipe },      { "^",   tok::Caret },
-	{ "~",   tok::Tilde },
+	{ "&&",  tok::LogicalAnd },    { "||",  tok::LogicalOr },
+	{ "!",   tok::LogicalNot },   { "&",   tok::BitwiseAnd},
+	{ "|",   tok::BitwiseOr},      { "^",   tok::BitwiseXor},
+	{ "~",   tok::BitwiseNot },
 	{ "+=",  tok::PlusEq },    { "-=",  tok::MinusEq },
 	{ "*=",  tok::StarEq },    { "/=",  tok::SlashEq },
 	{ "%=",  tok::PercentEq },
-	{ "&=",  tok::AmpEq },     { "|=",  tok::PipeEq },
-	{ "^=",  tok::CaretEq },
-	{ "<<",  tok::LessLess },  { ">>",  tok::GreaterGreater },
-	{ "<<=", tok::LessLessEq },{ ">>=", tok::GreaterGreaterEq },
-	{ "++",  tok::PlusPlus },  { "--",  tok::MinusMinus },
-	{ "?",   tok::Question },  { ".*",  tok::DotStar },
-	{ "->*", tok::ArrowStar },
+	{ "&=",  tok::BitwiseAndAssign },     { "|=",  tok::BitwiseOrAssign },
+	{ "^=",  tok::BitwiseXorAssign },
+	{ "<<",  tok::ShiftLeft},  { ">>",  tok::ShiftRight},
+	{ "<<=", tok::ShiftLeftAssign },{ ">>=", tok::ShiftRightAssign },
+	{ "++",  tok::Increment },  { "--",  tok::Decrement },
+	{ "?",   tok::Question },  { ".*",  tok::MemberPointer },
+	{ "->*", tok::ArrowMemberPointer },
 
 	// ---- Alternative operator spellings (same TokenKind) ----
-	{ "and",    tok::AmpAmp },   { "or",     tok::PipePipe },
-	{ "not",    tok::Exclaim },  { "bitand", tok::Amp },
-	{ "bitor",  tok::Pipe },     { "xor",    tok::Caret },
-	{ "compl",  tok::Tilde },    { "not_eq", tok::NotEq },
-	{ "and_eq", tok::AmpEq },    { "or_eq",  tok::PipeEq },
-	{ "xor_eq", tok::CaretEq },
+	{ "and",    tok::LogicalAnd },   { "or",     tok::LogicalOr },
+	{ "not",    tok::LogicalNot },  { "bitand", tok::BitwiseAnd},
+	{ "bitor",  tok::BitwiseOr},     { "xor",    tok::BitwiseXor},
+	{ "compl",  tok::BitwiseNot },    { "not_eq", tok::NotEqual },
+	{ "and_eq", tok::BitwiseAndAssign },    { "or_eq",  tok::BitwiseOrAssign },
+	{ "xor_eq", tok::BitwiseXorAssign },
 
 	// ---- Keywords ----
 	{ "if",        tok::KW_if },       { "else",      tok::KW_else },
@@ -367,17 +367,17 @@ The Lexer must also map alternative keyword spellings to the canonical
 `TokenKind`:
 
 ```
-"or"      → tok::PipePipe
-"and"     → tok::AmpAmp
-"not"     → tok::Exclaim
+"or"      → tok::LogicalOr
+"and"     → tok::LogicalAnd
+"not"     → tok::LogicalNot
 "bitand"  → tok::Amp
 "bitor"   → tok::Pipe
 "xor"     → tok::Caret
-"compl"   → tok::Tilde
-"not_eq"  → tok::NotEq
-"and_eq"  → tok::AmpEq
-"or_eq"   → tok::PipeEq
-"xor_eq"  → tok::CaretEq
+"compl"   → tok::BitwiseNot
+"not_eq"  → tok::NotEqual
+"and_eq"  → tok::BitwiseAndAssign
+"or_eq"   → tok::BitwiseOrAssign
+"xor_eq"  → tok::BitwiseXorAssign
 ```
 
 This means the keyword list in `is_keyword()` needs to be extended to
@@ -403,20 +403,20 @@ enum class PunctId : uint16_t {
 
 enum class OpId : uint16_t {
 	Plus, Minus, Star, Slash, Percent, Assign,
-	EqEq, NotEq, Less, Greater, LessEq, GreaterEq, Spaceship,
-	AmpAmp,     // && / and
-	PipePipe,   // || / or
-	Exclaim,    // !  / not
-	Amp,        // &  / bitand
-	Pipe,       // |  / bitor
-	Caret,      // ^  / xor
-	Tilde,      // ~  / compl
+	Equal, NotEqual, Less, Greater, LessEq, GreaterEq, Spaceship,
+	LogicalAnd,       // && / and
+	LogicalOr,        // || / or
+	LogicalNot,       // !  / not
+	BitwiseAnd,       // &  / bitand
+	BitwiseOr,        // |  / bitor
+	BitwiseXor,       // ^  / xor
+	BitwiseNot,       // ~  / compl
 	PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
-	AmpEq,      // &= / and_eq
-	PipeEq,     // |= / or_eq
-	CaretEq,    // ^= / xor_eq
-	LessLess, GreaterGreater, LessLessEq, GreaterGreaterEq,
-	PlusPlus, MinusMinus, Question, DotStar, ArrowStar
+	BitwiseAndAssign, // &= / and_eq
+	BitwiseOrAssign,  // |= / or_eq
+	BitwiseXorAssign, // ^= / xor_eq
+	ShiftLeft, ShiftRight, ShiftLeftAssign, ShiftRightAssign,
+	Increment, Decrement, Question, MemberPointer, ArrowMemberPointer
 };
 
 enum class KeywordId : uint16_t {
@@ -481,20 +481,20 @@ namespace tok {
 	inline constexpr auto Slash      = TokenKind::op(OpId::Slash);
 	inline constexpr auto Percent    = TokenKind::op(OpId::Percent);
 	inline constexpr auto Assign     = TokenKind::op(OpId::Assign);
-	inline constexpr auto EqEq       = TokenKind::op(OpId::EqEq);
-	inline constexpr auto NotEq      = TokenKind::op(OpId::NotEq);
+	inline constexpr auto Equal      = TokenKind::op(OpId::Equal);
+	inline constexpr auto NotEqual   = TokenKind::op(OpId::NotEqual);
 	inline constexpr auto Less       = TokenKind::op(OpId::Less);
 	inline constexpr auto Greater    = TokenKind::op(OpId::Greater);
 	inline constexpr auto LessEq     = TokenKind::op(OpId::LessEq);
 	inline constexpr auto GreaterEq  = TokenKind::op(OpId::GreaterEq);
 	inline constexpr auto Spaceship  = TokenKind::op(OpId::Spaceship);
-	inline constexpr auto AmpAmp     = TokenKind::op(OpId::AmpAmp);
-	inline constexpr auto PipePipe   = TokenKind::op(OpId::PipePipe);
-	inline constexpr auto Exclaim    = TokenKind::op(OpId::Exclaim);
-	inline constexpr auto Amp        = TokenKind::op(OpId::Amp);
-	inline constexpr auto Pipe       = TokenKind::op(OpId::Pipe);
-	inline constexpr auto Caret      = TokenKind::op(OpId::Caret);
-	inline constexpr auto Tilde      = TokenKind::op(OpId::Tilde);
+	inline constexpr auto LogicalAnd = TokenKind::op(OpId::LogicalAnd);
+	inline constexpr auto LogicalOr  = TokenKind::op(OpId::LogicalOr);
+	inline constexpr auto LogicalNot = TokenKind::op(OpId::LogicalNot);
+	inline constexpr auto BitwiseAnd = TokenKind::op(OpId::BitwiseAnd);
+	inline constexpr auto BitwiseOr  = TokenKind::op(OpId::BitwiseOr);
+	inline constexpr auto BitwiseXor = TokenKind::op(OpId::BitwiseXor);
+	inline constexpr auto BitwiseNot = TokenKind::op(OpId::BitwiseNot);
 	// ... remaining operators follow the same pattern
 
 	// Keywords
@@ -566,7 +566,7 @@ Once every call site is migrated:
 ### Phase 3 — Leverage new capabilities
 
 * Add `"or"`, `"and"`, `"not"`, etc. to the Lexer's keyword list so they
-  produce `tok::PipePipe`, `tok::AmpAmp`, `tok::Exclaim` automatically.
+  produce `tok::LogicalOr`, `tok::LogicalAnd`, `tok::LogicalNot` automatically.
   This gives FlashCpp correct handling of C++ alternative tokens with
   zero parser changes.
 * Use `peek().is_keyword()` / `peek().is_operator()` for
