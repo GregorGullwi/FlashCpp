@@ -2126,6 +2126,19 @@ ParseResult Parser::parse_static_member_block(
 			return init_result;
 		}
 		init_expr_opt = init_result.node();
+	} else if (peek() == "{"_tok) {
+		// Brace initialization: static constexpr int x{42};
+		advance(); // consume '{'
+		
+		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		init_expr_opt = init_result.node();
+		
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' after brace initializer", current_token_);
+		}
 	}
 
 	// Consume semicolon

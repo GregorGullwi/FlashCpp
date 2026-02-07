@@ -14,27 +14,27 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Blocked by missing features in allocator/string includes |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `static_assert` failed in `uses_allocator.h:106` |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Unnamed `in_place_t` parameter at `optional:564` |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` `::__gnu_debug` qualified type |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Blocked by `max_size_type.h` conversion operator template (`operator _Tp()`) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Blocked by `optional:754` template parameter `>>>` closing |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~300ms (2026-02-06: Fixed `alignas` expression parsing) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Expected type specifier at `any:583` (out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Blocked by `Base<T>::member()` call in allocator |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Blocked by `Base<T>::member()` call in allocator (2026-02-06: progressed past `::operator new`, `__attribute__`, destructor, template ctor) |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | `static_assert` failed in `uses_allocator.h:106` |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Blocked by allocator includes |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Blocked by `Base<T>::member()` call in allocator (2026-02-06: progressed past `::operator new`, `__attribute__`, destructor) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Blocked by `range_access.h` array reference parameter (`const _Tp (&)[_Nm]`) |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` `::__gnu_debug` qualified type (progressed past allocator, extern template) |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` `::__gnu_debug` qualified type |
+| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Blocked by `max_size_type.h` conversion operator template |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` `::__gnu_debug` qualified type (progressed past allocator, extern template) |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
-| `<atomic>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (2026-02-06: progressed past `static_assert sizeof`) |
+| `<atomic>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (enum bitwise ops) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
@@ -46,9 +46,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<print>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<expected>` | N/A | ✅ Compiled | ~18ms (C++23) |
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
-| `<barrier>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (2026-02-06: progressed past `static_assert sizeof`) |
+| `<barrier>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (enum bitwise ops) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ❌ Parse Error | `Expected identifier token` at `coroutine:297` (2026-02-06: progressed past `operator bool()`) |
+| `<coroutine>` | N/A | ❌ Parse Error | `coroutine:315` qualified static member definition (`noop_coroutine_handle::_S_fr{}`) (progressed past nested struct, friend) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
