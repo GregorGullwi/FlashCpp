@@ -331,8 +331,8 @@ public:
 private:
         Lexer& lexer_;
         CompileContext& context_;
-        std::optional<Token> current_token_;
-        std::optional<Token> injected_token_;  // Phase 5: For >> splitting in nested templates
+        Token current_token_;
+        Token injected_token_;  // Phase 5: For >> splitting in nested templates (Uninitialized = empty)
         std::vector<ASTNode> ast_nodes_;
         std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
         std::string last_error_;
@@ -511,8 +511,8 @@ private:
         };
 
         struct SavedToken {
-                std::optional<Token> current_token_;
-                std::optional<Token> injected_token_;  // Phase 5: Save injected token state for >> splitting
+                Token current_token_;
+                Token injected_token_;  // Phase 5: Save injected token state for >> splitting
                 size_t ast_nodes_size_ = 0;
                 TokenPosition lexer_position_;  // Store the lexer position with each save
         };
@@ -520,10 +520,10 @@ private:
         std::unordered_map<SaveHandle, SavedToken> saved_tokens_;
         size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
 
-        std::optional<Token> consume_token();
+        Token consume_token();
 
-        std::optional<Token> peek_token();
-        std::optional<Token> peek_token(size_t lookahead);  // Peek ahead N tokens (0 = current, 1 = next, etc.)
+        Token peek_token();
+        Token peek_token(size_t lookahead);  // Peek ahead N tokens (0 = current, 1 = next, etc.)
 
         // ---- New TokenKind-based API (Phase 0) ----
         // Returns the TokenKind of the current token. Returns TokenKind::eof() at end.
