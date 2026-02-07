@@ -9153,6 +9153,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Add parameters with substituted types
 	// Note: We compute the mangled name AFTER adding parameters, since the mangled name
 	// includes parameter types in its encoding
+	pack_param_info_.clear();
 	size_t arg_type_index = 0;  // Track which argument type we're using
 	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 		const auto& param = func_decl.parameter_nodes()[i];
@@ -9229,8 +9230,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				}
 				
 				// Record the pack expansion size for use during body re-parsing
-				//size_t pack_size = arg_type_index - pack_start_index;
-				// We'll set this before re-parsing the body below
+				size_t pack_size = arg_type_index - pack_start_index;
+				// Store pack info for expansion during body re-parsing
+				pack_param_info_.push_back({param_decl.identifier_token().value(), pack_start_index, pack_size});
 				
 			} else {
 				// Regular parameter - substitute template parameters in the parameter type
@@ -9334,6 +9336,22 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
+		// Add original pack parameter names to scope for pack expansion parsing
+		// When a parameter pack like 'rest' is expanded to 'rest_0', 'rest_1', etc.,
+		// we also need 'rest' in scope so 'rest...' can be parsed as a pack expansion
+		bool saved_has_parameter_packs = has_parameter_packs_;
+		auto saved_pack_param_info = std::move(pack_param_info_);
+		if (!saved_pack_param_info.empty()) {
+			has_parameter_packs_ = true;
+			pack_param_info_ = saved_pack_param_info;
+			for (const auto& pack_info : saved_pack_param_info) {
+				if (pack_info.pack_size > 0) {
+					const auto& first_expanded = new_func_ref.parameter_nodes()[pack_info.start_index];
+					gSymbolTable.insert(pack_info.original_name, first_expanded);
+				}
+			}
+		}
+
 		// Set up template parameter substitutions for type parameters
 		// This enables variable templates inside the function body to work correctly:
 		// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
@@ -9383,6 +9401,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Restore the template parameter substitutions
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
+
+		// Restore pack parameter info
+		has_parameter_packs_ = saved_has_parameter_packs;
+		pack_param_info_.clear();
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
 			// After parsing, we need to substitute template parameters in the body

@@ -449,6 +449,14 @@ private:
         // Track if current scope has parameter packs (enables fold expression parsing)
         bool has_parameter_packs_ = false;
 
+        // Track parameter pack expansions during variadic template instantiation
+        struct PackParamInfo {
+            std::string_view original_name;  // e.g., "rest"
+            size_t start_index;              // Index of first expanded param (e.g., rest_0)
+            size_t pack_size;                // Number of expanded elements
+        };
+        std::vector<PackParamInfo> pack_param_info_;
+
         // Track last failed template argument parse handle to prevent infinite loops
         SaveHandle last_failed_template_arg_parse_handle_ = SIZE_MAX;
 

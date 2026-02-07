@@ -12,7 +12,7 @@ This directory contains minimal reproduction cases for bugs discovered during C+
 | 4 | CTAD (deduction guides) | *(moved to tests/)* | **FIXED** | ~~Link~~ |
 | 5 | if constexpr + sizeof... | `bug_if_constexpr.cpp` | Open | Link |
 | 6 | Template specialization | *(moved to tests/)* | **FIXED** | ~~Runtime~~ |
-| 7 | Variadic template recursion | `bug_variadic_recursion.cpp` | Open | Runtime |
+| 7 | Variadic template recursion | *(moved to tests/)* | **FIXED** | ~~Runtime~~ |
 | 8 | Digit separators | *(moved to tests/)* | **FIXED** | ~~Runtime~~ |
 | 9 | new/delete in large files | *(moved to tests/)* | **FIXED** | ~~Runtime~~ |
 
@@ -25,32 +25,13 @@ This directory contains minimal reproduction cases for bugs discovered during C+
 - ~~Digit separators~~ -- **FIXED** (digit separators are stripped before numeric value conversion)
 - ~~CTAD~~ -- **FIXED** (implicit CTAD now deduces template arguments from constructor parameter types)
 - ~~new/delete in large files~~ -- **FIXED** (heap alloc/free now uses platform-correct calling convention register)
+- ~~Variadic template recursion~~ -- **FIXED** (pack parameter names added to scope during body re-parse, pack expansion in function call arguments)
 
 ## Remaining Open Bugs
 
 ### 5. if constexpr + sizeof... (Link Error)
 **File**: `bug_if_constexpr.cpp`
 **Severity**: High -- key C++17/20 pattern for compile-time branching in templates
-
-Using `if constexpr (sizeof...(rest) == 0)` in variadic templates compiles but fails to link.
-
-**Error**: Unresolved symbols during linking
-
-**Root cause**: Variadic template function body re-parsing does not properly expand parameter packs. The `sizeof...(rest)` expression requires the pack size to be known at instantiation time, and recursive calls like `variadic_sum(rest...)` require pack expansion.
-
-**Fix needed**: Implement proper variadic template function body re-parsing with pack expansion support, including `sizeof...` evaluation and recursive instantiation.
-
-### 7. Variadic Template Recursion (Runtime Failure)
-**File**: `bug_variadic_recursion.cpp`
-**Severity**: Medium -- fold expressions work as a workaround
-
-Recursive variadic template expansion using overload resolution (`var_sum(T first, Rest... rest)` calling `var_sum(rest...)`) produces incorrect results. The overload resolution now correctly selects the variadic overload (via argument count check), but the variadic function body is not properly re-parsed due to the same pack expansion limitation as Bug #5.
-
-**Error**: Compiles but the variadic template body is empty after re-parsing
-
-**Root cause**: Same as Bug #5 -- variadic template parameter pack expansion in function bodies is not yet implemented. The template body re-parsing registers `Rest` as a single type instead of a pack, and `rest...` expansion is not performed.
-
-**Workaround**: Use fold expressions instead of recursive expansion.
 
 ## Testing These Bugs
 

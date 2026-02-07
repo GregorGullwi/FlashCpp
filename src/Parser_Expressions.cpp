@@ -5691,6 +5691,69 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 				}
 				
+				// Check for pack expansion (...) after the argument in variadic template function calls
+				// Only expand if the argument is an identifier matching a known pack parameter name
+				if (peek() == "..."_tok && !pack_param_info_.empty() && !args.empty()) {
+					// Check if the last argument is an identifier matching a pack parameter
+					const PackParamInfo* matching_pack = nullptr;
+					ASTNode& last_arg = args[args.size() - 1];
+					if (last_arg.is<ExpressionNode>()) {
+						const auto& expr = last_arg.as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(expr)) {
+							const auto& id = std::get<IdentifierNode>(expr);
+							for (const auto& pack_info : pack_param_info_) {
+								if (id.name() == pack_info.original_name && pack_info.pack_size > 0) {
+									matching_pack = &pack_info;
+									break;
+								}
+							}
+						}
+					}
+					
+					if (matching_pack) {
+						advance(); // consume '...'
+						
+						size_t pre_pack_size = args.size();
+						bool first_element = true;
+						for (size_t pi = 0; pi < matching_pack->pack_size; ++pi) {
+							StringBuilder param_name_builder;
+							param_name_builder.append(matching_pack->original_name);
+							param_name_builder.append('_');
+							param_name_builder.append(pi);
+							std::string_view expanded_name = param_name_builder.commit();
+							
+							auto sym = lookup_symbol(StringTable::getOrInternStringHandle(expanded_name));
+							if (sym.has_value()) {
+								Token id_token(Token::Type::Identifier, expanded_name, 0, 0, 0);
+								auto id_node = emplace_node<ExpressionNode>(IdentifierNode(id_token));
+								
+								if (first_element && pre_pack_size > 0) {
+									// Overwrite the last element (the unexpanded pack name)
+									args[pre_pack_size - 1] = id_node;
+									if (!arg_types.empty()) {
+										if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
+											if (decl->type_node().is<TypeSpecifierNode>()) {
+												arg_types.back() = decl->type_node().as<TypeSpecifierNode>();
+												arg_types.back().set_lvalue_reference(true);
+											}
+										}
+									}
+									first_element = false;
+								} else {
+									args.push_back(id_node);
+									if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
+										if (decl->type_node().is<TypeSpecifierNode>()) {
+											TypeSpecifierNode arg_type_node_pack = decl->type_node().as<TypeSpecifierNode>();
+											arg_type_node_pack.set_lvalue_reference(true);
+											arg_types.push_back(arg_type_node_pack);
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				
 				if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
 					advance(); // Consume comma
 				}
