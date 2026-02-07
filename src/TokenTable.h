@@ -1,5 +1,6 @@
 #pragma once
 
+#include <unordered_map>
 #include "TokenKind.h"
 
 // Single source of truth for all fixed token spellings.
@@ -162,10 +163,20 @@ consteval TokenKind operator""_tok(const char* s, size_t len) {
 }
 
 // Runtime lookup: convert a spelling string to its TokenKind.
+// Uses a static hash map built once on first call for O(1) average lookup.
 // Returns TokenKind::eof() if the spelling is not a fixed token.
 inline TokenKind spell_to_kind(std::string_view spelling) {
-	for (const auto& entry : all_fixed_tokens) {
-		if (entry.spelling == spelling) return entry.kind;
-	}
-	return TokenKind::eof();  // not a fixed token
+	// Build hash map on first call (guaranteed thread-safe in C++11+)
+	struct SpellMap {
+		std::unordered_map<std::string_view, TokenKind> map;
+		SpellMap() {
+			map.reserve(sizeof(all_fixed_tokens) / sizeof(all_fixed_tokens[0]));
+			for (const auto& entry : all_fixed_tokens) {
+				map.emplace(entry.spelling, entry.kind);
+			}
+		}
+	};
+	static const SpellMap s_map;
+	auto it = s_map.map.find(spelling);
+	return it != s_map.map.end() ? it->second : TokenKind::eof();
 }

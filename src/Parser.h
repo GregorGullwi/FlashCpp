@@ -972,6 +972,17 @@ public:  // Public methods for template instantiation
                 angle_depth--;
             }
         }
+
+        // TokenKind-based overload — avoids string comparison
+        inline void update_angle_depth(TokenKind kind, int& angle_depth) {
+            if (kind == tok::Less) {
+                angle_depth++;
+            } else if (kind == tok::ShiftRight) {
+                angle_depth -= 2;
+            } else if (kind == tok::Greater) {
+                angle_depth--;
+            }
+        }
 };
 
 struct TypedNumeric {
