@@ -97,134 +97,139 @@ string value through full `TokenInfo`).
 
 ### The `"..."_tok` user-defined literal
 
+The literal is driven by a single `constexpr` table — the same table
+that the Lexer uses at runtime.  This means there is exactly **one
+place** to add a new token; both `_tok` and the Lexer pick it up
+automatically.
+
 ```cpp
-// TokenKind.h  (continued)
+// TokenTable.h — single source of truth for all fixed tokens
 
-// Constexpr lookup: maps a string literal to a TokenKind.
-// Implemented as a constexpr function with an if-else chain
-// (compilers fold this to a constant at -O1).
-consteval TokenKind operator""_tok(const char* s, size_t len) {
-	std::string_view sv(s, len);
+struct TokenSpelling {
+	std::string_view spelling;
+	TokenKind        kind;
+};
 
+inline constexpr TokenSpelling all_fixed_tokens[] = {
 	// ---- Punctuators ----
-	if (sv == "{")   return tok::LBrace;
-	if (sv == "}")   return tok::RBrace;
-	if (sv == "(")   return tok::LParen;
-	if (sv == ")")   return tok::RParen;
-	if (sv == "[")   return tok::LBracket;
-	if (sv == "]")   return tok::RBracket;
-	if (sv == ";")   return tok::Semi;
-	if (sv == ",")   return tok::Comma;
-	if (sv == ":")   return tok::Colon;
-	if (sv == "::")  return tok::ColonColon;
-	if (sv == "...")  return tok::Ellipsis;
-	if (sv == ".")   return tok::Dot;
-	if (sv == "->")  return tok::Arrow;
-	if (sv == "#")   return tok::Hash;
+	{ "{",   tok::LBrace },    { "}",   tok::RBrace },
+	{ "(",   tok::LParen },    { ")",   tok::RParen },
+	{ "[",   tok::LBracket },  { "]",   tok::RBracket },
+	{ ";",   tok::Semi },      { ",",   tok::Comma },
+	{ ":",   tok::Colon },     { "::",  tok::ColonColon },
+	{ "...", tok::Ellipsis },  { ".",   tok::Dot },
+	{ "->",  tok::Arrow },     { "#",   tok::Hash },
 
 	// ---- Operators ----
-	if (sv == "+")   return tok::Plus;
-	if (sv == "-")   return tok::Minus;
-	if (sv == "*")   return tok::Star;
-	if (sv == "/")   return tok::Slash;
-	if (sv == "%")   return tok::Percent;
-	if (sv == "=")   return tok::Assign;
-	if (sv == "==")  return tok::EqEq;
-	if (sv == "!=")  return tok::NotEq;
-	if (sv == "<")   return tok::Less;
-	if (sv == ">")   return tok::Greater;
-	if (sv == "<=")  return tok::LessEq;
-	if (sv == ">=")  return tok::GreaterEq;
-	if (sv == "<=>") return tok::Spaceship;
+	{ "+",   tok::Plus },      { "-",   tok::Minus },
+	{ "*",   tok::Star },      { "/",   tok::Slash },
+	{ "%",   tok::Percent },   { "=",   tok::Assign },
+	{ "==",  tok::EqEq },      { "!=",  tok::NotEq },
+	{ "<",   tok::Less },      { ">",   tok::Greater },
+	{ "<=",  tok::LessEq },    { ">=",  tok::GreaterEq },
+	{ "<=>", tok::Spaceship },
+	{ "&&",  tok::AmpAmp },    { "||",  tok::PipePipe },
+	{ "!",   tok::Exclaim },   { "&",   tok::Amp },
+	{ "|",   tok::Pipe },      { "^",   tok::Caret },
+	{ "~",   tok::Tilde },
+	{ "+=",  tok::PlusEq },    { "-=",  tok::MinusEq },
+	{ "*=",  tok::StarEq },    { "/=",  tok::SlashEq },
+	{ "%=",  tok::PercentEq },
+	{ "&=",  tok::AmpEq },     { "|=",  tok::PipeEq },
+	{ "^=",  tok::CaretEq },
+	{ "<<",  tok::LessLess },  { ">>",  tok::GreaterGreater },
+	{ "<<=", tok::LessLessEq },{ ">>=", tok::GreaterGreaterEq },
+	{ "++",  tok::PlusPlus },  { "--",  tok::MinusMinus },
+	{ "?",   tok::Question },  { ".*",  tok::DotStar },
+	{ "->*", tok::ArrowStar },
 
-	// --- Logical / bitwise with alternative token mappings ---
-	if (sv == "&&" || sv == "and")     return tok::AmpAmp;
-	if (sv == "||" || sv == "or")      return tok::PipePipe;
-	if (sv == "!"  || sv == "not")     return tok::Exclaim;
-	if (sv == "&"  || sv == "bitand")  return tok::Amp;
-	if (sv == "|"  || sv == "bitor")   return tok::Pipe;
-	if (sv == "^"  || sv == "xor")     return tok::Caret;
-	if (sv == "~"  || sv == "compl")   return tok::Tilde;
-	if (sv == "!=" || sv == "not_eq")  return tok::NotEq;
-	if (sv == "&=" || sv == "and_eq")  return tok::AmpEq;
-	if (sv == "|=" || sv == "or_eq")   return tok::PipeEq;
-	if (sv == "^=" || sv == "xor_eq")  return tok::CaretEq;
+	// ---- Alternative operator spellings (same TokenKind) ----
+	{ "and",    tok::AmpAmp },   { "or",     tok::PipePipe },
+	{ "not",    tok::Exclaim },  { "bitand", tok::Amp },
+	{ "bitor",  tok::Pipe },     { "xor",    tok::Caret },
+	{ "compl",  tok::Tilde },    { "not_eq", tok::NotEq },
+	{ "and_eq", tok::AmpEq },    { "or_eq",  tok::PipeEq },
+	{ "xor_eq", tok::CaretEq },
 
-	if (sv == "+=")  return tok::PlusEq;
-	if (sv == "-=")  return tok::MinusEq;
-	if (sv == "*=")  return tok::StarEq;
-	if (sv == "/=")  return tok::SlashEq;
-	if (sv == "%=")  return tok::PercentEq;
-	if (sv == "<<")  return tok::LessLess;
-	if (sv == ">>")  return tok::GreaterGreater;
-	if (sv == "<<=") return tok::LessLessEq;
-	if (sv == ">>=") return tok::GreaterGreaterEq;
-	if (sv == "++")  return tok::PlusPlus;
-	if (sv == "--")  return tok::MinusMinus;
-	if (sv == "?")   return tok::Question;
-	if (sv == ".*")  return tok::DotStar;
-	if (sv == "->*") return tok::ArrowStar;
+	// ---- Keywords ----
+	{ "if",        tok::KW_if },       { "else",      tok::KW_else },
+	{ "while",     tok::KW_while },    { "for",       tok::KW_for },
+	{ "do",        tok::KW_do },       { "return",    tok::KW_return },
+	{ "class",     tok::KW_class },    { "struct",    tok::KW_struct },
+	{ "enum",      tok::KW_enum },     { "union",     tok::KW_union },
+	{ "namespace", tok::KW_namespace },{ "template",  tok::KW_template },
+	{ "typename",  tok::KW_typename },
+	// ... remaining keywords
+};
+```
 
-	// ---- Keywords (partial, most common ones) ----
-	if (sv == "if")        return tok::KW_if;
-	if (sv == "else")      return tok::KW_else;
-	if (sv == "while")     return tok::KW_while;
-	if (sv == "for")       return tok::KW_for;
-	if (sv == "do")        return tok::KW_do;
-	if (sv == "return")    return tok::KW_return;
-	if (sv == "class")     return tok::KW_class;
-	if (sv == "struct")    return tok::KW_struct;
-	if (sv == "enum")      return tok::KW_enum;
-	if (sv == "union")     return tok::KW_union;
-	if (sv == "namespace") return tok::KW_namespace;
-	if (sv == "template")  return tok::KW_template;
-	if (sv == "typename")  return tok::KW_typename;
-	if (sv == "typedef")   return tok::KW_typedef;
-	if (sv == "using")     return tok::KW_using;
-	if (sv == "const")     return tok::KW_const;
-	if (sv == "static")    return tok::KW_static;
-	if (sv == "virtual")   return tok::KW_virtual;
-	if (sv == "override")  return tok::KW_override;
-	if (sv == "final")     return tok::KW_final;
-	if (sv == "public")    return tok::KW_public;
-	if (sv == "private")   return tok::KW_private;
-	if (sv == "protected") return tok::KW_protected;
-	if (sv == "friend")    return tok::KW_friend;
-	if (sv == "void")      return tok::KW_void;
-	if (sv == "int")       return tok::KW_int;
-	if (sv == "auto")      return tok::KW_auto;
-	if (sv == "switch")    return tok::KW_switch;
-	if (sv == "case")      return tok::KW_case;
-	if (sv == "default")   return tok::KW_default;
-	if (sv == "break")     return tok::KW_break;
-	if (sv == "continue")  return tok::KW_continue;
-	if (sv == "new")       return tok::KW_new;
-	if (sv == "delete")    return tok::KW_delete;
-	if (sv == "try")       return tok::KW_try;
-	if (sv == "catch")     return tok::KW_catch;
-	if (sv == "throw")     return tok::KW_throw;
-	if (sv == "sizeof")    return tok::KW_sizeof;
-	if (sv == "constexpr") return tok::KW_constexpr;
-	if (sv == "static_cast")      return tok::KW_static_cast;
-	if (sv == "dynamic_cast")     return tok::KW_dynamic_cast;
-	if (sv == "const_cast")       return tok::KW_const_cast;
-	if (sv == "reinterpret_cast") return tok::KW_reinterpret_cast;
-	// ... remaining keywords added as needed
+The `_tok` literal does a `consteval` search over this table.  Because
+it is `consteval`, the entire search is resolved at compile time — there
+is zero runtime cost, and an unrecognized string is a compile error.
 
-	// Fail at compile time if the literal is unrecognized
-	throw "unrecognized token literal";
+```cpp
+// TokenKind.h
+
+consteval TokenKind operator""_tok(const char* s, size_t len) {
+	std::string_view sv(s, len);
+	for (const auto& entry : all_fixed_tokens) {
+		if (entry.spelling == sv) return entry.kind;
+	}
+	throw "unrecognized token literal";  // compile error
 }
+```
+
+For the **Lexer's runtime path**, the same `all_fixed_tokens` table is
+used to build a perfect hash at startup (or to generate one offline via
+gperf).  A simple approach: use FNV-1a hashing with an open-addressing
+table sized to eliminate collisions for the known token set.
+
+```cpp
+// Lexer startup: build runtime lookup from the same table
+class SpellingToKindMap {
+	// Compact open-addressing hash map, sized for zero collisions
+	// over the known token set (verified by static_assert).
+	static constexpr size_t TABLE_SIZE = /* next power of 2 > 2*N */;
+	struct Slot { uint32_t hash; TokenKind kind; };
+	std::array<Slot, TABLE_SIZE> slots_{};
+
+public:
+	constexpr SpellingToKindMap() {
+		for (const auto& entry : all_fixed_tokens) {
+			uint32_t h = fnv1a(entry.spelling);
+			size_t idx = h & (TABLE_SIZE - 1);
+			while (slots_[idx].hash != 0) idx = (idx + 1) & (TABLE_SIZE - 1);
+			slots_[idx] = { h, entry.kind };
+		}
+	}
+
+	TokenKind lookup(std::string_view spelling) const {
+		uint32_t h = fnv1a(spelling);
+		size_t idx = h & (TABLE_SIZE - 1);
+		while (slots_[idx].hash != 0) {
+			if (slots_[idx].hash == h) return slots_[idx].kind;
+			idx = (idx + 1) & (TABLE_SIZE - 1);
+		}
+		return TokenKind::eof(); // not a fixed token
+	}
+};
+
+// The map is constexpr — built at compile time, zero startup cost
+inline constexpr SpellingToKindMap spelling_to_kind{};
 ```
 
 Key properties:
 
-* `consteval` — the lookup runs entirely at compile time; the call site
-  becomes a constant `TokenKind` value.
-* `"||"_tok == "or"_tok` — alternative token spellings resolve to the
-  same identity, so the parser can be written with whichever is most
-  readable.
-* An unrecognized string is a **compile error**, not a runtime surprise.
-* No overhead at runtime — the comparison is just two integer compares.
+* **Single source of truth** — `all_fixed_tokens` defines every
+  spelling-to-kind mapping once.  Both `_tok` and the Lexer derive
+  from it.
+* `consteval` — `_tok` resolves at compile time; unrecognized strings
+  are compile errors.
+* `"||"_tok == "or"_tok` — alternative spellings map to the same
+  `TokenKind`.
+* **Runtime O(1)** — the Lexer uses a perfect hash built from the same
+  table.  The hash map is `constexpr`, so it is embedded in the binary
+  with no startup cost.
 
 ### TokenInfo — full token data (replaces `Token`)
 
@@ -261,7 +266,7 @@ public:
 		  line_(line), column_(column), file_index_(file_index) {}
 
 	TokenKind        kind()       const { return kind_; }
-	StringHandle     spelling()   const { return spelling_; }
+	StringHandle     handle()     const { return spelling_; }
 	std::string_view text()      const { return spelling_.view(); }
 	size_t           line()       const { return line_; }
 	size_t           column()     const { return column_; }
@@ -285,7 +290,7 @@ private:
 carries location info and the interned spelling handle, but can be
 compared cheaply via its `TokenKind`.
 
-The `spelling()` accessor returns a `StringHandle` that can be passed
+The `handle()` accessor returns a `StringHandle` that can be passed
 directly to symbol tables, AST nodes, and codegen without re-interning.
 The `text()` convenience accessor returns a `string_view` for when you
 need the actual characters (error messages, debug output, etc.).
@@ -340,7 +345,7 @@ class Parser {
 | 8 | Operator precedence | `peek_token().has_value() && peek_token()->type() == Token::Type::Operator && get_operator_precedence(peek_token()->value()) >= prec` | `peek().is_operator() && get_operator_precedence(peek_info().text()) >= prec` |
 | 9 | Alternative spellings | `value == "||"` (misses `or`) | `"||"_tok` (equals `"or"_tok` automatically) |
 | 10 | Lookahead | `auto next = peek_token(1); if (next.has_value() && next->value() == "[")` | `if (peek(1) == "["_tok)` |
-| 11 | Intern for symbol table | `StringHandle h = StringTable::getOrInternStringHandle(token.value())` | `StringHandle h = info.spelling()` (already interned) |
+| 11 | Intern for symbol table | `StringHandle h = StringTable::getOrInternStringHandle(token.value())` | `StringHandle h = info.handle()` (already interned) |
 
 ## Lexer Changes
 
@@ -382,82 +387,137 @@ but operators semantically).
 
 ## TokenKind Constant Namespace
 
-All named constants live in a `tok` namespace:
+IDs within each category are assigned by per-category enums, so adding
+a new token is just appending to the enum — no manual numbering, no
+risk of duplicates or gaps.
+
+```cpp
+// TokenKind.h
+
+// ---- Per-category ID enums (auto-incremented) ----
+
+enum class PunctId : uint16_t {
+	LBrace, RBrace, LParen, RParen, LBracket, RBracket,
+	Semi, Comma, Colon, ColonColon, Ellipsis, Dot, Arrow, Hash
+};
+
+enum class OpId : uint16_t {
+	Plus, Minus, Star, Slash, Percent, Assign,
+	EqEq, NotEq, Less, Greater, LessEq, GreaterEq, Spaceship,
+	AmpAmp,     // && / and
+	PipePipe,   // || / or
+	Exclaim,    // !  / not
+	Amp,        // &  / bitand
+	Pipe,       // |  / bitor
+	Caret,      // ^  / xor
+	Tilde,      // ~  / compl
+	PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
+	AmpEq,      // &= / and_eq
+	PipeEq,     // |= / or_eq
+	CaretEq,    // ^= / xor_eq
+	LessLess, GreaterGreater, LessLessEq, GreaterGreaterEq,
+	PlusPlus, MinusMinus, Question, DotStar, ArrowStar
+};
+
+enum class KeywordId : uint16_t {
+	If, Else, While, For, Do, Return,
+	Class, Struct, Enum, Union, Namespace,
+	Template, Typename, Typedef, Using,
+	Const, Static, Virtual, Override, Final,
+	Public, Private, Protected, Friend,
+	Void, Int, Auto,
+	Switch, Case, Default, Break, Continue,
+	New, Delete, Try, Catch, Throw,
+	Sizeof, Constexpr,
+	StaticCast, DynamicCast, ConstCast, ReinterpretCast,
+	// ... remaining keywords appended here
+};
+```
+
+`TokenKind` gets factory methods that pair the category with the enum
+value, so the two can never go out of sync:
+
+```cpp
+class TokenKind {
+	// ... (existing members) ...
+
+	// Typed factories — category is implicit from the enum type
+	static constexpr TokenKind punct(PunctId id) {
+		return { Category::Punctuator, static_cast<uint16_t>(id) };
+	}
+	static constexpr TokenKind op(OpId id) {
+		return { Category::Operator, static_cast<uint16_t>(id) };
+	}
+	static constexpr TokenKind kw(KeywordId id) {
+		return { Category::Keyword, static_cast<uint16_t>(id) };
+	}
+};
+```
+
+The `tok::` constants are one-liners with no manual indices:
 
 ```cpp
 namespace tok {
 	// Punctuators
-	inline constexpr TokenKind LBrace    { TokenKind::Category::Punctuator,  1 };
-	inline constexpr TokenKind RBrace    { TokenKind::Category::Punctuator,  2 };
-	inline constexpr TokenKind LParen    { TokenKind::Category::Punctuator,  3 };
-	inline constexpr TokenKind RParen    { TokenKind::Category::Punctuator,  4 };
-	inline constexpr TokenKind LBracket  { TokenKind::Category::Punctuator,  5 };
-	inline constexpr TokenKind RBracket  { TokenKind::Category::Punctuator,  6 };
-	inline constexpr TokenKind Semi      { TokenKind::Category::Punctuator,  7 };
-	inline constexpr TokenKind Comma     { TokenKind::Category::Punctuator,  8 };
-	inline constexpr TokenKind Colon     { TokenKind::Category::Punctuator,  9 };
-	inline constexpr TokenKind ColonColon{ TokenKind::Category::Punctuator, 10 };
-	inline constexpr TokenKind Ellipsis  { TokenKind::Category::Punctuator, 11 };
-	inline constexpr TokenKind Dot       { TokenKind::Category::Punctuator, 12 };
-	inline constexpr TokenKind Arrow     { TokenKind::Category::Punctuator, 13 };
-	inline constexpr TokenKind Hash      { TokenKind::Category::Punctuator, 14 };
+	inline constexpr auto LBrace     = TokenKind::punct(PunctId::LBrace);
+	inline constexpr auto RBrace     = TokenKind::punct(PunctId::RBrace);
+	inline constexpr auto LParen     = TokenKind::punct(PunctId::LParen);
+	inline constexpr auto RParen     = TokenKind::punct(PunctId::RParen);
+	inline constexpr auto LBracket   = TokenKind::punct(PunctId::LBracket);
+	inline constexpr auto RBracket   = TokenKind::punct(PunctId::RBracket);
+	inline constexpr auto Semi       = TokenKind::punct(PunctId::Semi);
+	inline constexpr auto Comma      = TokenKind::punct(PunctId::Comma);
+	inline constexpr auto Colon      = TokenKind::punct(PunctId::Colon);
+	inline constexpr auto ColonColon = TokenKind::punct(PunctId::ColonColon);
+	inline constexpr auto Ellipsis   = TokenKind::punct(PunctId::Ellipsis);
+	inline constexpr auto Dot        = TokenKind::punct(PunctId::Dot);
+	inline constexpr auto Arrow      = TokenKind::punct(PunctId::Arrow);
+	inline constexpr auto Hash       = TokenKind::punct(PunctId::Hash);
 
 	// Operators
-	inline constexpr TokenKind Plus      { TokenKind::Category::Operator,  1 };
-	inline constexpr TokenKind Minus     { TokenKind::Category::Operator,  2 };
-	inline constexpr TokenKind Star      { TokenKind::Category::Operator,  3 };
-	inline constexpr TokenKind Slash     { TokenKind::Category::Operator,  4 };
-	inline constexpr TokenKind Percent   { TokenKind::Category::Operator,  5 };
-	inline constexpr TokenKind Assign    { TokenKind::Category::Operator,  6 };
-	inline constexpr TokenKind EqEq      { TokenKind::Category::Operator,  7 };
-	inline constexpr TokenKind NotEq     { TokenKind::Category::Operator,  8 };
-	inline constexpr TokenKind Less      { TokenKind::Category::Operator,  9 };
-	inline constexpr TokenKind Greater   { TokenKind::Category::Operator, 10 };
-	inline constexpr TokenKind LessEq    { TokenKind::Category::Operator, 11 };
-	inline constexpr TokenKind GreaterEq { TokenKind::Category::Operator, 12 };
-	inline constexpr TokenKind Spaceship { TokenKind::Category::Operator, 13 };
-	inline constexpr TokenKind AmpAmp    { TokenKind::Category::Operator, 14 }; // && / and
-	inline constexpr TokenKind PipePipe  { TokenKind::Category::Operator, 15 }; // || / or
-	inline constexpr TokenKind Exclaim   { TokenKind::Category::Operator, 16 }; // !  / not
-	inline constexpr TokenKind Amp       { TokenKind::Category::Operator, 17 }; // &  / bitand
-	inline constexpr TokenKind Pipe      { TokenKind::Category::Operator, 18 }; // |  / bitor
-	inline constexpr TokenKind Caret     { TokenKind::Category::Operator, 19 }; // ^  / xor
-	inline constexpr TokenKind Tilde     { TokenKind::Category::Operator, 20 }; // ~  / compl
-	inline constexpr TokenKind PlusEq    { TokenKind::Category::Operator, 21 };
-	inline constexpr TokenKind MinusEq   { TokenKind::Category::Operator, 22 };
-	inline constexpr TokenKind StarEq    { TokenKind::Category::Operator, 23 };
-	inline constexpr TokenKind SlashEq   { TokenKind::Category::Operator, 24 };
-	inline constexpr TokenKind PercentEq { TokenKind::Category::Operator, 25 };
-	inline constexpr TokenKind AmpEq     { TokenKind::Category::Operator, 26 }; // &= / and_eq
-	inline constexpr TokenKind PipeEq    { TokenKind::Category::Operator, 27 }; // |= / or_eq
-	inline constexpr TokenKind CaretEq   { TokenKind::Category::Operator, 28 }; // ^= / xor_eq
-	inline constexpr TokenKind LessLess  { TokenKind::Category::Operator, 29 };
-	inline constexpr TokenKind GreaterGreater { TokenKind::Category::Operator, 30 };
-	inline constexpr TokenKind LessLessEq    { TokenKind::Category::Operator, 31 };
-	inline constexpr TokenKind GreaterGreaterEq { TokenKind::Category::Operator, 32 };
-	inline constexpr TokenKind PlusPlus  { TokenKind::Category::Operator, 33 };
-	inline constexpr TokenKind MinusMinus{ TokenKind::Category::Operator, 34 };
-	inline constexpr TokenKind Question  { TokenKind::Category::Operator, 35 };
-	inline constexpr TokenKind DotStar   { TokenKind::Category::Operator, 36 };
-	inline constexpr TokenKind ArrowStar { TokenKind::Category::Operator, 37 };
+	inline constexpr auto Plus       = TokenKind::op(OpId::Plus);
+	inline constexpr auto Minus      = TokenKind::op(OpId::Minus);
+	inline constexpr auto Star       = TokenKind::op(OpId::Star);
+	inline constexpr auto Slash      = TokenKind::op(OpId::Slash);
+	inline constexpr auto Percent    = TokenKind::op(OpId::Percent);
+	inline constexpr auto Assign     = TokenKind::op(OpId::Assign);
+	inline constexpr auto EqEq       = TokenKind::op(OpId::EqEq);
+	inline constexpr auto NotEq      = TokenKind::op(OpId::NotEq);
+	inline constexpr auto Less       = TokenKind::op(OpId::Less);
+	inline constexpr auto Greater    = TokenKind::op(OpId::Greater);
+	inline constexpr auto LessEq     = TokenKind::op(OpId::LessEq);
+	inline constexpr auto GreaterEq  = TokenKind::op(OpId::GreaterEq);
+	inline constexpr auto Spaceship  = TokenKind::op(OpId::Spaceship);
+	inline constexpr auto AmpAmp     = TokenKind::op(OpId::AmpAmp);
+	inline constexpr auto PipePipe   = TokenKind::op(OpId::PipePipe);
+	inline constexpr auto Exclaim    = TokenKind::op(OpId::Exclaim);
+	inline constexpr auto Amp        = TokenKind::op(OpId::Amp);
+	inline constexpr auto Pipe       = TokenKind::op(OpId::Pipe);
+	inline constexpr auto Caret      = TokenKind::op(OpId::Caret);
+	inline constexpr auto Tilde      = TokenKind::op(OpId::Tilde);
+	// ... remaining operators follow the same pattern
 
-	// Keywords (assigned incrementally)
-	inline constexpr TokenKind KW_if       { TokenKind::Category::Keyword,  1 };
-	inline constexpr TokenKind KW_else     { TokenKind::Category::Keyword,  2 };
-	inline constexpr TokenKind KW_while    { TokenKind::Category::Keyword,  3 };
-	inline constexpr TokenKind KW_for      { TokenKind::Category::Keyword,  4 };
-	inline constexpr TokenKind KW_do       { TokenKind::Category::Keyword,  5 };
-	inline constexpr TokenKind KW_return   { TokenKind::Category::Keyword,  6 };
-	inline constexpr TokenKind KW_class    { TokenKind::Category::Keyword,  7 };
-	inline constexpr TokenKind KW_struct   { TokenKind::Category::Keyword,  8 };
-	inline constexpr TokenKind KW_enum     { TokenKind::Category::Keyword,  9 };
-	inline constexpr TokenKind KW_union    { TokenKind::Category::Keyword, 10 };
-	inline constexpr TokenKind KW_namespace{ TokenKind::Category::Keyword, 11 };
-	inline constexpr TokenKind KW_template { TokenKind::Category::Keyword, 12 };
-	inline constexpr TokenKind KW_typename { TokenKind::Category::Keyword, 13 };
-	// ... remaining keywords
+	// Keywords
+	inline constexpr auto KW_if        = TokenKind::kw(KeywordId::If);
+	inline constexpr auto KW_else      = TokenKind::kw(KeywordId::Else);
+	inline constexpr auto KW_while     = TokenKind::kw(KeywordId::While);
+	inline constexpr auto KW_for       = TokenKind::kw(KeywordId::For);
+	inline constexpr auto KW_return    = TokenKind::kw(KeywordId::Return);
+	inline constexpr auto KW_class     = TokenKind::kw(KeywordId::Class);
+	inline constexpr auto KW_struct    = TokenKind::kw(KeywordId::Struct);
+	inline constexpr auto KW_namespace = TokenKind::kw(KeywordId::Namespace);
+	inline constexpr auto KW_template  = TokenKind::kw(KeywordId::Template);
+	inline constexpr auto KW_typename  = TokenKind::kw(KeywordId::Typename);
+	// ... remaining keywords follow the same pattern
 }
 ```
+
+Adding a new token requires two steps:
+1. Append to the relevant enum (`PunctId`, `OpId`, or `KeywordId`)
+2. Add a `tok::` constant and a row in `all_fixed_tokens`
+
+No manual index management.  The compiler enforces uniqueness through
+the enum, and the `all_fixed_tokens` table ties spellings to constants.
 
 ## Migration Strategy
 
@@ -465,16 +525,16 @@ namespace tok {
 
 1. Add `TokenKind.h` with `TokenKind`, `tok::` constants, `operator""_tok`.
 2. Add `TokenInfo.h` wrapping `TokenKind` + `StringHandle` + location.
-3. Add `TokenKind kind_` and `StringHandle spelling_handle_` fields to
+3. Add `TokenKind kind_` and `StringHandle handle_` fields to
    the **existing** `Token` class.
-4. Make the Lexer populate both `kind_` and `spelling_handle_` during
+4. Make the Lexer populate both `kind_` and `handle_` during
    lexing (intern via `StringTable::getOrInternStringHandle()`).
-5. Add `Token::kind()` and `Token::spelling_handle()` accessors.
+5. Add `Token::kind()` and `Token::handle()` accessors.
 6. Add `peek()`, `peek_info()`, `advance()`, `consume(TokenKind)` to
    Parser **alongside** the existing methods.
 
 At this point both APIs work and all existing code still compiles.
-Call sites can start using `token.spelling_handle()` instead of
+Call sites can start using `token.handle()` instead of
 `StringTable::getOrInternStringHandle(token.value())` immediately.
 
 ### Phase 1 — Migrate Parser files one at a time
@@ -518,7 +578,7 @@ Once every call site is migrated:
 
 Identifiers don't have a fixed token string so they all share
 `TokenKind::ident()`.  To compare identifier names, use
-`peek_info().spelling()` (returns a `StringHandle`) or
+`peek_info().handle()` (returns a `StringHandle`) or
 `peek_info().text()` (returns a `string_view`):
 
 ```cpp
@@ -527,14 +587,14 @@ if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier 
     peek_token()->value() == "__pragma") {
 
 // After — using StringHandle comparison (uint32_t compare, fastest)
-if (peek() == TokenKind::ident() && peek_info().spelling() == pragma_handle) {
+if (peek() == TokenKind::ident() && peek_info().handle() == pragma_handle) {
 
 // After — using text() for ad-hoc string comparison
 if (peek() == TokenKind::ident() && peek_info().text() == "__pragma") {
 ```
 
 Note: `StringHandle` already has `operator==(std::string_view)`, so
-`peek_info().spelling() == "__pragma"` works directly.  But for
+`peek_info().handle() == "__pragma"` works directly.  But for
 frequently compared identifiers, caching the `StringHandle` is
 preferred since it reduces the comparison to a single integer check.
 
@@ -552,7 +612,7 @@ numbers.
 
 Numeric, string, and character literals each have a category but no
 fixed identity.  Like identifiers, comparing their value requires
-`peek_info().text()` (for the string content) or `peek_info().spelling()`
+`peek_info().text()` (for the string content) or `peek_info().handle()`
 (for the interned handle).  The category check is simplified:
 
 ```cpp
@@ -593,6 +653,8 @@ table at startup, making the per-token cost a simple table lookup.
 1. **Naming**: `peek()` vs `peek_kind()`? `advance()` vs `next()`?
    The shorter names are proposed here since they'll appear thousands
    of times, but the existing naming convention should take precedence.
+   `handle()` is chosen for the `StringHandle` accessor — short and
+   unambiguous given the return type.
 
 2. **Keyword completeness**: The `tok::KW_*` list needs to cover every
    keyword currently in `is_keyword()`.  The MSVC extensions
