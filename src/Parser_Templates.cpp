@@ -2158,41 +2158,42 @@ ParseResult Parser::parse_template_declaration() {
 			// E.g., Container<T*> -> Container_pattern_TP
 			//       Container<T**> -> Container_pattern_TPP
 			//       Container<T&> -> Container_pattern_TR
-			std::string pattern_name = std::string(template_name) + "_pattern";
+			StringBuilder pattern_name_builder;
+			pattern_name_builder.append(template_name).append("_pattern");
 			for (const auto& arg : pattern_args) {
 				// Add modifiers to make pattern unique
-				pattern_name += "_";
+				pattern_name_builder.append("_");
 				// Add pointer markers
 				for (size_t i = 0; i < arg.pointer_depth; ++i) {
-					pattern_name += "P";
+					pattern_name_builder.append("P");
 				}
 				// Add array marker
 				if (arg.is_array) {
-					pattern_name += "A";
+					pattern_name_builder.append("A");
 					if (arg.array_size.has_value()) {
-						pattern_name += "[" + std::to_string(*arg.array_size) + "]";
+						pattern_name_builder.append("[").append(static_cast<int64_t>(*arg.array_size)).append("]");
 					}
 				}
 				if (arg.member_pointer_kind == MemberPointerKind::Object) {
-					pattern_name += "MPO";
+					pattern_name_builder.append("MPO");
 				} else if (arg.member_pointer_kind == MemberPointerKind::Function) {
-					pattern_name += "MPF";
+					pattern_name_builder.append("MPF");
 				}
 				// Add reference markers
 				if (arg.is_rvalue_reference) {
-					pattern_name += "RR";
+					pattern_name_builder.append("RR");
 				} else if (arg.is_reference) {
-					pattern_name += "R";
+					pattern_name_builder.append("R");
 				}
 				// Add const/volatile markers
 				if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
-					pattern_name += "C";
+					pattern_name_builder.append("C");
 				}
 				if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
-					pattern_name += "V";
+					pattern_name_builder.append("V");
 				}
 			}
-			auto instantiated_name = StringTable::getOrInternStringHandle(StringBuilder().append(pattern_name));
+			auto instantiated_name = StringTable::getOrInternStringHandle(pattern_name_builder);
 			
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(

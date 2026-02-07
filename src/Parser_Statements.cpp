@@ -160,7 +160,8 @@ ParseResult Parser::parse_statement_or_declaration()
 		restore_token_position(saved_pos);
 
 		// Check if this identifier is a registered struct/class/enum/typedef type
-		std::string type_name(current_token.value());
+		StringBuilder type_name_builder;
+		type_name_builder.append(current_token.value());
 		
 		// Check for qualified name (e.g., std::size_t, ns::MyClass)
 		// Need to look ahead to see if there's a :: following
@@ -169,7 +170,7 @@ ParseResult Parser::parse_statement_or_declaration()
 		while (peek() == "::"_tok) {
 			advance(); // consume '::'
 			if (peek().is_identifier()) {
-				type_name += "::" + std::string(peek_info().value());
+				type_name_builder.append("::").append(peek_info().value());
 				advance(); // consume next identifier
 			} else {
 				break;
@@ -177,7 +178,8 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 		restore_token_position(saved_pos);
 		
-		auto type_info_ctx = lookupTypeInCurrentContext(StringTable::getOrInternStringHandle(type_name));
+		auto type_name_handle = StringTable::getOrInternStringHandle(type_name_builder);
+		auto type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
 		if (type_info_ctx) {
 			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
 			bool is_typedef = (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
@@ -269,8 +271,8 @@ ParseResult Parser::parse_statement_or_declaration()
 		// Check if this is a template identifier (e.g., Container<int>::Iterator)
 		// Templates need to be parsed as variable declarations
 		// UNLESS the next token is '(' (which indicates a function template call)
-		bool is_template = gTemplateRegistry.lookupTemplate(type_name).has_value();
-		bool is_alias_template = gTemplateRegistry.lookup_alias_template(type_name).has_value();
+		bool is_template = gTemplateRegistry.lookupTemplate(type_name_handle).has_value();
+		bool is_alias_template = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(type_name_handle)).has_value();
 		
 		if (is_template || is_alias_template) {
 			// We need to consume the identifier to peek at what comes after
@@ -316,7 +318,7 @@ ParseResult Parser::parse_statement_or_declaration()
 		// Template parameters can be used as types in variable declarations like "T result = value;"
 		if (!current_template_param_names_.empty()) {
 			for (const auto& param_name : current_template_param_names_) {
-				if (param_name == type_name) {
+				if (param_name == type_name_handle) {
 					// This is a template parameter being used as a type
 					// Parse as variable declaration
 					return parse_variable_declaration();
