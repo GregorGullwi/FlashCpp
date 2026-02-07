@@ -691,7 +691,7 @@ ParseResult Parser::parse_type_specifier()
 	         (peek_info().value() == "__builtin_va_list" || peek_info().value() == "__gnuc_va_list")) {
 		Token va_list_token = peek_info();
 		advance();
-		auto type_name_handle = StringTable::getOrInternStringHandle(va_list_token.value());
+		auto type_name_handle = va_list_token.handle();
 		auto type_it = gTypesByName.find(type_name_handle);
 		if (type_it != gTypesByName.end()) {
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(

@@ -2003,7 +2003,7 @@ bool Parser::parse_static_member_function(
 	
 	// Also register in StructTypeInfo
 	struct_info->member_functions.emplace_back(
-		StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
+		decl_node.identifier_token().handle(),
 		member_func_node,
 		current_access,
 		false,  // is_virtual
@@ -2108,7 +2108,7 @@ ParseResult Parser::parse_static_member_block(
 	size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 	// Register the static member
-	StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+	StringHandle static_member_name_handle = decl.identifier_token().handle();
 	
 	// Determine the access specifier to use
 	AccessSpecifier access = current_access;
@@ -4731,7 +4731,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Handle additional :: if present (nested member access)
 					while (current_token_.value() == "::") {
 						// Add current member to namespace path
-						StringHandle member_handle = StringTable::getOrInternStringHandle(member_token.value());
+						StringHandle member_handle = member_token.handle();
 						full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(full_ns_handle, member_handle);
 						advance(); // consume ::
 						if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
@@ -4877,10 +4877,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		std::optional<ASTNode> identifierType;
 		if (!current_template_param_names_.empty()) {
 			// Template-aware lookup: checks if identifier is a template parameter first
-			identifierType = gSymbolTable.lookup(StringTable::getOrInternStringHandle(idenfifier_token.value()), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+			identifierType = gSymbolTable.lookup(idenfifier_token.handle(), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
 			FLASH_LOG_FORMAT(Parser, Debug, "Template-aware lookup for '{}', template_params_count={}", idenfifier_token.value(), current_template_param_names_.size());
 		} else {
-			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(idenfifier_token.value()));
+			identifierType = lookup_symbol(idenfifier_token.handle());
 		}
 
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}', member_function_context_stack_ size={}",
@@ -4936,7 +4936,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Check member functions in this base class
 								// StructMemberFunction has function_decl which is an ASTNode
 								for (const auto& member_func : base_struct_info->member_functions) {
-									if (member_func.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
+									if (member_func.getName() == idenfifier_token.handle()) {
 										// Found matching member function in base class
 										if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 											// Update identifierType to point to the base class function
@@ -5019,7 +5019,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Static members should be visible in expressions within the same struct.
 		bool found_as_type_alias = false;
 		if (!identifierType && !struct_parsing_context_stack_.empty()) {
-			StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+			StringHandle identifier_handle = idenfifier_token.handle();
 			const auto& ctx = struct_parsing_context_stack_.back();
 			FLASH_LOG_FORMAT(Parser, Debug, "Checking struct context for '{}': struct_node={}, local_struct_info={}", 
 				idenfifier_token.value(), ctx.struct_node != nullptr, ctx.local_struct_info != nullptr);
@@ -5098,7 +5098,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			
 			if (should_check_types) {
-				StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+				StringHandle identifier_handle = idenfifier_token.handle();
 				auto type_it = gTypesByName.find(identifier_handle);
 				if (type_it != gTypesByName.end()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}', context={})", 
@@ -5527,7 +5527,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// If identifier not found in symbol table, check if it's a class/struct type name
 		// This handles constructor calls like Widget(42)
 		if (!identifierType.has_value()) {
-			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(idenfifier_token.value()));
+			auto type_it = gTypesByName.find(idenfifier_token.handle());
 			if (type_it != gTypesByName.end() && peek() == "("_tok) {
 				// This is a constructor call - handle it directly here
 				advance();  // consume '('
@@ -5779,7 +5779,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							TypeIndex base_type_index = base_type_info->type_index_;
 
 							// Check if the identifier is a member of the base class (recursively)
-							auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+							auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, idenfifier_token.handle());
 							if (member_result) {
 								// This is an inherited member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this"sv,
@@ -5816,7 +5816,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Use findStaticMemberRecursive to also search base classes
 						
 						// Trigger lazy static member instantiation if needed
-						StringHandle member_name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+						StringHandle member_name_handle = idenfifier_token.handle();
 						instantiateLazyStaticMember(struct_info->name, member_name_handle);
 						
 						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
@@ -5839,7 +5839,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						
 						// Check instance members (these use this->)
 						for (const auto& member : struct_info->members) {
-							if (member.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
+							if (member.getName() == idenfifier_token.handle()) {
 								// This is a member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this"sv,
 								                 idenfifier_token.line(), idenfifier_token.column(),
@@ -5856,7 +5856,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						// Also check base class members
-						auto member_result = FlashCpp::gLazyMemberResolver.resolve(member_func_ctx.struct_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+						auto member_result = FlashCpp::gLazyMemberResolver.resolve(member_func_ctx.struct_type_index, idenfifier_token.handle());
 						if (member_result) {
 							// This is an inherited member variable! Transform it into this->member
 							Token this_token(Token::Type::Keyword, "this"sv,
@@ -5936,7 +5936,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Check member functions in this base class
 									// StructMemberFunction has function_decl which is an ASTNode
 									for (const auto& member_func : base_struct_info->member_functions) {
-										if (member_func.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
+										if (member_func.getName() == idenfifier_token.handle()) {
 											// Found matching member function in base class
 											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 												gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
@@ -6011,7 +6011,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Skip this check for lambda variables - they should be handled by postfix operator parsing
 			if (!is_lambda_variable && consume("("_tok)) {
 				// First, check if this is a type name (constructor call)
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(idenfifier_token.value()));
+				auto type_it = gTypesByName.find(idenfifier_token.handle());
 				if (type_it != gTypesByName.end()) {
 					// This is a constructor call: TypeName(args)
 					// Parse constructor arguments
@@ -6641,7 +6641,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (!var_template_opt.has_value()) {
 								NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 								if (!current_namespace.isGlobal()) {
-									StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									StringHandle name_handle = idenfifier_token.handle();
 									StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
 									std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 									var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
@@ -6784,7 +6784,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								const auto& sp_ctx2 = struct_parsing_context_stack_.back();
 								const StructDeclarationNode* struct_node = sp_ctx2.struct_node;
 								if (struct_node) {
-									StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									StringHandle id_handle = idenfifier_token.handle();
 									
 									// First, check the current struct's member functions (including those parsed so far)
 									for (const auto& member_func_decl : struct_node->member_functions()) {
@@ -6793,7 +6793,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										if (func_node.is<TemplateFunctionDeclarationNode>()) {
 											const TemplateFunctionDeclarationNode& template_func = func_node.as<TemplateFunctionDeclarationNode>();
 											const FunctionDeclarationNode& func_decl = template_func.function_declaration().as<FunctionDeclarationNode>();
-											StringHandle func_name = StringTable::getOrInternStringHandle(func_decl.decl_node().identifier_token().value());
+											StringHandle func_name = func_decl.decl_node().identifier_token().handle();
 											if (func_name == id_handle) {
 												FLASH_LOG(Parser, Debug, "Found member template function '", idenfifier_token.value(), "' in current struct");
 												gSymbolTable.insert(idenfifier_token.value(), func_node);
@@ -6966,7 +6966,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (!var_template_opt.has_value()) {
 								NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 								if (!current_namespace.isGlobal()) {
-									StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									StringHandle name_handle = idenfifier_token.handle();
 									StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
 									std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 									var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
@@ -6998,7 +6998,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												base_classes_to_search.push_back(base.type_index);
 											}
 											
-											StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+											StringHandle id_handle = idenfifier_token.handle();
 											for (size_t i = 0; i < base_classes_to_search.size() && !found_inherited_template; ++i) {
 												TypeIndex base_idx = base_classes_to_search[i];
 												if (base_idx >= gTypeInfo.size()) continue;
@@ -7047,7 +7047,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									const StructDeclarationNode* struct_node = sp_ctx5.struct_node;
 									if (struct_node) {
 										// Get base classes from the struct AST node
-										StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+										StringHandle id_handle = idenfifier_token.handle();
 										for (const auto& base : struct_node->base_classes()) {
 											// Look up the base class type
 											auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
@@ -7189,7 +7189,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (!var_template_opt.has_value()) {
 						NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 						if (!current_namespace.isGlobal()) {
-							StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+							StringHandle name_handle = idenfifier_token.handle();
 							StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
 							std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 							var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
@@ -8250,7 +8250,7 @@ ParseResult Parser::parse_for_loop() {
                 }
             } else if (peek().is_identifier()) {
                 // Check if it's a known type name (e.g., size_t, string, etc.) or a qualified type (std::size_t)
-                StringHandle type_handle = StringTable::getOrInternStringHandle(peek_info().value());
+                StringHandle type_handle = peek_info().handle();
                 if (lookupTypeInCurrentContext(type_handle)) {
                     try_as_declaration = true;
                 } else if (peek(1) == "::"_tok) {
@@ -8948,7 +8948,7 @@ ParseResult Parser::parse_lambda_expression() {
         } else {
             // Regular capture: [x] or [&x]
             // Look up the original variable to get its type
-            auto var_symbol = lookup_symbol(StringTable::getOrInternStringHandle(id_token.value()));
+            auto var_symbol = lookup_symbol(id_token.handle());
             if (var_symbol.has_value()) {
                 const DeclarationNode* decl = get_decl_from_symbol(*var_symbol);
                 if (decl) {
@@ -9115,7 +9115,7 @@ ParseResult Parser::parse_lambda_expression() {
         std::unordered_set<StringHandle> param_names;
         for (const auto& param : parameters) {
             if (param.is<DeclarationNode>()) {
-                param_names.insert(StringTable::getOrInternStringHandle(param.as<DeclarationNode>().identifier_token().value()));
+                param_names.insert(param.as<DeclarationNode>().identifier_token().handle());
             }
         }
 

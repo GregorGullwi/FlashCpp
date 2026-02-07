@@ -573,7 +573,7 @@ ParseResult Parser::parse_type_and_name() {
                             }
                             
                             // Set up the type as a pointer-to-member-function
-                            type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_name_token.value()));
+                            type_spec.set_member_class_name(class_name_token.handle());
                             type_spec.add_pointer_level(CVQualifier::None);
                             
                             // Create declaration node
@@ -630,7 +630,7 @@ ParseResult Parser::parse_type_and_name() {
                           class_name_token.value(), "::*");
                 
                 // Set the member class name
-                type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_name_token.value()));
+                type_spec.set_member_class_name(class_name_token.handle());
                 
                 // Add a pointer level to indicate this is a pointer
                 type_spec.add_pointer_level(CVQualifier::None);
@@ -1893,7 +1893,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		advance();  // consume '::'
 		
 		// The class name is in decl_node.identifier_token()
-		StringHandle class_name = StringTable::getOrInternStringHandle(decl_node.identifier_token().value());
+		StringHandle class_name = decl_node.identifier_token().handle();
 		
 		// Parse the actual function name - this can be an identifier or 'operator' keyword
 		Token function_name_token;
@@ -1972,7 +1972,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Check if this is an out-of-line static member variable definition with parenthesized initializer
 		// Pattern: inline constexpr Type ClassName::member_name(initializer);
 		// This must be checked BEFORE assuming it's a function definition
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(function_name_token.value());
+		StringHandle member_name_handle = function_name_token.handle();
 		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle);
 		if (static_member != nullptr && peek() == "("_tok) {
 			// This is a static member variable definition with parenthesized initializer
@@ -2065,7 +2065,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Search for existing member function declaration with the same name
 		StructMemberFunction* existing_member = nullptr;
 		for (auto& member : struct_info->member_functions) {
-			if (member.getName() == StringTable::getOrInternStringHandle(function_name_token.value())) {
+			if (member.getName() == function_name_token.handle()) {
 				existing_member = &member;
 				break;
 			}
@@ -2264,7 +2264,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		const Token& identifier_token = decl_node.identifier_token();
-		StringHandle func_name = StringTable::getOrInternStringHandle(identifier_token.value());
+		StringHandle func_name = identifier_token.handle();
 		
 		// C++20 Abbreviated Function Templates: Check if any parameter has auto type
 		// If so, convert this function to an implicit function template
@@ -3089,7 +3089,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// Restore position - this is a type alias
 		restore_token_position(lookahead_pos);
 		
-		StringHandle alias_name = StringTable::getOrInternStringHandle(alias_token.value());
+		StringHandle alias_name = alias_token.handle();
 		advance(); // consume alias name
 		
 		// Skip GCC __attribute__ that may appear between alias name and '='
@@ -3137,7 +3137,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					// This is a pointer-to-member type: Type Class::*
 					// Mark the type as a pointer-to-member
 					type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
-					type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_token.value()));
+					type_spec.set_member_class_name(class_token.handle());
 					FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
 					discard_saved_token(saved_pos);
 				} else {
@@ -3465,7 +3465,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				}
 				
 				// Phase 7B: Intern member name and use StringHandle overload
-				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
 					member_name_handle,
 					member_type_spec.type(),
@@ -3497,7 +3497,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			if (!alias_token.kind().is_identifier()) {
 				return ParseResult::error("Expected alias name after struct definition", current_token_);
 			}
-			auto alias_name = StringTable::getOrInternStringHandle(alias_token.value());
+			auto alias_name = alias_token.handle();
 			
 			// Consume semicolon
 			if (!consume(";"_tok)) {
@@ -3534,7 +3534,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			StringHandle enum_name;
 			
 			if (peek().is_identifier()) {
-				enum_name = StringTable::getOrInternStringHandle(peek_info().value());
+				enum_name = peek_info().handle();
 				advance(); // consume enum name
 			} else {
 				// Anonymous enum - generate a unique name using StringBuilder for persistent storage
@@ -3619,7 +3619,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				auto enumerator_node = emplace_node<EnumeratorNode>(enumerator_name_token, enumerator_value);
 				enum_ref.add_enumerator(enumerator_node);
 				// Phase 7B: Intern enumerator name and use StringHandle overload
-				StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name_token.value());
+				StringHandle enumerator_name_handle = enumerator_name_token.handle();
 				enum_info->addEnumerator(enumerator_name_handle, value);
 				
 				// For unscoped enums, add to current scope
@@ -3659,7 +3659,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			if (!alias_token.kind().is_identifier()) {
 				return ParseResult::error("Expected alias name after enum definition", current_token_);
 			}
-			auto alias_name = StringTable::getOrInternStringHandle(alias_token.value());
+			auto alias_name = alias_token.handle();
 			
 			// Consume semicolon
 			if (!consume(";"_tok)) {
@@ -3746,7 +3746,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// This is a pointer-to-member type: Type Class::*
 				// Mark the type as a pointer-to-member
 				type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
-				type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_token.value()));
+				type_spec.set_member_class_name(class_token.handle());
 				FLASH_LOG(Parser, Debug, "Parsed pointer-to-member typedef in member_type_alias: ", type_spec.token().value(), " ", class_token.value(), "::*");
 				discard_saved_token(saved_pos);
 			} else {
@@ -3765,7 +3765,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		return ParseResult::error("Expected alias name in typedef", peek_info());
 	}
 	
-	auto alias_name = StringTable::getOrInternStringHandle(alias_token.value());
+	auto alias_name = alias_token.handle();
 	advance(); // consume alias name
 	
 	// Skip C++11 attributes that may follow the alias name (e.g., typedef T name [[__deprecated__]];)
@@ -3829,7 +3829,7 @@ ParseResult Parser::parse_struct_declaration()
 		return ParseResult::error("Expected struct/class name", name_token);
 	}
 
-	auto struct_name = StringTable::getOrInternStringHandle(name_token.value());
+	auto struct_name = name_token.handle();
 
 	// Check for template specialization arguments after struct name
 	// e.g., struct MyStruct<int>, struct MyStruct<T&>
@@ -4129,7 +4129,7 @@ ParseResult Parser::parse_struct_declaration()
 						if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 							return ParseResult::error("Expected member name after ::", current_token_);
 						}
-						StringHandle member_name = StringTable::getOrInternStringHandle(current_token_.value());
+						StringHandle member_name = current_token_.handle();
 						advance(); // consume member name
 						
 						member_type_name = member_name;
@@ -4248,7 +4248,7 @@ ParseResult Parser::parse_struct_declaration()
 				if (!next_token.kind().is_identifier()) {
 					return ParseResult::error("Expected member name after ::", next_token);
 				}
-				StringHandle member_name = StringTable::getOrInternStringHandle(next_token.value());
+				StringHandle member_name = next_token.handle();
 				advance(); // consume member name
 				
 				member_type_name = member_name;
@@ -4660,7 +4660,7 @@ ParseResult Parser::parse_struct_declaration()
 
 				// Add to struct's static members
 				// Phase 7B: Intern static member name and use StringHandle overload
-				StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle static_member_name_handle = decl.identifier_token().handle();
 				struct_info->addStaticMember(
 					static_member_name_handle,
 					type_spec.type(),
@@ -4774,7 +4774,7 @@ ParseResult Parser::parse_struct_declaration()
 							auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 							
 							// Add member to the anonymous type
-							StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_token.value());
+							StringHandle member_name_handle = member_name_token.handle();
 							anon_struct_info->members.push_back(StructMember{
 								member_name_handle,
 								member_type_spec.type(),
@@ -5068,7 +5068,7 @@ ParseResult Parser::parse_struct_declaration()
 							referenced_size_bits = referenced_size_bits ? referenced_size_bits : (anon_member_type_spec.size_in_bits());
 						}
 						
-						StringHandle member_name_handle = StringTable::getOrInternStringHandle(anon_member_name_token.value());
+						StringHandle member_name_handle = anon_member_name_token.handle();
 						struct_ref.add_anonymous_union_member(
 							member_name_handle,
 							anon_member_type_spec.type(),
@@ -6256,7 +6256,7 @@ ParseResult Parser::parse_struct_declaration()
 			referenced_size_bits = referenced_size_bits ? referenced_size_bits : (type_spec.size_in_bits());
 		}
 		// Phase 7B: Intern member name and use StringHandle overload
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
 			type_spec.type(),
@@ -6354,13 +6354,13 @@ ParseResult Parser::parse_struct_declaration()
 			if (func_decl.function_declaration.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
 				const DeclarationNode& decl = func.decl_node();
-				func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				func_name_handle = decl.identifier_token().handle();
 			} else if (func_decl.function_declaration.is<TemplateFunctionDeclarationNode>()) {
 				// Template member function - extract name from the inner function declaration
 				const TemplateFunctionDeclarationNode& tmpl_func = func_decl.function_declaration.as<TemplateFunctionDeclarationNode>();
 				const FunctionDeclarationNode& func = tmpl_func.function_decl_node();
 				const DeclarationNode& decl = func.decl_node();
-				func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				func_name_handle = decl.identifier_token().handle();
 			} else {
 				// Unknown function type - skip
 				continue;
@@ -6962,7 +6962,7 @@ ParseResult Parser::parse_struct_declaration()
 				func_name = delayed.dtor_node->name();
 			} else if (delayed.func_node) {
 				const auto& decl = delayed.func_node->decl_node();
-				func_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				func_name = decl.identifier_token().handle();
 				// is_const is stored in StructMemberFunctionDecl, not in FunctionDeclarationNode
 				// We'll match by name only for now
 			}
@@ -7047,7 +7047,7 @@ ParseResult Parser::parse_enum_declaration()
 	// Check if next token is an identifier (name) or : or { (anonymous enum)
 	if (peek().is_identifier()) {
 		auto name_token = advance();
-		enum_name = StringTable::getOrInternStringHandle(name_token.value());
+		enum_name = name_token.handle();
 	} else if (!peek().is_eof() && 
 	           (peek() == ":"_tok || peek() == "{"_tok)) {
 		// Anonymous enum - generate a unique name
@@ -7414,7 +7414,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member()
 	constexpr size_t pointer_size = sizeof(void*);
 	constexpr size_t pointer_alignment = alignof(void*);
 	
-	StringHandle funcptr_name_handle = StringTable::getOrInternStringHandle(funcptr_name_token.value());
+	StringHandle funcptr_name_handle = funcptr_name_token.handle();
 	
 	discard_saved_token(funcptr_saved_pos);
 	
@@ -7540,7 +7540,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				size_t nested_type_alignment = nested_anon_type_info.getStructInfo()->alignment;
 				
 				// Add member to the outer anonymous type
-				StringHandle outer_member_name_handle = StringTable::getOrInternStringHandle(outer_member_name_token.value());
+				StringHandle outer_member_name_handle = outer_member_name_token.handle();
 				out_struct_info->members.push_back(StructMember{
 					outer_member_name_handle,
 					Type::Struct,
@@ -7626,7 +7626,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 		
 		// Add member to the anonymous type
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_token.value());
+		StringHandle member_name_handle = member_name_token.handle();
 		out_struct_info->members.push_back(StructMember{
 			member_name_handle,
 			member_type_spec.type(),
@@ -7704,7 +7704,7 @@ ParseResult Parser::parse_typedef_declaration()
 				// Pattern 2: typedef enum _Name { ... } alias;
 				// or typedef enum _Name : type { ... } alias;
 				is_inline_enum = true;
-				enum_name_for_typedef = StringTable::getOrInternStringHandle(enum_name_token.value());
+				enum_name_for_typedef = enum_name_token.handle();
 			} else {
 				// Not an inline definition, restore position and parse normally
 				current_token_ = next_pos;
@@ -7740,7 +7740,7 @@ ParseResult Parser::parse_typedef_declaration()
 			if (peek() == "{"_tok) {
 				// Pattern 2/4: typedef struct/union Name { ... } alias;
 				is_inline_struct = true;
-				struct_name_for_typedef = StringTable::getOrInternStringHandle(struct_name_token.value());
+				struct_name_for_typedef = struct_name_token.handle();
 				discard_saved_token(next_pos);
 			} else {
 				// Not an inline definition, restore position and parse normally
@@ -7845,7 +7845,7 @@ ParseResult Parser::parse_typedef_declaration()
 			auto enumerator_node = emplace_node<EnumeratorNode>(enumerator_name_token, enumerator_value);
 			enum_ref.add_enumerator(enumerator_node);
 			// Phase 7B: Intern enumerator name and use StringHandle overload
-			StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name_token.value());
+			StringHandle enumerator_name_handle = enumerator_name_token.handle();
 			enum_info->addEnumerator(enumerator_name_handle, value);
 
 			// For unscoped enums, add enumerator to current scope as a constant
@@ -8374,7 +8374,7 @@ ParseResult Parser::parse_typedef_declaration()
 				referenced_size_bits = referenced_size_bits ? referenced_size_bits : member_type_spec.size_in_bits();
 			}
 			// Phase 7B: Intern member name and use StringHandle overload
-			StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
 				member_name_handle,
 				member_type_spec.type(),
@@ -8476,7 +8476,7 @@ ParseResult Parser::parse_typedef_declaration()
 					// This is a pointer-to-member type: Type Class::*
 					// Mark the type as a pointer-to-member
 					type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
-					type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_token.value()));
+					type_spec.set_member_class_name(class_token.handle());
 					FLASH_LOG(Parser, Debug, "Parsed pointer-to-member typedef: ", type_spec.token().value(), " ", class_token.value(), "::*");
 					discard_saved_token(saved_pos);
 				} else {
@@ -8702,7 +8702,7 @@ ParseResult Parser::parse_friend_declaration()
 			return ParseResult::error("Expected ';' after friend class declaration", current_token_);
 		}
 
-		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, StringTable::getOrInternStringHandle(class_name_token.value()));
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, class_name_token.handle());
 		return saved_position.success(friend_node);
 	}
 
@@ -9276,7 +9276,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 								// This is a pointer-to-member type: Type Class::*
 								// Mark the type as a pointer-to-member
 								type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
-								type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_token.value()));
+								type_spec.set_member_class_name(class_token.handle());
 								FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
 								discard_saved_token(saved_pos);
 							} else {
@@ -9413,7 +9413,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 					// Register the type alias in gTypesByName
 					// Create a TypeInfo for the alias that points to the underlying type
-					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token.value()), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
+					auto& alias_type_info = gTypeInfo.emplace_back(alias_token.handle(), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
 					alias_type_info.pointer_depth_ = type_spec.pointer_depth();
 					alias_type_info.is_reference_ = type_spec.is_reference();
 					alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
@@ -9427,7 +9427,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					// Also register with namespace-qualified name for type aliases defined in namespaces
 					NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();
 					if (!namespace_handle.isGlobal()) {
-						StringHandle alias_handle = StringTable::getOrInternStringHandle(alias_token.value());
+						StringHandle alias_handle = alias_token.handle();
 						auto full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, alias_handle);
 						if (gTypesByName.find(full_qualified_name) == gTypesByName.end()) {
 							gTypesByName.emplace(full_qualified_name, &alias_type_info);
@@ -9562,7 +9562,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		}
 
 		// Create the using enum node - CodeGen will also handle this for its local scope
-		StringHandle enum_name_handle = StringTable::getOrInternStringHandle(enum_type_token.value());
+		StringHandle enum_name_handle = enum_type_token.handle();
 		auto using_enum_node = emplace_node<UsingEnumNode>(enum_name_handle, using_token);
 		
 		// Add enumerators to gSymbolTable NOW so they're available during parsing
@@ -9702,10 +9702,10 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	StringHandle source_type_name;
 	if (namespace_path.empty()) {
 		// using ::identifier; - refers to global namespace
-		source_type_name = StringTable::getOrInternStringHandle(identifier_token.value());
+		source_type_name = identifier_token.handle();
 	} else {
 		// using ns1::ns2::identifier; - build qualified name
-		StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier_token.value());
+		StringHandle identifier_handle = identifier_token.handle();
 		source_type_name = namespace_handle.isValid()
 			? gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, identifier_handle)
 			: identifier_handle;
@@ -9719,7 +9719,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	// might itself be an alias to ::lldiv_t
 	if (existing_type_it == gTypesByName.end() && !namespace_path.empty()) {
 		StringHandle qualified_source = source_type_name;  // Save the qualified name for logging
-		StringHandle unqualified_source = StringTable::getOrInternStringHandle(identifier_token.value());
+		StringHandle unqualified_source = identifier_token.handle();
 		auto unqualified_it = gTypesByName.find(unqualified_source);
 		if (unqualified_it != gTypesByName.end()) {
 			existing_type_it = unqualified_it;
@@ -9734,7 +9734,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
 	if (!current_namespace_handle.isGlobal()) {
 		// Build qualified name for the target: std::identifier
-		StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier_token.value());
+		StringHandle identifier_handle = identifier_token.handle();
 		StringHandle target_type_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, identifier_handle);
 		
 		// Check if target name is already registered (avoid duplicates)
@@ -9755,7 +9755,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				// Also register with the unqualified name within the current namespace scope
 				// This allows code inside the namespace to use the type without qualification
 				// e.g., inside namespace std, both "std::lldiv_t" and "lldiv_t" should work
-				StringHandle unqualified_name = StringTable::getOrInternStringHandle(identifier_token.value());
+				StringHandle unqualified_name = identifier_token.handle();
 				if (gTypesByName.find(unqualified_name) == gTypesByName.end()) {
 					gTypesByName.emplace(unqualified_name, &alias_type_info);
 					FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
@@ -9792,7 +9792,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					                 StringTable::getStringView(target_type_name), type_it->second);
 					
 					// Also register with the unqualified name within the current namespace scope
-					StringHandle unqualified_name = StringTable::getOrInternStringHandle(identifier_token.value());
+					StringHandle unqualified_name = identifier_token.handle();
 					if (gTypesByName.find(unqualified_name) == gTypesByName.end()) {
 						gTypesByName.emplace(unqualified_name, &type_info);
 						FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
@@ -9808,7 +9808,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		bool is_from_gnu_cxx = (namespace_path.size() == 1 && namespace_path[0] == "__gnu_cxx");
 		
 		if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
-			StringHandle type_name = StringTable::getOrInternStringHandle(identifier_token.value());
+			StringHandle type_name = identifier_token.handle();
 			if (gTypesByName.find(type_name) == gTypesByName.end()) {
 				// Create opaque C library type in global namespace
 				auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size(), static_cast<int>(type_it->second));

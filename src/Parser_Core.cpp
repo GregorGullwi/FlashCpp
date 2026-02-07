@@ -190,7 +190,7 @@ static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_se
 	if (node.is<VariableDeclarationNode>()) {
 		const auto& var_decl = node.as<VariableDeclarationNode>();
 		const auto& decl = var_decl.declaration();
-		var_names.insert(StringTable::getOrInternStringHandle(decl.identifier_token().value()));
+		var_names.insert(decl.identifier_token().handle());
 	} else if (node.is<BlockNode>()) {
 		const auto& block = node.as<BlockNode>();
 		const auto& stmts = block.get_statements();

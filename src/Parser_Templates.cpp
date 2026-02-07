@@ -389,7 +389,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Also register with namespace-qualified name if we're in a namespace
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 		if (!current_handle.isGlobal()) {
-			StringHandle concept_handle = StringTable::getOrInternStringHandle(concept_name_token.value());
+			StringHandle concept_handle = concept_name_token.handle();
 			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, concept_handle);
 			gConceptRegistry.registerConcept(StringTable::getStringView(qualified_handle), concept_node);
 		}
@@ -502,7 +502,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Parse the template name
 				if (peek().is_identifier()) {
-					target_template_name = StringTable::getOrInternStringHandle(peek_info().value());
+					target_template_name = peek_info().handle();
 					advance();
 					
 					// Parse template arguments as AST nodes (not evaluated)
@@ -734,7 +734,7 @@ ParseResult Parser::parse_template_declaration() {
 					// For template instantiations like ratio<_Num, _Den>, this will be "ratio"
 					// For simple types like T, this will be "T"
 					if (type_spec.token().value().size() > 0) {
-						arg.dependent_name = StringTable::getOrInternStringHandle(type_spec.token().value());
+						arg.dependent_name = type_spec.token().handle();
 					}
 					
 					specialization_pattern.push_back(arg);
@@ -1121,7 +1121,7 @@ ParseResult Parser::parse_template_declaration() {
 								if (!peek().is_identifier()) {
 									return ParseResult::error("Expected member name after ::", peek_info());
 								}
-								member_type_name = StringTable::getOrInternStringHandle(peek_info().value());
+								member_type_name = peek_info().handle();
 								member_name_token = peek_info();
 								advance(); // consume member name
 							}
@@ -1132,7 +1132,7 @@ ParseResult Parser::parse_template_declaration() {
 								if (!peek().is_identifier()) {
 									return ParseResult::error("Expected member name after ::", peek_info());
 							}
-							member_type_name = StringTable::getOrInternStringHandle(peek_info().value());
+							member_type_name = peek_info().handle();
 							member_name_token = peek_info();
 							advance(); // consume member name
 						}
@@ -1142,7 +1142,7 @@ ParseResult Parser::parse_template_declaration() {
 							if (!peek().is_identifier()) {
 								return ParseResult::error("Expected member name after ::", peek_info());
 							}
-							member_type_name = StringTable::getOrInternStringHandle(peek_info().value());
+							member_type_name = peek_info().handle();
 							member_name_token = peek_info();
 							advance();
 						}
@@ -1938,7 +1938,7 @@ ParseResult Parser::parse_template_declaration() {
 					referenced_size_bits = referenced_size_bits ? referenced_size_bits : type_spec.size_in_bits();
 				}
 				// Phase 7B: Intern member name and use StringHandle overload
-				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info_ptr->addMember(
 					member_name_handle,
 					type_spec.type(),
@@ -1978,7 +1978,7 @@ ParseResult Parser::parse_template_declaration() {
 					const DeclarationNode& decl = func_decl->decl_node();
 
 					// Phase 7B: Intern function name and use StringHandle overload
-					StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+					StringHandle func_name_handle = decl.identifier_token().handle();
 					struct_info_ptr->addMemberFunction(
 						func_name_handle,
 						member_func_decl.function_declaration,
@@ -3076,7 +3076,7 @@ ParseResult Parser::parse_template_declaration() {
 				bool is_ref_member = type_spec.is_reference();
 				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
 				// Phase 7B: Intern member name and use StringHandle overload
-				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
 					member_name_handle,
 					type_spec.type(),
@@ -3115,7 +3115,7 @@ ParseResult Parser::parse_template_declaration() {
 						const DeclarationNode& decl = func_decl.decl_node();
 						
 						// Phase 7B: Intern function name and use StringHandle overload
-						StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+						StringHandle func_name_handle = decl.identifier_token().handle();
 						struct_info->addMemberFunction(
 							func_name_handle,
 							member_func_decl.function_declaration,
@@ -3131,7 +3131,7 @@ ParseResult Parser::parse_template_declaration() {
 						const DeclarationNode& decl = func_decl.decl_node();
 						
 						// Phase 7B: Intern function name and use StringHandle overload
-						StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+						StringHandle func_name_handle = decl.identifier_token().handle();
 						struct_info->addMemberFunction(
 							func_name_handle,
 							member_func_decl.function_declaration,
@@ -4920,7 +4920,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				
 				// Create constructor declaration
 				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-					struct_name_handle, StringTable::getOrInternStringHandle(ctor_name_token.value()));
+					struct_name_handle, ctor_name_token.handle());
 				
 				// Apply specifiers to constructor
 				ctor_ref.set_explicit(is_explicit);
@@ -5715,7 +5715,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						size_t static_member_alignment = get_type_alignment(type_spec.type(), static_member_size);
 						
 						// Add to struct's static members
-						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+						StringHandle static_member_name_handle = decl.identifier_token().handle();
 						member_struct_ref.add_static_member(
 							static_member_name_handle,
 							type_spec.type(),
@@ -7890,7 +7890,7 @@ std::optional<QualifiedIdParseResult> Parser::parse_qualified_identifier_with_te
 	// Collect namespace parts
 	while (current_token_.value() == "::") {
 		// Current identifier becomes a namespace part - intern into string table
-		namespaces.emplace_back(StringTable::getOrInternStringHandle(final_identifier.value()));
+		namespaces.emplace_back(final_identifier.handle());
 		advance(); // consume ::
 		
 		// Get next identifier
@@ -10409,7 +10409,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		size_t member_alignment = get_type_alignment(member_type, member_size);
 		
 		// Phase 7B: Intern member name and use StringHandle overload
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
 			member_type,
@@ -10513,7 +10513,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			}
 			
 			// Phase 7B: Intern function name and use StringHandle overload
-			StringHandle func_name_handle = StringTable::getOrInternStringHandle(orig_func.decl_node().identifier_token().value());
+			StringHandle func_name_handle = orig_func.decl_node().identifier_token().handle();
 			struct_info->addMemberFunction(
 				func_name_handle,
 				new_func_node,
@@ -11328,7 +11328,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_decl.default_initializer, template_args, template_params);
 			
 			// Phase 7B: Intern member name and use StringHandle overload
-			StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
 				member_name_handle,
 				member_type,
@@ -11439,7 +11439,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Add the function to the struct info (with substituted return type if needed)
 				// Phase 7B: Intern function name and use StringHandle overload
-				StringHandle func_name_handle = StringTable::getOrInternStringHandle(orig_decl.identifier_token().value());
+				StringHandle func_name_handle = orig_decl.identifier_token().handle();
 				struct_info->addMemberFunction(
 					func_name_handle,
 					mem_func.function_declaration,
@@ -13499,7 +13499,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_decl.default_initializer, template_args_to_use, template_params);
 	
 		// Phase 7B: Intern member name and use StringHandle overload
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
 			member_type,
@@ -14040,7 +14040,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				bool is_ref_member = substituted_type_spec.is_reference();
 				bool is_rvalue_ref_member = substituted_type_spec.is_rvalue_reference();
 				// Phase 7B: Intern member name and use StringHandle overload
-				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle member_name_handle = decl.identifier_token().handle();
 				nested_struct_info->addMember(
 					member_name_handle,
 					substituted_type_spec.type(),
@@ -14277,7 +14277,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				LazyMemberFunctionInfo lazy_info;
 				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
 				lazy_info.instantiated_class_name = instantiated_name;
-				lazy_info.member_function_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				lazy_info.member_function_name = decl.identifier_token().handle();
 				lazy_info.original_function_node = mem_func.function_declaration;
 				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
@@ -14445,7 +14445,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
 				
 				// Also add to struct_info so it can be found during codegen
-				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle func_name_handle = decl.identifier_token().handle();
 				struct_info_ptr->addMemberFunction(
 					func_name_handle,
 					new_func_node,
@@ -14660,7 +14660,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Also add to struct_info so it can be found during codegen
 				// Phase 7B: Intern function name and use StringHandle overload
-				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle func_name_handle = decl.identifier_token().handle();
 				struct_info_ptr->addMemberFunction(
 					func_name_handle,
 					new_func_node,
@@ -14799,7 +14799,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Also add to struct_info so it can be found during codegen
 				// Phase 7B: Intern function name and use StringHandle overload
-				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				StringHandle func_name_handle = decl.identifier_token().handle();
 				struct_info_ptr->addMemberFunction(
 					func_name_handle,
 					new_func_node,
@@ -17081,7 +17081,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		}
 		
 		// Get the name from the identifier token
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+		StringHandle member_name_handle = decl.identifier_token().handle();
 		
 		// Check if the type is a reference type
 		bool is_reference = type_spec.is_reference() || type_spec.is_lvalue_reference();
@@ -17247,7 +17247,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Register the static member variable definition
 		OutOfLineMemberVariable out_of_line_var;
 		out_of_line_var.template_params = template_params;
-		out_of_line_var.member_name = StringTable::getOrInternStringHandle(function_name_token.value());  // Actually the variable name
+		out_of_line_var.member_name = function_name_token.handle();  // Actually the variable name
 		out_of_line_var.type_node = return_type_node;               // Actually the variable type
 		out_of_line_var.initializer = *init_result.node();
 		out_of_line_var.template_param_names = template_param_names;
@@ -17269,7 +17269,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// This is used for providing storage for static constexpr members declared in the class
 		OutOfLineMemberVariable out_of_line_var;
 		out_of_line_var.template_params = template_params;
-		out_of_line_var.member_name = StringTable::getOrInternStringHandle(function_name_token.value());  // Actually the variable name
+		out_of_line_var.member_name = function_name_token.handle();  // Actually the variable name
 		out_of_line_var.type_node = return_type_node;               // Actually the variable type
 		// No initializer for this case
 		out_of_line_var.template_param_names = template_param_names;
