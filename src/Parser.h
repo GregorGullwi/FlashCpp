@@ -272,9 +272,8 @@ public:
                 size_t top_level_count = 0;
                 auto start_time = std::chrono::high_resolution_clock::now();
 #endif
-                // Note: peek_token() returns std::nullopt for EndOfFile tokens,
-                // so this loop terminates naturally at EOF without explicit check
-                while (peek_token().has_value() && !parseResult.is_error()) {
+                // The main parse loop: process top-level nodes until EOF or error
+                while (!peek().is_eof() && !parseResult.is_error()) {
                         parseResult = parse_top_level_node();
 #if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
                         ++top_level_count;
