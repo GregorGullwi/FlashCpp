@@ -7,8 +7,9 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$SCRIPT_DIR/../.."
 TEST_FILE="$SCRIPT_DIR/cpp20_simple_integration_test.cpp"
-FLASHCPP="$REPO_ROOT/x64/Debug/FlashCpp"
-ITERATIONS=${1:-10}
+FLASHCPP_DEBUG="$REPO_ROOT/x64/Debug/FlashCpp"
+FLASHCPP_RELEASE="$REPO_ROOT/x64/Release/FlashCpp"
+ITERATIONS=${1:-20}
 
 echo "======================================================================"
 echo "FlashCpp Compilation Speed Benchmark"
@@ -16,30 +17,34 @@ echo "======================================================================"
 echo ""
 echo "Test file: cpp20_simple_integration_test.cpp (~860 lines, 490 test points)"
 echo "Iterations: $ITERATIONS per compiler"
-echo "Mode: compile-only (-c), no optimization"
 echo ""
 
 # Check prerequisites
-if [ ! -f "$FLASHCPP" ]; then
-    echo "ERROR: FlashCpp binary not found at $FLASHCPP"
-    echo "Build it first: make main CXX=clang++"
+HAS_DEBUG=0
+HAS_RELEASE=0
+[ -f "$FLASHCPP_DEBUG" ] && HAS_DEBUG=1
+[ -f "$FLASHCPP_RELEASE" ] && HAS_RELEASE=1
+
+if [ $HAS_DEBUG -eq 0 ] && [ $HAS_RELEASE -eq 0 ]; then
+    echo "ERROR: No FlashCpp binary found."
+    echo "Build with: make main CXX=clang++        (debug)"
+    echo "       or:  make release CXX=clang++      (release)"
     exit 1
 fi
 
 if ! command -v clang++ &> /dev/null; then
-    echo "ERROR: clang++ not found"
-    exit 1
+    echo "WARNING: clang++ not found, skipping"
 fi
 
 if ! command -v g++ &> /dev/null; then
-    echo "ERROR: g++ not found"
-    exit 1
+    echo "WARNING: g++ not found, skipping"
 fi
 
 echo "Compiler versions:"
-echo "  Clang: $(clang++ --version | head -1)"
-echo "  GCC:   $(g++ --version | head -1)"
-echo "  FlashCpp: $($FLASHCPP --version 2>&1 | head -1 || echo 'dev build')"
+command -v clang++ &> /dev/null && echo "  Clang: $(clang++ --version | head -1)"
+command -v g++ &> /dev/null && echo "  GCC:   $(g++ --version | head -1)"
+[ $HAS_DEBUG -eq 1 ] && echo "  FlashCpp debug:   $FLASHCPP_DEBUG"
+[ $HAS_RELEASE -eq 1 ] && echo "  FlashCpp release: $FLASHCPP_RELEASE"
 echo ""
 
 benchmark() {
@@ -56,9 +61,7 @@ benchmark() {
         times+=($elapsed)
     done
 
-    local total=0
-    local min=${times[0]}
-    local max=${times[0]}
+    local total=0 min=${times[0]} max=${times[0]}
     for t in "${times[@]}"; do
         total=$((total + t))
         [ $t -lt $min ] && min=$t
@@ -66,42 +69,57 @@ benchmark() {
     done
     local avg=$((total / ITERATIONS))
 
-    printf "  %-20s avg=%3d ms  min=%3d ms  max=%3d ms\n" "$name" "$avg" "$min" "$max"
-    eval "${name//[^a-zA-Z0-9_]/_}_AVG=$avg"
-    eval "${name//[^a-zA-Z0-9_]/_}_MIN=$min"
-    eval "${name//[^a-zA-Z0-9_]/_}_MAX=$max"
+    printf "| %-28s | %6d | %6d | %6d |\n" "$name" "$avg" "$min" "$max"
 }
 
-echo "--- End-to-end compilation (source -> object file) ---"
+echo "======================================================================"
+echo "End-to-end compilation (source -> object file, -c)"
+echo "======================================================================"
 echo ""
-benchmark "Clang" clang++ -std=c++20 "$TEST_FILE" -c -o /tmp/bench_clang.o
-benchmark "GCC" g++ -std=c++20 "$TEST_FILE" -c -o /tmp/bench_gcc.o
-benchmark "FlashCpp" "$FLASHCPP" "$TEST_FILE" -o /tmp/bench_flash.o
-echo ""
+printf "| %-28s | %6s | %6s | %6s |\n" "Compiler" "Avg ms" "Min ms" "Max ms"
+printf "| %-28s | %6s | %6s | %6s |\n" "----------------------------" "------" "------" "------"
 
-echo "--- Parse-only (frontend only, no codegen) ---"
-echo ""
-benchmark "Clang_syntax" clang++ -std=c++20 -fsyntax-only "$TEST_FILE"
-benchmark "GCC_syntax" g++ -std=c++20 -fsyntax-only "$TEST_FILE"
-echo "  (FlashCpp does not have a parse-only mode)"
+if command -v clang++ &> /dev/null; then
+    benchmark "Clang++ -O0 (default)" clang++ -std=c++20 -O0 "$TEST_FILE" -c -o /tmp/bench.o
+    benchmark "Clang++ -O2" clang++ -std=c++20 -O2 "$TEST_FILE" -c -o /tmp/bench.o
+fi
+
+if command -v g++ &> /dev/null; then
+    benchmark "GCC -O0 (default)" g++ -std=c++20 -O0 "$TEST_FILE" -c -o /tmp/bench.o
+    benchmark "GCC -O2" g++ -std=c++20 -O2 "$TEST_FILE" -c -o /tmp/bench.o
+fi
+
+[ $HAS_DEBUG -eq 1 ] && benchmark "FlashCpp (debug, -g)" "$FLASHCPP_DEBUG" "$TEST_FILE" -o /tmp/bench.o
+[ $HAS_RELEASE -eq 1 ] && benchmark "FlashCpp (release, -O3)" "$FLASHCPP_RELEASE" "$TEST_FILE" -o /tmp/bench.o
+
 echo ""
 
 echo "======================================================================"
-echo "SUMMARY"
+echo "Parse-only (frontend only, no codegen)"
 echo "======================================================================"
 echo ""
-echo "| Compiler        | Avg (ms) | Min (ms) | Max (ms) |"
-echo "|-----------------|----------|----------|----------|"
-printf "| Clang++ 18.1.3  | %8d | %8d | %8d |\n" "$Clang_AVG" "$Clang_MIN" "$Clang_MAX"
-printf "| GCC 13.3.0      | %8d | %8d | %8d |\n" "$GCC_AVG" "$GCC_MIN" "$GCC_MAX"
-printf "| FlashCpp (debug)| %8d | %8d | %8d |\n" "$FlashCpp_AVG" "$FlashCpp_MIN" "$FlashCpp_MAX"
+printf "| %-28s | %6s | %6s | %6s |\n" "Compiler" "Avg ms" "Min ms" "Max ms"
+printf "| %-28s | %6s | %6s | %6s |\n" "----------------------------" "------" "------" "------"
+
+if command -v clang++ &> /dev/null; then
+    benchmark "Clang++ -fsyntax-only" clang++ -std=c++20 -fsyntax-only "$TEST_FILE"
+fi
+if command -v g++ &> /dev/null; then
+    benchmark "GCC -fsyntax-only" g++ -std=c++20 -fsyntax-only "$TEST_FILE"
+fi
 echo ""
-echo "Note: FlashCpp is compiled in debug mode (-g). Release builds are faster."
-echo "Note: FlashCpp performs full compilation (parse + codegen + ELF output)"
-echo "      in a single pass, while Clang/GCC use multi-stage pipelines."
+echo "(FlashCpp does not have a parse-only mode)"
 echo ""
-echo "FlashCpp internal timing breakdown (last run):"
-"$FLASHCPP" "$TEST_FILE" -o /tmp/bench_flash.o 2>&1 | grep -E "^(Phase|Preproc|Lexer|Pars|IR Conv|Deferred|Code Gen|Other|TOTAL|---)" || true
+
+# Show FlashCpp internal timing if debug build exists
+if [ $HAS_DEBUG -eq 1 ]; then
+    echo "======================================================================"
+    echo "FlashCpp internal timing breakdown (debug build)"
+    echo "======================================================================"
+    echo ""
+    "$FLASHCPP_DEBUG" "$TEST_FILE" -o /tmp/bench.o 2>&1 | grep -E "^(Phase|Preproc|Lexer|Pars|IR Conv|Deferred|Code Gen|Other|TOTAL|---)" || true
+    echo ""
+fi
 
 # Cleanup
-rm -f /tmp/bench_clang.o /tmp/bench_gcc.o /tmp/bench_flash.o
+rm -f /tmp/bench.o

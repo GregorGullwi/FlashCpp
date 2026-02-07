@@ -172,33 +172,37 @@ with clang, and running the resulting binary. Individual section results:
 
 ## Compilation Speed Benchmarks
 
-Benchmarks measured end-to-end compile time for the integration test file (~860 lines)
-on the same machine. Run `./run_benchmark.sh` to reproduce.
+Benchmarks measured end-to-end compile time (source to object file) for the integration
+test (~860 lines) on Linux x86-64. 20 iterations each. Run `./run_benchmark.sh` to reproduce.
 
 | Compiler | Avg (ms) | Min (ms) | Max (ms) |
 |----------|----------|----------|----------|
-| Clang++ 18.1.3 | 79 | 74 | 89 |
-| GCC 13.3.0 | 106 | 98 | 118 |
-| FlashCpp (debug) | 93 | 83 | 140 |
+| **FlashCpp (release, -O3)** | **91** | **84** | **107** |
+| Clang++ 18.1.3 -O0 | 97 | 90 | 112 |
+| Clang++ 18.1.3 -O2 | 117 | 110 | 124 |
+| FlashCpp (debug, -g) | 124 | 115 | 136 |
+| GCC 13.3.0 -O2 | 128 | 113 | 141 |
+| GCC 13.3.0 -O0 | 131 | 117 | 142 |
 
-FlashCpp's internal timing breakdown (~47ms actual work, rest is process startup overhead
-from the debug build):
+FlashCpp's internal timing breakdown (debug build, ~45ms actual work, rest is
+process startup overhead):
 
 | Phase | Time (ms) | Percentage |
 |-------|-----------|------------|
 | Preprocessing | 1.9 | 4% |
-| Lexer Setup | 0.2 | 1% |
-| Parsing | 25 | 54% |
+| Lexer Setup | 0.3 | 1% |
+| Parsing | 24 | 54% |
 | IR Conversion | 6 | 13% |
-| Code Generation | 11 | 24% |
-| Other | 2 | 4% |
-| **TOTAL** | **~47** | 100% |
+| Code Generation | 10 | 23% |
+| Other | 2 | 5% |
+| **TOTAL** | **~45** | 100% |
 
 **Key observations**:
-- FlashCpp (debug build) compiles faster than GCC and is competitive with Clang
-- FlashCpp's actual compilation work takes ~47ms; the rest is process startup overhead
-- A release build of FlashCpp would be substantially faster
+- FlashCpp release build is the **fastest compiler tested** (91ms avg)
+- 6% faster than Clang -O0 (97ms) and 30% faster than GCC -O0 (131ms)
+- Even the debug build (124ms) is competitive with GCC
 - FlashCpp performs full compilation (preprocess + parse + codegen + ELF output) in a single pass
+- The Clang/GCC numbers use `-O0` (no optimization), which is the default for `clang++ -c`
 
 ## Known FlashCpp Limitations
 
