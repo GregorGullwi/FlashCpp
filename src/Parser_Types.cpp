@@ -713,14 +713,15 @@ ParseResult Parser::parse_type_specifier()
 			return ParseResult::error("Expected identifier after '::'", peek().is_eof() ? Token() : peek_info());
 		}
 
-		// Build qualified name starting with ::
+		// Build qualified name WITHOUT the leading :: prefix.
+		// The :: is just a scope resolution indicator meaning "start from the global namespace"
+		// and should not be part of the stored type name.
 		StringBuilder type_name_builder;
-		type_name_builder.append("::"sv);
 		type_name_builder.append(peek_info().value());
 		Token type_name_token = peek_info();
 		advance();
 
-		// Continue building qualified name (e.g., ::__gnu_debug::_Safe_iterator)
+		// Continue building qualified name (e.g., __gnu_debug::_Safe_iterator)
 		while (peek() == "::"_tok) {
 			advance();  // consume '::'
 			if (peek() == "template"_tok) {
@@ -736,7 +737,7 @@ ParseResult Parser::parse_type_specifier()
 
 		std::string_view type_name = type_name_builder.commit();
 
-		// Skip template arguments if present (e.g., ::__gnu_debug::_Safe_iterator<_Ite, _Seq, Tag>)
+		// Skip template arguments if present (e.g., __gnu_debug::_Safe_iterator<_Ite, _Seq, Tag>)
 		if (peek() == "<"_tok) {
 			skip_template_arguments();
 		}
@@ -753,14 +754,9 @@ ParseResult Parser::parse_type_specifier()
 			advance();
 		}
 
-		// Try to look up this globally-qualified type; if not found, treat as opaque user-defined type
+		// Look up the type by its unqualified name
 		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 		auto type_it = gTypesByName.find(type_name_handle);
-		if (type_it == gTypesByName.end() && type_name.starts_with("::")) {
-			// Try without the leading :: prefix to find types registered with unqualified names
-			StringHandle unqualified_handle = StringTable::getOrInternStringHandle(type_name.substr(2));
-			type_it = gTypesByName.find(unqualified_handle);
-		}
 		if (type_it != gTypesByName.end()) {
 			size_t user_type_index = type_it->second->type_index_;
 			int type_size_bits = static_cast<int>(type_it->second->type_size_);

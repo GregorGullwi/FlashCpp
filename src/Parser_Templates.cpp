@@ -5187,24 +5187,55 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 							return param_result;
 						}
 
+						// Create a function declaration for the conversion operator
+						auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+							decl_node.as<DeclarationNode>(), identifier_token.value());
+						for (const auto& param : params.parameters) {
+							func_ref.add_parameter_node(param);
+						}
+
 						// Skip trailing specifiers (const, noexcept, etc.)
 						skip_function_trailing_specifiers();
 						skip_trailing_requires_clause();
 
-						// Skip or consume the body
+						// Create template function declaration node
+						auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
+							std::move(template_params),
+							func_node,
+							requires_clause
+						);
+
+						// Handle body: = default, = delete, { body }, or ;
 						if (peek() == "{"_tok) {
+							SaveHandle body_start = save_token_position();
+							func_ref.set_template_body_position(body_start);
 							skip_balanced_braces();
 						} else if (peek() == "="_tok) {
-							advance();
-							if (peek() == "delete"_tok || peek() == "default"_tok) {
-								advance();
+							advance(); // consume '='
+							if (peek() == "delete"_tok) {
+								advance(); // consume 'delete'
+								// Deleted template conversion operators are registered but
+								// will be rejected if instantiation is attempted
+							} else if (peek() == "default"_tok) {
+								advance(); // consume 'default'
+								// Defaulted template conversion operators get compiler-generated impl
+								func_ref.set_is_implicit(true);
+								auto [block_node, block_ref] = create_node_ref(BlockNode());
+								func_ref.set_definition(block_node);
 							}
 							consume(";"_tok);
 						} else {
 							consume(";"_tok);
 						}
 
-						// Register as a member function (no-op template, just skip)
+						// Register as a member function template on the struct
+						struct_node.add_member_function(template_func_node, access);
+
+						auto qualified_name = StringTable::getOrInternStringHandle(
+							StringBuilder().append(struct_node.name()).append("::"sv).append(operator_name));
+						gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_func_node);
+						gTemplateRegistry.registerTemplate(operator_name, template_func_node);
+
 						current_template_param_names_ = std::move(saved_template_param_names);
 						return saved_position.success();
 					}
