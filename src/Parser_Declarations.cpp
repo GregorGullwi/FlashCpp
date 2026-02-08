@@ -457,66 +457,74 @@ ParseResult Parser::parse_type_and_name() {
             restore_token_position(saved_pos);;
         } else if (!peek().is_eof() && (peek() == "&"_tok || peek() == "&&"_tok)) {
             // This is a reference to array pattern: T (&arr)[N] or T (&&arr)[N]
+            // Also handles unnamed variant: T (&)[N] (used in function parameters)
             // Pattern: type (&identifier)[array_size] or type (&&identifier)[array_size]
             bool is_rvalue_ref = (peek() == "&&"_tok);
             advance(); // consume '&' or '&&'
             
-            // Parse identifier
-            if (!peek().is_identifier()) {
+            // Parse optional identifier (may be unnamed for function parameters)
+            Token ref_identifier;
+            bool has_name = false;
+            if (peek().is_identifier()) {
+                ref_identifier = peek_info();
+                has_name = true;
+                advance();
+            }
+            
+            // Expect closing ')'
+            if (peek() != ")"_tok) {
                 // Not a valid reference-to-array pattern, restore and continue
                 restore_token_position(saved_pos);
             } else {
-                Token ref_identifier = peek_info();
-                advance();
+                advance(); // consume ')'
                 
-                // Expect closing ')'
-                if (peek() != ")"_tok) {
-                    // Not a valid reference-to-array pattern, restore and continue
+                // Expect array size: '[' size ']'
+                if (peek() != "["_tok) {
+                    // Not a reference-to-array pattern, restore and continue
                     restore_token_position(saved_pos);
                 } else {
-                    advance(); // consume ')'
+                    advance(); // consume '['
                     
-                    // Expect array size: '[' size ']'
-                    if (peek() != "["_tok) {
-                        // Not a reference-to-array pattern, restore and continue
+                    // Parse array size expression
+                    auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+                    if (size_result.is_error()) {
                         restore_token_position(saved_pos);
                     } else {
-                        advance(); // consume '['
+                        std::optional<ASTNode> array_size_expr = size_result.node();
                         
-                        // Parse array size expression
-                        auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-                        if (size_result.is_error()) {
+                        // Expect closing ']'
+                        if (!consume("]"_tok)) {
                             restore_token_position(saved_pos);
                         } else {
-                            std::optional<ASTNode> array_size_expr = size_result.node();
-                            
-                            // Expect closing ']'
-                            if (!consume("]"_tok)) {
-                                restore_token_position(saved_pos);
+                            // Successfully parsed reference-to-array pattern
+                            // Set the type_spec to be a reference
+                            if (is_rvalue_ref) {
+                                type_spec.set_reference(true);  // rvalue reference
                             } else {
-                                // Successfully parsed reference-to-array pattern
-                                // Set the type_spec to be a reference
-                                if (is_rvalue_ref) {
-                                    type_spec.set_reference(true);  // rvalue reference
-                                } else {
-                                    type_spec.set_lvalue_reference(true);  // lvalue reference
-                                }
-                                type_spec.set_array(true);
-                                
-                                // Create declaration node
-                                auto decl_node = emplace_node<DeclarationNode>(
-                                    emplace_node<TypeSpecifierNode>(type_spec),
-                                    ref_identifier,
-                                    array_size_expr
-                                );
-                                
-                                if (custom_alignment.has_value()) {
-                                    decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
-                                }
-                                
-                                discard_saved_token(saved_pos);
-                                return ParseResult::success(decl_node);
+                                type_spec.set_lvalue_reference(true);  // lvalue reference
                             }
+                            type_spec.set_array(true);
+                            
+                            // Use a synthetic unnamed token if no name was provided
+                            if (!has_name) {
+                                ref_identifier = Token(Token::Type::Identifier, ""sv,
+                                    type_spec.token().line(), type_spec.token().column(),
+                                    type_spec.token().file_index());
+                            }
+                            
+                            // Create declaration node
+                            auto decl_node = emplace_node<DeclarationNode>(
+                                emplace_node<TypeSpecifierNode>(type_spec),
+                                ref_identifier,
+                                array_size_expr
+                            );
+                            
+                            if (custom_alignment.has_value()) {
+                                decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+                            }
+                            
+                            discard_saved_token(saved_pos);
+                            return ParseResult::success(decl_node);
                         }
                     }
                 }
@@ -8770,6 +8778,21 @@ ParseResult Parser::parse_friend_declaration()
 		} else {
 			break;
 		}
+	}
+
+	// Check if this is a friend class/struct declaration without 'class' keyword
+	// Pattern: friend std::numeric_limits<__max_size_type>;
+	// After parsing the type specifier (which includes template args), if ';' follows, it's a friend class
+	if (peek() == ";"_tok) {
+		advance(); // consume ';'
+		const auto& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		// Use the type_index to look up the full qualified name from gTypeInfo,
+		// since token() only holds a single identifier segment (e.g., 'std' not 'std::numeric_limits')
+		StringHandle friend_name = (type_spec.type_index() < gTypeInfo.size())
+			? gTypeInfo[type_spec.type_index()].name()
+			: type_spec.token().handle();
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name);
+		return saved_position.success(friend_node);
 	}
 
 	// Parse function name (may be qualified: ClassName::functionName, or an operator)
