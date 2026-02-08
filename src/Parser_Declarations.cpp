@@ -3117,9 +3117,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		StringHandle alias_name = alias_token.handle();
 		advance(); // consume alias name
 		
-		// Skip GCC __attribute__ that may appear between alias name and '='
+		// Skip C++ [[...]] and GCC __attribute__((...)) between alias name and '='
 		// e.g., using is_always_equal __attribute__((__deprecated__("..."))) = true_type;
-		skip_gcc_attributes();
+		// e.g., using result_type [[__deprecated__]] = size_t;
+		skip_cpp_attributes();
 		
 		// Check for '='
 		if (peek() != "="_tok) {
@@ -9344,10 +9345,13 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 	// Check if this is a type alias or namespace alias: using identifier = ...;
 	// We need to look ahead to see if there's an '=' after the first identifier
+	// (possibly with [[attributes]] in between)
 	SaveHandle lookahead_pos = save_token_position();
 	auto first_token = peek_info();
 	if (first_token.kind().is_identifier()) {
 		advance(); // consume identifier
+		// Skip attributes in lookahead: using name [[deprecated]] = type;
+		skip_cpp_attributes();
 		auto next_token = peek_info();
 		if (next_token.kind() == "="_tok) {
 			// This is either a type alias or namespace alias: using alias = type/namespace;
@@ -9358,6 +9362,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			if (!alias_token.kind().is_identifier()) {
 				return ParseResult::error("Expected alias name after 'using'", current_token_);
 			}
+
+			// Skip C++ attributes like [[__deprecated__]] between name and '='
+			skip_cpp_attributes();
 
 			// Consume '='
 			if (peek().is_eof() || peek_info().type() != Token::Type::Operator || peek() != "="_tok) {

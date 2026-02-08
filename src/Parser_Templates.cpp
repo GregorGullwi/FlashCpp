@@ -3406,9 +3406,19 @@ if (struct_type_info.getStructInfo()) {
 						}
 					}
 					
+					// Handle pack expansion '...' (e.g., _Up...)
+					if (peek() == "..."_tok) {
+						advance(); // consume '...'
+					}
+
 					// Optional parameter name (ignored)
 					if (peek().is_identifier()) {
 						advance();
+					}
+
+					// Also handle '...' after parameter name
+					if (peek() == "..."_tok) {
+						advance(); // consume '...'
 					}
 					
 					if (peek() == ","_tok) {
@@ -4909,7 +4919,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		SaveHandle lookahead_pos = save_token_position();
 		bool found_constructor = false;
 		
-		// Skip declaration specifiers using existing helper
+		// Skip declaration specifiers and 'explicit' in any order
+		// Both orderings are valid: 'explicit constexpr' and 'constexpr explicit'
 		parse_declaration_specifiers();
 		
 		// Also skip 'explicit' which is constructor-specific and not in parse_declaration_specifiers
@@ -4920,6 +4931,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				skip_balanced_parens();
 			}
 		}
+		
+		// Skip any remaining declaration specifiers after 'explicit'
+		// Handles 'explicit constexpr' where constexpr comes after explicit
+		// (Results intentionally discarded - this is a lookahead, actual values captured below)
+		parse_declaration_specifiers();
 		
 		// Check if next identifier is the struct name
 		// Also check the base template name for template specializations
@@ -4960,6 +4976,16 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					if (peek() == "("_tok) {
 						skip_balanced_parens();
 					}
+				}
+				
+				// Parse any remaining declaration specifiers after 'explicit'
+				// Handles 'explicit constexpr' where constexpr comes after explicit
+				{
+					auto more_specs = parse_declaration_specifiers();
+					if (more_specs.is_constexpr) specs.is_constexpr = true;
+					if (more_specs.is_consteval) specs.is_consteval = true;
+					if (more_specs.is_constinit) specs.is_constinit = true;
+					if (more_specs.is_inline) specs.is_inline = true;
 				}
 				
 				// Now at the constructor name - consume it
