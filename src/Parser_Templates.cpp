@@ -17742,11 +17742,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						// Skip member initializer list (for constructors)
 						if (peek() == ":"_tok) {
 							advance(); // consume ':'
-							while (!peek().is_eof() && peek() != "{"_tok) {
+							// Skip entries: name(args), name{args}, name<T>(args), ...
+							// Brace-init in the list must be skipped as balanced
+							// pairs so we don't confuse them with the function body '{'.
+							while (!peek().is_eof() && peek() != ";"_tok) {
 								if (peek() == "("_tok) {
 									skip_balanced_parens();
 								} else if (peek() == "{"_tok) {
-									break;
+									// Could be brace-init (member{val}) or function body.
+									// After balanced braces, if next is ',' there are more initializers;
+									// otherwise we've found the function body start.
+									skip_balanced_braces();
+									if (peek() != ","_tok) break;
 								} else {
 									advance();
 								}
@@ -18209,12 +18216,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Skip member initializer list (for constructors): ": member(args), ..."
 	if (peek() == ":"_tok) {
 		advance(); // consume ':'
-		// Skip initializer list entries: name(args), name{args}, name(args)...
-		while (!peek().is_eof() && peek() != "{"_tok) {
+		// Skip entries: name(args), name{args}, name<T>(args), ...
+		// Brace-init in the list (e.g., member{value}) must be skipped as balanced
+		// pairs so we don't confuse them with the function body '{'.
+		while (!peek().is_eof() && peek() != ";"_tok) {
 			if (peek() == "("_tok) {
 				skip_balanced_parens();
 			} else if (peek() == "{"_tok) {
-				break; // function body starts
+				// Could be brace-init (member{val}) or function body.
+				// After balanced braces, if next is ',' there are more initializers;
+				// otherwise we've found the function body start.
+				skip_balanced_braces();
+				if (peek() != ","_tok) break;
 			} else {
 				advance();
 			}
