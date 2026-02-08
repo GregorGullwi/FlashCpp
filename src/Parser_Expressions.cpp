@@ -1859,12 +1859,14 @@ void Parser::skip_function_trailing_specifiers()
 			break;
 		}
 		
-		// Handle pure virtual (= 0), default (= default), delete (= delete)
+		// Handle pure virtual (= 0) — note: = default and = delete are NOT consumed here;
+		// callers (struct body parsing, friend declarations, parse_static_member_function)
+		// handle those explicitly so they can record the semantic information.
 		if (token.type() == Token::Type::Punctuator && token.value() == "=") {
 			auto next = peek_info(1);
-			if ((next.value() == "0" || next.value() == "default" || next.value() == "delete")) {
+			if (next.value() == "0") {
 				advance(); // consume '='
-				advance(); // consume 0/default/delete
+				advance(); // consume 0
 				continue;
 			}
 		}
@@ -1903,6 +1905,73 @@ void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
 			type_spec.set_reference(false);  // false = lvalue reference
 		}
 	}
+}
+
+// Consume pointer (*) and reference (& / &&) modifiers, applying them to the type specifier.
+// Handles: T*, T**, T&, T&&, T*&, etc.
+void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
+	while (peek() == "*"_tok) {
+		advance();
+		type_spec.add_pointer_level(CVQualifier::None);
+	}
+	if (peek() == "&&"_tok) {
+		advance();
+		type_spec.set_reference(true);
+	} else if (peek() == "&"_tok) {
+		advance();
+		type_spec.set_reference(false);
+	}
+}
+
+// Consume pointer/reference modifiers after conversion operator target type
+// Handles: operator _Tp&(), operator _Tp*(), operator _Tp&&()
+void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type) {
+	consume_pointer_ref_modifiers(target_type);
+}
+
+// Parse a function type parameter list for template argument parsing.
+// Expects the parser to be positioned after the opening '(' of the parameter list.
+// Parses types separated by commas, handling pack expansion (...), C-style varargs,
+// and pointer/reference modifiers. Stops before ')' — caller must consume it.
+// Returns true if at least one type was parsed or the list is empty (valid).
+bool Parser::parse_function_type_parameter_list(std::vector<Type>& out_param_types) {
+	while (peek() != ")"_tok && !peek().is_eof()) {
+		// Handle C-style varargs: just '...' (without type before it)
+		if (peek() == "..."_tok) {
+			advance(); // consume '...'
+			break;
+		}
+		
+		auto param_type_result = parse_type_specifier();
+		if (!param_type_result.is_error() && param_type_result.node().has_value()) {
+			TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+			
+			// Handle pack expansion (...) after a parameter type
+			if (peek() == "..."_tok) {
+				advance(); // consume '...'
+			}
+			
+			// Apply pointer/reference modifiers to the parameter type
+			consume_pointer_ref_modifiers(param_type);
+			out_param_types.push_back(param_type.type());
+		} else {
+			return false; // Parsing failed
+		}
+		
+		if (peek() == ","_tok) {
+			advance(); // consume ','
+		} else {
+			break;
+		}
+	}
+	
+	// Handle trailing C-style varargs: _ArgTypes... ...
+	// After breaking out of the loop, we might have '...' before ')'
+	if (peek() == "..."_tok) {
+		advance(); // consume C-style varargs '...'
+	}
+	
+	return true;
 }
 
 // Helper to parse static member functions - reduces code duplication across three call sites
@@ -2023,6 +2092,28 @@ bool Parser::parse_static_member_function(
 			nullptr,  // dtor_node
 			current_template_param_names
 		});
+	} else if (peek() == "="_tok) {
+		// Handle = delete or = default
+		advance(); // consume '='
+		if (peek() == "delete"_tok) {
+			advance(); // consume 'delete'
+			if (!consume(";"_tok)) {
+				type_and_name_result = ParseResult::error("Expected ';' after '= delete'", peek_info());
+				return true;
+			}
+			// Deleted static member functions are not callable - skip registration
+			return true;
+		} else if (peek() == "default"_tok) {
+			advance(); // consume 'default'
+			member_func_ref.set_is_implicit(true);
+			if (!consume(";"_tok)) {
+				type_and_name_result = ParseResult::error("Expected ';' after '= default'", peek_info());
+				return true;
+			}
+		} else {
+			type_and_name_result = ParseResult::error("Expected 'delete' or 'default' after '='", peek_info());
+			return true;
+		}
 	} else if (!consume(";"_tok)) {
 		type_and_name_result = ParseResult::error("Expected '{' or ';' after static member function declaration", peek_info());
 		return true;

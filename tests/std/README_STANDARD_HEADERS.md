@@ -14,7 +14,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` `::__gnu_debug` qualified type |
+| `<vector>` | `test_std_vector.cpp` | ❌ Runtime Crash | Progressed past `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Blocked by `max_size_type.h` conversion operator template (`operator _Tp()`) |
 | `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Blocked by `optional:754` template parameter `>>>` closing |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~300ms (2026-02-06: Fixed `alignas` expression parsing) |
@@ -23,16 +23,16 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Blocked by `range_access.h` array reference parameter (`const _Tp (&)[_Nm]`) |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` `::__gnu_debug` qualified type (progressed past allocator, extern template) |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` `::__gnu_debug` qualified type |
+| `<string>` | `test_std_string.cpp` | ❌ Runtime Crash | Progressed past `refwrap.h` and `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Blocked by `array:293` deduction guide |
 | `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
 | `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Blocked by `max_size_type.h` conversion operator template |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
-| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
+| `<map>` | `test_std_map.cpp` | ❌ Runtime Crash | Progressed past `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
+| `<set>` | `test_std_set.cpp` | ❌ Runtime Crash | Progressed past `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Blocked by `array:293` deduction guide |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` `::__gnu_debug` qualified type (progressed past allocator, extern template) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Runtime Crash | Progressed past `refwrap.h` and `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
 | `<atomic>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (enum bitwise ops) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
@@ -90,14 +90,33 @@ The following parser issues were fixed to unblock standard header compilation:
 
 9. **`Base<T>::member(args)` qualified call expressions**: Statement parser now recognizes `Type<Args>::member(args)` as an expression (not a variable declaration) when `::` follows template arguments. Expression parser handles `::member(args)` after template argument disambiguation.
 
+### Recent Fixes (2026-02-08)
+
+The following parser issues were fixed to unblock standard header compilation:
+
+1. **Member function pointer types in template specialization patterns**: Added parsing of `_Res (_Class::*)(_ArgTypes...)` syntax in template arguments, including variants with `const`, `volatile`, `&`, `&&`, `noexcept`, and C-style varargs (`_ArgTypes... ...`). This unblocks `refwrap.h` used by `<string>`, `<iostream>`, and 10+ other headers.
+
+2. **Bare function types in template arguments**: Added parsing of `_Res(_ArgTypes...)` (bare function types, not pointers) in template specialization patterns. This handles `_Weak_result_type_impl<_Res(_ArgTypes...)>` patterns in `refwrap.h`.
+
+3. **`noexcept(expr)` on function types in template arguments**: Extended function type parsing in template arguments to handle `noexcept(_NE)` conditional noexcept on function types, function pointers, and member function pointers.
+
+4. **`= delete` / `= default` on static member functions**: Static member function declarations now accept `= delete;` and `= default;` syntax.
+
+5. **Conversion operators returning reference types**: Conversion operator detection in struct bodies now handles pointer (`*`) and reference (`&`, `&&`) modifiers after the target type (e.g., `operator _Tp&() const noexcept`).
+
+6. **Template context flags for `static_assert` deferral in member struct template bodies**: `parse_member_struct_template()` now properly sets `parsing_template_body_` and `current_template_param_names_` before parsing the body of both primary and partial specialization member struct templates. This ensures `static_assert` with template-dependent expressions is properly deferred. Unblocks `alloc_traits.h`.
+
+7. **`decltype` expression fallback with pack expansion**: Fixed `parse_decltype_specifier()` to save and restore the parser position before the expression when the fallback to dependent type is triggered. Previously, failed expression parsing (e.g., `decltype(func(args...))` with pack expansion) could leave the parser at an unpredictable position, causing the paren-skipping logic to malfunction. Unblocks trailing return types with pack expansion in `alloc_traits.h`.
+
 ### Current Blockers for Major Headers
 
 | Blocker | Affected Headers | Details |
 |---------|-----------------|---------|
-| `Base<T>::member()` call pattern | `<string>`, `<iostream>`, many others | `__allocator_base<_Tp>::deallocate(p, n)` — expression parser needs deeper template qualified call support |
+| `bad_any_cast` runtime crash | `<string>`, `<iostream>`, `<vector>`, `<map>`, `<set>` | Crash during deep template instantiation after `alloc_traits.h`; likely an ASTNode variant access issue |
 | `__cmpexch_failure_order2` overload | `<atomic>`, `<barrier>` | Constexpr function using bitwise ops on `memory_order` enum |
 | Unnamed `in_place_t` parameter | `<optional>` | `_Optional_base(in_place_t, _Args&&...)` unnamed parameter |
 | Memory corruption | `<ratio>`, `<chrono>` | glibc malloc assertion failure during parsing |
+| Deduction guide parsing | `<array>`, `<span>` | `array:293` deduction guide syntax not fully supported |
 
 ### Recent Fixes (2026-02-05)
 

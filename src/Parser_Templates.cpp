@@ -1705,11 +1705,15 @@ ParseResult Parser::parse_template_declaration() {
 							// Try to parse the target type
 							auto type_result = parse_type_specifier();
 							if (!type_result.is_error() && type_result.node().has_value()) {
+								TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();
+								
+								// Consume pointer/reference modifiers: operator _Tp&(), operator _Tp*(), etc.
+								consume_conversion_operator_target_modifiers(target_type);
+								
 								// Check for ()
 								if (peek() == "("_tok) {
 									is_conversion = true;
 									
-									const TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();
 									StringBuilder op_name_builder;
 									op_name_builder.append("operator ");
 									op_name_builder.append(target_type.getReadableString());
@@ -5695,6 +5699,20 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Parse struct body with simple member parsing
 		AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 		
+		// Set template context flags so static_assert deferral works correctly
+		// Use ScopeGuard to ensure flags are restored on all exit paths (including error returns)
+		auto saved_tpn_partial = std::move(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& name : template_param_names) {
+			current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
+		}
+		bool saved_ptb_partial = parsing_template_body_;
+		parsing_template_body_ = true;
+		ScopeGuard restore_template_context_partial([&]() {
+			current_template_param_names_ = std::move(saved_tpn_partial);
+			parsing_template_body_ = saved_ptb_partial;
+		});
+		
 		while (peek() != "}"_tok) {
 			// Check for access specifiers
 			if (peek().is_keyword()) {
@@ -6012,6 +6030,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 		
+		// ScopeGuard restore_template_context_partial handles restoration automatically
+		
 		// Expect '}' to close struct body
 		if (peek() != "}"_tok) {
 			return ParseResult::error("Expected '}' to close struct body", current_token_);
@@ -6094,6 +6114,20 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	// For template member structs, parse members but don't instantiate dependent types yet
 	// This matches C++ semantics where template members are parsed but not instantiated until needed
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+	
+	// Set template context flags so static_assert deferral works correctly
+	// Use ScopeGuard to ensure flags are restored on all exit paths (including error returns)
+	auto saved_template_param_names_body = std::move(current_template_param_names_);
+	current_template_param_names_.clear();
+	for (const auto& name : template_param_names) {
+		current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
+	}
+	bool saved_parsing_template_body = parsing_template_body_;
+	parsing_template_body_ = true;
+	ScopeGuard restore_template_context_body([&]() {
+		current_template_param_names_ = std::move(saved_template_param_names_body);
+		parsing_template_body_ = saved_parsing_template_body;
+	});
 	
 	while (peek() != "}"_tok) {
 		// Check for access specifiers
@@ -6305,6 +6339,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			return ParseResult::error("Expected '(' or ';' after member declaration", peek_info());
 		}
 	}
+	
+	// ScopeGuard restore_template_context_body handles restoration automatically
 
 	// Expect '}' to close struct body
 	if (peek() != "}"_tok) {
@@ -7648,10 +7684,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			SaveHandle paren_saved_pos = save_token_position();
 			advance(); // consume '('
 			
-			// Detect what's inside: *, &, or &&
+			// Detect what's inside: *, &, &&, or _Class::* (member pointer)
 			bool is_ptr = false;
 			bool is_lvalue_ref = false;
 			bool is_rvalue_ref = false;
+			bool is_member_ptr = false;
 			
 			if (!peek().is_eof()) {
 				if (peek() == "*"_tok) {
@@ -7668,6 +7705,23 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						is_rvalue_ref = true;
 						is_lvalue_ref = false;
 						advance(); // consume second '&'
+					}
+				} else if (peek().is_identifier()) {
+					// Check for member pointer syntax: _Class::*
+					SaveHandle member_check_pos = save_token_position();
+					advance(); // consume class name
+					if (peek() == "::"_tok) {
+						advance(); // consume '::'
+						if (peek() == "*"_tok) {
+							advance(); // consume '*'
+							is_member_ptr = true;
+							is_ptr = true;
+							discard_saved_token(member_check_pos);
+						} else {
+							restore_token_position(member_check_pos);
+						}
+					} else {
+						restore_token_position(member_check_pos);
 					}
 				}
 			}
@@ -7710,43 +7764,62 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						restore_token_position(paren_saved_pos);
 					}
 				} else if (peek() == "("_tok) {
-					// Function pointer/reference: T(&)(...) or T(*)(...) or T(&&)(...)
+					// Function pointer/reference/member: T(&)(...) or T(*)(...) or T(&&)(...) or T(Class::*)(...)
 					advance(); // consume '('
 					
-					// Parse parameter list (can be empty or have parameters)
+					// Parse parameter list using shared helper
 					std::vector<Type> param_types;
-					while (peek() != ")"_tok) {
-						// Parse parameter type - can be complex types
-						auto param_type_result = parse_type_specifier();
-						if (!param_type_result.is_error() && param_type_result.node().has_value()) {
-							const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-							param_types.push_back(param_type.type());
-						} else {
-							// Parsing failed - restore position
-							restore_token_position(paren_saved_pos);
-							break;
-						}
-						
-						// Check for comma
-						if (peek() == ","_tok) {
-							advance(); // consume ','
-						} else {
-							break;
-						}
+					bool param_parse_ok = parse_function_type_parameter_list(param_types);
+					
+					if (!param_parse_ok) {
+						// Parsing failed - restore position
+						restore_token_position(paren_saved_pos);
 					}
 					
-					if (peek() == ")"_tok) {
+					if (param_parse_ok && peek() == ")"_tok) {
 						advance(); // consume ')'
+						
+						// Parse trailing cv-qualifiers, ref-qualifiers, and noexcept
+						// For member function pointers: _Res (_Class::*)(_ArgTypes...) const & noexcept
+						// For function pointers: _Res(*)(_ArgTypes...) noexcept(_NE)
+						// For function references: _Res(&)(_ArgTypes...) noexcept
+						bool sig_is_const = false;
+						bool sig_is_volatile = false;
+						while (!peek().is_eof()) {
+							if ((is_member_ptr) && peek() == "const"_tok) {
+								sig_is_const = true;
+								advance();
+							} else if ((is_member_ptr) && peek() == "volatile"_tok) {
+								sig_is_volatile = true;
+								advance();
+							} else if (is_member_ptr && (peek() == "&"_tok || peek() == "&&"_tok)) {
+								advance();
+							} else if (peek() == "noexcept"_tok) {
+								advance(); // consume 'noexcept'
+								if (peek() == "("_tok) {
+									skip_balanced_parens();
+								}
+							} else {
+								break;
+							}
+						}
 						
 						// Successfully parsed function reference/pointer type!
 						FunctionSignature func_sig;
 						func_sig.return_type = type_node.type();
 						func_sig.parameter_types = std::move(param_types);
+						func_sig.is_const = sig_is_const;
+						func_sig.is_volatile = sig_is_volatile;
 						
 						if (is_ptr) {
 							type_node.add_pointer_level(CVQualifier::None);
 						}
 						type_node.set_function_signature(func_sig);
+						
+						if (is_member_ptr) {
+							// Member function pointer - mark as member pointer
+							type_node.set_member_class_name(StringHandle{});
+						}
 						
 						if (is_lvalue_ref) {
 							type_node.set_reference(false);  // lvalue reference
@@ -7756,7 +7829,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						
 						discard_saved_token(paren_saved_pos);
 						FLASH_LOG(Parser, Debug, "Parsed function ", 
-						          is_ptr ? "pointer" : (is_rvalue_ref ? "rvalue ref" : "lvalue ref"),
+						          is_member_ptr ? "member pointer" : (is_ptr ? "pointer" : (is_rvalue_ref ? "rvalue ref" : "lvalue ref")),
 						          " type in template argument");
 					} else {
 						// Parsing failed - restore position
@@ -7767,32 +7840,43 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					restore_token_position(paren_saved_pos);
 				}
 			} else {
-				restore_token_position(paren_saved_pos);
+				// Not (*, &, &&, or Class::*) - could be a bare function type: _Res(_ArgTypes...)
+				// Try to parse the contents as a parameter list
+				// Save position within the parens
+				SaveHandle func_type_saved_pos = save_token_position();
+				bool is_bare_func_type = false;
+				std::vector<Type> func_param_types;
+				
+				// Try to parse as function parameter list using shared helper
+				bool param_parse_ok = parse_function_type_parameter_list(func_param_types);
+				
+				if (param_parse_ok && peek() == ")"_tok) {
+					advance(); // consume ')'
+					is_bare_func_type = true;
+					
+					// Successfully parsed bare function type
+					FunctionSignature func_sig;
+					func_sig.return_type = type_node.type();
+					func_sig.parameter_types = std::move(func_param_types);
+					type_node.set_function_signature(func_sig);
+					
+					// Consume trailing noexcept or noexcept(expr) if present
+					skip_noexcept_specifier();
+					
+					discard_saved_token(func_type_saved_pos);
+					discard_saved_token(paren_saved_pos);
+					FLASH_LOG(Parser, Debug, "Parsed bare function type in template argument");
+				}
+				
+				if (!is_bare_func_type) {
+					restore_token_position(func_type_saved_pos);
+					restore_token_position(paren_saved_pos);
+				}
 			}
 		}
 
-		// Check for pointer modifiers (*) - for patterns like T*, T**, etc.
-		while (peek() == "*"_tok) {
-			advance(); // consume '*'
-			type_node.add_pointer_level(CVQualifier::None);
-		}
-		
-		// Check for reference modifier (&) or rvalue reference (&&)
-		if (peek() == "&&"_tok) {
-			// Rvalue reference - single && token
-			advance(); // consume '&&'
-			type_node.set_reference(true);  // is_rvalue = true
-		} else if (peek() == "&"_tok) {
-			advance(); // consume '&'
-			
-			// Check for second & (though lexer usually combines them)
-			if (peek() == "&"_tok) {
-				advance(); // consume second '&'
-				type_node.set_reference(true);  // is_rvalue = true
-			} else {
-				type_node.set_reference(false); // is_rvalue = false (lvalue reference)
-			}
-		}
+		// Apply pointer/reference modifiers to the type
+		consume_pointer_ref_modifiers(type_node);
 
 		// Check for array declarators (e.g., T[], T[N])
 		bool is_array_type = false;
