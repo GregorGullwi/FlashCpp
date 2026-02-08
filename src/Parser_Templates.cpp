@@ -5709,6 +5709,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Parse struct body with simple member parsing
 		AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 		
+		// Set template context flags so static_assert deferral works correctly
+		auto saved_tpn_partial = std::move(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& name : template_param_names) {
+			current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
+		}
+		bool saved_ptb_partial = parsing_template_body_;
+		parsing_template_body_ = true;
+		
 		while (peek() != "}"_tok) {
 			// Check for access specifiers
 			if (peek().is_keyword()) {
@@ -6026,6 +6035,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 		
+		// Restore template context flags
+		current_template_param_names_ = std::move(saved_tpn_partial);
+		parsing_template_body_ = saved_ptb_partial;
+		
 		// Expect '}' to close struct body
 		if (peek() != "}"_tok) {
 			return ParseResult::error("Expected '}' to close struct body", current_token_);
@@ -6108,6 +6121,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	// For template member structs, parse members but don't instantiate dependent types yet
 	// This matches C++ semantics where template members are parsed but not instantiated until needed
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+	
+	// Set template context flags so static_assert deferral works correctly
+	auto saved_template_param_names_body = std::move(current_template_param_names_);
+	current_template_param_names_.clear();
+	for (const auto& name : template_param_names) {
+		current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
+	}
+	bool saved_parsing_template_body = parsing_template_body_;
+	parsing_template_body_ = true;
 	
 	while (peek() != "}"_tok) {
 		// Check for access specifiers
@@ -6319,6 +6341,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			return ParseResult::error("Expected '(' or ';' after member declaration", peek_info());
 		}
 	}
+	
+	// Restore template context flags
+	current_template_param_names_ = std::move(saved_template_param_names_body);
+	parsing_template_body_ = saved_parsing_template_body;
 
 	// Expect '}' to close struct body
 	if (peek() != "}"_tok) {
