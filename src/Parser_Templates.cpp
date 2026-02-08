@@ -8532,16 +8532,51 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 	// Check if we have only variadic parameters - they can be empty
 	bool all_variadic = true;
+	bool has_variadic_pack = false;
 	for (const auto& template_param_node : template_params) {
 		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
 		if (!param.is_variadic()) {
 			all_variadic = false;
-			break;
+		} else {
+			has_variadic_pack = true;
 		}
 	}
 
 	if (arg_types.empty() && !all_variadic) {
 		return std::nullopt;  // No arguments to deduce from
+	}
+
+	// SFINAE: Check function parameter count against call argument count
+	// For non-variadic templates, argument count must be <= parameter count (some may have defaults)
+	// and >= count of parameters without default values
+	// For variadic templates, argument count must be >= non-pack parameter count
+	size_t func_param_count = func_decl.parameter_nodes().size();
+	if (!has_variadic_pack) {
+		if (arg_types.size() > func_param_count) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} > parameter count {} for non-variadic template '{}'",
+				recursion_depth, arg_types.size(), func_param_count, template_name);
+			return std::nullopt;
+		}
+		// Count required parameters (those without default values)
+		size_t required_params = 0;
+		for (const auto& param : func_decl.parameter_nodes()) {
+			if (param.is<DeclarationNode>() && !param.as<DeclarationNode>().has_default_value()) {
+				required_params++;
+			}
+		}
+		if (arg_types.size() < required_params) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for non-variadic template '{}'",
+				recursion_depth, arg_types.size(), required_params, template_name);
+			return std::nullopt;
+		}
+	} else {
+		// Variadic: count non-pack parameters (all params except the pack expansion)
+		size_t non_pack_params = func_param_count > 0 ? func_param_count - 1 : 0;
+		if (arg_types.size() < non_pack_params) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < non-pack parameter count {} for variadic template '{}'",
+				recursion_depth, arg_types.size(), non_pack_params, template_name);
+			return std::nullopt;
+		}
 	}
 
 	// Build template argument list
@@ -9180,6 +9215,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Add parameters with substituted types
 	// Note: We compute the mangled name AFTER adding parameters, since the mangled name
 	// includes parameter types in its encoding
+	auto saved_outer_pack_param_info = std::move(pack_param_info_);
+	pack_param_info_.clear();
 	size_t arg_type_index = 0;  // Track which argument type we're using
 	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 		const auto& param = func_decl.parameter_nodes()[i];
@@ -9256,8 +9293,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				}
 				
 				// Record the pack expansion size for use during body re-parsing
-				//size_t pack_size = arg_type_index - pack_start_index;
-				// We'll set this before re-parsing the body below
+				size_t pack_size = arg_type_index - pack_start_index;
+				// Store pack info for expansion during body re-parsing
+				pack_param_info_.push_back({param_decl.identifier_token().value(), pack_start_index, pack_size});
 				
 			} else {
 				// Regular parameter - substitute template parameters in the parameter type
@@ -9361,6 +9399,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
+		// Set up pack parameter info for pack expansion during body re-parsing
+		// Pack expansion in function calls (rest...) uses pack_param_info_ to expand
+		// the pack name to rest_0, rest_1, etc. without adding the original name to scope
+		// (adding to scope would break fold expressions which need the name unresolved)
+		bool saved_has_parameter_packs = has_parameter_packs_;
+		auto saved_pack_param_info = std::move(pack_param_info_);
+		if (!saved_pack_param_info.empty()) {
+			has_parameter_packs_ = true;
+			pack_param_info_ = saved_pack_param_info;
+		}
+
 		// Set up template parameter substitutions for type parameters
 		// This enables variable templates inside the function body to work correctly:
 		// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
@@ -9410,6 +9459,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Restore the template parameter substitutions
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
+
+		// Restore pack parameter info
+		has_parameter_packs_ = saved_has_parameter_packs;
+		pack_param_info_ = std::move(saved_outer_pack_param_info);
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
 			// After parsing, we need to substitute template parameters in the body
@@ -9451,6 +9504,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (orig_body.has_value()) {
 			new_func_ref.set_definition(orig_body.value());
 		}
+
+		// Restore outer pack parameter info (must happen on both branches)
+		pack_param_info_ = std::move(saved_outer_pack_param_info);
 	}
 
 	// Analyze the function body to determine if it should be inline-always
@@ -17821,8 +17877,48 @@ ASTNode Parser::substituteTemplateParameters(
 			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
 			std::string_view pack_name = sizeof_pack.pack_name();
 			
-			// Count pack elements using the helper function
+			// Count pack elements using the helper function (works when symbol table scope is active)
 			size_t num_pack_elements = count_pack_elements(pack_name);
+			
+			// Fallback: if count_pack_elements returns 0 (scope may have been exited),
+			// try to calculate from template_params/template_args by finding the variadic parameter
+			bool found_variadic = false;
+			if (num_pack_elements == 0 && !template_args.empty()) {
+				// The pack_name is the function parameter name (e.g., "rest")
+				// We need to find the corresponding variadic template parameter (e.g., "Rest")
+				// The mapping: function param type uses the template param name
+				size_t non_variadic_count = 0;
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					if (template_params[i].is<TemplateParameterNode>()) {
+						const auto& tparam = template_params[i].as<TemplateParameterNode>();
+						if (tparam.is_variadic()) {
+							found_variadic = true;
+						} else {
+							non_variadic_count++;
+						}
+					}
+				}
+				if (found_variadic && template_args.size() >= non_variadic_count) {
+					num_pack_elements = template_args.size() - non_variadic_count;
+				}
+			} else if (num_pack_elements > 0) {
+				found_variadic = true; // count_pack_elements found it
+			}
+			
+			// If no variadic parameter was found, check pack_param_info_ as well
+			if (!found_variadic) {
+				auto pack_size = get_pack_size(pack_name);
+				if (pack_size.has_value()) {
+					found_variadic = true;
+					num_pack_elements = *pack_size;
+				}
+			}
+			
+			// Error if pack name doesn't refer to a known parameter pack
+			if (!found_variadic) {
+				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack");
+				throw std::runtime_error("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
+			}
 			
 			// Create an integer literal with the pack size
 			StringBuilder pack_size_builder;
@@ -18018,12 +18114,34 @@ ASTNode Parser::substituteTemplateParameters(
 		const IfStatementNode& if_stmt = node.as<IfStatementNode>();
 		
 		ASTNode substituted_condition = substituteTemplateParameters(if_stmt.get_condition(), template_params, template_args);
+		
+		// For if constexpr, evaluate the condition at compile time and eliminate the dead branch
+		if (if_stmt.is_constexpr()) {
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_condition, eval_ctx);
+			if (eval_result.success()) {
+				bool condition_value = eval_result.as_int() != 0;
+				FLASH_LOG(Templates, Debug, "if constexpr condition evaluated to ", condition_value ? "true" : "false");
+				if (condition_value) {
+					return substituteTemplateParameters(if_stmt.get_then_statement(), template_params, template_args);
+				} else if (if_stmt.has_else()) {
+					return substituteTemplateParameters(*if_stmt.get_else_statement(), template_params, template_args);
+				} else {
+					// No else branch and condition is false - return empty block
+					return emplace_node<BlockNode>();
+				}
+			}
+		}
+		
 		ASTNode substituted_then = substituteTemplateParameters(if_stmt.get_then_statement(), template_params, template_args);
 		auto substituted_else = if_stmt.get_else_statement().has_value() ?
 			std::optional<ASTNode>(substituteTemplateParameters(*if_stmt.get_else_statement(), template_params, template_args)) :
 			std::nullopt;
+		auto substituted_init = if_stmt.get_init_statement().has_value() ?
+			std::optional<ASTNode>(substituteTemplateParameters(*if_stmt.get_init_statement(), template_params, template_args)) :
+			std::nullopt;
 		
-		return emplace_node<IfStatementNode>(substituted_condition, substituted_then, substituted_else);
+		return emplace_node<IfStatementNode>(substituted_condition, substituted_then, substituted_else, substituted_init, if_stmt.is_constexpr());
 
 	} else if (node.is<WhileStatementNode>()) {
 		// Handle while statements

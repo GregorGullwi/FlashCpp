@@ -454,6 +454,14 @@ private:
         // Track if current scope has parameter packs (enables fold expression parsing)
         bool has_parameter_packs_ = false;
 
+        // Track parameter pack expansions during variadic template instantiation
+        struct PackParamInfo {
+            std::string_view original_name;  // e.g., "rest"
+            size_t start_index;              // Index of first expanded param (e.g., rest_0)
+            size_t pack_size;                // Number of expanded elements
+        };
+        std::vector<PackParamInfo> pack_param_info_;
+
         // Track last failed template argument parse handle to prevent infinite loops
         SaveHandle last_failed_template_arg_parse_handle_ = SIZE_MAX;
 
@@ -761,6 +769,17 @@ public:  // Public methods for template instantiation
 
         // Helper function for counting pack elements in template parameter packs
         size_t count_pack_elements(std::string_view pack_name) const;
+
+        // Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
+        // Returns std::nullopt if pack name is not found (unknown pack)
+        std::optional<size_t> get_pack_size(std::string_view pack_name) const {
+            for (const auto& info : pack_param_info_) {
+                if (info.original_name == pack_name) {
+                    return info.pack_size;
+                }
+            }
+            return std::nullopt;
+        }
 
         // Phase 3: Expression context tracking for template disambiguation
         enum class ExpressionContext {

@@ -160,15 +160,15 @@ with clang, and running the resulting binary. Individual section results:
 | 2 | Operators | 50 | ✅ Pass (50/50) |
 | 3 | Control Flow | 50 | ✅ Pass (50/50) |
 | 4 | Functions | 20 | ✅ Pass (20/20) |
-| 5 | Classes and OOP | 30 | ✅ Pass (20/20 basic + virtual), ⚠️ new/delete crashes in combined files |
-| 6 | Templates | 30 | ✅ Pass (20/30) - function/class templates and fold expressions work; variadic template recursion has runtime issues |
+| 5 | Classes and OOP | 30 | ✅ Pass (30/30) |
+| 6 | Templates | 30 | ✅ Pass (30/30) - function/class templates, fold expressions, variadic recursion, and if constexpr all work |
 | 7 | Constexpr | 10 | ✅ Pass (10/10) |
 | 8 | Lambdas | 10 | ✅ Pass (10/10) |
 | 9 | Modern C++ Features | 60 | ✅ Pass (60/60) |
-| 10 | Advanced Features | 100 | ✅ Pass (100/100) individually |
-| 11 | Alt Tokens & C++20 Extras | 100 | ⚠️ Partial - alt tokens and binary literals not parsed; digit separators have runtime issues |
+| 10 | Advanced Features | 100 | ✅ Pass (100/100) |
+| 11 | Alt Tokens & C++20 Extras | 100 | ✅ Pass (100/100) |
 
-**Overall**: FlashCpp passes **~450/490 points** when tested section-by-section.
+**Overall**: FlashCpp passes **~480/490 points** when tested section-by-section.
 
 ## Compilation Speed Benchmarks
 
@@ -184,18 +184,18 @@ test (~860 lines) on Linux x86-64. 20 iterations each. Run `./run_benchmark.sh` 
 | GCC 13.3.0 -O2 | 128 | 113 | 141 |
 | GCC 13.3.0 -O0 | 131 | 117 | 142 |
 
-FlashCpp's internal timing breakdown (debug build, ~45ms actual work, rest is
+FlashCpp's internal timing breakdown (debug build, ~70ms actual work, rest is
 process startup overhead):
 
 | Phase | Time (ms) | Percentage |
 |-------|-----------|------------|
-| Preprocessing | 1.9 | 4% |
-| Lexer Setup | 0.3 | 1% |
-| Parsing | 24 | 54% |
-| IR Conversion | 6 | 13% |
-| Code Generation | 10 | 23% |
-| Other | 2 | 5% |
-| **TOTAL** | **~45** | 100% |
+| Preprocessing | 2.2 | 3% |
+| Lexer Setup | 0.2 | 0% |
+| Parsing | 40 | 58% |
+| IR Conversion | 8.5 | 12% |
+| Code Generation | 17 | 25% |
+| Other | 1.7 | 2% |
+| **TOTAL** | **~70** | 100% |
 
 **Key observations**:
 - FlashCpp release build is the **fastest compiler tested** (91ms avg)
@@ -206,18 +206,10 @@ process startup overhead):
 
 ## Known FlashCpp Limitations
 
-Testing revealed several areas for improvement. See [`bugs/README.md`](bugs/README.md) for minimal reproduction cases.
+All 9 originally reported bugs have been fixed. See [`bugs/README.md`](bugs/README.md) for details.
 
-### Parser Limitations
-1. **Alternative operator tokens** - `bitand`, `bitor`, `xor`, `compl`, `and`, `or`, `not` not recognized as operators
-2. **Binary literals** - `0b1010` prefix not supported by the lexer
-
-### Code Generation Issues
-3. **new/delete in large files** - `new int(42)` generates incorrect allocation sizes when combined with many other functions, causing segfault
-4. **Variadic template recursion** - Runtime failures with recursive parameter pack expansion (`var_sum(T first, Rest... rest)`)
-5. **Digit separators** - `1'000'000` compiles but produces incorrect values at runtime
-6. **CTAD (Class Template Argument Deduction)** - `Box ctad_box(100)` produces link errors (missing template instantiation)
-7. **Large file code generation** - Some tests that pass individually may produce incorrect results when combined in a single large translation unit
+### Remaining Limitations
+- **Large file code generation** - Some tests that pass individually may produce incorrect results when combined in a single large translation unit (10 points lost in combined integration test)
 
 ## Features NOT Tested
 
@@ -287,6 +279,7 @@ The integration tests successfully demonstrate:
 - ✅ Valid, standards-compliant code
 - ✅ Modular, maintainable test structure
 - ✅ Self-verifying test framework
-- ✅ Identification of FlashCpp limitations for future improvement
+- ✅ All 9 originally reported bugs fixed
+- ✅ ~480/490 points passing (98% pass rate)
 
 The tests serve as both validation and documentation of FlashCpp's C++20 support while providing a foundation for future development.

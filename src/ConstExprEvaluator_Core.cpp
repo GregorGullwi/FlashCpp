@@ -50,18 +50,15 @@ public:
 		// For SizeofPackNode (sizeof... operator)
 		if (std::holds_alternative<SizeofPackNode>(expr)) {
 			const auto& sizeof_pack = std::get<SizeofPackNode>(expr);
-			// During template instantiation, sizeof... should be replaced with the actual pack size
-			// If we reach here in constant expression evaluation, the pack wasn't substituted
-			// This is an error unless we can look up the pack size from context
 			std::string_view pack_name = sizeof_pack.pack_name();
 			
-			// Try to get pack size from context (if available during template instantiation)
+			// Try to get pack size from the parser's pack parameter info
 			if (context.parser) {
-				// Check if this is a template parameter pack
-				// For now, return an error - proper support requires tracking pack expansions
-				return EvalResult::error("sizeof... requires template instantiation context for pack: " + 
-				                         std::string(pack_name),
-				                         EvalErrorType::TemplateDependentExpression);
+				auto pack_size = context.parser->get_pack_size(pack_name);
+				if (pack_size.has_value()) {
+					return EvalResult::from_int(static_cast<long long>(*pack_size));
+				}
+				return EvalResult::error("sizeof... requires template instantiation context for pack: " + std::string(pack_name), EvalErrorType::TemplateDependentExpression);
 			}
 			
 			return EvalResult::error("sizeof... operator requires template context");

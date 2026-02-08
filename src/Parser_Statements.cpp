@@ -1549,6 +1549,9 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 		return false;
 	}
 
+	// CTAD only applies to unresolved template class names, not already-instantiated structs.
+	// When explicit template args are provided (e.g., Processor<char>), the type has a valid
+	// type_index_ from template instantiation, so CTAD should not override it.
 	if (type_specifier.type() != Type::UserDefined && type_specifier.type() != Type::Struct) {
 		return false;
 	}
@@ -1558,15 +1561,19 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 		return false;
 	}
 
-	if (!gTemplateRegistry.lookupTemplate(class_name).has_value()) {
+	// If the type already has a non-zero size, it was explicitly instantiated with template
+	// arguments (e.g., Processor<char>). CTAD should only apply when no template args were
+	// specified (e.g., Box b(42)), in which case the template has size 0 pre-deduction.
+	if (type_specifier.size_in_bits() > 0) {
 		return false;
 	}
 
-	auto guide_nodes = gTemplateRegistry.lookup_deduction_guides(class_name);
-	if (guide_nodes.empty()) {
+	auto template_opt = gTemplateRegistry.lookupTemplate(class_name);
+	if (!template_opt.has_value()) {
 		return false;
 	}
 
+	// Get argument types from the initializer list
 	std::vector<TypeSpecifierNode> argument_types;
 	argument_types.reserve(init_list.initializers().size());
 	for (const auto& arg_expr : init_list.initializers()) {
@@ -1577,16 +1584,95 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 		argument_types.push_back(*arg_type_opt);
 	}
 
-	std::vector<TemplateTypeArg> deduced_args;
-	for (const auto& guide_node : guide_nodes) {
-		if (!guide_node.is<DeductionGuideNode>()) {
+	// Try explicit deduction guides first
+	auto guide_nodes = gTemplateRegistry.lookup_deduction_guides(class_name);
+	if (!guide_nodes.empty()) {
+		std::vector<TemplateTypeArg> deduced_args;
+		for (const auto& guide_node : guide_nodes) {
+			if (!guide_node.is<DeductionGuideNode>()) {
+				continue;
+			}
+			const auto& guide = guide_node.as<DeductionGuideNode>();
+			if (deduce_template_arguments_from_guide(guide, argument_types, deduced_args)) {
+				if (instantiate_deduced_template(class_name, deduced_args, type_specifier)) {
+					return true;
+				}
+			}
+		}
+	}
+
+	// Implicit CTAD: deduce template arguments from constructor parameters
+	if (!template_opt->is<TemplateClassDeclarationNode>()) {
+		return false;
+	}
+	const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
+	const auto& template_params = template_class.template_parameters();
+	const auto& struct_decl = template_class.class_decl_node();
+
+	// Build template parameter name set for matching
+	std::unordered_map<std::string_view, size_t> tparam_name_to_index;
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		if (template_params[i].is<TemplateParameterNode>()) {
+			const auto& tparam = template_params[i].as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				tparam_name_to_index[tparam.name()] = i;
+			}
+		}
+	}
+
+	// Try each constructor to deduce template arguments
+	for (const auto& member_func : struct_decl.member_functions()) {
+		if (!member_func.is_constructor) continue;
+
+		// Get parameter nodes from either ConstructorDeclarationNode or FunctionDeclarationNode
+		const std::vector<ASTNode>* params_ptr = nullptr;
+		if (member_func.function_declaration.is<ConstructorDeclarationNode>()) {
+			params_ptr = &member_func.function_declaration.as<ConstructorDeclarationNode>().parameter_nodes();
+		} else if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+			params_ptr = &member_func.function_declaration.as<FunctionDeclarationNode>().parameter_nodes();
+		} else {
 			continue;
 		}
-		const auto& guide = guide_node.as<DeductionGuideNode>();
-		if (deduce_template_arguments_from_guide(guide, argument_types, deduced_args)) {
-			if (instantiate_deduced_template(class_name, deduced_args, type_specifier)) {
-				return true;
+		const auto& params = *params_ptr;
+
+		if (params.size() != argument_types.size()) continue;
+
+		// Try to deduce template arguments from constructor parameter types
+		std::vector<TemplateTypeArg> deduced_args(template_params.size());
+		std::vector<bool> deduced(template_params.size(), false);
+		bool match = true;
+
+		for (size_t i = 0; i < params.size() && match; ++i) {
+			if (!params[i].is<DeclarationNode>()) { match = false; break; }
+			const auto& param_decl = params[i].as<DeclarationNode>();
+			ASTNode param_type_node = param_decl.type_node();
+			if (!param_type_node.is<TypeSpecifierNode>()) { match = false; break; }
+			const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+			std::string_view param_type_name = param_type.token().value();
+
+			auto tparam_it = tparam_name_to_index.find(param_type_name);
+			if (tparam_it != tparam_name_to_index.end()) {
+				size_t idx = tparam_it->second;
+				deduced_args[idx] = TemplateTypeArg(argument_types[i]);
+				deduced[idx] = true;
 			}
+		}
+
+		if (!match) continue;
+
+		// Check all template type params were deduced
+		bool all_deduced = true;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			if (tparam_name_to_index.count(template_params[i].is<TemplateParameterNode>()
+				? template_params[i].as<TemplateParameterNode>().name() : "") > 0 && !deduced[i]) {
+				all_deduced = false;
+				break;
+			}
+		}
+		if (!all_deduced) continue;
+
+		if (instantiate_deduced_template(class_name, deduced_args, type_specifier)) {
+			return true;
 		}
 	}
 
