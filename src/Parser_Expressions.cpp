@@ -9646,6 +9646,7 @@ ParseResult Parser::parse_if_statement() {
                 // Skip the else-branch if present
                 if (peek() == "else"_tok) {
                     advance(); // consume 'else'
+                    skip_cpp_attributes(); // Skip [[likely]]/[[unlikely]] after else
                     // Recursively skip the else branch, which may be:
                     // 1. A block: else { ... }
                     // 2. An else-if chain: else if (...) { ... } else ...
@@ -9658,6 +9659,7 @@ ParseResult Parser::parse_if_statement() {
                             advance(); // consume 'if'
                             if (peek() == "constexpr"_tok) advance();
                             skip_balanced_parens(); // skip condition
+                            skip_cpp_attributes(); // Skip [[likely]]/[[unlikely]] after if condition
                             // Skip then-branch (block or statement)
                             if (peek() == "{"_tok) {
                                 skip_balanced_braces();
@@ -9668,6 +9670,7 @@ ParseResult Parser::parse_if_statement() {
                             // Continue loop to handle else/else-if after this branch
                             if (peek() == "else"_tok) {
                                 advance(); // consume 'else'
+                                skip_cpp_attributes(); // Skip [[likely]]/[[unlikely]] after inner else
                                 continue; // loop handles next branch
                             }
                             break;
@@ -9692,6 +9695,7 @@ ParseResult Parser::parse_if_statement() {
                 // Parse the else-branch if present
                 if (peek() == "else"_tok) {
                     consume("else"_tok);
+                    skip_cpp_attributes(); // Skip [[likely]]/[[unlikely]] after else
                     ParseResult else_result;
                     if (peek() == "{"_tok) {
                         else_result = parse_block();
