@@ -2175,6 +2175,7 @@ ParseResult Parser::parse_decltype_specifier()
 
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
 	// In decltype context, < after qualified-id should strongly prefer template arguments over comparison
+	SaveHandle expr_start_pos = save_token_position();
 	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 	if (expr_result.is_error()) {
 		// If we're in a template context and the expression parsing fails (e.g., due to
@@ -2183,7 +2184,9 @@ ParseResult Parser::parse_decltype_specifier()
 		// will happen during template instantiation when the dependent types are known.
 		if (parsing_template_body_ || !current_template_param_names_.empty()) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for failed decltype expression in template context");
-			// Skip to closing ')' to recover parsing
+			// Restore position to start of expression for reliable paren counting
+			restore_token_position(expr_start_pos);
+			// Skip to closing ')' to recover parsing - depth 1 for the opening decltype(
 			int paren_depth = 1;
 			while (!peek().is_eof() && paren_depth > 0) {
 				if (peek() == "("_tok) {
@@ -2202,8 +2205,10 @@ ParseResult Parser::parse_decltype_specifier()
 			TypeSpecifierNode dependent_type(Type::Auto, TypeQualifier::None, 0);
 			return saved_position.success(emplace_node<TypeSpecifierNode>(dependent_type));
 		}
+		discard_saved_token(expr_start_pos);
 		return expr_result;
 	}
+	discard_saved_token(expr_start_pos);
 
 	// Expect ')'
 	if (!consume(")"_tok)) {
