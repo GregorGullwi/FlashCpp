@@ -832,27 +832,25 @@
 			return true;
 		}
 		std::string filename(token.substr(1, token.size() - 2));
+		bool is_quoted_include = (token.front() == '"');
 		bool found = false;
 		if (settings_.isVerboseMode()) {
 			FLASH_LOG(Lexer, Trace, "Looking for include file: ", filename);
 		}
-		for (const auto& include_dir : settings_.getIncludeDirs()) {
-			std::filesystem::path include_path(include_dir);
-			include_path /= filename;  // Use /= operator which handles path separators correctly
+		// For quoted includes (#include "file.h"), first search the directory of the current file
+		// This is standard C/C++ behavior per [cpp.include]
+		if (is_quoted_include && !current_file.empty()) {
+			std::filesystem::path current_dir = std::filesystem::path(current_file).parent_path();
+			std::filesystem::path include_path = current_dir / filename;
 			std::string include_file = include_path.string();
 			if (settings_.isVerboseMode()) {
-				FLASH_LOG(Lexer, Trace, "  Checking path: ", include_file, " - exists: ", std::filesystem::exists(include_file));
+				FLASH_LOG(Lexer, Trace, "  Checking current file dir: ", include_file, " - exists: ", std::filesystem::exists(include_file));
 			}
-			// Check if the file exists before trying to read it
-			// This distinguishes between "file not found" and "file found but had preprocessing error"
 			if (std::filesystem::exists(include_file)) {
-				// File exists, try to read and preprocess it
 				if (settings_.isVerboseMode()) {
-					FLASH_LOG(Lexer, Trace, "Found include file, attempting to read: ", include_file);
+					FLASH_LOG(Lexer, Trace, "Found include file in current dir, attempting to read: ", include_file);
 				}
 				if (!readFile(include_file, include_line_number)) {
-					// Preprocessing failed (e.g., #error directive)
-					// Return false to propagate the error up
 					if (settings_.isVerboseMode()) {
 						FLASH_LOG(Lexer, Trace, "readFile returned false for: ", include_file);
 					}
@@ -860,7 +858,35 @@
 				}
 				tree_.addDependency(current_file, include_file);
 				found = true;
-				break;
+			}
+		}
+		if (!found) {
+			for (const auto& include_dir : settings_.getIncludeDirs()) {
+				std::filesystem::path include_path(include_dir);
+				include_path /= filename;  // Use /= operator which handles path separators correctly
+				std::string include_file = include_path.string();
+				if (settings_.isVerboseMode()) {
+					FLASH_LOG(Lexer, Trace, "  Checking path: ", include_file, " - exists: ", std::filesystem::exists(include_file));
+				}
+				// Check if the file exists before trying to read it
+				// This distinguishes between "file not found" and "file found but had preprocessing error"
+				if (std::filesystem::exists(include_file)) {
+					// File exists, try to read and preprocess it
+					if (settings_.isVerboseMode()) {
+						FLASH_LOG(Lexer, Trace, "Found include file, attempting to read: ", include_file);
+					}
+					if (!readFile(include_file, include_line_number)) {
+						// Preprocessing failed (e.g., #error directive)
+						// Return false to propagate the error up
+						if (settings_.isVerboseMode()) {
+							FLASH_LOG(Lexer, Trace, "readFile returned false for: ", include_file);
+						}
+						return false;
+					}
+					tree_.addDependency(current_file, include_file);
+					found = true;
+					break;
+				}
 			}
 		}
 		if (!found) {
