@@ -766,14 +766,14 @@ public:  // Public methods for template instantiation
         size_t count_pack_elements(std::string_view pack_name) const;
 
         // Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
-        size_t get_pack_size(std::string_view pack_name) const {
+        // Returns std::nullopt if pack name is not found (unknown pack)
+        std::optional<size_t> get_pack_size(std::string_view pack_name) const {
             for (const auto& info : pack_param_info_) {
                 if (info.original_name == pack_name) {
                     return info.pack_size;
                 }
             }
-            // Fallback: if not found in pack_param_info_, pack is empty (0 elements)
-            return 0;
+            return std::nullopt;
         }
 
         // Phase 3: Expression context tracking for template disambiguation

@@ -17833,12 +17833,12 @@ ASTNode Parser::substituteTemplateParameters(
 			
 			// Fallback: if count_pack_elements returns 0 (scope may have been exited),
 			// try to calculate from template_params/template_args by finding the variadic parameter
+			bool found_variadic = false;
 			if (num_pack_elements == 0 && !template_args.empty()) {
 				// The pack_name is the function parameter name (e.g., "rest")
 				// We need to find the corresponding variadic template parameter (e.g., "Rest")
 				// The mapping: function param type uses the template param name
 				size_t non_variadic_count = 0;
-				bool found_variadic = false;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (template_params[i].is<TemplateParameterNode>()) {
 						const auto& tparam = template_params[i].as<TemplateParameterNode>();
@@ -17852,6 +17852,23 @@ ASTNode Parser::substituteTemplateParameters(
 				if (found_variadic && template_args.size() >= non_variadic_count) {
 					num_pack_elements = template_args.size() - non_variadic_count;
 				}
+			} else if (num_pack_elements > 0) {
+				found_variadic = true; // count_pack_elements found it
+			}
+			
+			// If no variadic parameter was found, check pack_param_info_ as well
+			if (!found_variadic) {
+				auto pack_size = get_pack_size(pack_name);
+				if (pack_size.has_value()) {
+					found_variadic = true;
+					num_pack_elements = *pack_size;
+				}
+			}
+			
+			// Error if pack name doesn't refer to a known parameter pack
+			if (!found_variadic) {
+				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack");
+				throw std::runtime_error("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
 			}
 			
 			// Create an integer literal with the pack size

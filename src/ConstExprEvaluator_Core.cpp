@@ -54,8 +54,11 @@ public:
 			
 			// Try to get pack size from the parser's pack parameter info
 			if (context.parser) {
-				size_t pack_size = context.parser->get_pack_size(pack_name);
-				return EvalResult::from_int(static_cast<long long>(pack_size));
+				auto pack_size = context.parser->get_pack_size(pack_name);
+				if (pack_size.has_value()) {
+					return EvalResult::from_int(static_cast<long long>(*pack_size));
+				}
+				return EvalResult::error("sizeof... requires template instantiation context for pack: " + std::string(pack_name), EvalErrorType::TemplateDependentExpression);
 			}
 			
 			return EvalResult::error("sizeof... operator requires template context");
