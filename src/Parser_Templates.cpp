@@ -17497,19 +17497,44 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 
 		// Handle 'operator' keyword for operator member functions
-		// (e.g., ClassName::operator==)
+		// (e.g., ClassName::operator==, ClassName::operator(), ClassName::operator[])
 		if (peek() == "operator"_tok) {
 			function_name_token = peek_info();
 			advance(); // consume 'operator'
 			// Build the operator name (operator==, operator(), operator[], etc.)
 			StringBuilder op_builder;
 			op_builder.append("operator"sv);
-			while (!peek().is_eof() && peek() != "("_tok) {
-				// Stop if we hit something that's clearly not part of the operator name
-				if (peek() == "{"_tok || peek() == ";"_tok) break;
-				op_builder.append(peek_info().value());
-				advance();
+
+			// Special handling for operator() - '(' followed by ')' is the call operator name
+			if (peek() == "("_tok) {
+				auto next_saved = save_token_position();
+				advance(); // consume '('
+				if (peek() == ")"_tok) {
+					advance(); // consume ')'
+					discard_saved_token(next_saved);
+					op_builder.append("()"sv);
+				} else {
+					// Not operator() — the '(' starts the parameter list
+					restore_token_position(next_saved);
+				}
 			}
+			// Special handling for operator[] - '[' followed by ']'
+			else if (peek() == "["_tok) {
+				advance(); // consume '['
+				if (peek() == "]"_tok) {
+					advance(); // consume ']'
+					op_builder.append("[]"sv);
+				}
+			}
+			else {
+				// Other operators: consume tokens until we hit '(' (parameter list start)
+				while (!peek().is_eof() && peek() != "("_tok) {
+					if (peek() == "{"_tok || peek() == ";"_tok) break;
+					op_builder.append(peek_info().value());
+					advance();
+				}
+			}
+
 			std::string_view op_name = op_builder.commit();
 			function_name_token = Token(Token::Type::Identifier, op_name,
 				function_name_token.line(), function_name_token.column(),
