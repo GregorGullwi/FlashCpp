@@ -17491,6 +17491,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	while (peek() == "::"_tok) {
 		advance(); // consume '::'
 
+		// The previous function_name_token was actually a nested class name,
+		// not a function name. Update class_name to track the innermost class.
+		class_name = function_name_token.value();
+
 		// Handle 'template' keyword disambiguator (e.g., ::template member<Args>)
 		if (peek() == "template"_tok) {
 			advance(); // consume 'template'
