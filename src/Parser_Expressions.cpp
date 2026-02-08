@@ -1796,10 +1796,13 @@ bool Parser::parse_constructor_exception_specifier()
 // Skip function trailing specifiers and attributes after parameters
 // Handles: const, volatile, &, &&, noexcept, noexcept(...), override, final, = 0, = default, = delete
 // and __attribute__((...))
-void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers* out_quals)
+void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals)
 {
 	// Clear any previously parsed requires clause
 	last_parsed_requires_clause_.reset();
+	
+	// Reset output qualifiers
+	out_quals = FlashCpp::MemberQualifiers{};
 	
 	while (!peek().is_eof()) {
 		auto token = peek_info();
@@ -1807,22 +1810,20 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers* out_q
 		// Handle cv-qualifiers
 		if (token.type() == Token::Type::Keyword && 
 			(token.value() == "const" || token.value() == "volatile")) {
-			if (out_quals) {
-				if (token.value() == "const") out_quals->is_const = true;
-				else out_quals->is_volatile = true;
-			}
+			if (token.value() == "const") out_quals.is_const = true;
+			else out_quals.is_volatile = true;
 			advance();
 			continue;
 		}
 		
 		// Handle ref-qualifiers (& and &&)
 		if (peek() == "&"_tok) {
-			if (out_quals) out_quals->is_lvalue_ref = true;
+			out_quals.is_lvalue_ref = true;
 			advance();
 			continue;
 		}
 		if (peek() == "&&"_tok) {
-			if (out_quals) out_quals->is_rvalue_ref = true;
+			out_quals.is_rvalue_ref = true;
 			advance();
 			continue;
 		}
@@ -2034,7 +2035,8 @@ bool Parser::parse_static_member_function(
 	member_func_ref.set_is_constexpr(is_static_constexpr);
 
 	// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
-	skip_function_trailing_specifiers();
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
 
 	// Check for trailing requires clause: static int func(int x) requires constraint { ... }
 	// This is common in C++20 code, e.g., requires requires { expr; } 

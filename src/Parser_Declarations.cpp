@@ -2053,7 +2053,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Skip optional qualifiers after parameter list using existing helper
 		// Note: skip_function_trailing_specifiers() doesn't skip override/final as they have semantic meaning
 		// For out-of-line definitions, we also skip override/final as they're already recorded in the declaration
-		skip_function_trailing_specifiers();
+		FlashCpp::MemberQualifiers member_quals;
+		skip_function_trailing_specifiers(member_quals);
 		
 		// Also skip override/final for out-of-line definitions
 		while (!peek().is_eof()) {
@@ -2759,7 +2760,8 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	}
 	
 	// Skip optional qualifiers (noexcept, const, etc.) using existing helper
-	skip_function_trailing_specifiers();
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
 	
 	// Skip trailing requires clause for out-of-line constructor/destructor definitions
 	skip_trailing_requires_clause();
@@ -8879,7 +8881,8 @@ ParseResult Parser::parse_friend_declaration()
 	}
 
 	// Skip optional qualifiers after parameter list using existing helper
-	skip_function_trailing_specifiers();
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
 
 	// Skip trailing requires clause on friend functions
 	skip_trailing_requires_clause();

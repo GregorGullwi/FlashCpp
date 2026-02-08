@@ -4685,7 +4685,8 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// In C++, the order after parameters is: cv-qualifiers -> ref-qualifier -> noexcept -> trailing-return-type
 	// We need to skip cv-qualifiers, ref-qualifier, and noexcept BEFORE checking for trailing return type
 	// Example: template<typename T> auto func(T x) const noexcept -> decltype(x + 1)
-	skip_function_trailing_specifiers();
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
 
 	// Skip trailing requires clause during template instantiation
 	// (the constraint was already evaluated during template argument deduction)
@@ -5225,7 +5226,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						}
 
 						// Skip trailing specifiers (const, noexcept, etc.)
-						skip_function_trailing_specifiers();
+						FlashCpp::MemberQualifiers member_quals;
+						skip_function_trailing_specifiers(member_quals);
 						skip_trailing_requires_clause();
 
 						// Create template function declaration node

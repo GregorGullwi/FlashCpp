@@ -578,7 +578,8 @@ ParseResult Parser::parse_variable_declaration()
 			first_init_expr = init_result;
 			// After closing ), skip any trailing specifiers (this might be a function forward declaration)
 			// e.g., void func() noexcept; or void func() const;
-			skip_function_trailing_specifiers();
+			FlashCpp::MemberQualifiers member_quals;
+			skip_function_trailing_specifiers(member_quals);
 		} else {
 			return ParseResult::error("Expected ')' after direct initialization arguments", current_token_);
 		}
