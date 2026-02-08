@@ -704,6 +704,19 @@ struct OutOfLineMemberFunction {
 	ASTNode function_node;                  // FunctionDeclarationNode
 	SaveHandle body_start;                  // Handle to saved position of function body for re-parsing
 	std::vector<StringHandle> template_param_names;  // Names of template parameters
+	// For nested templates (member function templates of class templates):
+	// template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
+	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
+	std::vector<ASTNode> inner_template_params;
+	std::vector<StringHandle> inner_template_param_names;
+};
+
+// Outer template parameter bindings for member function templates of class templates.
+// Stored when a TemplateFunctionDeclarationNode is copied during class template instantiation.
+// Used during inner template instantiation to resolve outer template params (e.g., T→int).
+struct OuterTemplateBinding {
+	std::vector<StringHandle> param_names;  // Outer param names (e.g., ["T"])
+	std::vector<TemplateTypeArg> param_args;  // Concrete types (e.g., [int])
 };
 
 // Out-of-line template static member variable definition
@@ -1337,6 +1350,21 @@ public:
 		return {};
 	}
 
+	// Register outer template parameter bindings for a member function template
+	// of an instantiated class template (e.g., Container<int>::convert has T→int)
+	void registerOuterTemplateBinding(std::string_view qualified_name, OuterTemplateBinding binding) {
+		outer_template_bindings_[std::string(qualified_name)] = std::move(binding);
+	}
+
+	// Get outer template parameter bindings for a member function template
+	const OuterTemplateBinding* getOuterTemplateBinding(std::string_view qualified_name) const {
+		auto it = outer_template_bindings_.find(qualified_name);
+		if (it != outer_template_bindings_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+
 	// Register a template specialization pattern
 	void registerSpecializationPattern(std::string_view template_name, 
 	                                   const std::vector<ASTNode>& template_params,
@@ -1578,6 +1606,10 @@ private:
 
 	// Map from class name to out-of-line static member variable definitions (supports heterogeneous lookup)
 	std::unordered_map<std::string, std::vector<OutOfLineMemberVariable>, TransparentStringHash, std::equal_to<>> out_of_line_variables_;
+
+	// Map from qualified member function template name (e.g., "Container$hash::convert") to
+	// outer template parameter bindings (e.g., T→int). Used during nested template instantiation.
+	std::unordered_map<std::string, OuterTemplateBinding, TransparentStringHash, std::equal_to<>> outer_template_bindings_;
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;

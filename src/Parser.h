@@ -695,7 +695,7 @@ private:
             const std::vector<TemplateTypeArg>& args,
             const std::vector<ASTNode>& params);  // Substitute non-type template parameter in initializer
         
-        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<StringHandle>& template_param_names);  // NEW: Parse out-of-line template member function
+        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<StringHandle>& template_param_names, const std::vector<ASTNode>& inner_template_params = {}, const std::vector<StringHandle>& inner_template_param_names = {});  // NEW: Parse out-of-line template member function
         bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
         bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
                 const std::vector<TypeSpecifierNode>& argument_types,
