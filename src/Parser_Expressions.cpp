@@ -9731,6 +9731,9 @@ ParseResult Parser::parse_if_statement() {
     if (peek() == "else"_tok) {
         consume("else"_tok);
 
+        // Skip C++20 [[likely]]/[[unlikely]] attributes on else branches
+        skip_cpp_attributes();
+
         // Parse else-statement (can be a block, another if, or a single statement)
         ParseResult else_result;
         if (peek() == "{"_tok) {
