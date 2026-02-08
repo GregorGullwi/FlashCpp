@@ -88,7 +88,7 @@ $(MAIN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 $(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 	@echo "Building main executable (Release) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(RELEASE_DIR) 2>nul || $(MKDIR) $(RELEASE_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $(MAIN_SOURCES)
+	$(CXX) $(CXXFLAGS) -Wno-unused-parameter $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $(MAIN_SOURCES)
 	@echo "Built: $@"
 
 # Build test executable

@@ -280,6 +280,16 @@ private:
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
+
+		// Check for alternative operator tokens (C++ ISO 646 digraphs)
+		// These must be emitted as Operator tokens with standard operator spellings
+		// so the parser and code generator handle them correctly.
+		std::string_view alt_op = get_alternative_operator(value);
+		if (!alt_op.empty()) {
+			return Token(Token::Type::Operator, alt_op, line_, column_,
+				current_file_index_);
+		}
+
 		if (is_keyword(value)) {
 			return Token(Token::Type::Keyword, value, line_, column_,
 				current_file_index_);
@@ -305,9 +315,9 @@ private:
 			}
 			// Skip to exponent/suffix handling below
 		}
-		// Check for prefix (hex, octal, binary)
-		else if (source_[cursor_] == 'x') {
-			// Hexadecimal literal
+		// Check for prefix (hex, binary, octal)
+		else if (source_[cursor_] == 'x' || source_[cursor_] == 'X') {
+			// Hexadecimal literal (0x / 0X)
 			++cursor_;
 			++column_;
 
@@ -316,27 +326,21 @@ private:
 				++column_;
 			}
 		}
-		else if (source_[cursor_] == '0') {
-			// Octal or binary literal
+		else if (source_[cursor_] == 'b' || source_[cursor_] == 'B') {
+			// Binary literal (0b / 0B)
 			++cursor_;
 			++column_;
 
-			if (cursor_ < source_size_ && (source_[cursor_] == 'b' || source_[cursor_] == 'B')) {
-				// Binary literal
+			while (cursor_ < source_size_ && (source_[cursor_] == '0' || source_[cursor_] == '1' || source_[cursor_] == '\'')) {
 				++cursor_;
 				++column_;
-
-				while (cursor_ < source_size_ && (source_[cursor_] == '0' || source_[cursor_] == '1' || source_[cursor_] == '\'')) {
-					++cursor_;
-					++column_;
-				}
 			}
-			else {
-				// Octal literal
-				while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
-					++cursor_;
-					++column_;
-				}
+		}
+		else if (first_char == '0') {
+			// Octal literal (starts with 0 followed by digits)
+			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
+				++cursor_;
+				++column_;
 			}
 		}
 		else {
@@ -557,6 +561,20 @@ private:
 		};
 
 		return keywords.count(value) > 0;
+	}
+
+	// Map C++ alternative operator tokens to their standard operator spellings.
+	// Returns empty string_view if the token is not an alternative operator.
+	static std::string_view get_alternative_operator(std::string_view value) {
+		using namespace std::string_view_literals;
+		static const std::unordered_map<std::string_view, std::string_view> alt_ops = {
+			{"bitand"sv, "&"sv}, {"bitor"sv, "|"sv}, {"xor"sv, "^"sv}, {"compl"sv, "~"sv},
+			{"and"sv, "&&"sv}, {"or"sv, "||"sv}, {"not"sv, "!"sv},
+			{"and_eq"sv, "&="sv}, {"or_eq"sv, "|="sv}, {"xor_eq"sv, "^="sv},
+			{"not_eq"sv, "!="sv}
+		};
+		auto it = alt_ops.find(value);
+		return it != alt_ops.end() ? it->second : std::string_view{};
 	}
 
 	bool is_operator(char c) const {
