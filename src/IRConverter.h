@@ -6277,11 +6277,57 @@ private:
 						// For normal functions: skip shadow space first
 						stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
 					}
-					
-					if (is_float_arg) {
+
+					// Determine if this stack argument needs to pass an address instead of its value
+					// (mirrors the should_pass_address logic used for register arguments)
+					bool stack_pass_address = false;
+					if (arg.is_reference()) {
+						// Reference parameters always pass by address
+						stack_pass_address = true;
+					} else if (arg.type == Type::Struct && !arg.is_reference()) {
+						if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+							// Linux: structs > 16 bytes pass by pointer
+							if (arg.size_in_bits > 128) {
+								stack_pass_address = true;
+							}
+						} else {
+							// Windows: structs > 8 bytes pass by pointer
+							if (arg.size_in_bits > 64) {
+								stack_pass_address = true;
+							}
+						}
+					}
+
+					if (stack_pass_address) {
+						// Store address of the argument on the stack
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						if (std::holds_alternative<StringHandle>(arg.value)) {
+							StringHandle var_handle = std::get<StringHandle>(arg.value);
+							int var_offset = variable_scopes.back().variables[var_handle].offset;
+							auto ref_it = reference_stack_info_.find(var_offset);
+							if (ref_it != reference_stack_info_.end()) {
+								// Already holds a pointer (e.g., reference variable) - load it
+								emitMovFromFrame(temp_reg, var_offset);
+							} else {
+								// Take address of the variable
+								emitLeaFromFrame(temp_reg, var_offset);
+							}
+						} else if (std::holds_alternative<TempVar>(arg.value)) {
+							const auto& temp_var = std::get<TempVar>(arg.value);
+							int var_offset = getStackOffsetFromTempVar(temp_var);
+							auto ref_it = reference_stack_info_.find(var_offset);
+							if (ref_it != reference_stack_info_.end()) {
+								emitMovFromFrame(temp_reg, var_offset);
+							} else {
+								emitLeaFromFrame(temp_reg, var_offset);
+							}
+						}
+						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+						regAlloc.release(temp_reg);
+					} else if (is_float_arg) {
 						// For floating-point arguments, load into XMM register and store with float instruction
 						X64Register temp_xmm = allocateXMMRegisterWithSpilling();
-						
+
 						// Load the float value into XMM register
 						if (std::holds_alternative<double>(arg.value)) {
 							// Handle floating-point literal
@@ -6295,14 +6341,14 @@ private:
 							} else {
 								std::memcpy(&bits, &float_value, sizeof(bits));
 							}
-							
+
 							// Load bit pattern into temp GPR first
 							X64Register temp_gpr = allocateRegisterWithSpilling();
 							emitMovImm64(temp_gpr, bits);
-							
+
 							// Move from GPR to XMM register
 							emitMovqGprToXmm(temp_gpr, temp_xmm);
-							
+
 							regAlloc.release(temp_gpr);
 						} else if (std::holds_alternative<TempVar>(arg.value)) {
 							const auto& temp_var = std::get<TempVar>(arg.value);
@@ -6315,11 +6361,11 @@ private:
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						}
-						
+
 						// Store XMM register to stack using float store instruction
 						bool is_float = (arg.type == Type::Float);
 						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, is_float);
-						
+
 						regAlloc.release(temp_xmm);
 					} else {
 						// For integer arguments, use the existing code path

@@ -5271,7 +5271,7 @@
 			} else {
 				// Windows/MSVC ABI: Simple pointer-based approach
 				// va_list is a char* that directly holds the address of the next variadic argument
-				
+
 				// Step 1: Load the current pointer value from va_list variable
 				TempVar current_ptr = var_counter.next();
 				AssignmentOp load_ptr_op;
@@ -5283,25 +5283,54 @@
 					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), functionCallNode.called_from()));
-				
+
 				// Step 2: Read the value at the current pointer
+				// Win64 ABI: structs > 8 bytes are passed by pointer in variadic calls,
+				// so the stack slot holds a pointer to the struct, not the struct itself.
+				// We need to read the pointer first, then dereference it.
+				bool is_indirect_struct = (requested_type == Type::Struct && requested_size > 64);
+
 				TempVar value = var_counter.next();
-				DereferenceOp deref_value_op;
-				deref_value_op.result = value;
-				deref_value_op.pointer.type = requested_type;
-				deref_value_op.pointer.size_in_bits = requested_size;
-				deref_value_op.pointer.pointer_depth = 1;
-				deref_value_op.pointer.value = current_ptr;
-				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
-				
-				// Step 3: Advance va_list by 8 bytes
+				if (is_indirect_struct) {
+					// Large struct: stack slot contains a pointer to the struct
+					// Step 2a: Read the pointer from the stack slot
+					TempVar struct_ptr = var_counter.next();
+					DereferenceOp deref_ptr_op;
+					deref_ptr_op.result = struct_ptr;
+					deref_ptr_op.pointer.type = Type::UnsignedLongLong;
+					deref_ptr_op.pointer.size_in_bits = 64;
+					deref_ptr_op.pointer.pointer_depth = 1;
+					deref_ptr_op.pointer.value = current_ptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
+
+					// Step 2b: Dereference the struct pointer to get the actual struct
+					DereferenceOp deref_struct_op;
+					deref_struct_op.result = value;
+					deref_struct_op.pointer.type = requested_type;
+					deref_struct_op.pointer.size_in_bits = requested_size;
+					deref_struct_op.pointer.pointer_depth = 1;
+					deref_struct_op.pointer.value = struct_ptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_struct_op), functionCallNode.called_from()));
+				} else {
+					// Small types (≤8 bytes): read value directly from stack slot
+					DereferenceOp deref_value_op;
+					deref_value_op.result = value;
+					deref_value_op.pointer.type = requested_type;
+					deref_value_op.pointer.size_in_bits = requested_size;
+					deref_value_op.pointer.pointer_depth = 1;
+					deref_value_op.pointer.value = current_ptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
+				}
+
+				// Step 3: Advance va_list by 8 bytes (always 8 - even for large structs,
+				// since the stack slot holds a pointer, not the struct itself)
 				TempVar next_ptr = var_counter.next();
 				BinaryOp add_op;
 				add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
 				add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
 				add_op.result = next_ptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
-				
+
 				// Step 4: Store the updated pointer back to va_list
 				AssignmentOp assign_op;
 				assign_op.result = var_counter.next();  // unused but required
@@ -5312,7 +5341,7 @@
 				}
 				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, next_ptr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
-				
+
 				return {requested_type, requested_size, value};
 			}
 		}
