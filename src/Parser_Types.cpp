@@ -732,11 +732,15 @@ ParseResult Parser::parse_type_specifier()
 				return ParseResult::error("Expected identifier after '::'", peek().is_eof() ? Token() : peek_info());
 			}
 			type_name_builder.append("::"sv).append(peek_info().value());
-			type_name_token = peek_info();  // Update to the last identifier segment
 			advance();
 		}
 
 		std::string_view type_name = type_name_builder.commit();
+
+		// Update the token to carry the full qualified name (e.g., "__gnu_debug::_Safe_iterator")
+		// so that downstream consumers like FriendDeclarationNode get the complete type name.
+		type_name_token = Token(Token::Type::Identifier, type_name,
+			type_name_token.line(), type_name_token.column(), type_name_token.file_index());
 
 		// Skip template arguments if present (e.g., __gnu_debug::_Safe_iterator<_Ite, _Seq, Tag>)
 		if (peek() == "<"_tok) {

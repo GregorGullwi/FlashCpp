@@ -8785,7 +8785,12 @@ ParseResult Parser::parse_friend_declaration()
 	// After parsing the type specifier (which includes template args), if ';' follows, it's a friend class
 	if (peek() == ";"_tok) {
 		advance(); // consume ';'
-		StringHandle friend_name = type_result.node()->as<TypeSpecifierNode>().token().handle();
+		const auto& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		// Use the type_index to look up the full qualified name from gTypeInfo,
+		// since token() only holds a single identifier segment (e.g., 'std' not 'std::numeric_limits')
+		StringHandle friend_name = (type_spec.type_index() < gTypeInfo.size())
+			? gTypeInfo[type_spec.type_index()].name()
+			: type_spec.token().handle();
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name);
 		return saved_position.success(friend_node);
 	}
