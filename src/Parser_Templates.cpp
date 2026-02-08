@@ -4685,7 +4685,8 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// In C++, the order after parameters is: cv-qualifiers -> ref-qualifier -> noexcept -> trailing-return-type
 	// We need to skip cv-qualifiers, ref-qualifier, and noexcept BEFORE checking for trailing return type
 	// Example: template<typename T> auto func(T x) const noexcept -> decltype(x + 1)
-	skip_function_trailing_specifiers();
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
 
 	// Skip trailing requires clause during template instantiation
 	// (the constraint was already evaluated during template argument deduction)
@@ -4731,16 +4732,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		
 		// Apply pointer and reference qualifiers to the trailing return type (e.g., T*, T&, T&&)
 		TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
-		
-		// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
-		while (peek() == "*"_tok) {
-			advance(); // consume '*'
-			CVQualifier ptr_cv = parse_cv_qualifiers();
-			trailing_ts.add_pointer_level(ptr_cv);
-		}
-		
-		// Apply reference qualifiers if present (e.g., T& or T&&)
-		apply_trailing_reference_qualifiers(trailing_ts);
+		consume_pointer_ref_modifiers(trailing_ts);
 		
 		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
@@ -5225,7 +5217,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						}
 
 						// Skip trailing specifiers (const, noexcept, etc.)
-						skip_function_trailing_specifiers();
+						FlashCpp::MemberQualifiers member_quals;
+						skip_function_trailing_specifiers(member_quals);
 						skip_trailing_requires_clause();
 
 						// Create template function declaration node
@@ -5259,7 +5252,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						}
 
 						// Register as a member function template on the struct
-						struct_node.add_member_function(template_func_node, access);
+						struct_node.add_member_function(template_func_node, access,
+						                                false, false, false, false,
+						                                member_quals.is_const, member_quals.is_volatile);
 
 						auto qualified_name = StringTable::getOrInternStringHandle(
 							StringBuilder().append(struct_node.name()).append("::"sv).append(operator_name));

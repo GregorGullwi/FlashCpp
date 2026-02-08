@@ -2053,7 +2053,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Skip optional qualifiers after parameter list using existing helper
 		// Note: skip_function_trailing_specifiers() doesn't skip override/final as they have semantic meaning
 		// For out-of-line definitions, we also skip override/final as they're already recorded in the declaration
-		skip_function_trailing_specifiers();
+		FlashCpp::MemberQualifiers member_quals;
+		skip_function_trailing_specifiers(member_quals);
 		
 		// Also skip override/final for out-of-line definitions
 		while (!peek().is_eof()) {
@@ -2084,10 +2085,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		func_ref.set_is_constinit(is_constinit);
 		func_ref.set_is_consteval(is_consteval);
 		
-		// Search for existing member function declaration with the same name
+		// Search for existing member function declaration with the same name and const qualification
 		StructMemberFunction* existing_member = nullptr;
 		for (auto& member : struct_info->member_functions) {
-			if (member.getName() == function_name_token.handle()) {
+			if (member.getName() == function_name_token.handle() &&
+				member.is_const == member_quals.is_const &&
+				member.is_volatile == member_quals.is_volatile) {
 				existing_member = &member;
 				break;
 			}
@@ -2759,7 +2762,8 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	}
 	
 	// Skip optional qualifiers (noexcept, const, etc.) using existing helper
-	skip_function_trailing_specifiers();
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
 	
 	// Skip trailing requires clause for out-of-line constructor/destructor definitions
 	skip_trailing_requires_clause();
@@ -6440,6 +6444,10 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.is_override,
 				func_decl.is_final
 			);
+			// Propagate const/volatile qualifiers from the AST node to StructTypeInfo
+			auto& registered_func = struct_info->member_functions.back();
+			registered_func.is_const = func_decl.is_const;
+			registered_func.is_volatile = func_decl.is_volatile;
 	}
 }
 
@@ -8879,7 +8887,8 @@ ParseResult Parser::parse_friend_declaration()
 	}
 
 	// Skip optional qualifiers after parameter list using existing helper
-	skip_function_trailing_specifiers();
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
 
 	// Skip trailing requires clause on friend functions
 	skip_trailing_requires_clause();
