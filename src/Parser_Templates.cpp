@@ -177,6 +177,40 @@ ParseResult Parser::parse_template_declaration() {
 	current_template_param_names_ = template_param_names;
 	parsing_template_body_ = true;
 
+	// Check if this is a nested template (member function template of a class template)
+	// Pattern: template<typename T> template<typename U> ReturnType Class<T>::method(U u) { ... }
+	// At this point, outer template params are registered, so the inner parse can see them.
+	// TODO: Full nested template instantiation is not yet supported. Currently we skip the
+	// inner template definition entirely, which means member function templates of class
+	// templates will parse but won't generate code. Calls to such functions will fail at
+	// link time. This allows standard headers like <algorithm> to parse without errors.
+	if (peek() == "template"_tok) {
+		// Save the inner template params, then skip forward to find the function body and consume it
+		auto inner_saved = save_token_position();
+		advance(); // consume inner 'template'
+		if (peek() == "<"_tok) {
+			skip_template_arguments(); // skip inner template params
+			// Now skip everything until we find the function body '{' or a ';'
+			// We need to handle nested braces, parens, etc.
+			while (!peek().is_eof()) {
+				if (peek() == "{"_tok) {
+					skip_balanced_braces();
+					discard_saved_token(inner_saved);
+					return saved_position.success();
+				} else if (peek() == ";"_tok) {
+					advance();
+					discard_saved_token(inner_saved);
+					return saved_position.success();
+				} else if (peek() == "("_tok) {
+					skip_balanced_parens();
+				} else {
+					advance();
+				}
+			}
+		}
+		restore_token_position(inner_saved);
+	}
+
 	// Check if it's a concept template: template<typename T> concept Name = ...;
 	bool is_concept_template = peek() == "concept"_tok;
 
@@ -14496,6 +14530,65 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	// Fix up struct members whose types were unresolved nested classes.
+	// During member processing above, nested classes haven't been instantiated yet,
+	// so members of type "Wrapper::Nested" (with size 0) remain unresolved.
+	// Now that nested classes are registered as "Wrapper$hash::Nested", update those members.
+	{
+		StructTypeInfo* si = struct_info.get();
+		if (si) {
+			bool had_fixup = false;
+			for (auto& member : si->members) {
+				if (member.size == 0 && member.type_index < gTypeInfo.size()) {
+					const TypeInfo& mem_type_info = gTypeInfo[member.type_index];
+					std::string_view mem_type_name = StringTable::getStringView(mem_type_info.name());
+					// Check if this is a nested class of the current template (e.g., "Wrapper::Nested")
+					if (mem_type_name.starts_with(template_name) && mem_type_name.size() > template_name.size() + 2 &&
+					    mem_type_name.substr(template_name.size(), 2) == "::") {
+						std::string_view nested_name = mem_type_name.substr(template_name.size() + 2);
+						StringBuilder sb;
+						StringHandle resolved_handle = StringTable::getOrInternStringHandle(
+							sb.append(instantiated_name).append("::").append(nested_name).commit());
+						auto resolved_it = gTypesByName.find(resolved_handle);
+						if (resolved_it != gTypesByName.end()) {
+							const TypeInfo* resolved_type = resolved_it->second;
+							member.type = resolved_type->type_;
+							member.type_index = resolved_type->type_index_;
+							if (resolved_type->getStructInfo()) {
+								member.size = resolved_type->getStructInfo()->total_size;
+								member.alignment = resolved_type->getStructInfo()->alignment;
+							}
+							had_fixup = true;
+							FLASH_LOG(Templates, Debug, "Fixed nested class member '", StringTable::getStringView(member.name),
+							          "': ", mem_type_name, " -> ", StringTable::getStringView(resolved_handle),
+							          " (size=", member.size, ")");
+						}
+					}
+				}
+			}
+
+			// Recalculate struct layout from scratch after nested class member fixup
+			if (had_fixup) {
+				size_t new_total = 0;
+				size_t new_alignment = 1;
+				for (auto& member : si->members) {
+					size_t eff_align = member.alignment;
+					if (si->pack_alignment > 0 && si->pack_alignment < eff_align) {
+						eff_align = si->pack_alignment;
+					}
+					member.offset = si->is_union ? 0 : ((new_total + eff_align - 1) & ~(eff_align - 1));
+					new_total = member.offset + member.size;
+					new_alignment = std::max(new_alignment, eff_align);
+				}
+				si->total_size = (new_total + new_alignment - 1) & ~(new_alignment - 1);
+				si->alignment = new_alignment;
+				struct_type_info.type_size_ = si->total_size;
+				FLASH_LOG(Templates, Debug, "Re-laid out struct ", instantiated_name,
+				          " after nested class fixup, total_size=", si->total_size);
+			}
+		}
+	}
+
 	// Copy type aliases from the template with template parameter substitution
 	for (const auto& type_alias : class_decl.type_aliases()) {
 		auto qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(type_alias.alias_name));
@@ -15408,16 +15501,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Process out-of-line member function definitions for the template
 	auto out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(template_name);
+	FLASH_LOG(Templates, Debug, "Processing ", out_of_line_members.size(), " out-of-line member functions for ", template_name);
 	
 	for (const auto& out_of_line_member : out_of_line_members) {
 		// The function_node should be a FunctionDeclarationNode
 		if (!out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
-			FLASH_LOG(Templates, Error, "Out-of-line member function_node is not a FunctionDeclarationNode");
+			FLASH_LOG(Templates, Error, "Out-of-line member function_node is not a FunctionDeclarationNode, type: ", out_of_line_member.function_node.type_name());
 			continue;
 		}
 		
 		const FunctionDeclarationNode& func_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>();
 		const DeclarationNode& decl = func_decl.decl_node();
+		
+		FLASH_LOG(Templates, Debug, "  Looking for match of out-of-line '", decl.identifier_token().value(), 
+		          "' in ", instantiated_struct_ref.member_functions().size(), " struct member functions");
 		
 		// Check if this function is in the instantiated struct's member functions
 		// We need to find the matching declaration in the instantiated struct and add the definition
@@ -15503,6 +15600,101 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						break;
 					} catch (const std::exception& e) {
 						FLASH_LOG(Templates, Error, "Exception during template parameter substitution for out-of-line function ", 
+						          decl.identifier_token().value(), ": ", e.what());
+					}
+				}
+			}
+			// Also check ConstructorDeclarationNode members for out-of-line constructor definitions
+			// The out-of-line definition uses the template name (e.g., "Buffer") but the
+			// instantiated constructor uses the instantiated name (e.g., "Buffer$hash")
+			else if (mem_func.is_constructor && mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
+				auto& ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+				std::string_view ool_name = decl.identifier_token().value();
+				std::string_view ctor_name = StringTable::getStringView(ctor.name());
+				// Match if names are equal, or if ctor name starts with ool_name + '$'
+				bool names_match = (ctor_name == ool_name);
+				if (!names_match && ctor_name.size() > ool_name.size() && 
+				    ctor_name[ool_name.size()] == '$' &&
+				    ctor_name.substr(0, ool_name.size()) == ool_name) {
+					names_match = true;
+				}
+				if (names_match) {
+					// Save current position
+					SaveHandle saved_pos = save_token_position();
+					
+					// Add constructor parameters to scope
+					gSymbolTable.enter_scope(ScopeType::Block);
+					for (const auto& param_node : ctor.parameter_nodes()) {
+						if (param_node.is<DeclarationNode>()) {
+							const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+							gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+						}
+					}
+					
+					// Set up member function context
+					member_function_context_stack_.push_back({
+						instantiated_name,
+						struct_type_info.type_index_,
+						&instantiated_struct_ref,
+						nullptr
+					});
+					
+					// Restore to the out-of-line function body position
+					restore_lexer_position_only(out_of_line_member.body_start);
+					
+					if (peek() != "{"_tok) {
+						FLASH_LOG(Templates, Error, "Expected '{' at body_start position for constructor, got: ", 
+						          (!peek().is_eof() ? std::string(peek_info().value()) : "EOF"));
+						member_function_context_stack_.pop_back();
+						gSymbolTable.exit_scope();
+						restore_lexer_position_only(saved_pos);
+						continue;
+					}
+					
+					auto body_result = parse_block();
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					restore_lexer_position_only(saved_pos);
+					
+					if (body_result.is_error() || !body_result.node().has_value()) {
+						FLASH_LOG(Templates, Error, "Failed to parse out-of-line constructor body for ", 
+						          decl.identifier_token().value());
+						continue;
+					}
+					
+					std::vector<TemplateArgument> converted_template_args;
+					converted_template_args.reserve(template_args_to_use.size());
+					for (const auto& ttype_arg : template_args_to_use) {
+						if (ttype_arg.is_value) {
+							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+						} else {
+							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+						}
+					}
+					
+					try {
+						ASTNode substituted_body = substituteTemplateParameters(
+							*body_result.node(),
+							out_of_line_member.template_params,
+							converted_template_args
+						);
+						ctor.set_definition(substituted_body);
+						// Also update the StructTypeInfo's copy (used by codegen)
+						if (struct_type_info.struct_info_) {
+							for (auto& info_func : struct_type_info.struct_info_->member_functions) {
+								if (info_func.is_constructor && info_func.function_decl.is<ConstructorDeclarationNode>()) {
+									auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
+									if (info_ctor.name() == ctor.name() && !info_ctor.get_definition().has_value()) {
+										info_ctor.set_definition(substituted_body);
+										break;
+									}
+								}
+							}
+						}
+						found_match = true;
+						break;
+					} catch (const std::exception& e) {
+						FLASH_LOG(Templates, Error, "Exception during template parameter substitution for out-of-line constructor ", 
 						          decl.identifier_token().value(), ": ", e.what());
 					}
 				}
@@ -17491,6 +17683,112 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
 
+	// Check for out-of-line constructor/destructor pattern first:
+	// ClassName<Args>::ClassName(...)  (constructor)
+	// ClassName<Args>::~ClassName()    (destructor)
+	// parse_type_specifier would consume the full qualified name as a type, so detect this early
+	if (peek().is_identifier()) {
+		SaveHandle ctor_check = save_token_position();
+		Token potential_class = peek_info();
+		advance(); // consume class name
+		if (peek() == "<"_tok) {
+			skip_template_arguments();
+			if (peek() == "::"_tok) {
+				advance(); // consume '::'
+				bool is_dtor = false;
+				if (peek_info().value() == "~") {
+					advance(); // consume '~'
+					is_dtor = true;
+				}
+				if (peek().is_identifier() && peek_info().value() == potential_class.value()) {
+					Token ctor_name_token = peek_info();
+					advance(); // consume constructor/destructor name
+					if (peek() == "("_tok) {
+						// This IS a constructor/destructor definition!
+						discard_saved_token(ctor_check);
+						std::string_view ctor_class_name = potential_class.value();
+
+						// Create a void return type for constructors/destructors
+						auto void_type = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0, ctor_name_token);
+						auto [ctor_decl_node, ctor_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, ctor_name_token);
+						auto [ctor_func_node, ctor_func_ref] = emplace_node_ref<FunctionDeclarationNode>(ctor_decl_ref, ctor_name_token.value());
+
+						// Parse parameter list
+						FlashCpp::ParsedParameterList ctor_params;
+						auto ctor_param_result = parse_parameter_list(ctor_params);
+						if (ctor_param_result.is_error()) {
+							discard_saved_token(saved_pos);
+							return true; // consumed tokens, can't backtrack
+						}
+						for (const auto& param : ctor_params.parameters) {
+							ctor_func_ref.add_parameter_node(param);
+						}
+						ctor_func_ref.set_is_variadic(ctor_params.is_variadic);
+
+						// Skip trailing specifiers (const, noexcept, etc.)
+						FlashCpp::MemberQualifiers ctor_quals;
+						skip_function_trailing_specifiers(ctor_quals);
+						// Skip requires clause if present
+						if (peek() == "requires"_tok) {
+							advance();
+							if (peek() == "("_tok) {
+								skip_balanced_parens();
+							} else {
+								while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok && peek() != ":"_tok) {
+									advance();
+								}
+							}
+						}
+						// Skip member initializer list (for constructors)
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							// Skip entries: name(args), name{args}, name<T>(args), ...
+							// Brace-init in the list must be skipped as balanced
+							// pairs so we don't confuse them with the function body '{'.
+							while (!peek().is_eof() && peek() != ";"_tok) {
+								if (peek() == "("_tok) {
+									skip_balanced_parens();
+								} else if (peek() == "{"_tok) {
+									// Could be brace-init (member{val}) or function body.
+									// After balanced braces, if next is ',' there are more initializers;
+									// otherwise we've found the function body start.
+									skip_balanced_braces();
+									if (peek() != ","_tok) break;
+								} else {
+									advance();
+								}
+							}
+						}
+
+						// Save body position and skip body
+						SaveHandle ctor_body_start = save_token_position();
+						if (peek() == "{"_tok) {
+							skip_balanced_braces();
+						} else if (peek() == ";"_tok) {
+							advance();
+						}
+
+						// Register as out-of-line member function
+						OutOfLineMemberFunction out_of_line_ctor;
+						out_of_line_ctor.template_params = template_params;
+						out_of_line_ctor.function_node = ctor_func_node;
+						out_of_line_ctor.body_start = ctor_body_start;
+						out_of_line_ctor.template_param_names = template_param_names;
+
+						gTemplateRegistry.registerOutOfLineMember(ctor_class_name, std::move(out_of_line_ctor));
+
+						FLASH_LOG(Templates, Debug, "Registered out-of-line template ",
+						          (is_dtor ? "destructor" : "constructor"), ": ",
+						          ctor_class_name);
+						discard_saved_token(saved_pos);
+						return true;
+					}
+				}
+			}
+		}
+		restore_token_position(ctor_check);
+	}
+
 	// Try to parse return type
 	auto return_type_result = parse_type_specifier();
 	if (return_type_result.is_error() || !return_type_result.node().has_value()) {
@@ -17517,15 +17815,26 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
-	// Check for class name (identifier)
-	if (!peek().is_identifier()) {
+	// Check for class name (identifier) or constructor pattern
+	// For constructors: ClassName<Args>::ClassName(...)
+	// parse_type_specifier already consumed "ClassName" as a type, so next is '<'
+	Token class_name_token;
+	std::string_view class_name;
+
+	if (peek().is_identifier()) {
+		// Normal case: return_type ClassName<Args>::FunctionName(...)
+		class_name_token = peek_info();
+		class_name = class_name_token.value();
+		advance();
+	} else if (peek() == "<"_tok && return_type_node.is<TypeSpecifierNode>()) {
+		// Constructor pattern: ClassName<Args>::ClassName(...)
+		// parse_type_specifier consumed "ClassName" as return type, but it's really the class name
+		class_name_token = return_type_node.as<TypeSpecifierNode>().token();
+		class_name = class_name_token.value();
+	} else {
 		restore_token_position(saved_pos);
 		return std::nullopt;
 	}
-
-	Token class_name_token = peek_info();
-	std::string_view class_name = class_name_token.value();
-	advance();
 
 	// Check for template arguments after class name: ClassName<T>, etc.
 	// This is optional - only present for template classes
@@ -17557,8 +17866,95 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Discard the saved position - we're committed to parsing this
 	discard_saved_token(saved_pos);
 
-	// Parse function name
+	// Parse function name (or constructor/destructor/operator name)
 	if (!peek().is_identifier()) {
+		// Handle 'operator' keyword for operator member functions
+		// (e.g., ClassName<T>::operator()(...))
+		if (peek() == "operator"_tok) {
+			Token op_token = peek_info();
+			advance(); // consume 'operator'
+			StringBuilder op_builder;
+			op_builder.append("operator"sv);
+
+			// Special handling for operator() - '(' followed by ')' is the call operator name
+			if (peek() == "("_tok) {
+				auto next_saved = save_token_position();
+				advance(); // consume '('
+				if (peek() == ")"_tok) {
+					advance(); // consume ')'
+					discard_saved_token(next_saved);
+					op_builder.append("()"sv);
+				} else {
+					// Not operator() — the '(' starts the parameter list
+					restore_token_position(next_saved);
+				}
+			}
+			// Special handling for operator[] - '[' followed by ']'
+			else if (peek() == "["_tok) {
+				auto bracket_saved = save_token_position();
+				advance(); // consume '['
+				if (peek() == "]"_tok) {
+					advance(); // consume ']'
+					discard_saved_token(bracket_saved);
+					op_builder.append("[]"sv);
+				} else {
+					restore_token_position(bracket_saved);
+				}
+			}
+			else {
+				// Other operators: consume tokens until we hit '(' (parameter list start)
+				while (!peek().is_eof() && peek() != "("_tok) {
+					if (peek() == "{"_tok || peek() == ";"_tok) break;
+					op_builder.append(peek_info().value());
+					advance();
+				}
+			}
+
+			std::string_view op_name = op_builder.commit();
+			Token function_name_token_op = Token(Token::Type::Identifier, op_name,
+				op_token.line(), op_token.column(), op_token.file_index());
+
+			// Skip to parameter list parsing with operator name
+			// Create function declaration and skip the body
+			auto [func_decl_node_op, func_decl_ref_op] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token_op);
+			auto [func_node_op, func_ref_op] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref_op, function_name_token_op.value());
+
+			if (peek() == "("_tok) {
+				skip_balanced_parens();
+			}
+			FlashCpp::MemberQualifiers op_quals;
+			skip_function_trailing_specifiers(op_quals);
+			if (peek() == "{"_tok) {
+				skip_balanced_braces();
+			} else if (peek() == ";"_tok) {
+				advance();
+			}
+
+			FLASH_LOG(Templates, Debug, "Skipped out-of-line template operator: ",
+			          class_name, "::", op_name);
+			return true;
+		}
+
+		// Check for destructor: ~ClassName
+		if (peek_info().value() == "~") {
+			advance(); // consume '~'
+			if (peek().is_identifier()) {
+				// Destructor - skip the name and body
+				advance(); // consume destructor name
+				// Skip the parameter list and body
+				if (peek() == "("_tok) {
+					skip_balanced_parens();
+				}
+				FlashCpp::MemberQualifiers dtor_quals;
+				skip_function_trailing_specifiers(dtor_quals);
+				if (peek() == "{"_tok) {
+					skip_balanced_braces();
+				} else if (peek() == ";"_tok) {
+					advance();
+				}
+				return true;
+			}
+		}
 		return std::nullopt;  // Error - expected function name
 	}
 
@@ -17799,7 +18195,48 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
+	// Skip function trailing specifiers (const, volatile, noexcept, etc.)
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
+
+	// Skip requires clause if present
+	if (peek() == "requires"_tok) {
+		advance(); // consume 'requires'
+		// Skip the requires expression - could be complex
+		if (peek() == "("_tok) {
+			skip_balanced_parens();
+		} else {
+			// Simple requires clause - skip until { or ;
+			while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok && peek() != ":"_tok) {
+				advance();
+			}
+		}
+	}
+
+	// Skip member initializer list (for constructors): ": member(args), ..."
+	if (peek() == ":"_tok) {
+		advance(); // consume ':'
+		// Skip entries: name(args), name{args}, name<T>(args), ...
+		// Brace-init in the list (e.g., member{value}) must be skipped as balanced
+		// pairs so we don't confuse them with the function body '{'.
+		while (!peek().is_eof() && peek() != ";"_tok) {
+			if (peek() == "("_tok) {
+				skip_balanced_parens();
+			} else if (peek() == "{"_tok) {
+				// Could be brace-init (member{val}) or function body.
+				// After balanced braces, if next is ',' there are more initializers;
+				// otherwise we've found the function body start.
+				skip_balanced_braces();
+				if (peek() != ","_tok) break;
+			} else {
+				advance();
+			}
+		}
+	}
+
 	// Save the position of the function body for delayed parsing
+	// body_start must be right before '{' - trailing specifiers and initializer lists
+	// are already consumed above
 	SaveHandle body_start = save_token_position();
 
 	// Skip the function body for now (we'll re-parse it during instantiation or first use)

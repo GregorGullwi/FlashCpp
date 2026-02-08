@@ -17,24 +17,24 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<vector>` | `test_std_vector.cpp` | ❌ Runtime Crash | Progressed past `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Expected identifier token at `variant` (regression needs investigation) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed past `_Destroy` call; now fails at `variant:694` (type specifier in partial specialization) |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~300ms (previously blocked by out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
 | `<string>` | `test_std_string.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Failed to parse initializer expression (deduction guide parsing progressed) |
-| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Expected identifier token at `stl_tempbuf.h` |
+| `<array>` | `test_std_array.cpp` | ✅ Compiled | ~738ms (2026-02-08: Fixed with deduction guide and namespace-qualified call fixes) |
+| `<memory>` | `test_std_memory.cpp` | ❌ Runtime Crash | Progressed past `stl_tempbuf.h` (out-of-line ctor fix); now hits `bad_any_cast` |
 | `<functional>` | `test_std_functional.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Unexpected token in type specifier: 'template' at `uniform_int_dist.h` |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Runtime Crash | Progressed past `uniform_int_dist.h` (nested template + operator fix); now hits `bad_any_cast` |
 | `<map>` | `test_std_map.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
 | `<set>` | `test_std_set.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
 | `<span>` | `test_std_span.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | No matching template for call to `__builtin_va_start` |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
 | `<chrono>` | `test_std_chrono.cpp` | ✅ Compiled | ~287ms (2026-02-08: Fixed with ref-qualifier and attribute fixes) |
-| `<atomic>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (enum bitwise ops) |
+| `<atomic>` | N/A | ❌ Parse Error | Progressed past `__cmpexch_failure_order2`; now fails at `atomic_base.h:706` (operator in out-of-line def) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |

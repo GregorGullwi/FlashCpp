@@ -10801,6 +10801,47 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				}
 			}
 
+			// Handle hash-based dependent qualified types like "Wrapper$hash::Nested"
+			// These come from parsing "typename Wrapper<T>::Nested" during template definition.
+			// The hash represents a dependent instantiation (Wrapper<T> with T not yet resolved).
+			// We need to extract the template name ("Wrapper"), re-instantiate with concrete args,
+			// and look up the nested type in the new instantiation.
+			if (!found_match && type_name.find("::") != std::string_view::npos) {
+				auto sep_pos = type_name.find("::");
+				std::string_view base_part_sv = type_name.substr(0, sep_pos);
+				std::string_view member_part = type_name.substr(sep_pos + 2);
+				// '$' in the base part indicates a hash-based mangled template name
+				// (e.g., "Wrapper$a1b2c3d4" for dependent Wrapper<T>)
+				auto dollar_pos = base_part_sv.find('$');
+				
+				if (dollar_pos != std::string_view::npos) {
+					std::string_view base_template_name = base_part_sv.substr(0, dollar_pos);
+					
+					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
+					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+						// Re-instantiate with concrete args
+						try_instantiate_class_template(base_template_name, template_args);
+						std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+						
+						StringBuilder sb;
+						StringHandle resolved_handle = StringTable::getOrInternStringHandle(
+							sb.append(instantiated_base).append("::").append(member_part).commit());
+						auto type_it = gTypesByName.find(resolved_handle);
+						
+						FLASH_LOG(Templates, Debug, "Dependent hash-qualified type: '", type_name,
+						          "' -> '", StringTable::getStringView(resolved_handle),
+						          "' found=", (type_it != gTypesByName.end()));
+						
+						if (type_it != gTypesByName.end()) {
+							const TypeInfo* resolved_info = type_it->second;
+							result_type = resolved_info->type_;
+							result_type_index = resolved_info->type_index_;
+							found_match = true;
+						}
+					}
+				}
+			}
+
 			// Handle dependent placeholder types like "TC_T" - template instantiations that
 			// contain template parameters in their mangled name. Extract the template base
 			// name and instantiate with the substituted arguments.
@@ -10980,9 +11021,47 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 	}
 	else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-		// For binary operators, we'd need to evaluate the result type
-		// For now, just return int as a placeholder
-		// TODO: Implement proper type inference for binary operators
+		const auto& binary = std::get<BinaryOperatorNode>(expr);
+		TokenKind op_kind = binary.get_token().kind();
+
+		// Comparison and logical operators always return bool
+		if (op_kind == tok::Equal || op_kind == tok::NotEqual ||
+		    op_kind == tok::Less || op_kind == tok::Greater ||
+		    op_kind == tok::LessEq || op_kind == tok::GreaterEq ||
+		    op_kind == tok::LogicalAnd || op_kind == tok::LogicalOr) {
+			return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+		}
+
+		// For bitwise/arithmetic operators, check the LHS type
+		// If LHS is an enum, check for free function operator overloads
+		auto lhs_type_opt = get_expression_type(binary.get_lhs());
+		if (lhs_type_opt.has_value() && lhs_type_opt->type() == Type::Enum) {
+			// Look for a free function operator overload (e.g., operator&(EnumA, EnumB) -> EnumA)
+			StringBuilder op_name_builder;
+			op_name_builder.append("operator"sv);
+			op_name_builder.append(binary.op());
+			auto op_name = op_name_builder.commit();
+			auto overloads = gSymbolTable.lookup_all(op_name);
+			for (const auto& overload : overloads) {
+				if (overload.is<FunctionDeclarationNode>()) {
+					const auto& func = overload.as<FunctionDeclarationNode>();
+					const ASTNode& type_node = func.decl_node().type_node();
+					if (type_node.is<TypeSpecifierNode>()) {
+						return type_node.as<TypeSpecifierNode>();
+					}
+				}
+			}
+		}
+
+		// For same-type operands, return the LHS type
+		if (lhs_type_opt.has_value()) {
+			auto rhs_type_opt = get_expression_type(binary.get_rhs());
+			if (rhs_type_opt.has_value() && lhs_type_opt->type() == rhs_type_opt->type()) {
+				return *lhs_type_opt;
+			}
+		}
+
+		// Default: return int for arithmetic/bitwise operations
 		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
 	}
 	else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
