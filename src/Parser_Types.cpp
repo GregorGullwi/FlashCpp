@@ -732,6 +732,7 @@ ParseResult Parser::parse_type_specifier()
 				return ParseResult::error("Expected identifier after '::'", peek().is_eof() ? Token() : peek_info());
 			}
 			type_name_builder.append("::"sv).append(peek_info().value());
+			type_name_token = peek_info();  // Update to the last identifier segment
 			advance();
 		}
 
@@ -758,10 +759,23 @@ ParseResult Parser::parse_type_specifier()
 		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 		auto type_it = gTypesByName.find(type_name_handle);
 		if (type_it != gTypesByName.end()) {
-			size_t user_type_index = type_it->second->type_index_;
-			int type_size_bits = static_cast<int>(type_it->second->type_size_);
-			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				Type::Struct, user_type_index, type_size_bits, type_name_token, cv_qualifier));
+			const TypeInfo* type_info = type_it->second;
+			size_t user_type_index = type_info->type_index_;
+			int type_size_bits = static_cast<int>(type_info->type_size_);
+
+			// Determine the correct Type value from the found TypeInfo
+			if (type_info->isStruct()) {
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
+				if (struct_info) {
+					type_size_bits = static_cast<int>(struct_info->total_size * 8);
+				}
+				return ParseResult::success(emplace_node<TypeSpecifierNode>(
+					Type::Struct, user_type_index, type_size_bits, type_name_token, cv_qualifier));
+			} else {
+				// Use the type's own Type value (Enum, UserDefined, etc.)
+				return ParseResult::success(emplace_node<TypeSpecifierNode>(
+					type_info->type_, user_type_index, type_size_bits, type_name_token, cv_qualifier));
+			}
 		}
 
 		// Not found - create a placeholder type (forward declaration)
