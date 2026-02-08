@@ -3292,6 +3292,26 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
 		type_spec.set_reference_qualifier(ref_qual);
 		
+		// Parse array dimensions: using _Type = _Tp[_Nm]; or using _Type = _Tp[2][3];
+		while (peek() == "["_tok) {
+			advance(); // consume '['
+			if (peek() == "]"_tok) {
+				type_spec.set_array(true);
+				advance(); // consume ']'
+			} else {
+				auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (dim_result.is_error()) {
+					return dim_result;
+				}
+				auto dim_val = try_evaluate_constant_expression(*dim_result.node());
+				size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
+				type_spec.add_array_dimension(dim_size);
+				if (!consume("]"_tok)) {
+					return ParseResult::error("Expected ']' after array dimension in type alias", current_token_);
+				}
+			}
+		}
+		
 		// Consume semicolon
 		if (!consume(";"_tok)) {
 			return ParseResult::error("Expected ';' after type alias", current_token_);
@@ -5646,6 +5666,20 @@ ParseResult Parser::parse_struct_declaration()
 			}
 			if (!type_result.node().has_value()) {
 				return ParseResult::error("Expected type specifier after 'operator' keyword in conversion operator", operator_keyword_token);
+			}
+			
+			// Consume pointer/reference modifiers: operator _Tp&(), operator _Tp*(), etc.
+			TypeSpecifierNode& target_type_mut = type_result.node()->as<TypeSpecifierNode>();
+			while (peek() == "*"_tok) {
+				advance();
+				target_type_mut.add_pointer_level(CVQualifier::None);
+			}
+			if (peek() == "&&"_tok) {
+				advance();
+				target_type_mut.set_reference(true);
+			} else if (peek() == "&"_tok) {
+				advance();
+				target_type_mut.set_reference(false);
 			}
 			
 			// Create operator name like "operator int" using StringBuilder
@@ -9493,6 +9527,26 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						type_spec.set_reference(true);  // true = rvalue reference
 					} else if (ref_qual == ReferenceQualifier::LValueReference) {
 						type_spec.set_reference(false);  // false = lvalue reference
+					}
+					
+					// Parse array dimensions: using _Type = _Tp[_Nm];
+					while (peek() == "["_tok) {
+						advance(); // consume '['
+						if (peek() == "]"_tok) {
+							type_spec.set_array(true);
+							advance(); // consume ']'
+						} else {
+							auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (dim_result.is_error()) {
+								return dim_result;
+							}
+							auto dim_val = try_evaluate_constant_expression(*dim_result.node());
+							size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
+							type_spec.add_array_dimension(dim_size);
+							if (!consume("]"_tok)) {
+								return ParseResult::error("Expected ']' after array dimension in type alias", current_token_);
+							}
+						}
 					}
 					
 					// This is a type alias

@@ -2023,6 +2023,25 @@ bool Parser::parse_static_member_function(
 			nullptr,  // dtor_node
 			current_template_param_names
 		});
+	} else if (peek() == "="_tok) {
+		// Handle = delete or = default
+		advance(); // consume '='
+		if (peek() == "delete"_tok) {
+			advance(); // consume 'delete'
+			if (!consume(";"_tok)) {
+				type_and_name_result = ParseResult::error("Expected ';' after '= delete'", peek_info());
+				return true;
+			}
+		} else if (peek() == "default"_tok) {
+			advance(); // consume 'default'
+			if (!consume(";"_tok)) {
+				type_and_name_result = ParseResult::error("Expected ';' after '= default'", peek_info());
+				return true;
+			}
+		} else {
+			type_and_name_result = ParseResult::error("Expected 'delete' or 'default' after '='", peek_info());
+			return true;
+		}
 	} else if (!consume(";"_tok)) {
 		type_and_name_result = ParseResult::error("Expected '{' or ';' after static member function declaration", peek_info());
 		return true;
