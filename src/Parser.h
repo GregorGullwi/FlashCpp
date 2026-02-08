@@ -853,6 +853,7 @@ public:  // Public methods for template instantiation
         bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
         void apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec);  // Apply & or && reference qualifiers to a type
         void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
+        void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
         
         // Helper to parse static member functions (reduces code duplication)
         bool parse_static_member_function(
@@ -986,6 +987,12 @@ public:  // Public methods for template instantiation
         void skip_balanced_parens();  // Skip over a balanced parentheses block
         void skip_template_arguments();  // Skip over template arguments <...>
         void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
+        
+        // Parse a function type parameter list for template argument parsing
+        // Parses types separated by commas, handling pack expansion (...), C-style varargs,
+        // and pointer/reference modifiers. Used for bare function types and function pointer types.
+        // Returns true if parsing succeeded and ')' was NOT consumed (caller must consume it).
+        bool parse_function_type_parameter_list(std::vector<Type>& out_param_types);
         
         // Helper to update angle bracket depth for template parsing
         // Handles both '>' (decrement by 1) and '>>' (decrement by 2) for nested templates

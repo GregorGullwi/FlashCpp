@@ -7767,59 +7767,16 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					// Function pointer/reference/member: T(&)(...) or T(*)(...) or T(&&)(...) or T(Class::*)(...)
 					advance(); // consume '('
 					
-					// Parse parameter list (can be empty or have parameters)
+					// Parse parameter list using shared helper
 					std::vector<Type> param_types;
-					while (peek() != ")"_tok && !peek().is_eof()) {
-						// Handle C-style varargs: just '...' (without type before it)
-						if (peek() == "..."_tok) {
-							advance(); // consume '...'
-							break;
-						}
-						
-						// Parse parameter type - can be complex types
-						auto param_type_result = parse_type_specifier();
-						if (!param_type_result.is_error() && param_type_result.node().has_value()) {
-							TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-							
-							// Handle pack expansion (...) after a parameter type
-							if (peek() == "..."_tok) {
-								advance(); // consume '...'
-							}
-							
-							// Apply pointer/reference modifiers to the parameter type
-							while (peek() == "*"_tok) {
-								advance();
-								param_type.add_pointer_level(CVQualifier::None);
-							}
-							if (peek() == "&&"_tok) {
-								advance();
-								param_type.set_reference(true);
-							} else if (peek() == "&"_tok) {
-								advance();
-								param_type.set_reference(false);
-							}
-							param_types.push_back(param_type.type());
-						} else {
-							// Parsing failed - restore position
-							restore_token_position(paren_saved_pos);
-							break;
-						}
-						
-						// Check for comma
-						if (peek() == ","_tok) {
-							advance(); // consume ','
-						} else {
-							break;
-						}
+					bool param_parse_ok = parse_function_type_parameter_list(param_types);
+					
+					if (!param_parse_ok) {
+						// Parsing failed - restore position
+						restore_token_position(paren_saved_pos);
 					}
 					
-					// Handle trailing C-style varargs: _ArgTypes... ...
-					// After breaking out of the loop, we might have '...' before ')'
-					if (peek() == "..."_tok) {
-						advance(); // consume C-style varargs '...'
-					}
-					
-					if (peek() == ")"_tok) {
+					if (param_parse_ok && peek() == ")"_tok) {
 						advance(); // consume ')'
 						
 						// Parse trailing cv-qualifiers, ref-qualifiers, and noexcept
@@ -7890,51 +7847,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				bool is_bare_func_type = false;
 				std::vector<Type> func_param_types;
 				
-				// Try to parse as function parameter list
-				while (peek() != ")"_tok && !peek().is_eof()) {
-					// Handle C-style varargs
-					if (peek() == "..."_tok) {
-						advance(); // consume '...'
-						break;
-					}
-					
-					auto param_type_result = parse_type_specifier();
-					if (!param_type_result.is_error() && param_type_result.node().has_value()) {
-						TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-						
-						// Handle pack expansion (...) and pointer/reference modifiers on param type
-						if (peek() == "..."_tok) {
-							advance(); // consume '...'
-						}
-						while (peek() == "*"_tok) {
-							advance();
-							param_type.add_pointer_level(CVQualifier::None);
-						}
-						if (peek() == "&&"_tok) {
-							advance();
-							param_type.set_reference(true);
-						} else if (peek() == "&"_tok) {
-							advance();
-							param_type.set_reference(false);
-						}
-						func_param_types.push_back(param_type.type());
-					} else {
-						break;
-					}
-					
-					if (peek() == ","_tok) {
-						advance(); // consume ','
-					} else {
-						break;
-					}
-				}
+				// Try to parse as function parameter list using shared helper
+				bool param_parse_ok = parse_function_type_parameter_list(func_param_types);
 				
-				// Handle trailing C-style varargs: _ArgTypes... ...
-				if (peek() == "..."_tok) {
-					advance(); // consume '...'
-				}
-				
-				if (peek() == ")"_tok) {
+				if (param_parse_ok && peek() == ")"_tok) {
 					advance(); // consume ')'
 					is_bare_func_type = true;
 					
@@ -7959,28 +7875,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 		}
 
-		// Check for pointer modifiers (*) - for patterns like T*, T**, etc.
-		while (peek() == "*"_tok) {
-			advance(); // consume '*'
-			type_node.add_pointer_level(CVQualifier::None);
-		}
-		
-		// Check for reference modifier (&) or rvalue reference (&&)
-		if (peek() == "&&"_tok) {
-			// Rvalue reference - single && token
-			advance(); // consume '&&'
-			type_node.set_reference(true);  // is_rvalue = true
-		} else if (peek() == "&"_tok) {
-			advance(); // consume '&'
-			
-			// Check for second & (though lexer usually combines them)
-			if (peek() == "&"_tok) {
-				advance(); // consume second '&'
-				type_node.set_reference(true);  // is_rvalue = true
-			} else {
-				type_node.set_reference(false); // is_rvalue = false (lvalue reference)
-			}
-		}
+		// Apply pointer/reference modifiers to the type
+		consume_pointer_ref_modifiers(type_node);
 
 		// Check for array declarators (e.g., T[], T[N])
 		bool is_array_type = false;
