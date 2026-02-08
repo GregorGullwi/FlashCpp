@@ -169,7 +169,6 @@ $expectedCompileFailures = @(
 	"test_cstddef.cpp"
 	"test_cstdio_puts.cpp"
 	"test_cstdlib.cpp"
-	"test_out_of_line_template_member_multiline_ret42.cpp"
 )
 
 # Expected link failures - files that compile but have known link issues

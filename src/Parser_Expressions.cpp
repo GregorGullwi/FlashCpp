@@ -10801,6 +10801,45 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				}
 			}
 
+			// Handle hash-based dependent qualified types like "Wrapper$hash::Nested"
+			// These come from parsing "typename Wrapper<T>::Nested" during template definition.
+			// The hash represents a dependent instantiation (Wrapper<T> with T not yet resolved).
+			// We need to extract the template name ("Wrapper"), re-instantiate with concrete args,
+			// and look up the nested type in the new instantiation.
+			if (!found_match && type_name.find("::") != std::string_view::npos) {
+				auto sep_pos = type_name.find("::");
+				std::string_view base_part_sv = type_name.substr(0, sep_pos);
+				std::string_view member_part = type_name.substr(sep_pos + 2);
+				auto dollar_pos = base_part_sv.find('$');
+				
+				if (dollar_pos != std::string_view::npos) {
+					std::string_view base_template_name = base_part_sv.substr(0, dollar_pos);
+					
+					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
+					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+						// Re-instantiate with concrete args
+						try_instantiate_class_template(base_template_name, template_args);
+						std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+						
+						StringBuilder sb;
+						StringHandle resolved_handle = StringTable::getOrInternStringHandle(
+							sb.append(instantiated_base).append("::").append(member_part).commit());
+						auto type_it = gTypesByName.find(resolved_handle);
+						
+						FLASH_LOG(Templates, Debug, "Dependent hash-qualified type: '", type_name,
+						          "' -> '", StringTable::getStringView(resolved_handle),
+						          "' found=", (type_it != gTypesByName.end()));
+						
+						if (type_it != gTypesByName.end()) {
+							const TypeInfo* resolved_info = type_it->second;
+							result_type = resolved_info->type_;
+							result_type_index = resolved_info->type_index_;
+							found_match = true;
+						}
+					}
+				}
+			}
+
 			// Handle dependent placeholder types like "TC_T" - template instantiations that
 			// contain template parameters in their mangled name. Extract the template base
 			// name and instantiate with the substituted arguments.

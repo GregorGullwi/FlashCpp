@@ -3656,6 +3656,50 @@
 				base_type = element_type;
 				base_type_index = element_type_index;
 			}
+			// Case 5: Member function call (e.g., wrapper.get()->value)
+			else if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+				const MemberFunctionCallNode& call_node = std::get<MemberFunctionCallNode>(expr);
+				auto call_result = generateMemberFunctionCallIr(call_node);
+				if (call_result.empty() || call_result.size() < 3) {
+					FLASH_LOG(Codegen, Error, "Failed to evaluate member function call for member access");
+					return {};
+				}
+				base_type = std::get<Type>(call_result[0]);
+				if (std::holds_alternative<TempVar>(call_result[2])) {
+					base_object = std::get<TempVar>(call_result[2]);
+				} else {
+					FLASH_LOG(Codegen, Error, "Member function call result has unsupported value type");
+					return {};
+				}
+				if (call_result.size() >= 4 && std::holds_alternative<unsigned long long>(call_result[3])) {
+					base_type_index = static_cast<size_t>(std::get<unsigned long long>(call_result[3]));
+				}
+				if (memberAccessNode.is_arrow()) {
+					is_pointer_dereference = true;
+				}
+			}
+			// Case 6: Free function call (e.g., getPtr()->value)
+			else if (std::holds_alternative<FunctionCallNode>(expr)) {
+				const FunctionCallNode& call_node = std::get<FunctionCallNode>(expr);
+				auto call_result = generateFunctionCallIr(call_node);
+				if (call_result.empty() || call_result.size() < 3) {
+					FLASH_LOG(Codegen, Error, "Failed to evaluate function call for member access");
+					return {};
+				}
+				base_type = std::get<Type>(call_result[0]);
+				if (std::holds_alternative<TempVar>(call_result[2])) {
+					base_object = std::get<TempVar>(call_result[2]);
+				} else {
+					FLASH_LOG(Codegen, Error, "Function call result has unsupported value type");
+					return {};
+				}
+				if (call_result.size() >= 4 && std::holds_alternative<unsigned long long>(call_result[3])) {
+					base_type_index = static_cast<size_t>(std::get<unsigned long long>(call_result[3]));
+				}
+				if (memberAccessNode.is_arrow()) {
+					is_pointer_dereference = true;
+				}
+			}
 			else {
 				FLASH_LOG(Codegen, Error, "member access on unsupported expression type");
 				return {};
@@ -3681,6 +3725,30 @@
 				if (!validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference)) {
 					return {};
 				}
+			}
+		}
+		else if (object_node.is<MemberFunctionCallNode>()) {
+			// Case: member access on a member function call result (e.g., wrapper.get()->value)
+			const MemberFunctionCallNode& call_node = object_node.as<MemberFunctionCallNode>();
+			auto call_result = generateMemberFunctionCallIr(call_node);
+			if (call_result.empty() || call_result.size() < 3) {
+				FLASH_LOG(Codegen, Error, "Failed to evaluate member function call for member access");
+				return {};
+			}
+			base_type = std::get<Type>(call_result[0]);
+			if (std::holds_alternative<TempVar>(call_result[2])) {
+				base_object = std::get<TempVar>(call_result[2]);
+			} else {
+				FLASH_LOG(Codegen, Error, "Member function call result has unsupported value type");
+				return {};
+			}
+			// Get type_index from call result if available
+			if (call_result.size() >= 4 && std::holds_alternative<unsigned long long>(call_result[3])) {
+				base_type_index = static_cast<size_t>(std::get<unsigned long long>(call_result[3]));
+			}
+			// If the function returns a pointer and we're using ->, set up pointer dereference
+			if (memberAccessNode.is_arrow()) {
+				is_pointer_dereference = true;
 			}
 		}
 		else if (!base_setup_complete) {

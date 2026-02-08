@@ -14530,6 +14530,65 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	// Fix up struct members whose types were unresolved nested classes.
+	// During member processing above, nested classes haven't been instantiated yet,
+	// so members of type "Wrapper::Nested" (with size 0) remain unresolved.
+	// Now that nested classes are registered as "Wrapper$hash::Nested", update those members.
+	{
+		StructTypeInfo* si = struct_info.get();
+		if (si) {
+			bool had_fixup = false;
+			for (auto& member : si->members) {
+				if (member.size == 0 && member.type_index < gTypeInfo.size()) {
+					const TypeInfo& mem_type_info = gTypeInfo[member.type_index];
+					std::string_view mem_type_name = StringTable::getStringView(mem_type_info.name());
+					// Check if this is a nested class of the current template (e.g., "Wrapper::Nested")
+					if (mem_type_name.starts_with(template_name) && mem_type_name.size() > template_name.size() + 2 &&
+					    mem_type_name.substr(template_name.size(), 2) == "::") {
+						std::string_view nested_name = mem_type_name.substr(template_name.size() + 2);
+						StringBuilder sb;
+						StringHandle resolved_handle = StringTable::getOrInternStringHandle(
+							sb.append(instantiated_name).append("::").append(nested_name).commit());
+						auto resolved_it = gTypesByName.find(resolved_handle);
+						if (resolved_it != gTypesByName.end()) {
+							const TypeInfo* resolved_type = resolved_it->second;
+							member.type = resolved_type->type_;
+							member.type_index = resolved_type->type_index_;
+							if (resolved_type->getStructInfo()) {
+								member.size = resolved_type->getStructInfo()->total_size;
+								member.alignment = resolved_type->getStructInfo()->alignment;
+							}
+							had_fixup = true;
+							FLASH_LOG(Templates, Debug, "Fixed nested class member '", StringTable::getStringView(member.name),
+							          "': ", mem_type_name, " -> ", StringTable::getStringView(resolved_handle),
+							          " (size=", member.size, ")");
+						}
+					}
+				}
+			}
+
+			// Recalculate struct layout from scratch after nested class member fixup
+			if (had_fixup) {
+				size_t new_total = 0;
+				size_t new_alignment = 1;
+				for (auto& member : si->members) {
+					size_t eff_align = member.alignment;
+					if (si->pack_alignment > 0 && si->pack_alignment < eff_align) {
+						eff_align = si->pack_alignment;
+					}
+					member.offset = si->is_union ? 0 : ((new_total + eff_align - 1) & ~(eff_align - 1));
+					new_total = member.offset + member.size;
+					new_alignment = std::max(new_alignment, eff_align);
+				}
+				si->total_size = (new_total + new_alignment - 1) & ~(new_alignment - 1);
+				si->alignment = new_alignment;
+				struct_type_info.type_size_ = si->total_size;
+				FLASH_LOG(Templates, Debug, "Re-laid out struct ", instantiated_name,
+				          " after nested class fixup, total_size=", si->total_size);
+			}
+		}
+	}
+
 	// Copy type aliases from the template with template parameter substitution
 	for (const auto& type_alias : class_decl.type_aliases()) {
 		auto qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(type_alias.alias_name));
