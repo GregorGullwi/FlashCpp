@@ -2131,10 +2131,12 @@ bool Parser::parse_static_member_function(
 	}
 
 	// Add static member function to struct
-	struct_ref.add_member_function(member_func_node, current_access, false, false, false);
+	struct_ref.add_member_function(member_func_node, current_access,
+	                               false, false, false, false,
+	                               member_quals.is_const, member_quals.is_volatile);
 	
 	// Also register in StructTypeInfo
-	struct_info->member_functions.emplace_back(
+	auto& registered = struct_info->member_functions.emplace_back(
 		decl_node.identifier_token().handle(),
 		member_func_node,
 		current_access,
@@ -2142,6 +2144,8 @@ bool Parser::parse_static_member_function(
 		false,  // is_pure_virtual
 		false   // is_override
 	);
+	registered.is_const = member_quals.is_const;
+	registered.is_volatile = member_quals.is_volatile;
 
 	return true;  // Successfully handled as a function
 }

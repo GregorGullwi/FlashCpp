@@ -5261,7 +5261,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						}
 
 						// Register as a member function template on the struct
-						struct_node.add_member_function(template_func_node, access);
+						struct_node.add_member_function(template_func_node, access,
+						                                false, false, false, false,
+						                                member_quals.is_const, member_quals.is_volatile);
 
 						auto qualified_name = StringTable::getOrInternStringHandle(
 							StringBuilder().append(struct_node.name()).append("::"sv).append(operator_name));

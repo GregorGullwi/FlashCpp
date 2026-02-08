@@ -2085,10 +2085,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		func_ref.set_is_constinit(is_constinit);
 		func_ref.set_is_consteval(is_consteval);
 		
-		// Search for existing member function declaration with the same name
+		// Search for existing member function declaration with the same name and const qualification
 		StructMemberFunction* existing_member = nullptr;
 		for (auto& member : struct_info->member_functions) {
-			if (member.getName() == function_name_token.handle()) {
+			if (member.getName() == function_name_token.handle() &&
+				member.is_const == member_quals.is_const) {
 				existing_member = &member;
 				break;
 			}
@@ -6442,6 +6443,10 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.is_override,
 				func_decl.is_final
 			);
+			// Propagate const/volatile qualifiers from the AST node to StructTypeInfo
+			auto& registered_func = struct_info->member_functions.back();
+			registered_func.is_const = func_decl.is_const;
+			registered_func.is_volatile = func_decl.is_volatile;
 	}
 }
 
