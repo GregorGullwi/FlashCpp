@@ -5126,6 +5126,100 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		}
 	}
 
+	// Check for template conversion operator: template<typename T> operator T() const noexcept
+	// Conversion operators don't have a return type, so parse_type_and_name() fails.
+	// We need to detect and handle them before calling parse_template_function_declaration_body().
+	{
+		SaveHandle conv_lookahead = save_token_position();
+		bool found_conversion_op = false;
+
+		// Skip declaration specifiers (constexpr, explicit, inline, etc.)
+		parse_declaration_specifiers();
+		// Also skip 'explicit' / 'explicit(condition)'
+		while (peek() == "explicit"_tok) {
+			advance();
+			if (peek() == "("_tok) {
+				skip_balanced_parens();
+			}
+		}
+
+		if (peek() == "operator"_tok) {
+			// Check if this is a conversion operator (not operator() or operator<< etc.)
+			SaveHandle op_saved = save_token_position();
+			Token operator_keyword_token = peek_info();
+			advance(); // consume 'operator'
+
+			// If next token is not '(' and not an operator symbol, it's likely a conversion operator
+			if (peek() != "("_tok &&
+			    !peek().is_operator() &&
+			    peek() != "["_tok && peek() != "new"_tok && peek() != "delete"_tok) {
+				auto type_result = parse_type_specifier();
+				if (!type_result.is_error() && type_result.node().has_value()) {
+					// Skip pointer/reference qualifiers on conversion target type
+					while (peek() == "*"_tok || peek() == "&"_tok) {
+						advance();
+					}
+					if (peek() == "("_tok) {
+						found_conversion_op = true;
+
+						const TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();
+						StringBuilder op_name_builder;
+						op_name_builder.append("operator ");
+						op_name_builder.append(target_type.getReadableString());
+						std::string_view operator_name = op_name_builder.commit();
+
+						Token identifier_token = Token(Token::Type::Identifier, operator_name,
+						                              operator_keyword_token.line(), operator_keyword_token.column(),
+						                              operator_keyword_token.file_index());
+
+						// Create a declaration node with the return type being the target type
+						ASTNode decl_node = emplace_node<DeclarationNode>(
+							type_result.node().value(), identifier_token);
+
+						discard_saved_token(op_saved);
+						discard_saved_token(conv_lookahead);
+
+						// Parse parameter list (should be empty for conversion operators)
+						FlashCpp::ParsedParameterList params;
+						auto param_result = parse_parameter_list(params);
+						if (param_result.is_error()) {
+							current_template_param_names_ = std::move(saved_template_param_names);
+							return param_result;
+						}
+
+						// Skip trailing specifiers (const, noexcept, etc.)
+						skip_function_trailing_specifiers();
+						skip_trailing_requires_clause();
+
+						// Skip or consume the body
+						if (peek() == "{"_tok) {
+							skip_balanced_braces();
+						} else if (peek() == "="_tok) {
+							advance();
+							if (peek() == "delete"_tok || peek() == "default"_tok) {
+								advance();
+							}
+							consume(";"_tok);
+						} else {
+							consume(";"_tok);
+						}
+
+						// Register as a member function (no-op template, just skip)
+						current_template_param_names_ = std::move(saved_template_param_names);
+						return saved_position.success();
+					}
+				}
+			}
+			if (!found_conversion_op) {
+				restore_token_position(op_saved);
+			}
+		}
+
+		if (!found_conversion_op) {
+			restore_token_position(conv_lookahead);
+		}
+	}
+
 	// Use shared helper to parse function declaration body (Phase 6)
 	ASTNode template_func_node;
 	auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
@@ -5584,6 +5678,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					else if (keyword == "protected") current_access = AccessSpecifier::Protected;
 					continue;
 				}
+				// Handle static_assert inside member struct template body
+				if (keyword == "static_assert") {
+					auto static_assert_result = parse_static_assert();
+					if (static_assert_result.is_error()) {
+						return static_assert_result;
+					}
+					continue;
+				}
 				// Handle nested struct/class declarations inside partial specialization body
 				// e.g., struct __type { ... };
 				if (keyword == "struct" || keyword == "class") {
@@ -5974,6 +6076,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				if (keyword == "public") current_access = AccessSpecifier::Public;
 				else if (keyword == "private") current_access = AccessSpecifier::Private;
 				else if (keyword == "protected") current_access = AccessSpecifier::Protected;
+				continue;
+			}
+			// Handle static_assert inside member struct template body
+			if (keyword == "static_assert") {
+				auto static_assert_result = parse_static_assert();
+				if (static_assert_result.is_error()) {
+					return static_assert_result;
+				}
 				continue;
 			}
 			// Handle member function templates - skip them for now
@@ -17337,6 +17447,43 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					angle_bracket_depth--;
 				}
 				advance();
+			}
+		}
+	}
+
+	// Handle nested class template member: ClassName::NestedTemplate<Args>::FunctionName
+	// When we have ClassName::NestType<Args>:: followed by more identifiers,
+	// the actual function name is further down. Keep consuming qualified parts.
+	while (peek() == "::"_tok) {
+		advance(); // consume '::'
+		if (!peek().is_identifier() && peek() != "~"_tok) {
+			// Can't continue - not a valid qualified name
+			return std::nullopt;
+		}
+		// Handle destructor: ~ClassName
+		if (peek() == "~"_tok) {
+			advance(); // consume '~'
+		}
+		if (!peek().is_identifier()) {
+			return std::nullopt;
+		}
+		function_name_token = peek_info();
+		advance();
+		// Reset function template args - they belonged to the nested class, not the function
+		function_template_args.clear();
+		// Check for template arguments on this new name
+		if (peek() == "<"_tok) {
+			auto template_args_opt = parse_explicit_template_arguments();
+			if (template_args_opt.has_value()) {
+				function_template_args = *template_args_opt;
+			} else {
+				advance();  // consume '<'
+				int angle_bracket_depth = 1;
+				while (angle_bracket_depth > 0 && !peek().is_eof()) {
+					if (peek() == "<"_tok) angle_bracket_depth++;
+					else if (peek() == ">"_tok) angle_bracket_depth--;
+					advance();
+				}
 			}
 		}
 	}

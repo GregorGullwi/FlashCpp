@@ -344,7 +344,7 @@ ParseResult Parser::parse_type_specifier()
 	}
 
 	if (peek().is_eof() ||
-		(!peek().is_keyword() && !peek().is_identifier())) {
+		(!peek().is_keyword() && !peek().is_identifier() && peek() != "::"_tok)) {
 		return ParseResult::error("Expected type specifier",
 			peek().is_eof() ? Token() : peek_info());
 	}
@@ -703,6 +703,70 @@ ParseResult Parser::parse_type_specifier()
 		TypeSpecifierNode va_list_type(Type::Void, TypeQualifier::None, 0, va_list_token, cv_qualifier);
 		va_list_type.add_pointer_level();
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(va_list_type));
+	}
+	else if (peek() == "::"_tok) {
+		// Handle global-scope-qualified types like ::__gnu_debug::_Safe_iterator
+		// The '::' prefix denotes a type from the global namespace
+		advance();  // consume '::'
+
+		if (!peek().is_identifier()) {
+			return ParseResult::error("Expected identifier after '::'", peek().is_eof() ? Token() : peek_info());
+		}
+
+		// Build qualified name starting with ::
+		StringBuilder type_name_builder;
+		type_name_builder.append("::"sv);
+		type_name_builder.append(peek_info().value());
+		Token type_name_token = peek_info();
+		advance();
+
+		// Continue building qualified name (e.g., ::__gnu_debug::_Safe_iterator)
+		while (peek() == "::"_tok) {
+			advance();  // consume '::'
+			if (peek() == "template"_tok) {
+				advance();  // consume 'template'
+			}
+			if (!peek().is_identifier()) {
+				type_name_builder.reset();
+				return ParseResult::error("Expected identifier after '::'", peek().is_eof() ? Token() : peek_info());
+			}
+			type_name_builder.append("::"sv).append(peek_info().value());
+			advance();
+		}
+
+		std::string_view type_name = type_name_builder.commit();
+
+		// Skip template arguments if present (e.g., ::__gnu_debug::_Safe_iterator<_Ite, _Seq, Tag>)
+		if (peek() == "<"_tok) {
+			skip_template_arguments();
+		}
+
+		// Trailing CV-qualifiers
+		while (peek() == "const"_tok || peek() == "volatile"_tok) {
+			if (peek() == "const"_tok) {
+				cv_qualifier = static_cast<CVQualifier>(
+					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
+			} else {
+				cv_qualifier = static_cast<CVQualifier>(
+					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
+			}
+			advance();
+		}
+
+		// Try to look up this globally-qualified type; if not found, treat as opaque user-defined type
+		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+		auto type_it = gTypesByName.find(type_name_handle);
+		if (type_it != gTypesByName.end()) {
+			size_t user_type_index = type_it->second->type_index_;
+			int type_size_bits = static_cast<int>(type_it->second->type_size_);
+			return ParseResult::success(emplace_node<TypeSpecifierNode>(
+				Type::Struct, user_type_index, type_size_bits, type_name_token, cv_qualifier));
+		}
+
+		// Not found - create a placeholder type (forward declaration)
+		TypeInfo& forward_decl_type = add_struct_type(type_name_handle);
+		return ParseResult::success(emplace_node<TypeSpecifierNode>(
+			Type::Struct, forward_decl_type.type_index_, 0, type_name_token, cv_qualifier));
 	}
 	else if (peek().is_identifier()) {
 		// Handle user-defined type (struct, class, or other user-defined types)

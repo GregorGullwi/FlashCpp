@@ -9620,6 +9620,9 @@ ParseResult Parser::parse_if_statement() {
         return ParseResult::error("Expected ')' after if condition", current_token_);
     }
 
+    // Skip C++20 [[likely]]/[[unlikely]] attributes on if branches
+    skip_cpp_attributes();
+
     // For if constexpr during template body re-parsing with parameter packs,
     // evaluate the condition at compile time and skip the dead branch
     // (which may contain ill-formed code like unexpanded parameter packs)
