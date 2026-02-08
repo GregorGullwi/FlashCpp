@@ -17519,8 +17519,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 
 		// Handle destructor: ~ClassName
+		bool is_dtor = false;
 		if (peek() == "~"_tok) {
 			advance(); // consume '~'
+			is_dtor = true;
 		}
 
 		// If we can't find an identifier here, break out of the loop
@@ -17529,7 +17531,16 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			break;
 		}
 
-		function_name_token = peek_info();
+		if (is_dtor) {
+			// Build "~ClassName" token
+			Token ident = peek_info();
+			std::string_view dtor_name = StringBuilder().append("~"sv).append(ident.value()).commit();
+			function_name_token = Token(Token::Type::Identifier, dtor_name,
+				ident.line(), ident.column(), ident.file_index());
+		} else {
+			function_name_token = peek_info();
+		}
+		advance();
 		advance();
 		// Reset function template args - they belonged to the nested class, not the function
 		function_template_args.clear();
