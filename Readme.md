@@ -298,9 +298,8 @@ To reproduce: `tests/cpp20_integration/run_benchmark.sh`
 
 ### C++20 Integration Test Results
 
-FlashCpp passes **480/490 test points** (98% pass rate) in the full combined integration
-test. The single failing test (`test_explicit_casts`) is due to `static_cast<bool>(n)`
-not normalizing to 0/1. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.md) for detailed results.
+FlashCpp passes **490/490 test points** (100% pass rate) in the full combined integration
+test. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.md) for detailed results.
 
 ### Summary
 - **Compile speed**: Fastest compiler tested in release mode

@@ -6132,6 +6132,31 @@
 			return { target_type, target_size, result_temp, 0ULL };
 		}
 
+		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
+		// e.g. static_cast<bool>(42) must produce 1, not 42
+		if (is_integer_type(source_type) && target_type == Type::Bool) {
+			TempVar result_temp = var_counter.next();
+			BinaryOp bin_op{
+				.lhs = toTypedValue(expr_operands),
+				.rhs = TypedValue{source_type, source_size, 0ULL},
+				.result = result_temp,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), staticCastNode.cast_token()));
+			return { Type::Bool, 8, result_temp, 0ULL };
+		}
+
+		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
+		if (is_floating_point_type(source_type) && target_type == Type::Bool) {
+			TempVar result_temp = var_counter.next();
+			BinaryOp bin_op{
+				.lhs = toTypedValue(expr_operands),
+				.rhs = TypedValue{source_type, source_size, 0.0},
+				.result = result_temp,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), staticCastNode.cast_token()));
+			return { Type::Bool, 8, result_temp, 0ULL };
+		}
+
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
 		return { target_type, target_size, expr_operands[2], 0ULL };

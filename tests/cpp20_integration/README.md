@@ -167,9 +167,9 @@ clang++ 18.1.3 linker.
 | 8 | Lambdas | 10 | ✅ Pass (10/10) |
 | 9 | Modern C++ Features | 60 | ✅ Pass (60/60) |
 | 10 | Advanced Features | 100 | ✅ Pass (100/100) |
-| 11 | Alt Tokens & C++20 Extras | 100 | ⚠️ Pass (90/100) - `test_explicit_casts` fails: `static_cast<bool>(n)` stores raw int value instead of normalizing to 0/1 |
+| 11 | Alt Tokens & C++20 Extras | 100 | ✅ Pass (100/100) |
 
-**Overall**: FlashCpp passes **480/490 points** (98% pass rate).
+**Overall**: FlashCpp passes **490/490 points** (100% pass rate).
 
 ## Compilation Speed Benchmarks
 
@@ -207,10 +207,10 @@ process startup overhead):
 
 ## Known FlashCpp Limitations
 
-All 9 originally reported bugs have been fixed. See [`bugs/README.md`](bugs/README.md) for details.
+All originally reported bugs have been fixed. See [`bugs/README.md`](bugs/README.md) for details.
 
 ### Remaining Limitations
-- **`static_cast<bool>(n)` normalization** - Stores raw integer value instead of normalizing to 0 or 1. Causes `test_explicit_casts` to fail when `static_cast<bool>(42)` produces 42 (non-zero but ≠1), which breaks logical AND with comparison results.
+None - all 490 test points pass.
 
 ## Features NOT Tested
 
@@ -280,8 +280,8 @@ The integration tests successfully demonstrate:
 - ✅ Valid, standards-compliant code
 - ✅ Modular, maintainable test structure
 - ✅ Self-verifying test framework
-- ✅ All 9 originally reported bugs fixed
-- ✅ 480/490 points passing (98% pass rate) in full combined test
+- ✅ All originally reported bugs fixed
+- ✅ **490/490 points passing (100% pass rate)** in full combined test
 - ✅ FlashCpp release build is the fastest compiler tested (75ms avg vs 91ms Clang -O0)
 
 The tests serve as both validation and documentation of FlashCpp's C++20 support while providing a foundation for future development.
