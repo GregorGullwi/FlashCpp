@@ -9572,23 +9572,38 @@ ParseResult Parser::parse_if_statement() {
                 }
                 // Skip the else-branch if present
                 if (peek() == "else"_tok) {
-                    consume("else"_tok);
-                    if (peek() == "{"_tok) {
-                        skip_balanced_braces();
-                    } else if (peek() == "if"_tok) {
-                        // Skip else-if chain: consume 'if', skip condition parens, skip then block, optionally skip else
-                        advance(); // consume 'if'
-                        if (peek() == "constexpr"_tok) advance();
-                        skip_balanced_parens();
-                        if (peek() == "{"_tok) skip_balanced_braces();
-                        if (peek() == "else"_tok) {
-                            advance();
-                            if (peek() == "{"_tok) skip_balanced_braces();
+                    advance(); // consume 'else'
+                    // Recursively skip the else branch, which may be:
+                    // 1. A block: else { ... }
+                    // 2. An else-if chain: else if (...) { ... } else ...
+                    // 3. A single statement: else return x;
+                    while (true) {
+                        if (peek() == "{"_tok) {
+                            skip_balanced_braces();
+                            break;
+                        } else if (peek() == "if"_tok) {
+                            advance(); // consume 'if'
+                            if (peek() == "constexpr"_tok) advance();
+                            skip_balanced_parens(); // skip condition
+                            // Skip then-branch (block or statement)
+                            if (peek() == "{"_tok) {
+                                skip_balanced_braces();
+                            } else {
+                                while (!peek().is_eof() && peek() != ";"_tok) advance();
+                                consume(";"_tok);
+                            }
+                            // Continue loop to handle else/else-if after this branch
+                            if (peek() == "else"_tok) {
+                                advance(); // consume 'else'
+                                continue; // loop handles next branch
+                            }
+                            break;
+                        } else {
+                            // Single statement else - skip to semicolon
+                            while (!peek().is_eof() && peek() != ";"_tok) advance();
+                            consume(";"_tok);
+                            break;
                         }
-                    } else {
-                        // Single statement else - skip to semicolon
-                        while (!peek().is_eof() && peek() != ";"_tok) advance();
-                        consume(";"_tok);
                     }
                 }
                 // Return just the then-branch content

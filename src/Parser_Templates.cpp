@@ -9166,6 +9166,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Add parameters with substituted types
 	// Note: We compute the mangled name AFTER adding parameters, since the mangled name
 	// includes parameter types in its encoding
+	auto saved_outer_pack_param_info = std::move(pack_param_info_);
 	pack_param_info_.clear();
 	size_t arg_type_index = 0;  // Track which argument type we're using
 	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
@@ -9412,7 +9413,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		// Restore pack parameter info
 		has_parameter_packs_ = saved_has_parameter_packs;
-		pack_param_info_.clear();
+		pack_param_info_ = std::move(saved_outer_pack_param_info);
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
 			// After parsing, we need to substitute template parameters in the body
