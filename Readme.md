@@ -283,22 +283,24 @@ on Linux x86-64. Source to object file, 20 iterations each.
 
 | Compiler | Avg (ms) | Min (ms) | Max (ms) |
 |----------|----------|----------|----------|
-| **FlashCpp (release, -O3)** | **91** | **84** | **107** |
-| Clang++ 18.1.3 -O0 | 97 | 90 | 112 |
-| Clang++ 18.1.3 -O2 | 117 | 110 | 124 |
-| FlashCpp (debug, -g) | 124 | 115 | 136 |
-| GCC 13.3.0 -O0 | 131 | 117 | 142 |
+| **FlashCpp (release, -O3)** | **75** | **72** | **84** |
+| Clang++ 18.1.3 -O0 | 91 | 84 | 100 |
+| Clang++ 18.1.3 -O2 | 102 | 96 | 109 |
+| GCC 13.3.0 -O0 | 105 | 94 | 121 |
+| FlashCpp (debug, -g) | 119 | 113 | 130 |
+| GCC 13.3.0 -O2 | 119 | 109 | 180 |
 
-FlashCpp release is the **fastest compiler tested** -- 6% faster than Clang -O0 and
-30% faster than GCC -O0. Internal timing shows ~45ms of actual compilation work with
+FlashCpp release is the **fastest compiler tested** -- 18% faster than Clang -O0 and
+29% faster than GCC -O0. Internal timing shows ~53ms of actual compilation work with
 the remaining time being process/ELF overhead.
 
 To reproduce: `tests/cpp20_integration/run_benchmark.sh`
 
 ### C++20 Integration Test Results
 
-FlashCpp passes **~450/490 test points** across 11 feature categories when tested
-section-by-section. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.md) for detailed results.
+FlashCpp passes **480/490 test points** (98% pass rate) in the full combined integration
+test. The single failing test (`test_explicit_casts`) is due to `static_cast<bool>(n)`
+not normalizing to 0/1. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.md) for detailed results.
 
 ### Summary
 - **Compile speed**: Fastest compiler tested in release mode

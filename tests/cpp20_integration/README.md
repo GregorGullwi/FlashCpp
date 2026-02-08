@@ -149,10 +149,11 @@ echo $?  # Should print 0 on success
 |-----------|----------------|------------|
 | cpp20_simple_integration_test.cpp | ✅ Pass (490/490) | ✅ Pass (490/490) |
 
-### FlashCpp Results (Section-by-Section)
+### FlashCpp Results (Full Integration Test)
 
-Testing was performed by compiling each section individually with FlashCpp, linking
-with clang, and running the resulting binary. Individual section results:
+Testing performed by compiling the full integration test with FlashCpp debug build,
+linking with clang, and running the resulting binary. Tested on Linux x86-64,
+clang++ 18.1.3 linker.
 
 | Section | Feature | Points | FlashCpp Status |
 |---------|---------|--------|-----------------|
@@ -166,9 +167,9 @@ with clang, and running the resulting binary. Individual section results:
 | 8 | Lambdas | 10 | ✅ Pass (10/10) |
 | 9 | Modern C++ Features | 60 | ✅ Pass (60/60) |
 | 10 | Advanced Features | 100 | ✅ Pass (100/100) |
-| 11 | Alt Tokens & C++20 Extras | 100 | ✅ Pass (100/100) |
+| 11 | Alt Tokens & C++20 Extras | 100 | ⚠️ Pass (90/100) - `test_explicit_casts` fails: `static_cast<bool>(n)` stores raw int value instead of normalizing to 0/1 |
 
-**Overall**: FlashCpp passes **~480/490 points** when tested section-by-section.
+**Overall**: FlashCpp passes **480/490 points** (98% pass rate).
 
 ## Compilation Speed Benchmarks
 
@@ -177,30 +178,30 @@ test (~860 lines) on Linux x86-64. 20 iterations each. Run `./run_benchmark.sh` 
 
 | Compiler | Avg (ms) | Min (ms) | Max (ms) |
 |----------|----------|----------|----------|
-| **FlashCpp (release, -O3)** | **91** | **84** | **107** |
-| Clang++ 18.1.3 -O0 | 97 | 90 | 112 |
-| Clang++ 18.1.3 -O2 | 117 | 110 | 124 |
-| FlashCpp (debug, -g) | 124 | 115 | 136 |
-| GCC 13.3.0 -O2 | 128 | 113 | 141 |
-| GCC 13.3.0 -O0 | 131 | 117 | 142 |
+| **FlashCpp (release, -O3)** | **75** | **72** | **84** |
+| Clang++ 18.1.3 -O0 | 91 | 84 | 100 |
+| Clang++ 18.1.3 -O2 | 102 | 96 | 109 |
+| GCC 13.3.0 -O0 | 105 | 94 | 121 |
+| FlashCpp (debug, -g) | 119 | 113 | 130 |
+| GCC 13.3.0 -O2 | 119 | 109 | 180 |
 
-FlashCpp's internal timing breakdown (debug build, ~70ms actual work, rest is
+FlashCpp's internal timing breakdown (debug build, ~53ms actual work, rest is
 process startup overhead):
 
 | Phase | Time (ms) | Percentage |
 |-------|-----------|------------|
-| Preprocessing | 2.2 | 3% |
-| Lexer Setup | 0.2 | 0% |
-| Parsing | 40 | 58% |
-| IR Conversion | 8.5 | 12% |
-| Code Generation | 17 | 25% |
-| Other | 1.7 | 2% |
-| **TOTAL** | **~70** | 100% |
+| Preprocessing | 2.0 | 4% |
+| Lexer Setup | 0.3 | 1% |
+| Parsing | 30.3 | 57% |
+| IR Conversion | 6.4 | 12% |
+| Code Generation | 11.5 | 22% |
+| Other | 2.2 | 4% |
+| **TOTAL** | **~52.7** | 100% |
 
 **Key observations**:
-- FlashCpp release build is the **fastest compiler tested** (91ms avg)
-- 6% faster than Clang -O0 (97ms) and 30% faster than GCC -O0 (131ms)
-- Even the debug build (124ms) is competitive with GCC
+- FlashCpp release build is the **fastest compiler tested** (75ms avg)
+- 18% faster than Clang -O0 (91ms) and 29% faster than GCC -O0 (105ms)
+- Even the debug build (119ms) is competitive with GCC and Clang -O2
 - FlashCpp performs full compilation (preprocess + parse + codegen + ELF output) in a single pass
 - The Clang/GCC numbers use `-O0` (no optimization), which is the default for `clang++ -c`
 
@@ -209,7 +210,7 @@ process startup overhead):
 All 9 originally reported bugs have been fixed. See [`bugs/README.md`](bugs/README.md) for details.
 
 ### Remaining Limitations
-- **Large file code generation** - Some tests that pass individually may produce incorrect results when combined in a single large translation unit (10 points lost in combined integration test)
+- **`static_cast<bool>(n)` normalization** - Stores raw integer value instead of normalizing to 0 or 1. Causes `test_explicit_casts` to fail when `static_cast<bool>(42)` produces 42 (non-zero but ≠1), which breaks logical AND with comparison results.
 
 ## Features NOT Tested
 
@@ -280,6 +281,7 @@ The integration tests successfully demonstrate:
 - ✅ Modular, maintainable test structure
 - ✅ Self-verifying test framework
 - ✅ All 9 originally reported bugs fixed
-- ✅ ~480/490 points passing (98% pass rate)
+- ✅ 480/490 points passing (98% pass rate) in full combined test
+- ✅ FlashCpp release build is the fastest compiler tested (75ms avg vs 91ms Clang -O0)
 
 The tests serve as both validation and documentation of FlashCpp's C++20 support while providing a foundation for future development.
