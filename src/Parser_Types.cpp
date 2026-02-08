@@ -756,6 +756,11 @@ ParseResult Parser::parse_type_specifier()
 		// Try to look up this globally-qualified type; if not found, treat as opaque user-defined type
 		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 		auto type_it = gTypesByName.find(type_name_handle);
+		if (type_it == gTypesByName.end() && type_name.starts_with("::")) {
+			// Try without the leading :: prefix to find types registered with unqualified names
+			StringHandle unqualified_handle = StringTable::getOrInternStringHandle(type_name.substr(2));
+			type_it = gTypesByName.find(unqualified_handle);
+		}
 		if (type_it != gTypesByName.end()) {
 			size_t user_type_index = type_it->second->type_index_;
 			int type_size_bits = static_cast<int>(type_it->second->type_size_);
