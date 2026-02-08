@@ -5156,7 +5156,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				auto type_result = parse_type_specifier();
 				if (!type_result.is_error() && type_result.node().has_value()) {
 					// Skip pointer/reference qualifiers on conversion target type
-					while (peek() == "*"_tok || peek() == "&"_tok) {
+					while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
 						advance();
 					}
 					if (peek() == "("_tok) {
