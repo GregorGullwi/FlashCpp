@@ -15,25 +15,25 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
 | `<vector>` | `test_std_vector.cpp` | ❌ Runtime Crash | Progressed past `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Blocked by `max_size_type.h` conversion operator template (`operator _Tp()`) |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Blocked by `optional:754` template parameter `>>>` closing |
-| `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~300ms (2026-02-06: Fixed `alignas` expression parsing) |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Expected type specifier at `any:583` (out-of-line template member) |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
+| `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Expected identifier token at `variant` (regression needs investigation) |
+| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~300ms (previously blocked by out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Blocked by `range_access.h` array reference parameter (`const _Tp (&)[_Nm]`) |
-| `<string>` | `test_std_string.cpp` | ❌ Runtime Crash | Progressed past `refwrap.h` and `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Blocked by `array:293` deduction guide |
-| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Blocked by `max_size_type.h` conversion operator template |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
-| `<map>` | `test_std_map.cpp` | ❌ Runtime Crash | Progressed past `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
-| `<set>` | `test_std_set.cpp` | ❌ Runtime Crash | Progressed past `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Blocked by `array:293` deduction guide |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Blocked by `stl_algobase.h` or allocator includes |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Runtime Crash | Progressed past `refwrap.h` and `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
-| `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | glibc malloc assertion failure (memory corruption) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
+| `<string>` | `test_std_string.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Failed to parse initializer expression (deduction guide parsing progressed) |
+| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Expected identifier token at `stl_tempbuf.h` |
+| `<functional>` | `test_std_functional.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Unexpected token in type specifier: 'template' at `uniform_int_dist.h` |
+| `<map>` | `test_std_map.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
+| `<set>` | `test_std_set.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
+| `<span>` | `test_std_span.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | No matching template for call to `__builtin_va_start` |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
+| `<chrono>` | `test_std_chrono.cpp` | ✅ Compiled | ~287ms (2026-02-08: Fixed with ref-qualifier and attribute fixes) |
 | `<atomic>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (enum bitwise ops) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
@@ -112,11 +112,27 @@ The following parser issues were fixed to unblock standard header compilation:
 
 | Blocker | Affected Headers | Details |
 |---------|-----------------|---------|
-| `bad_any_cast` runtime crash | `<string>`, `<iostream>`, `<vector>`, `<map>`, `<set>` | Crash during deep template instantiation after `alloc_traits.h`; likely an ASTNode variant access issue |
+| `bad_any_cast` runtime crash | `<string>`, `<iostream>`, `<vector>`, `<map>`, `<set>`, `<tuple>`, `<functional>`, `<string_view>`, `<span>` | Crash during deep template instantiation; likely an ASTNode variant access issue |
 | `__cmpexch_failure_order2` overload | `<atomic>`, `<barrier>` | Constexpr function using bitwise ops on `memory_order` enum |
-| Unnamed `in_place_t` parameter | `<optional>` | `_Optional_base(in_place_t, _Args&&...)` unnamed parameter |
-| Memory corruption | `<ratio>`, `<chrono>` | glibc malloc assertion failure during parsing |
-| Deduction guide parsing | `<array>`, `<span>` | `array:293` deduction guide syntax not fully supported |
+| Memory corruption | `<ratio>` | glibc malloc assertion failure during parsing |
+| `template` inside struct body | `<algorithm>` | `uniform_int_dist.h:285` has `template` keyword inside struct context not handled |
+| `Expected identifier token` | `<memory>`, `<variant>` | Identifier parsing issues in template contexts |
+
+### Recent Fixes (2026-02-08, PR #3)
+
+The following parser issues were fixed to unblock standard header compilation:
+
+1. **`explicit constexpr` constructor ordering in member function templates**: The constructor detection lookahead in `parse_member_function_template()` now calls `parse_declaration_specifiers()` after consuming the `explicit` keyword, allowing `explicit constexpr` (not just `constexpr explicit`). This matches the C++20 standard that permits these specifiers in any order. Unblocks `<optional>`.
+
+2. **Deduction guide parameter pack expansion (`_Up...`)**: The deduction guide parameter parsing in `parse_template_declaration()` now handles `...` (pack expansion) after type specifiers. Previously, `array(_Tp, _Up...) -> array<_Tp, 1 + sizeof...(_Up)>;` would fail because `...` was not consumed. Unblocks `<array>`, `<span>`.
+
+3. **Relative include resolution for quoted includes**: The preprocessor `#include "file.h"` directive now searches the directory of the including file first, per C++ standard [cpp.include]. Previously, `pstl/execution_defs.h` including `"algorithm_fwd.h"` (in the same `pstl/` directory) would fail because only the main file's directory was searched. Unblocks `<memory>`, `<algorithm>`.
+
+4. **Ref-qualifier token type bug in `skip_function_trailing_specifiers()`**: Fixed `&` and `&&` ref-qualifier detection which was checking for `Token::Type::Punctuator` but these tokens are actually `Token::Type::Operator` (token kind `BitwiseAnd`/`LogicalAnd`). Now uses `peek() == "&"_tok` pattern for correct matching. Unblocks template member functions with `const&` and `&&` ref-qualifiers, critical for `<optional>`.
+
+5. **`[[__deprecated__]]` C++ attributes on `using` type aliases**: Added `skip_cpp_attributes()` after the alias name in both member type alias and regular type alias parsing. This handles patterns like `using result_type [[__deprecated__]] = size_t;` in `<optional>` and `<functional>`.
+
+**Headers newly compiling:** `<optional>` (was blocked by ref-qualifier, explicit constexpr, and attribute issues), `<any>` (was blocked by out-of-line template member issues), `<chrono>` (previously crashed with malloc assertion failure; fixes to ref-qualifier and attribute handling may have resolved the underlying memory corruption path).
 
 ### Recent Fixes (2026-02-05)
 

@@ -4934,6 +4934,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		
 		// Skip any remaining declaration specifiers after 'explicit'
 		// Handles 'explicit constexpr' where constexpr comes after explicit
+		// (Results intentionally discarded - this is a lookahead, actual values captured below)
 		parse_declaration_specifiers();
 		
 		// Check if next identifier is the struct name
