@@ -1,5 +1,42 @@
 # Known IR Generation Issues
 
+## Issue: Dependent Qualified Return Types Not Substituted in Template Instantiation
+
+### Status: BUG - codegen failure
+
+### Description
+
+When a template class has a member function whose return type is a qualified dependent nested type (e.g., `const typename Wrapper<T>::Nested*`), the return type is not properly substituted during template instantiation. The return type stays as the dependent placeholder (type index with size 0), causing codegen to fail with "Return statement: expression evaluation failed".
+
+### Example Code
+
+```cpp
+template<typename T>
+struct Wrapper {
+    struct Nested { T value; };
+    const typename Wrapper<T>::Nested* get() const;
+    Wrapper(T v) : nested{v} {}
+    Nested nested;
+};
+
+template<typename T>
+const typename Wrapper<T>::Nested*
+Wrapper<T>::get() const { return &nested; }
+
+int main() {
+    Wrapper<int> wrapper(42);
+    return wrapper.get()->value;  // Should return 42, returns 0
+}
+```
+
+### Root Cause
+
+During lazy template instantiation, `substitute_template_parameter` handles simple type parameters (T → int) but does not resolve qualified nested types like `Wrapper<T>::Nested` → `Wrapper<int>::Nested`. The nested class IS instantiated (as `Wrapper$hash::Nested`), but the member function's return type still references the unresolved placeholder.
+
+### Affected Test
+
+`test_out_of_line_template_member_multiline_ret42.cpp` - returns 0 instead of 42.
+
 ## Issue: Suboptimal Assignment IR for Reference Parameters with Compound Operations
 
 ### Status: FUNCTIONALLY CORRECT, but IR could be more optimal

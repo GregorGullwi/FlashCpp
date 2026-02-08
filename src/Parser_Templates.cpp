@@ -180,8 +180,10 @@ ParseResult Parser::parse_template_declaration() {
 	// Check if this is a nested template (member function template of a class template)
 	// Pattern: template<typename T> template<typename U> ReturnType Class<T>::method(U u) { ... }
 	// At this point, outer template params are registered, so the inner parse can see them.
-	// For now, we skip the inner template definition since full nested template instantiation
-	// is not yet supported. This allows standard headers like <algorithm> to parse.
+	// TODO: Full nested template instantiation is not yet supported. Currently we skip the
+	// inner template definition entirely, which means member function templates of class
+	// templates will parse but won't generate code. Calls to such functions will fail at
+	// link time. This allows standard headers like <algorithm> to parse without errors.
 	if (peek() == "template"_tok) {
 		// Save the inner template params, then skip forward to find the function body and consume it
 		auto inner_saved = save_token_position();
@@ -15445,8 +15447,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& out_of_line_member : out_of_line_members) {
 		// The function_node should be a FunctionDeclarationNode
 		if (!out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
-			FLASH_LOG(Templates, Error, "Out-of-line member function_node is not a FunctionDeclarationNode, type: ", 
-			          out_of_line_member.function_node.type_name());
+			FLASH_LOG(Templates, Error, "Out-of-line member function_node is not a FunctionDeclarationNode, type: ", out_of_line_member.function_node.type_name());
 			continue;
 		}
 		
