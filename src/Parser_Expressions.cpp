@@ -1812,8 +1812,7 @@ void Parser::skip_function_trailing_specifiers()
 		}
 		
 		// Handle ref-qualifiers (& and &&)
-		if (token.type() == Token::Type::Punctuator &&
-			(token.value() == "&" || token.value() == "&&")) {
+		if (peek() == "&"_tok || peek() == "&&"_tok) {
 			advance();
 			continue;
 		}

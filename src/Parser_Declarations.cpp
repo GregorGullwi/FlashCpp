@@ -3120,6 +3120,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// Skip GCC __attribute__ that may appear between alias name and '='
 		// e.g., using is_always_equal __attribute__((__deprecated__("..."))) = true_type;
 		skip_gcc_attributes();
+		// Skip C++ attributes like [[__deprecated__]] between name and '='
+		skip_cpp_attributes();
 		
 		// Check for '='
 		if (peek() != "="_tok) {
@@ -9358,6 +9360,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			if (!alias_token.kind().is_identifier()) {
 				return ParseResult::error("Expected alias name after 'using'", current_token_);
 			}
+
+			// Skip C++ attributes like [[__deprecated__]] between name and '='
+			skip_cpp_attributes();
 
 			// Consume '='
 			if (peek().is_eof() || peek_info().type() != Token::Type::Operator || peek() != "="_tok) {
