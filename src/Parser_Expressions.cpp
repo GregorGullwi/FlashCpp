@@ -1798,6 +1798,9 @@ bool Parser::parse_constructor_exception_specifier()
 // and __attribute__((...))
 void Parser::skip_function_trailing_specifiers()
 {
+	// Clear any previously parsed requires clause
+	last_parsed_requires_clause_.reset();
+	
 	while (!peek().is_eof()) {
 		auto token = peek_info();
 		
@@ -1848,6 +1851,14 @@ void Parser::skip_function_trailing_specifiers()
 			continue;
 		}
 		
+		// Stop before trailing requires clause - don't consume it here.
+		// Callers like parse_static_member_function need to handle requires clauses
+		// themselves so they can set up proper function parameter scope first.
+		// This allows requires clauses referencing function parameters to work correctly.
+		if (token.type() == Token::Type::Keyword && token.value() == "requires") {
+			break;
+		}
+		
 		// Handle pure virtual (= 0), default (= default), delete (= delete)
 		if (token.type() == Token::Type::Punctuator && token.value() == "=") {
 			auto next = peek_info(1);
@@ -1860,6 +1871,22 @@ void Parser::skip_function_trailing_specifiers()
 		
 		// Not a trailing specifier, stop
 		break;
+	}
+}
+
+// Parse and discard a trailing requires clause if present.
+// Used by call sites that don't need to enforce the constraint (e.g., out-of-line definitions
+// where the constraint was already recorded during the in-class declaration).
+// For call sites that need parameter scope (e.g., parse_static_member_function),
+// handle the requires clause directly instead of using this helper.
+void Parser::skip_trailing_requires_clause()
+{
+	if (peek() == "requires"_tok) {
+		advance(); // consume 'requires'
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (constraint_result.is_error()) {
+			FLASH_LOG(Parser, Warning, "Failed to parse trailing requires clause: ", constraint_result.error_message());
+		}
 	}
 }
 
@@ -1934,6 +1961,7 @@ bool Parser::parse_static_member_function(
 	// Check for trailing requires clause: static int func(int x) requires constraint { ... }
 	// This is common in C++20 code, e.g., requires requires { expr; } 
 	if (peek() == "requires"_tok) {
+		Token requires_token = peek_info(); // Preserve source location
 		advance(); // consume 'requires'
 		
 		// Enter a temporary scope and add function parameters so they're visible in the requires clause
@@ -1957,10 +1985,12 @@ bool Parser::parse_static_member_function(
 			return true;
 		}
 		
-		// Note: For now, we store the requires clause but don't enforce it at compile time.
-		// This allows us to parse the code correctly; constraint checking would be done during
-		// template instantiation or in the type system.
-		FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for static member function");
+		// Store the parsed requires clause - it will be evaluated at compile time
+		// during template instantiation via the evaluateConstraint() infrastructure.
+		last_parsed_requires_clause_ = emplace_node<RequiresClauseNode>(
+			*constraint_result.node(),
+			requires_token);
+		FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for static member function (compile-time evaluation)");
 	}
 
 	// Parse function body if present
@@ -2088,6 +2118,19 @@ ParseResult Parser::parse_static_member_block(
 			return init_result;
 		}
 		init_expr_opt = init_result.node();
+	} else if (peek() == "{"_tok) {
+		// Brace initialization: static constexpr int x{42};
+		advance(); // consume '{'
+		
+		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		init_expr_opt = init_result.node();
+		
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' after brace initializer", current_token_);
+		}
 	}
 
 	// Consume semicolon
@@ -2536,8 +2579,8 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			continue;
 		}
 		
-		// Check for -> member access
-		if (peek().is_operator() && peek() == "->"_tok) {
+		// Check for -> member access (-> is a punctuator, not an operator)
+		if (peek() == "->"_tok) {
 			Token arrow_token = peek_info();
 			advance(); // consume '->'
 			
@@ -2556,9 +2599,35 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			Token member_name_token = peek_info();
 			advance();
 			
-			// Create arrow access node
-			result = emplace_node<ExpressionNode>(
-				MemberAccessNode(*result, member_name_token, true)); // true = arrow access
+			// Check if this is a member function call (followed by '(')
+			if (peek() == "("_tok) {
+				advance(); // consume '('
+				
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = false
+				});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+				}
+				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after arrow member function call arguments", current_token_);
+				}
+				
+				auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
+				auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
+				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+				
+				result = emplace_node<ExpressionNode>(
+					MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_name_token));
+			} else {
+				// Create arrow access node
+				result = emplace_node<ExpressionNode>(
+					MemberAccessNode(*result, member_name_token, true)); // true = arrow access
+			}
 			continue;
 		}
 		
@@ -4376,13 +4445,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// For now, we'll treat it as an identity function that preserves references
 			// Skip template arguments if present
 			if (current_token_.value() == "<") {
-				// Skip template arguments: <T>
+				// Skip template arguments: <T> or <iter_reference_t<_It>>
 				int angle_bracket_depth = 1;
 				advance(); // consume <
 				
 				while (angle_bracket_depth > 0 && !current_token_.kind().is_eof()) {
 					if (current_token_.value() == "<") angle_bracket_depth++;
 					else if (current_token_.value() == ">") angle_bracket_depth--;
+					else if (current_token_.value() == ">>") angle_bracket_depth -= 2;
 					advance();
 				}
 			}

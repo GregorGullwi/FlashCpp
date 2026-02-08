@@ -290,6 +290,16 @@ ParseResult Parser::parse_top_level_node()
 			}
 
 			return saved_position.success();
+		} else if (peek() == "template"_tok) {
+			// extern template class allocator<char>; — explicit instantiation declaration
+			// Don't restore, we've already consumed 'extern', and parse_template_declaration
+			// will consume 'template'. Discard the saved position.
+			discard_saved_token(extern_saved_pos);
+			auto template_result = parse_template_declaration();
+			if (!template_result.is_error()) {
+				return saved_position.success();
+			}
+			return saved_position.propagate(std::move(template_result));
 		} else {
 			// Regular extern without linkage specification, restore and continue
 			restore_token_position(extern_saved_pos);
@@ -2046,6 +2056,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				break;
 			}
 		}
+		
+		// Skip trailing requires clause for out-of-line definitions
+		// (the constraint was already recorded during the in-class declaration)
+		skip_trailing_requires_clause();
 
 		// Apply parsed parameters to the function
 		for (const auto& param : params.parameters) {
@@ -2738,6 +2752,9 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	
 	// Skip optional qualifiers (noexcept, const, etc.) using existing helper
 	skip_function_trailing_specifiers();
+	
+	// Skip trailing requires clause for out-of-line constructor/destructor definitions
+	skip_trailing_requires_clause();
 	
 	// Find the matching constructor/destructor declaration in the struct
 	StructMemberFunction* existing_member = nullptr;
@@ -4639,6 +4656,19 @@ ParseResult Parser::parse_struct_declaration()
 						return init_result;
 					}
 					init_expr_opt = init_result.node();
+				} else if (peek() == "{"_tok) {
+					// Brace initialization: static constexpr int x{42};
+					advance(); // consume '{'
+					
+					auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (init_result.is_error()) {
+						return init_result;
+					}
+					init_expr_opt = init_result.node();
+					
+					if (!consume("}"_tok)) {
+						return ParseResult::error("Expected '}' after brace initializer", current_token_);
+					}
 				}
 
 				// Expect semicolon
@@ -7335,6 +7365,20 @@ ParseResult Parser::parse_static_assert()
 
 	// Check if the assertion failed
 	if (!eval_result.as_bool()) {
+		// In template contexts, static_assert may evaluate to false because
+		// type traits like is_constructible<_Tp, _Args...> return false_type
+		// for unknown/dependent types. Defer instead of failing.
+		if (is_in_template_definition || is_in_template_struct) {
+			FLASH_LOG(Templates, Debug, "Deferring static_assert that evaluated to false in template context");
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& struct_ctx = struct_parsing_context_stack_.back();
+				if (struct_ctx.struct_node) {
+					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+				}
+			}
+			return saved_position.success();
+		}
 		std::string error_msg = "static_assert failed";
 		if (!message.empty()) {
 			error_msg += ": " + message;
@@ -8789,6 +8833,9 @@ ParseResult Parser::parse_friend_declaration()
 	// Skip optional qualifiers after parameter list using existing helper
 	skip_function_trailing_specifiers();
 
+	// Skip trailing requires clause on friend functions
+	skip_trailing_requires_clause();
+
 	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
 	if (peek() == "{"_tok) {
 		// Friend function with inline body - skip the body using existing helper
@@ -8847,6 +8894,21 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 			angle_bracket_depth--;
 		}
 		advance();
+	}
+
+	// Parse optional requires clause between template parameters and 'friend'
+	// e.g., template<typename _It2, sentinel_for<_It> _Sent2>
+	//         requires sentinel_for<_Sent, _It2>
+	//         friend constexpr bool operator==(...) { ... }
+	if (peek() == "requires"_tok) {
+		advance(); // consume 'requires'
+		// Parse the constraint expression properly for compile-time evaluation
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (constraint_result.is_error()) {
+			FLASH_LOG(Parser, Warning, "Failed to parse requires clause in friend template: ", constraint_result.error_message());
+		} else {
+			FLASH_LOG(Parser, Debug, "Parsed requires clause in friend template for compile-time evaluation");
+		}
 	}
 
 	// Now we should see 'friend'
@@ -9145,6 +9207,10 @@ ParseResult Parser::parse_namespace() {
 					decl_result = parse_declaration_or_function_definition();
 					current_linkage_ = saved_linkage;
 				}
+			} else if (peek() == "template"_tok) {
+				// extern template class allocator<char>; — explicit instantiation declaration
+				discard_saved_token(extern_saved_pos);
+				decl_result = parse_template_declaration();
 			} else {
 				// Regular extern declaration (not extern "C")
 				restore_token_position(extern_saved_pos);

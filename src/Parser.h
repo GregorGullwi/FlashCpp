@@ -443,6 +443,11 @@ private:
         // When true, type resolution errors should be treated as substitution failures instead of hard errors
         bool in_sfinae_context_ = false;
 
+        // Last parsed trailing requires clause from caller-specific requires handling
+        // skip_function_trailing_specifiers() stops before 'requires' so callers can
+        // parse it themselves with proper function parameter scope setup.
+        std::optional<ASTNode> last_parsed_requires_clause_;
+
         // Track nesting of inline namespaces (parallel to parse_namespace recursion)
         std::vector<bool> inline_namespace_stack_;
         
@@ -824,7 +829,8 @@ public:  // Public methods for template instantiation
         void skip_cpp_attributes();                   // Skip C++ standard [[...]] attributes
         void skip_gcc_attributes();                   // Skip GCC __attribute__((...)) specifications
         void skip_noexcept_specifier();               // Skip noexcept or noexcept(expr) specifier
-        void skip_function_trailing_specifiers();     // Skip all trailing specifiers after function parameters
+        void skip_function_trailing_specifiers();     // Skip all trailing specifiers after function parameters (stops before 'requires')
+        void skip_trailing_requires_clause();         // Parse and discard trailing requires clause (if present)
         bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
         void apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec);  // Apply & or && reference qualifiers to a type
         

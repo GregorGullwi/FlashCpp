@@ -52,14 +52,23 @@ benchmark() {
     shift
     local cmd=("$@")
     local times=()
+    local failures=0
 
     for i in $(seq 1 $ITERATIONS); do
         start=$(date +%s%N)
-        "${cmd[@]}" > /dev/null 2>&1 || true
-        end=$(date +%s%N)
-        elapsed=$(( (end - start) / 1000000 ))
-        times+=($elapsed)
+        if "${cmd[@]}" > /dev/null 2>&1; then
+            end=$(date +%s%N)
+            elapsed=$(( (end - start) / 1000000 ))
+            times+=($elapsed)
+        else
+            failures=$((failures + 1))
+        fi
     done
+
+    if [ ${#times[@]} -eq 0 ]; then
+        printf "| %-28s | %6s | %6s | %6s | FAILED (all %d iterations)\n" "$name" "---" "---" "---" "$failures"
+        return
+    fi
 
     local total=0 min=${times[0]} max=${times[0]}
     for t in "${times[@]}"; do
@@ -67,9 +76,13 @@ benchmark() {
         [ $t -lt $min ] && min=$t
         [ $t -gt $max ] && max=$t
     done
-    local avg=$((total / ITERATIONS))
+    local avg=$((total / ${#times[@]}))
 
-    printf "| %-28s | %6d | %6d | %6d |\n" "$name" "$avg" "$min" "$max"
+    if [ $failures -gt 0 ]; then
+        printf "| %-28s | %6d | %6d | %6d | (%d/%d FAILED)\n" "$name" "$avg" "$min" "$max" "$failures" "$ITERATIONS"
+    else
+        printf "| %-28s | %6d | %6d | %6d |\n" "$name" "$avg" "$min" "$max"
+    fi
 }
 
 echo "======================================================================"

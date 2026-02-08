@@ -1303,6 +1303,45 @@ ParseResult Parser::parse_template_declaration() {
 							return static_result;
 						}
 						continue;
+					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
+						// Handle nested struct/class declarations inside full specialization body
+						advance(); // consume 'struct' or 'class'
+						
+						// Skip struct name if present
+						if (peek().is_identifier()) {
+							advance(); // consume struct name
+						}
+						
+						// Skip template arguments if present (e.g., struct Wrapper<int>)
+						if (peek() == "<"_tok) {
+							parse_explicit_template_arguments();
+						}
+						
+						// Skip base class list if present (e.g., struct Frame : public Base)
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+								advance();
+							}
+						}
+						
+						// Skip to body or semicolon
+						if (peek() == "{"_tok) {
+							skip_balanced_braces();
+						}
+						
+						// Consume trailing semicolon
+						if (peek() == ";"_tok) {
+							advance();
+						}
+						continue;
+					} else if (peek() == "friend"_tok) {
+						// Handle friend declarations inside full specialization body
+						auto friend_result = parse_friend_declaration();
+						if (friend_result.is_error()) {
+							return friend_result;
+						}
+						continue;
 					}
 				}
 
@@ -2204,6 +2243,12 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Create struct type info early so we can add base classes
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+			
+			// Mark as template instantiation with the base template name
+			// This allows constructor detection (e.g., template<typename U> allocator(const allocator<U>&))
+			// to find the base template name and match it against the constructor name
+			struct_type_info.setTemplateInstantiationInfo(
+				StringTable::getOrInternStringHandle(template_name), {});
 			
 			// Create StructTypeInfo for this specialization
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
@@ -4627,6 +4672,10 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// We need to skip cv-qualifiers, ref-qualifier, and noexcept BEFORE checking for trailing return type
 	// Example: template<typename T> auto func(T x) const noexcept -> decltype(x + 1)
 	skip_function_trailing_specifiers();
+
+	// Skip trailing requires clause during template instantiation
+	// (the constraint was already evaluated during template argument deduction)
+	skip_trailing_requires_clause();
 
 	// Handle trailing return type for auto return type
 	// This must be done AFTER skipping cv-qualifiers/noexcept but BEFORE semicolon/body
