@@ -1558,6 +1558,7 @@ public:
 		variable_templates_.clear();
 		deduction_guides_.clear();
 		instantiation_to_pattern_.clear();
+		outer_template_bindings_.clear();
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
