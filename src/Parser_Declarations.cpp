@@ -5670,17 +5670,7 @@ ParseResult Parser::parse_struct_declaration()
 			
 			// Consume pointer/reference modifiers: operator _Tp&(), operator _Tp*(), etc.
 			TypeSpecifierNode& target_type_mut = type_result.node()->as<TypeSpecifierNode>();
-			while (peek() == "*"_tok) {
-				advance();
-				target_type_mut.add_pointer_level(CVQualifier::None);
-			}
-			if (peek() == "&&"_tok) {
-				advance();
-				target_type_mut.set_reference(true);
-			} else if (peek() == "&"_tok) {
-				advance();
-				target_type_mut.set_reference(false);
-			}
+			consume_conversion_operator_target_modifiers(target_type_mut);
 			
 			// Create operator name like "operator int" using StringBuilder
 			const TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();

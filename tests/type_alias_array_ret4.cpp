@@ -4,8 +4,9 @@
 template<typename _Tp, int _Nm>
 struct array_wrapper {
     using _Type = _Tp[_Nm];
+    static constexpr int size = _Nm;
 };
 
 int main() {
-    return 0;
+    return array_wrapper<int, 4>::size;
 }

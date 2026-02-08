@@ -852,6 +852,7 @@ public:  // Public methods for template instantiation
         void skip_trailing_requires_clause();         // Parse and discard trailing requires clause (if present)
         bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
         void apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec);  // Apply & or && reference qualifiers to a type
+        void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
         
         // Helper to parse static member functions (reduces code duplication)
         bool parse_static_member_function(

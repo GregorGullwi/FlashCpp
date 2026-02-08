@@ -1905,6 +1905,22 @@ void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
 	}
 }
 
+// Consume pointer/reference modifiers after conversion operator target type
+// Handles: operator _Tp&(), operator _Tp*(), operator _Tp&&()
+void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type) {
+	while (peek() == "*"_tok) {
+		advance();
+		target_type.add_pointer_level(CVQualifier::None);
+	}
+	if (peek() == "&&"_tok) {
+		advance();
+		target_type.set_reference(true);
+	} else if (peek() == "&"_tok) {
+		advance();
+		target_type.set_reference(false);
+	}
+}
+
 // Helper to parse static member functions - reduces code duplication across three call sites
 bool Parser::parse_static_member_function(
 	ParseResult& type_and_name_result,
@@ -2032,8 +2048,11 @@ bool Parser::parse_static_member_function(
 				type_and_name_result = ParseResult::error("Expected ';' after '= delete'", peek_info());
 				return true;
 			}
+			// Deleted static member functions are not callable - skip registration
+			return true;
 		} else if (peek() == "default"_tok) {
 			advance(); // consume 'default'
+			member_func_ref.set_is_implicit(true);
 			if (!consume(";"_tok)) {
 				type_and_name_result = ParseResult::error("Expected ';' after '= default'", peek_info());
 				return true;
