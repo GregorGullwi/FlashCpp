@@ -10980,9 +10980,45 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 	}
 	else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-		// For binary operators, we'd need to evaluate the result type
-		// For now, just return int as a placeholder
-		// TODO: Implement proper type inference for binary operators
+		const auto& binary = std::get<BinaryOperatorNode>(expr);
+		std::string_view op = binary.op();
+
+		// Comparison and logical operators always return bool
+		if (op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" ||
+		    op == "&&" || op == "||") {
+			return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+		}
+
+		// For bitwise/arithmetic operators, check the LHS type
+		// If LHS is an enum, check for free function operator overloads
+		auto lhs_type_opt = get_expression_type(binary.get_lhs());
+		if (lhs_type_opt.has_value() && lhs_type_opt->type() == Type::Enum) {
+			// Look for a free function operator overload (e.g., operator&(EnumA, EnumB) -> EnumA)
+			StringBuilder op_name_builder;
+			op_name_builder.append("operator"sv);
+			op_name_builder.append(op);
+			auto op_name = op_name_builder.commit();
+			auto overloads = gSymbolTable.lookup_all(op_name);
+			for (const auto& overload : overloads) {
+				if (overload.is<FunctionDeclarationNode>()) {
+					const auto& func = overload.as<FunctionDeclarationNode>();
+					const ASTNode& type_node = func.decl_node().type_node();
+					if (type_node.is<TypeSpecifierNode>()) {
+						return type_node.as<TypeSpecifierNode>();
+					}
+				}
+			}
+		}
+
+		// For same-type operands, return the LHS type
+		if (lhs_type_opt.has_value()) {
+			auto rhs_type_opt = get_expression_type(binary.get_rhs());
+			if (rhs_type_opt.has_value() && lhs_type_opt->type() == rhs_type_opt->type()) {
+				return *lhs_type_opt;
+			}
+		}
+
+		// Default: return int for arithmetic/bitwise operations
 		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
 	}
 	else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
