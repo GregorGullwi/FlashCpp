@@ -1437,7 +1437,7 @@ ParseResult Parser::parse_template_declaration() {
 								}
 								
 								advance();  // consume '(' or '{'
-								auto close_kind = is_paren ? ")"_tok : "}"_tok;
+								TokenKind close_kind = [is_paren]() { if (is_paren) return ")"_tok; return "}"_tok; }();
 								
 								std::vector<ASTNode> init_args;
 								if (peek() != close_kind) {
@@ -2665,7 +2665,7 @@ ParseResult Parser::parse_template_declaration() {
 								}
 								
 								advance();  // consume '(' or '{'
-								auto close_kind = is_paren ? ")"_tok : "}"_tok;
+								TokenKind close_kind = [is_paren]() { if (is_paren) return ")"_tok; return "}"_tok; }();
 								
 								std::vector<ASTNode> init_args;
 								if (peek() != close_kind) {

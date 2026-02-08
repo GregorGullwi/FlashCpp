@@ -3289,7 +3289,7 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 				}
 
 				advance();  // consume '(' or '{'
-				TokenKind close_kind = is_paren ? ")"_tok : "}"_tok;
+				TokenKind close_kind = [is_paren]() { if (is_paren) return ")"_tok; return "}"_tok; }();
 
 				// Parse initializer arguments
 				std::vector<ASTNode> init_args;
