@@ -17485,19 +17485,50 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Handle nested class template member: ClassName::NestedTemplate<Args>::FunctionName
 	// When we have ClassName::NestType<Args>:: followed by more identifiers,
 	// the actual function name is further down. Keep consuming qualified parts.
+	// Note: saved_pos was already discarded above - we are committed to this parsing path,
+	// so we must not return std::nullopt from within this loop. Instead, break out and let
+	// the downstream code handle any unexpected tokens.
 	while (peek() == "::"_tok) {
 		advance(); // consume '::'
-		if (!peek().is_identifier() && peek() != "~"_tok) {
-			// Can't continue - not a valid qualified name
-			return std::nullopt;
+
+		// Handle 'template' keyword disambiguator (e.g., ::template member<Args>)
+		if (peek() == "template"_tok) {
+			advance(); // consume 'template'
 		}
+
+		// Handle 'operator' keyword for operator member functions
+		// (e.g., ClassName::operator==)
+		if (peek() == "operator"_tok) {
+			function_name_token = peek_info();
+			advance(); // consume 'operator'
+			// Build the operator name (operator==, operator(), operator[], etc.)
+			StringBuilder op_builder;
+			op_builder.append("operator"sv);
+			while (!peek().is_eof() && peek() != "("_tok) {
+				// Stop if we hit something that's clearly not part of the operator name
+				if (peek() == "{"_tok || peek() == ";"_tok) break;
+				op_builder.append(peek_info().value());
+				advance();
+			}
+			std::string_view op_name = op_builder.commit();
+			function_name_token = Token(Token::Type::Identifier, op_name,
+				function_name_token.line(), function_name_token.column(),
+				function_name_token.file_index());
+			function_template_args.clear();
+			break; // operator name consumed; next token should be '('
+		}
+
 		// Handle destructor: ~ClassName
 		if (peek() == "~"_tok) {
 			advance(); // consume '~'
 		}
+
+		// If we can't find an identifier here, break out of the loop
+		// and let the downstream code handle the unexpected token
 		if (!peek().is_identifier()) {
-			return std::nullopt;
+			break;
 		}
+
 		function_name_token = peek_info();
 		advance();
 		// Reset function template args - they belonged to the nested class, not the function
