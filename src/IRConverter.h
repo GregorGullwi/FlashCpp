@@ -7076,12 +7076,77 @@ private:
 			}  // End of fallback for loop
 		}  // End of if (actual_ctor) else block
 
-		// Load parameters into registers
-		// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
-		// Integer regs: RDI is 'this', so start at index 1 for first param (RSI on Linux, RDX on Windows)
-		// Float regs: XMM0-XMM7 for floating-point parameters
+		// Process constructor parameters: first handle stack overflow args, then register args
 		const size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 		const size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+		size_t shadow_space = getShadowSpaceSize<TWriterClass>();
+
+		// First pass: identify and place stack arguments (params that don't fit in registers)
+		// Register index 0 is used by 'this', so effective int reg capacity is max_int_regs - 1
+		{
+			size_t temp_int_idx = 1;  // Start at 1 because 'this' uses register 0
+			size_t temp_float_idx = 0;
+			size_t stack_arg_count = 0;
+
+			for (size_t i = 0; i < num_params; ++i) {
+				const TypedValue& arg = ctor_op.arguments[i];
+				bool is_float_arg = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference();
+
+				bool goes_on_stack = false;
+				if (is_float_arg) {
+					if (temp_float_idx >= max_float_regs) {
+						goes_on_stack = true;
+					}
+					temp_float_idx++;
+				} else {
+					if (temp_int_idx >= max_int_regs) {
+						goes_on_stack = true;
+					}
+					temp_int_idx++;
+				}
+
+				if (goes_on_stack) {
+					int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+
+					if (is_float_arg) {
+						X64Register temp_xmm = allocateXMMRegisterWithSpilling();
+						if (std::holds_alternative<double>(arg.value)) {
+							double float_value = std::get<double>(arg.value);
+							uint64_t bits;
+							if (arg.type == Type::Float) {
+								float float_val = static_cast<float>(float_value);
+								uint32_t float_bits;
+								std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+								bits = float_bits;
+							} else {
+								std::memcpy(&bits, &float_value, sizeof(bits));
+							}
+							X64Register temp_gpr = allocateRegisterWithSpilling();
+							emitMovImm64(temp_gpr, bits);
+							emitMovqGprToXmm(temp_gpr, temp_xmm);
+							regAlloc.release(temp_gpr);
+						} else if (std::holds_alternative<TempVar>(arg.value)) {
+							int var_offset = getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
+							emitFloatMovFromFrame(temp_xmm, var_offset, arg.type == Type::Float);
+						} else if (std::holds_alternative<StringHandle>(arg.value)) {
+							int var_offset = variable_scopes.back().variables[std::get<StringHandle>(arg.value)].offset;
+							emitFloatMovFromFrame(temp_xmm, var_offset, arg.type == Type::Float);
+						}
+						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.type == Type::Float);
+						regAlloc.release(temp_xmm);
+					} else {
+						X64Register temp_reg = loadTypedValueIntoRegister(arg);
+						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+						regAlloc.release(temp_reg);
+					}
+					stack_arg_count++;
+				}
+			}
+		}
+
+		// Second pass: load register arguments
+		// Integer regs: index 0 is 'this', so start at index 1 for first explicit param
+		// Float regs: XMM0-XMM7 for floating-point parameters
 		size_t int_reg_index = 1;  // Start at 1 because index 0 (RDI/RCX) is 'this' pointer
 		size_t float_reg_index = 0;
 
@@ -7210,7 +7275,7 @@ private:
 					}
 				}
 			}
-			// Note: If we run out of registers, we'd need to push args to stack (not implemented here for constructors)
+			// Args that don't fit in registers were already placed on the stack in the first pass above
 		}
 
 		// Generate the call instruction
@@ -9124,7 +9189,8 @@ private:
 				} else {
 					// Parameter comes from stack - calculate positive offset
 					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
-					offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
+					// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
+					offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(type_specific_index - reg_threshold) * 8;
 				}
 
 				StringHandle param_name_handle = instruction.getOperandAs<StringHandle>(paramIndex + FunctionDeclLayout::PARAM_NAME);
@@ -9240,8 +9306,8 @@ private:
 					offset = (paramNumber + 1) * -8;
 				} else {
 					// Parameter comes from stack - calculate positive offset
-					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
-					offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
+					// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
+					offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(type_specific_index - reg_threshold) * 8;
 				}
 
 				// Phase 4: Use helper to get param name for map key

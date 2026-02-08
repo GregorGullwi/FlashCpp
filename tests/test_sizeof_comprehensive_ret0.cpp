@@ -3,7 +3,7 @@ int main() {
     // Test 1: sizeof with different primitive types
     int arr_int[10];
     char arr_char[20];
-    long arr_long[5];
+    long long arr_long[5];
     
     int size_int = sizeof(arr_int);    // 10 * 4 = 40
     int size_char = sizeof(arr_char);  // 20 * 1 = 20

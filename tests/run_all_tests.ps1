@@ -302,7 +302,7 @@ foreach ($file in $referenceFiles) {
 				$exeFullPath = (Resolve-Path $exeFile).Path
 				$stdErrOutput = & $exeFullPath 2>&1 | Out-String
 				$returnValue = $LASTEXITCODE
-				
+
 				# Check for Windows-specific crash exit codes
 				# Common Windows exception codes that indicate crashes
 				$windowsExceptionCodes = @(
@@ -330,6 +330,12 @@ foreach ($file in $referenceFiles) {
 						$runtimeCrashes += $file.Name
 					}
 				} else {
+					# On Windows, process exit codes are 32-bit, but on Linux
+					# they are truncated to 8 bits (0-255). Since test filenames
+					# encode the expected return value as the low byte (matching
+					# Linux behavior), apply the same truncation here.
+					$returnValue = $returnValue -band 0xFF
+
 					# Check if the filename indicates an expected return value
 					if ($expectedReturnValue -ne $null) {
 						if ($returnValue -ne $expectedReturnValue) {
