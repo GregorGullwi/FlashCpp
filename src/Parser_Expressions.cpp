@@ -1796,7 +1796,7 @@ bool Parser::parse_constructor_exception_specifier()
 // Skip function trailing specifiers and attributes after parameters
 // Handles: const, volatile, &, &&, noexcept, noexcept(...), override, final, = 0, = default, = delete
 // and __attribute__((...))
-void Parser::skip_function_trailing_specifiers()
+void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers* out_quals)
 {
 	// Clear any previously parsed requires clause
 	last_parsed_requires_clause_.reset();
@@ -1807,12 +1807,22 @@ void Parser::skip_function_trailing_specifiers()
 		// Handle cv-qualifiers
 		if (token.type() == Token::Type::Keyword && 
 			(token.value() == "const" || token.value() == "volatile")) {
+			if (out_quals) {
+				if (token.value() == "const") out_quals->is_const = true;
+				else out_quals->is_volatile = true;
+			}
 			advance();
 			continue;
 		}
 		
 		// Handle ref-qualifiers (& and &&)
-		if (peek() == "&"_tok || peek() == "&&"_tok) {
+		if (peek() == "&"_tok) {
+			if (out_quals) out_quals->is_lvalue_ref = true;
+			advance();
+			continue;
+		}
+		if (peek() == "&&"_tok) {
+			if (out_quals) out_quals->is_rvalue_ref = true;
 			advance();
 			continue;
 		}
