@@ -9455,6 +9455,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (orig_body.has_value()) {
 			new_func_ref.set_definition(orig_body.value());
 		}
+
+		// Restore outer pack parameter info (must happen on both branches)
+		pack_param_info_ = std::move(saved_outer_pack_param_info);
 	}
 
 	// Analyze the function body to determine if it should be inline-always
