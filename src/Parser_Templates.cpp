@@ -4732,16 +4732,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		
 		// Apply pointer and reference qualifiers to the trailing return type (e.g., T*, T&, T&&)
 		TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
-		
-		// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
-		while (peek() == "*"_tok) {
-			advance(); // consume '*'
-			CVQualifier ptr_cv = parse_cv_qualifiers();
-			trailing_ts.add_pointer_level(ptr_cv);
-		}
-		
-		// Apply reference qualifiers if present (e.g., T& or T&&)
-		apply_trailing_reference_qualifiers(trailing_ts);
+		consume_pointer_ref_modifiers(trailing_ts);
 		
 		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");

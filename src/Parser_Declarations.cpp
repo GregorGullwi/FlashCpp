@@ -2089,7 +2089,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		StructMemberFunction* existing_member = nullptr;
 		for (auto& member : struct_info->member_functions) {
 			if (member.getName() == function_name_token.handle() &&
-				member.is_const == member_quals.is_const) {
+				member.is_const == member_quals.is_const &&
+				member.is_volatile == member_quals.is_volatile) {
 				existing_member = &member;
 				break;
 			}

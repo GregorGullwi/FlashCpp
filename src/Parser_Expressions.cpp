@@ -1794,8 +1794,9 @@ bool Parser::parse_constructor_exception_specifier()
 }
 
 // Skip function trailing specifiers and attributes after parameters
-// Handles: const, volatile, &, &&, noexcept, noexcept(...), override, final, = 0, = default, = delete
-// and __attribute__((...))
+// Handles: const, volatile, &, &&, noexcept, noexcept(...), throw(), = 0, __attribute__((...))
+// Stops before: override, final, = default, = delete (callers handle those with semantic info),
+//               requires (callers handle with proper parameter scope)
 void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals)
 {
 	// Clear any previously parsed requires clause
