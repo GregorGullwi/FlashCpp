@@ -8498,13 +8498,26 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// SFINAE: Check function parameter count against call argument count
-	// For non-variadic templates, argument count must match parameter count exactly
+	// For non-variadic templates, argument count must be <= parameter count (some may have defaults)
+	// and >= count of parameters without default values
 	// For variadic templates, argument count must be >= non-pack parameter count
 	size_t func_param_count = func_decl.parameter_nodes().size();
 	if (!has_variadic_pack) {
-		if (arg_types.size() != func_param_count) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} != parameter count {} for non-variadic template '{}'",
+		if (arg_types.size() > func_param_count) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} > parameter count {} for non-variadic template '{}'",
 				recursion_depth, arg_types.size(), func_param_count, template_name);
+			return std::nullopt;
+		}
+		// Count required parameters (those without default values)
+		size_t required_params = 0;
+		for (const auto& param : func_decl.parameter_nodes()) {
+			if (param.is<DeclarationNode>() && !param.as<DeclarationNode>().has_default_value()) {
+				required_params++;
+			}
+		}
+		if (arg_types.size() < required_params) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for non-variadic template '{}'",
+				recursion_depth, arg_types.size(), required_params, template_name);
 			return std::nullopt;
 		}
 	} else {

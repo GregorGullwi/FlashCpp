@@ -1549,12 +1549,22 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 		return false;
 	}
 
+	// CTAD only applies to unresolved template class names, not already-instantiated structs.
+	// When explicit template args are provided (e.g., Processor<char>), the type has a valid
+	// type_index_ from template instantiation, so CTAD should not override it.
 	if (type_specifier.type() != Type::UserDefined && type_specifier.type() != Type::Struct) {
 		return false;
 	}
 
 	std::string_view class_name = type_specifier.token().value();
 	if (class_name.empty()) {
+		return false;
+	}
+
+	// If the type already has a non-zero size, it was explicitly instantiated with template
+	// arguments (e.g., Processor<char>). CTAD should only apply when no template args were
+	// specified (e.g., Box b(42)), in which case the template has size 0 pre-deduction.
+	if (type_specifier.size_in_bits() > 0) {
 		return false;
 	}
 
