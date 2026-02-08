@@ -177,6 +177,17 @@ ParseResult Parser::parse_template_declaration() {
 	current_template_param_names_ = template_param_names;
 	parsing_template_body_ = true;
 
+	// Check if this is a nested template (member function template of a class template)
+	// Pattern: template<typename T> template<typename U> ReturnType Class<T>::method(U u) { ... }
+	// At this point, outer template params are registered, so the inner parse can see them.
+	if (peek() == "template"_tok) {
+		auto inner_result = parse_template_declaration();
+		if (inner_result.is_error()) {
+			return inner_result;
+		}
+		return saved_position.success();
+	}
+
 	// Check if it's a concept template: template<typename T> concept Name = ...;
 	bool is_concept_template = peek() == "concept"_tok;
 
@@ -17491,6 +17502,75 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
 
+	// Check for out-of-line constructor/destructor pattern first:
+	// ClassName<Args>::ClassName(...)  (constructor)
+	// ClassName<Args>::~ClassName()    (destructor)
+	// parse_type_specifier would consume the full qualified name as a type, so detect this early
+	if (peek().is_identifier()) {
+		SaveHandle ctor_check = save_token_position();
+		Token potential_class = peek_info();
+		advance(); // consume class name
+		if (peek() == "<"_tok) {
+			skip_template_arguments();
+			if (peek() == "::"_tok) {
+				advance(); // consume '::'
+				bool is_dtor = false;
+				if (peek_info().value() == "~") {
+					advance(); // consume '~'
+					is_dtor = true;
+				}
+				if (peek().is_identifier() && peek_info().value() == potential_class.value()) {
+					advance(); // consume constructor/destructor name
+					if (peek() == "("_tok) {
+						// This IS a constructor/destructor definition!
+						discard_saved_token(ctor_check);
+						// Skip parameter list
+						skip_balanced_parens();
+						// Skip trailing specifiers (const, noexcept, etc.)
+						FlashCpp::MemberQualifiers ctor_quals;
+						skip_function_trailing_specifiers(ctor_quals);
+						// Skip requires clause if present
+						if (peek() == "requires"_tok) {
+							advance();
+							if (peek() == "("_tok) {
+								skip_balanced_parens();
+							} else {
+								while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok && peek() != ":"_tok) {
+									advance();
+								}
+							}
+						}
+						// Skip member initializer list (for constructors)
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							while (!peek().is_eof() && peek() != "{"_tok) {
+								if (peek() == "("_tok) {
+									skip_balanced_parens();
+								} else if (peek() == "{"_tok) {
+									break;
+								} else {
+									advance();
+								}
+							}
+						}
+						// Skip body
+						if (peek() == "{"_tok) {
+							skip_balanced_braces();
+						} else if (peek() == ";"_tok) {
+							advance();
+						}
+						FLASH_LOG(Templates, Debug, "Skipped out-of-line template ",
+						          (is_dtor ? "destructor" : "constructor"), ": ",
+						          potential_class.value());
+						discard_saved_token(saved_pos);
+						return true;
+					}
+				}
+			}
+		}
+		restore_token_position(ctor_check);
+	}
+
 	// Try to parse return type
 	auto return_type_result = parse_type_specifier();
 	if (return_type_result.is_error() || !return_type_result.node().has_value()) {
@@ -17517,15 +17597,28 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
-	// Check for class name (identifier)
-	if (!peek().is_identifier()) {
+	// Check for class name (identifier) or constructor pattern
+	// For constructors: ClassName<Args>::ClassName(...)
+	// parse_type_specifier already consumed "ClassName" as a type, so next is '<'
+	[[maybe_unused]] bool is_constructor = false;
+	Token class_name_token;
+	std::string_view class_name;
+
+	if (peek().is_identifier()) {
+		// Normal case: return_type ClassName<Args>::FunctionName(...)
+		class_name_token = peek_info();
+		class_name = class_name_token.value();
+		advance();
+	} else if (peek() == "<"_tok && return_type_node.is<TypeSpecifierNode>()) {
+		// Constructor pattern: ClassName<Args>::ClassName(...)
+		// parse_type_specifier consumed "ClassName" as return type, but it's really the class name
+		class_name_token = return_type_node.as<TypeSpecifierNode>().token();
+		class_name = class_name_token.value();
+		is_constructor = true;
+	} else {
 		restore_token_position(saved_pos);
 		return std::nullopt;
 	}
-
-	Token class_name_token = peek_info();
-	std::string_view class_name = class_name_token.value();
-	advance();
 
 	// Check for template arguments after class name: ClassName<T>, etc.
 	// This is optional - only present for template classes
@@ -17557,8 +17650,95 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Discard the saved position - we're committed to parsing this
 	discard_saved_token(saved_pos);
 
-	// Parse function name
+	// Parse function name (or constructor/destructor/operator name)
 	if (!peek().is_identifier()) {
+		// Handle 'operator' keyword for operator member functions
+		// (e.g., ClassName<T>::operator()(...))
+		if (peek() == "operator"_tok) {
+			Token op_token = peek_info();
+			advance(); // consume 'operator'
+			StringBuilder op_builder;
+			op_builder.append("operator"sv);
+
+			// Special handling for operator() - '(' followed by ')' is the call operator name
+			if (peek() == "("_tok) {
+				auto next_saved = save_token_position();
+				advance(); // consume '('
+				if (peek() == ")"_tok) {
+					advance(); // consume ')'
+					discard_saved_token(next_saved);
+					op_builder.append("()"sv);
+				} else {
+					// Not operator() — the '(' starts the parameter list
+					restore_token_position(next_saved);
+				}
+			}
+			// Special handling for operator[] - '[' followed by ']'
+			else if (peek() == "["_tok) {
+				auto bracket_saved = save_token_position();
+				advance(); // consume '['
+				if (peek() == "]"_tok) {
+					advance(); // consume ']'
+					discard_saved_token(bracket_saved);
+					op_builder.append("[]"sv);
+				} else {
+					restore_token_position(bracket_saved);
+				}
+			}
+			else {
+				// Other operators: consume tokens until we hit '(' (parameter list start)
+				while (!peek().is_eof() && peek() != "("_tok) {
+					if (peek() == "{"_tok || peek() == ";"_tok) break;
+					op_builder.append(peek_info().value());
+					advance();
+				}
+			}
+
+			std::string_view op_name = op_builder.commit();
+			Token function_name_token_op = Token(Token::Type::Identifier, op_name,
+				op_token.line(), op_token.column(), op_token.file_index());
+
+			// Skip to parameter list parsing with operator name
+			// Create function declaration and skip the body
+			auto [func_decl_node_op, func_decl_ref_op] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token_op);
+			auto [func_node_op, func_ref_op] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref_op, function_name_token_op.value());
+
+			if (peek() == "("_tok) {
+				skip_balanced_parens();
+			}
+			FlashCpp::MemberQualifiers op_quals;
+			skip_function_trailing_specifiers(op_quals);
+			if (peek() == "{"_tok) {
+				skip_balanced_braces();
+			} else if (peek() == ";"_tok) {
+				advance();
+			}
+
+			FLASH_LOG(Templates, Debug, "Skipped out-of-line template operator: ",
+			          class_name, "::", op_name);
+			return true;
+		}
+
+		// Check for destructor: ~ClassName
+		if (peek_info().value() == "~") {
+			advance(); // consume '~'
+			if (peek().is_identifier()) {
+				// Destructor - skip the name and body
+				advance(); // consume destructor name
+				// Skip the parameter list and body
+				if (peek() == "("_tok) {
+					skip_balanced_parens();
+				}
+				FlashCpp::MemberQualifiers dtor_quals;
+				skip_function_trailing_specifiers(dtor_quals);
+				if (peek() == "{"_tok) {
+					skip_balanced_braces();
+				} else if (peek() == ";"_tok) {
+					advance();
+				}
+				return true;
+			}
+		}
 		return std::nullopt;  // Error - expected function name
 	}
 
@@ -17800,7 +17980,42 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 
 	// Save the position of the function body for delayed parsing
+	// Note: body_start includes trailing specifiers (const, noexcept, etc.) and
+	// member initializer lists, so delayed parsing can replay all of them
 	SaveHandle body_start = save_token_position();
+
+	// Skip function trailing specifiers (const, volatile, noexcept, etc.)
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
+
+	// Skip requires clause if present
+	if (peek() == "requires"_tok) {
+		advance(); // consume 'requires'
+		// Skip the requires expression - could be complex
+		if (peek() == "("_tok) {
+			skip_balanced_parens();
+		} else {
+			// Simple requires clause - skip until { or ;
+			while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok && peek() != ":"_tok) {
+				advance();
+			}
+		}
+	}
+
+	// Skip member initializer list (for constructors): ": member(args), ..."
+	if (peek() == ":"_tok) {
+		advance(); // consume ':'
+		// Skip initializer list entries: name(args), name{args}, name(args)...
+		while (!peek().is_eof() && peek() != "{"_tok) {
+			if (peek() == "("_tok) {
+				skip_balanced_parens();
+			} else if (peek() == "{"_tok) {
+				break; // function body starts
+			} else {
+				advance();
+			}
+		}
+	}
 
 	// Skip the function body for now (we'll re-parse it during instantiation or first use)
 	if (peek() == "{"_tok) {
