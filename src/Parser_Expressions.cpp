@@ -9607,9 +9607,7 @@ ParseResult Parser::parse_if_statement() {
                     }
                 }
                 // Return just the then-branch content
-                if (!then_stmt_result.is_error() && then_stmt_result.node().has_value()) {
-                    return then_stmt_result;
-                }
+                return then_stmt_result;
             } else {
                 // Skip the then-branch
                 if (peek() == "{"_tok) {
