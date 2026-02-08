@@ -9631,6 +9631,7 @@ ParseResult Parser::parse_if_statement() {
                     if (!else_result.is_error() && else_result.node().has_value()) {
                         return else_result;
                     }
+                    return else_result;  // Propagate the error
                 }
                 // No else branch and condition is false - return empty block
                 return ParseResult::success(emplace_node<BlockNode>());
