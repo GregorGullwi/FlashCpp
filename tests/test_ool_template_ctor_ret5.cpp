@@ -7,7 +7,9 @@ struct Buffer {
 };
 
 template<typename T>
-Buffer<T>::Buffer(T val, int len) : value(val), length(len) {
+Buffer<T>::Buffer(T val, int len) {
+    value = val;
+    length = len;
 }
 
 int main() {

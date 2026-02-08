@@ -10981,11 +10981,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 	else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& binary = std::get<BinaryOperatorNode>(expr);
-		std::string_view op = binary.op();
+		TokenKind op_kind = binary.get_token().kind();
 
 		// Comparison and logical operators always return bool
-		if (op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" ||
-		    op == "&&" || op == "||") {
+		if (op_kind == tok::Equal || op_kind == tok::NotEqual ||
+		    op_kind == tok::Less || op_kind == tok::Greater ||
+		    op_kind == tok::LessEq || op_kind == tok::GreaterEq ||
+		    op_kind == tok::LogicalAnd || op_kind == tok::LogicalOr) {
 			return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
 		}
 
@@ -10996,7 +10998,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			// Look for a free function operator overload (e.g., operator&(EnumA, EnumB) -> EnumA)
 			StringBuilder op_name_builder;
 			op_name_builder.append("operator"sv);
-			op_name_builder.append(op);
+			op_name_builder.append(binary.op());
 			auto op_name = op_name_builder.commit();
 			auto overloads = gSymbolTable.lookup_all(op_name);
 			for (const auto& overload : overloads) {
