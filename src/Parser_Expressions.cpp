@@ -9550,9 +9550,10 @@ ParseResult Parser::parse_if_statement() {
         return ParseResult::error("Expected ')' after if condition", current_token_);
     }
 
-    // For if constexpr during template body re-parsing, evaluate the condition at compile time
-    // and skip the dead branch (which may contain ill-formed code like unexpanded parameter packs)
-    if (is_constexpr && parsing_template_body_ && condition.node().has_value()) {
+    // For if constexpr during template body re-parsing with parameter packs,
+    // evaluate the condition at compile time and skip the dead branch
+    // (which may contain ill-formed code like unexpanded parameter packs)
+    if (is_constexpr && has_parameter_packs_ && condition.node().has_value()) {
         ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
         eval_ctx.parser = this;
         auto eval_result = ConstExpr::Evaluator::evaluate(*condition.node(), eval_ctx);
