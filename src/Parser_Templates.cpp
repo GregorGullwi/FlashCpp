@@ -17520,10 +17520,14 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			}
 			// Special handling for operator[] - '[' followed by ']'
 			else if (peek() == "["_tok) {
+				auto bracket_saved = save_token_position();
 				advance(); // consume '['
 				if (peek() == "]"_tok) {
 					advance(); // consume ']'
+					discard_saved_token(bracket_saved);
 					op_builder.append("[]"sv);
+				} else {
+					restore_token_position(bracket_saved);
 				}
 			}
 			else {
