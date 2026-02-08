@@ -10810,6 +10810,8 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				auto sep_pos = type_name.find("::");
 				std::string_view base_part_sv = type_name.substr(0, sep_pos);
 				std::string_view member_part = type_name.substr(sep_pos + 2);
+				// '$' in the base part indicates a hash-based mangled template name
+				// (e.g., "Wrapper$a1b2c3d4" for dependent Wrapper<T>)
 				auto dollar_pos = base_part_sv.find('$');
 				
 				if (dollar_pos != std::string_view::npos) {
