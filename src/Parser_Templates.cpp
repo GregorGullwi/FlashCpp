@@ -17566,7 +17566,6 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			function_name_token = peek_info();
 		}
 		advance();
-		advance();
 		// Reset function template args - they belonged to the nested class, not the function
 		function_template_args.clear();
 		// Check for template arguments on this new name
