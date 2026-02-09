@@ -7002,6 +7002,25 @@ private:
 					if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 						const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 						const auto& params = ctor_node.parameter_nodes();
+						
+						// Skip implicit copy/move constructors when the argument
+						// isn't the same struct type (e.g., aggregate init my_type{0})
+						if (ctor_node.is_implicit() && params.size() == 1 && num_params == 1 &&
+						    params[0].is<DeclarationNode>()) {
+							const auto& param_type = params[0].as<DeclarationNode>().type_node();
+							if (param_type.is<TypeSpecifierNode>()) {
+								const auto& pts = param_type.as<TypeSpecifierNode>();
+								if ((pts.is_reference() || pts.is_rvalue_reference()) &&
+								    (pts.type() == Type::Struct || pts.type() == Type::UserDefined)) {
+									// Check if the argument is actually the same struct type
+									const TypedValue& arg = ctor_op.arguments[0];
+									if (arg.type != Type::Struct || arg.type_index != struct_type_it->second->type_index_) {
+										continue;  // Skip implicit copy/move ctor - arg isn't same struct
+									}
+								}
+							}
+						}
+						
 						if (params.size() == num_params) {
 							actual_ctor = &ctor_node;
 							break;

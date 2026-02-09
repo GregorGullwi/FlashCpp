@@ -1035,7 +1035,11 @@
 		call_op.is_indirect_call = functionCallNode.is_indirect_call();
 		
 		// Get return type information
-		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		// Prefer the matched function declaration's return type over the original call's,
+		// since template instantiation may have resolved dependent types (e.g., Tp* → int*)
+		const auto& return_type = matched_func_decl 
+			? matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>()
+			: decl_node.type_node().as<TypeSpecifierNode>();
 		call_op.return_type = return_type.type();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level

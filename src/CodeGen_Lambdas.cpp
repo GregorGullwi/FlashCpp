@@ -1504,6 +1504,20 @@
 					const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 					const auto& params = ctor_node.parameter_nodes();
 					
+					// Skip implicit copy/move constructors — they only apply when the
+					// argument is actually the same struct type, not for aggregate-like
+					// brace init with scalar values like my_type{0}
+					if (ctor_node.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
+						const auto& param_type = params[0].as<DeclarationNode>().type_node();
+						if (param_type.is<TypeSpecifierNode>()) {
+							const auto& pts = param_type.as<TypeSpecifierNode>();
+							if ((pts.is_reference() || pts.is_rvalue_reference()) &&
+							    is_struct_type(pts.type())) {
+								continue;  // Skip implicit copy/move ctors
+							}
+						}
+					}
+					
 					// Match constructor with same number of parameters or with default parameters
 					if (params.size() == num_args) {
 						matching_ctor = &ctor_node;
@@ -1528,6 +1542,55 @@
 		}
 		
 		// Get constructor parameter types for reference handling
+		// But first check for aggregate initialization: if no matching constructor was found
+		// (excluding implicit copy/move), and the struct has public members, generate direct
+		// member stores instead of a constructor call. This handles: return my_type{0}
+		if (!matching_ctor && struct_info && num_args > 0 && !struct_info->members.empty()) {
+			bool is_aggregate = true;
+			for (const auto& func : struct_info->member_functions) {
+				if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+					if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+						is_aggregate = false;
+						break;
+					}
+				}
+			}
+			
+			if (is_aggregate && num_args <= struct_info->members.size()) {
+				// Emit default constructor call first (zero-initializes the object)
+				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
+				
+				// Then emit member stores for each argument
+				size_t member_idx = 0;
+				constructorCallNode.arguments().visit([&](ASTNode argument) {
+					if (member_idx >= struct_info->members.size()) {
+						member_idx++;
+						return;
+					}
+					const StructMember& member = struct_info->members[member_idx];
+					auto arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
+					if (arg_operands.size() >= 3) {
+						MemberStoreOp store_op;
+						store_op.object = ret_var;
+						store_op.member_name = member.getName();
+						store_op.offset = static_cast<int>(member.offset);
+						store_op.value = toTypedValue(arg_operands);
+						store_op.struct_type_info = nullptr;
+						store_op.is_reference = false;
+						store_op.is_rvalue_reference = false;
+						store_op.is_pointer_to_member = false;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), constructorCallNode.called_from()));
+					}
+					member_idx++;
+				});
+				
+				setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
+				
+				TypeIndex result_type_index = type_spec.type_index();
+				return { type_spec.type(), actual_size_bits, ret_var, static_cast<unsigned long long>(result_type_index) };
+			}
+		}
+		
 		const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
 
 		// Generate IR for constructor arguments and add them to ctor_op.arguments
