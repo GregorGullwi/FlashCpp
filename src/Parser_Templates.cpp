@@ -3611,23 +3611,14 @@ if (struct_type_info.getStructInfo()) {
 							SaveHandle paren_pos = save_token_position();
 							advance(); // consume '('
 							
-							bool is_rvalue_ref = false;
-							bool is_ref = false;
-							if (peek() == "&"_tok) {
-								advance(); // consume '&'
-								if (peek() == "&"_tok) {
-									advance(); // consume second '&'
-									is_rvalue_ref = true;
-								}
-								is_ref = true;
-							}
+							consume_pointer_ref_modifiers(param_type);
 							
 							// Optional identifier inside parens
-							if (is_ref && peek().is_identifier()) {
+							if (param_type.is_reference() && peek().is_identifier()) {
 								advance(); // skip name
 							}
 							
-							if (is_ref && peek() == ")"_tok) {
+							if (param_type.is_reference() && peek() == ")"_tok) {
 								advance(); // consume ')'
 								if (peek() == "["_tok) {
 									advance(); // consume '['
@@ -3637,12 +3628,6 @@ if (struct_type_info.getStructInfo()) {
 									}
 									if (peek() == "]"_tok) {
 										advance(); // consume ']'
-									}
-									// Mark as reference
-									if (is_rvalue_ref) {
-										param_type.set_reference(true);
-									} else {
-										param_type.set_lvalue_reference(true);
 									}
 									param_type.set_array(true);
 									discard_saved_token(paren_pos);
@@ -3655,21 +3640,7 @@ if (struct_type_info.getStructInfo()) {
 						}
 
 						// Parse pointer levels with optional CV-qualifiers
-						while (peek() == "*"_tok) {
-							advance(); // consume '*'
-
-							CVQualifier ptr_cv = parse_cv_qualifiers();
-
-							param_type.add_pointer_level(ptr_cv);
-						}
-
-						// Parse references (& or &&)
-						ReferenceQualifier ref_qual = parse_reference_qualifier();
-						if (ref_qual == ReferenceQualifier::RValueReference) {
-							param_type.set_reference(true);
-						} else if (ref_qual == ReferenceQualifier::LValueReference) {
-							param_type.set_lvalue_reference(true);
-						}
+						consume_pointer_ref_modifiers(param_type);
 					}
 					
 					// Handle pack expansion '...' (e.g., _Up...)

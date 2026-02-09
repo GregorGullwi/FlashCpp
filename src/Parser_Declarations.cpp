@@ -3616,15 +3616,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// Handle pointer declarators with CV-qualifiers (e.g., "unsigned short const* _locale_pctype")
 				// Parse pointer declarators: * [const] [volatile] *...
 				TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
-				while (peek() == "*"_tok) {
-					advance(); // consume '*'
-
-					// Check for CV-qualifiers after the *
-					CVQualifier ptr_cv = parse_cv_qualifiers();
-
-					// Add pointer level to the type specifier
-					member_type_spec.add_pointer_level(ptr_cv);
-				}
+				consume_pointer_ref_modifiers(member_type_spec);
 
 				// Parse member name
 				auto member_name_token = peek_info();
