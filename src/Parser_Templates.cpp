@@ -3976,13 +3976,24 @@ if (struct_type_info.getStructInfo()) {
 		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
 		
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
+		// Note: struct_decl.name() may already be qualified (e.g., "std::numeric_limits")
+		// if parse_struct_declaration prepended the namespace. Extract the unqualified name
+		// to avoid double-prefixing (e.g., "std::std::numeric_limits").
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 		if (!current_handle.isGlobal()) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(simple_name);
+			std::string_view unqualified_name = simple_name;
+			auto last_colon = simple_name.rfind("::");
+			if (last_colon != std::string_view::npos) {
+				unqualified_name = simple_name.substr(last_colon + 2);
+			}
+			StringHandle name_handle = StringTable::getOrInternStringHandle(unqualified_name);
 			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
 			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
-			gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
+			// Only register if the qualified name is different from the simple name
+			if (qualified_name != simple_name) {
+				FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
+				gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
+			}
 		}
 
 		// Primary templates shouldn't be added to AST - only instantiations and specializations
