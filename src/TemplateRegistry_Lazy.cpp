@@ -1441,6 +1441,17 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				// that the expression is valid and the return type matches
 				continue;
 			}
+			// Check for false literal (from SFINAE recovery when expression parsing failed)
+			if (requirement.is<BoolLiteralNode>()) {
+				if (!requirement.as<BoolLiteralNode>().value()) {
+					return ConstraintEvaluationResult::failure(
+						"requirement not satisfied: expression is ill-formed",
+						"false",
+						"the expression is not valid for the substituted types"
+					);
+				}
+				continue;
+			}
 			if (requirement.is<RequiresClauseNode>()) {
 				// Nested requirement: requires constraint
 				const auto& nested_req = requirement.as<RequiresClauseNode>();
@@ -1454,6 +1465,18 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			// For binary operator expressions like a + b, we need to check if the operation is valid for the type
 			if (requirement.is<ExpressionNode>()) {
 				const ExpressionNode& expr = requirement.as<ExpressionNode>();
+				// Check if this is a false literal (SFINAE recovery created this)
+				if (std::holds_alternative<BoolLiteralNode>(expr)) {
+					const BoolLiteralNode& bool_lit = std::get<BoolLiteralNode>(expr);
+					if (!bool_lit.value()) {
+						return ConstraintEvaluationResult::failure(
+							"requirement not satisfied: expression is not valid for the given types",
+							"false",
+							"the expression is ill-formed for the substituted types"
+						);
+					}
+					continue;
+				}
 				// Check if this is a function call to a constrained template function
 				if (std::holds_alternative<FunctionCallNode>(expr)) {
 					const FunctionCallNode& call = std::get<FunctionCallNode>(expr);
@@ -1465,10 +1488,19 @@ inline ConstraintEvaluationResult evaluateConstraint(
 							if (tmpl.is<TemplateFunctionDeclarationNode>()) {
 								const auto& tfdn = tmpl.as<TemplateFunctionDeclarationNode>();
 								if (tfdn.has_requires_clause()) {
-									// Evaluate the constraint with the concrete template args
+									// Build the called function's own template parameter names
+									// and map outer template args to them via positional matching
+									std::vector<std::string_view> callee_param_names;
+									for (const auto& param_node : tfdn.template_parameters()) {
+										if (param_node.is<TemplateParameterNode>()) {
+											callee_param_names.push_back(param_node.as<TemplateParameterNode>().name());
+										}
+									}
+									// Evaluate using the callee's param names with the outer args
+									// (positional: concept's T maps to callee's T by position)
 									auto req_result = evaluateConstraint(
 										tfdn.requires_clause()->as<RequiresClauseNode>().constraint_expr(),
-										template_args, template_param_names);
+										template_args, callee_param_names);
 									if (!req_result.satisfied) {
 										return ConstraintEvaluationResult::failure(
 											"requirement not satisfied: constrained function call failed",

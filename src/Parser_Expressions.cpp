@@ -8185,6 +8185,52 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		                         first_string.file_index());
 
 		result = emplace_node<ExpressionNode>(StringLiteralNode(concatenated_token));
+		
+		// Check for user-defined literal suffix: "hello"_suffix or "hello"sv
+		if (peek_info().type() == Token::Type::Identifier) {
+			std::string_view suffix = peek_info().value();
+			// UDL suffixes start with _ (user-defined) or are standard (sv, s, etc.)
+			if (suffix.size() > 0 && (suffix[0] == '_' || suffix == "sv" || suffix == "s")) {
+				Token suffix_token = peek_info();
+				advance(); // consume suffix
+				
+				// Build the operator name: operator""_suffix
+				std::string operator_name = "operator\"\"" + std::string(suffix);
+				
+				// Look up the UDL operator in the symbol table
+				auto udl_lookup = gSymbolTable.lookup(operator_name);
+				if (udl_lookup.has_value() && udl_lookup->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = udl_lookup->as<FunctionDeclarationNode>();
+					DeclarationNode& decl = const_cast<DeclarationNode&>(func_decl.decl_node());
+					
+					// Build arguments: the string literal and its length
+					ChunkedVector<ASTNode> args;
+					args.push_back(*result);  // string literal
+					
+					// Calculate string length (excluding quotes)
+					std::string_view str_val = persistent_string;
+					size_t str_len = 0;
+					if (str_val.size() >= 2) {
+						str_len = str_val.size() - 2;  // Remove opening and closing quotes
+					}
+					
+					// Create a NumericLiteralNode for the length
+					std::string_view zero_sv = "0";
+					Token len_token(Token::Type::Literal, zero_sv, suffix_token.line(), suffix_token.column(), suffix_token.file_index());
+					auto len_node = emplace_node<ExpressionNode>(
+						NumericLiteralNode(len_token, static_cast<unsigned long long>(str_len), Type::UnsignedLong, TypeQualifier::None, 64));
+					args.push_back(len_node);
+					
+					result = emplace_node<ExpressionNode>(
+						FunctionCallNode(decl, std::move(args), suffix_token));
+					
+					// Set mangled name if available
+					if (func_decl.has_mangled_name()) {
+						std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+					}
+				}
+			}
+		}
 	}
 	else if (current_token_.type() == Token::Type::CharacterLiteral) {
 		// Parse character literal and convert to numeric value

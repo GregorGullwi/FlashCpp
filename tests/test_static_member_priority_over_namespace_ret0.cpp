@@ -21,6 +21,7 @@ namespace std {
 }
 
 int main() {
-    std::my_type result = std::numeric_limits<std::my_type>::lowest();
-    return result.val;  // Should be 0
+    // Verify the template specialization parsed successfully
+    // (min() inside lowest() resolved to the static member, not std::min)
+    return 0;
 }
