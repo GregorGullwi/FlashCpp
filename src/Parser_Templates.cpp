@@ -181,6 +181,14 @@ ParseResult Parser::parse_template_declaration() {
 	// Pattern: template<typename T> template<typename U> ReturnType Class<T>::method(U u) { ... }
 	// At this point, outer template params are registered, so the inner parse can see them.
 	if (peek() == "template"_tok) {
+		// Helper to clean up template state before early returns from this block.
+		// parsing_template_body_ and current_template_param_names_ were set above
+		// and would normally be cleaned up at end-of-function (~line 3805).
+		auto cleanup_template_state = [this]() {
+			current_template_param_names_.clear();
+			parsing_template_body_ = false;
+		};
+
 		auto inner_saved = save_token_position();
 		advance(); // consume inner 'template'
 		if (peek() == "<"_tok) {
@@ -195,11 +203,12 @@ ParseResult Parser::parse_template_declaration() {
 				advance(); // re-consume 'template'
 				skip_template_arguments();
 				while (!peek().is_eof()) {
-					if (peek() == "{"_tok) { skip_balanced_braces(); return saved_position.success(); }
-					else if (peek() == ";"_tok) { advance(); return saved_position.success(); }
+					if (peek() == "{"_tok) { skip_balanced_braces(); cleanup_template_state(); return saved_position.success(); }
+					else if (peek() == ";"_tok) { advance(); cleanup_template_state(); return saved_position.success(); }
 					else if (peek() == "("_tok) { skip_balanced_parens(); }
 					else { advance(); }
 				}
+				cleanup_template_state();
 				return saved_position.success();
 			}
 
@@ -209,11 +218,12 @@ ParseResult Parser::parse_template_declaration() {
 				advance(); // re-consume 'template'
 				skip_template_arguments();
 				while (!peek().is_eof()) {
-					if (peek() == "{"_tok) { skip_balanced_braces(); return saved_position.success(); }
-					else if (peek() == ";"_tok) { advance(); return saved_position.success(); }
+					if (peek() == "{"_tok) { skip_balanced_braces(); cleanup_template_state(); return saved_position.success(); }
+					else if (peek() == ";"_tok) { advance(); cleanup_template_state(); return saved_position.success(); }
 					else if (peek() == "("_tok) { skip_balanced_parens(); }
 					else { advance(); }
 				}
+				cleanup_template_state();
 				return saved_position.success();
 			}
 			advance(); // consume '>'
@@ -314,16 +324,18 @@ ParseResult Parser::parse_template_declaration() {
 				          " (outer params: ", template_params.size(),
 				          ", inner params: ", inner_template_params.size(), ")");
 
+				cleanup_template_state();
 				return saved_position.success();
 			}
 
 			// Fallback: skip remaining tokens
 			while (!peek().is_eof()) {
-				if (peek() == "{"_tok) { skip_balanced_braces(); return saved_position.success(); }
-				else if (peek() == ";"_tok) { advance(); return saved_position.success(); }
+				if (peek() == "{"_tok) { skip_balanced_braces(); cleanup_template_state(); return saved_position.success(); }
+				else if (peek() == ";"_tok) { advance(); cleanup_template_state(); return saved_position.success(); }
 				else if (peek() == "("_tok) { skip_balanced_parens(); }
 				else { advance(); }
 			}
+			cleanup_template_state();
 			return saved_position.success();
 		}
 		restore_token_position(inner_saved);
