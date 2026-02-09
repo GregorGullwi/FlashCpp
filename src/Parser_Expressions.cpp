@@ -1933,8 +1933,9 @@ void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
 // Handles: T*, T**, T&, T&&, T*&, etc.
 void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	while (peek() == "*"_tok) {
-		advance();
-		type_spec.add_pointer_level(CVQualifier::None);
+		advance(); // consume '*'
+		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
+		type_spec.add_pointer_level(ptr_cv);
 	}
 	if (peek() == "&&"_tok) {
 		advance();

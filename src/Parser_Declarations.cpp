@@ -3925,39 +3925,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	
 	ASTNode type_node = *type_result.node();
 	TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
-	
-	// Handle pointer declarators (e.g., typedef T* pointer;)
-	while (peek() == "*"_tok) {
-		advance(); // consume '*'
-		type_spec.add_pointer_level();
-		
-		// Skip const/volatile after *
-		while (peek().is_keyword()) {
-			std::string_view kw = peek_info().value();
-			if (kw == "const" || kw == "volatile") {
-				advance();
-			} else {
-				break;
-			}
-		}
-	}
-	
-	// Handle reference declarators (e.g., typedef T& reference; or typedef T&& rvalue_ref;)
-	if (peek() == "&"_tok) {
-		advance(); // consume first '&'
-		// Check for && (rvalue reference) as two separate '&' tokens
-		if (peek() == "&"_tok) {
-			advance(); // consume second '&'
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else {
-			type_spec.set_lvalue_reference(true);  // lvalue reference
-		}
-	} else if (peek() == "&&"_tok) {
-		// Handle && as a single token (rvalue reference)
-		advance(); // consume '&&'
-		type_spec.set_reference(true);  // true = rvalue reference
-	}
-	
+	consume_pointer_ref_modifiers(type_spec);
+
 	// Check for pointer-to-member type syntax: typedef Type Class::* alias;
 	// This is used in <type_traits> for result_of patterns
 	// Pattern: typedef _Res _Class::* _MemPtr;
@@ -9627,12 +9596,6 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 							} else if (peek() == "&"_tok) {
 								is_function_ref = true;
 								advance(); // consume '&'
-								// Check for second & (in case lexer didn't combine them)
-								if (peek() == "&"_tok) {
-									is_rvalue_function_ref = true;
-									is_function_ref = false;
-									advance(); // consume second '&'
-								}
 							} else if (peek() == "*"_tok) {
 								is_function_ptr = true;
 								advance(); // consume '*'

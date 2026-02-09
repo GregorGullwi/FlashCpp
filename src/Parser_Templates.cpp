@@ -704,35 +704,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Discard the saved position since we've consumed the type
 		discard_saved_token(target_type_start_pos);
 		
-		// Handle pointer depth (*, **, etc.)
-		while (peek() == "*"_tok) {
-			advance(); // consume '*'
-			
-			// Parse CV-qualifiers after the * (const, volatile)
-			CVQualifier ptr_cv = parse_cv_qualifiers();
-			
-			type_spec.add_pointer_level(ptr_cv);
-		}
-		
-		// Handle reference modifiers (&, &&)
-		// The lexer may produce either:
-		// - A single '&&' token for rvalue reference
-		// - Two separate '&' tokens for rvalue reference  
-		// - A single '&' token for lvalue reference
-		if (peek() == "&&"_tok) {
-			advance(); // consume '&&'
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (peek() == "&"_tok) {
-			advance(); // consume first '&'
-			
-			// Check for rvalue reference (&&) as two tokens
-			if (peek() == "&"_tok) {
-				advance(); // consume second '&'
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else {
-				type_spec.set_lvalue_reference(true);  // lvalue reference
-			}
-		}
+		consume_pointer_ref_modifiers(type_spec);
 		
 		// Expect semicolon
 		if (!consume(";"_tok)) {
@@ -5519,7 +5491,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				auto type_result = parse_type_specifier();
 				if (!type_result.is_error() && type_result.node().has_value()) {
 					// Skip pointer/reference qualifiers on conversion target type
-					while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
+					while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {	// Should we call consume_pointer_ref_modifiers() here?
 						advance();
 					}
 					if (peek() == "("_tok) {
@@ -5764,33 +5736,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Get the TypeSpecifierNode and check for pointer/reference modifiers
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-
-	// Handle pointer depth (*, **, etc.)
-	while (peek() == "*"_tok) {
-		advance(); // consume '*'
-
-		// Parse CV-qualifiers after the * (const, volatile)
-		CVQualifier ptr_cv = parse_cv_qualifiers();
-
-		type_spec.add_pointer_level(ptr_cv);
-	}
-
-	// Handle reference modifiers (&, &&)
-	if (peek() == "&"_tok) {
-		advance(); // consume first '&'
-
-		// Check for rvalue reference (&&)
-		if (peek() == "&"_tok) {
-			advance(); // consume second '&'
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else {
-			type_spec.set_lvalue_reference(true);  // lvalue reference
-		}
-	} else if (peek() == "&&"_tok) {
-		// Handle && as a single token (rvalue reference)
-		advance(); // consume '&&'
-		type_spec.set_reference(true);  // true = rvalue reference
-	}
+	consume_pointer_ref_modifiers(type_spec);
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
@@ -8062,12 +8008,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				} else if (peek() == "&"_tok) {
 					is_lvalue_ref = true;
 					advance(); // consume '&'
-					// Check for second & (in case lexer didn't combine them)
-					if (peek() == "&"_tok) {
-						is_rvalue_ref = true;
-						is_lvalue_ref = false;
-						advance(); // consume second '&'
-					}
 				} else if (peek().is_identifier()) {
 					// Check for member pointer syntax: _Class::*
 					SaveHandle member_check_pos = save_token_position();
