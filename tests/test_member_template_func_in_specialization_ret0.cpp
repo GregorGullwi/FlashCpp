@@ -30,5 +30,8 @@ struct allocator_traits<allocator<Tp>> {
 using traits_type = std::allocator_traits<std::allocator<int>>;
 
 int main() {
-    return 0;
+    // This should compile without bad_any_cast
+    std::allocator<int> a;
+    int* p = std::allocator_traits<std::allocator<int>>::allocate(a, 10);
+    return p == nullptr ? 0 : 1;
 }

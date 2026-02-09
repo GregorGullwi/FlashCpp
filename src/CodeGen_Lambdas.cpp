@@ -1047,6 +1047,17 @@
 	// Collected local struct member functions for deferred generation
 	std::vector<LocalStructMemberInfo> collected_local_struct_members_;
 	
+	// Deferred member functions discovered during function call resolution
+	// When generateFunctionCallIr resolves a static member call via struct search,
+	// the function body may not have been generated yet (e.g., for template specializations).
+	// These are collected here and generated in a deferred pass.
+	struct DeferredMemberFunctionInfo {
+		StringHandle struct_name;
+		ASTNode function_node;
+		std::vector<std::string> namespace_stack;
+	};
+	std::vector<DeferredMemberFunctionInfo> deferred_member_functions_;
+	
 	// Structure to hold template instantiation info for deferred generation
 	struct TemplateInstantiationInfo {
 		StringHandle qualified_template_name;  // e.g., "Container::insert"

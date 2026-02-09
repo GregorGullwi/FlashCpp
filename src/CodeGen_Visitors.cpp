@@ -218,6 +218,31 @@ public:
 		}
 	}
 	
+	// Generate deferred member functions discovered during function call resolution.
+	// Uses a worklist approach since generated functions may call other ungenerated functions.
+	void generateDeferredMemberFunctions() {
+		size_t processed = 0;
+		while (processed < deferred_member_functions_.size()) {
+			auto& info = deferred_member_functions_[processed++];
+			StringHandle saved_function = current_function_name_;
+			auto saved_namespace = current_namespace_stack_;
+			current_struct_name_ = info.struct_name;
+			current_function_name_ = StringHandle();
+			current_namespace_stack_ = info.namespace_stack;
+			
+			if (info.function_node.is<FunctionDeclarationNode>()) {
+				visitFunctionDeclarationNode(info.function_node.as<FunctionDeclarationNode>());
+			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
+				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
+			} else if (info.function_node.is<DestructorDeclarationNode>()) {
+				visitDestructorDeclarationNode(info.function_node.as<DestructorDeclarationNode>());
+			}
+			
+			current_function_name_ = saved_function;
+			current_namespace_stack_ = saved_namespace;
+		}
+	}
+	
 	// Generate all collected template instantiations (must be called after visiting all nodes)
 	void generateCollectedTemplateInstantiations() {
 		for (const auto& inst_info : collected_template_instantiations_) {
@@ -2556,11 +2581,16 @@ private:
 			// looking up the TypeInfo's name (which may be namespace-qualified like "ns::Test").
 			// The namespace will be added during mangling from current_namespace_stack_.
 			std::string_view parent_name = node.parent_struct_name();
-			if (!parent_name.empty()) {
+			// If parent_struct_name is a template pattern but we have a valid struct context
+			// from visitStructDeclarationNode, keep the struct context (instantiated name)
+			if (!parent_name.empty() && parent_name.find("_pattern_") == std::string_view::npos) {
 				current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
 			}
-		} else {
-			// Clear current_struct_name_ to prevent struct context from leaking into free functions
+			// else: keep current_struct_name_ from visitStructDeclarationNode context
+		} else if (!current_struct_name_.isValid()) {
+			// Clear current_struct_name_ only if we don't already have a struct context
+			// (e.g., from visitStructDeclarationNode visiting this function as a member).
+			// Template instantiation may not set is_member_function_ on pattern-derived functions.
 			current_struct_name_ = StringHandle();
 		}
 
@@ -3035,6 +3065,7 @@ private:
 		// Generate member functions for both global and local structs
 		// Save the enclosing function context so member function visits don't clobber it
 		StringHandle saved_enclosing_function = current_function_name_;
+		StringHandle saved_struct_name = current_struct_name_;
 		
 		// Check if this is a local struct (declared inside a function)
 		bool is_local_struct = current_function_name_.isValid();
@@ -3206,8 +3237,9 @@ private:
 					current_struct_name_ = StringHandle();
 				}
 			}
-		// Restore the enclosing function context
+		// Restore the enclosing function and struct context
 		current_function_name_ = saved_enclosing_function;
+		current_struct_name_ = saved_struct_name;
 	}
 
 	void visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {

@@ -8191,11 +8191,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			std::string_view suffix = peek_info().value();
 			// UDL suffixes start with _ (user-defined) or are standard (sv, s, etc.)
 			if (suffix.size() > 0 && (suffix[0] == '_' || suffix == "sv" || suffix == "s")) {
+				// Save position before consuming suffix in case the operator is not found
+				SaveHandle pre_suffix_pos = save_token_position();
 				Token suffix_token = peek_info();
 				advance(); // consume suffix
 				
 				// Build the operator name: operator""_suffix
-				std::string operator_name = "operator\"\"" + std::string(suffix);
+				std::string_view operator_name = StringBuilder().append("operator\"\""sv).append(suffix).commit();
 				
 				// Look up the UDL operator in the symbol table
 				auto udl_lookup = gSymbolTable.lookup(operator_name);
@@ -8228,6 +8230,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (func_decl.has_mangled_name()) {
 						std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
 					}
+				} else {
+					// Operator not found - restore position so suffix token is not lost
+					restore_token_position(pre_suffix_pos);
 				}
 			}
 		}

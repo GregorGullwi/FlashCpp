@@ -7338,6 +7338,25 @@ private:
 			// Regular class: function_name = class_name = struct_name
 			function_name = struct_name;
 			class_name = struct_name;
+			// Check if the struct's constructors are registered under a namespace-qualified name.
+			// This happens when a struct is defined inside a namespace (e.g., std::my_type)
+			// but the ctor_op.struct_name only has the unqualified name (e.g., "my_type").
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				const StructTypeInfo* si = type_it->second->getStructInfo();
+				if (si && !si->member_functions.empty()) {
+					for (const auto& mf : si->member_functions) {
+						if (mf.is_constructor && mf.function_decl.is<ConstructorDeclarationNode>()) {
+							std::string_view ctor_struct = StringTable::getStringView(
+								mf.function_decl.as<ConstructorDeclarationNode>().struct_name());
+							if (!ctor_struct.empty() && ctor_struct.find("::") != std::string_view::npos) {
+								class_name = std::string(ctor_struct);
+								break;
+							}
+						}
+					}
+				}
+			}
 		}
 		
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };

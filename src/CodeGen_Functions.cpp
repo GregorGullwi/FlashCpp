@@ -459,10 +459,16 @@
 				if (!type_info_ptr->isStruct()) continue;
 				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
 				if (!struct_info) continue;
+				// Skip pattern structs (templates) - they shouldn't be used for code generation
+				std::string_view struct_type_name = StringTable::getStringView(name_handle);
+				if (struct_type_name.find("_pattern_") != std::string_view::npos) continue;
+				if (struct_type_name.find("_unknown") != std::string_view::npos) continue;
 				
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						// Also skip if the function's parent_struct_name is a pattern
+						if (func_decl.parent_struct_name().find("_pattern_") != std::string_view::npos) continue;
 						if (func_decl.decl_node().identifier_token().value() == func_name_view
 						    && func_decl.parameter_nodes().size() == expected_param_count) {
 							matched_func_decl = &func_decl;
@@ -472,6 +478,35 @@
 								function_name = generateMangledNameForCall(func_decl, func_decl.parent_struct_name());
 							}
 							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved static member function via struct search: {} -> {}", func_name_view, function_name);
+							
+							// Queue all member functions of this struct for deferred generation
+							// since the matched function may call other members (e.g., lowest() calls min())
+							// Extract namespace from the type name (e.g., "std::numeric_limits$hash" → ["std"])
+							std::vector<std::string> ns_stack;
+							std::string_view type_name_sv = StringTable::getStringView(type_info_ptr->name());
+							size_t ns_end = type_name_sv.rfind("::");
+							if (ns_end != std::string_view::npos) {
+								std::string_view ns_part = type_name_sv.substr(0, ns_end);
+								// Split by :: for nested namespaces
+								size_t start = 0;
+								while (start < ns_part.size()) {
+									size_t pos = ns_part.find("::", start);
+									if (pos == std::string_view::npos) {
+										ns_stack.emplace_back(ns_part.substr(start));
+										break;
+									}
+									ns_stack.emplace_back(ns_part.substr(start, pos - start));
+									start = pos + 2;
+								}
+							}
+							for (const auto& mf : struct_info->member_functions) {
+								DeferredMemberFunctionInfo deferred_info;
+								deferred_info.struct_name = type_info_ptr->name();
+								deferred_info.function_node = mf.function_decl;
+								deferred_info.namespace_stack = ns_stack;
+								deferred_member_functions_.push_back(std::move(deferred_info));
+							}
+							
 							break;
 						}
 					}

@@ -451,6 +451,9 @@ int main_impl(int argc, char *argv[]) {
         // Generate all collected local struct member functions after visiting all nodes
         converter.generateCollectedLocalStructMembers();
 
+        // Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
+        converter.generateDeferredMemberFunctions();
+
         // Note: Template instantiations happen during parsing, not here
     }
 
