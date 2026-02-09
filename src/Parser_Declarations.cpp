@@ -1983,6 +1983,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		const TypeInfo* type_info = struct_iter->second;
 		StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_info->getStructInfo());
 		if (!struct_info) {
+			// Type alias resolution: follow type_index_ to find the actual struct type
+			// e.g., using Alias = SomeStruct; then Alias::member() needs to resolve to SomeStruct
+			if (type_info->type_index_ < gTypeInfo.size() && &gTypeInfo[type_info->type_index_] != type_info) {
+				const TypeInfo& resolved_type = gTypeInfo[type_info->type_index_];
+				struct_info = const_cast<StructTypeInfo*>(resolved_type.getStructInfo());
+			}
+		}
+		if (!struct_info) {
 			FLASH_LOG(Parser, Error, "'", class_name.view(), "' is not a struct/class type");
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
@@ -2031,6 +2039,34 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			ASTNode return_type_node = decl_node.type_node();
 			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
 			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_result.node());
+			
+			return saved_position.success(var_node);
+		}
+		
+		// Check if this is an out-of-line static member variable definition with brace initializer
+		// Pattern: inline Type ClassName::member_name{};  or  ClassName::member_name{value};
+		if (static_member != nullptr && peek() == "{"_tok) {
+			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition with brace init: ", 
+			          class_name.view(), "::", function_name_token.value());
+			
+			// Skip the brace initializer
+			skip_balanced_braces();
+			
+			// Expect semicolon
+			if (!consume(";"_tok)) {
+				FLASH_LOG(Parser, Error, "Expected ';' after static member variable brace initializer");
+				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			}
+			
+			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member brace init: ",
+			          class_name.view(), "::", function_name_token.value());
+			
+			// Return success with a placeholder node
+			ASTNode return_type_node = decl_node.type_node();
+			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+			Token zero_token(Token::Type::Literal, "0"sv, 0, 0, 0);
+			auto literal = emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, literal);
 			
 			return saved_position.success(var_node);
 		}

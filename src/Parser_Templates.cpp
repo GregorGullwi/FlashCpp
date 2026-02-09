@@ -3092,9 +3092,69 @@ ParseResult Parser::parse_template_declaration() {
 					continue;
 				}
 				
-				// Parse member declaration using delayed parsing for function bodies
-				// (Same approach as full specialization to ensure member_function_context is available)
-				auto member_result = parse_type_and_name();
+				// Special handling for conversion operators: operator type()
+				// Conversion operators don't have a return type, so we need to detect them early
+				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
+				ParseResult member_result;
+				{
+					SaveHandle conv_saved = save_token_position();
+					bool found_conversion_op = false;
+					auto conv_specs = parse_member_leading_specifiers();
+					(void)conv_specs;
+					if (peek() == "operator"_tok) {
+						// Check if this is a conversion operator (not operator() or operator<< etc.)
+						SaveHandle op_saved = save_token_position();
+						Token operator_keyword_token = peek_info();
+						advance(); // consume 'operator'
+						
+						// If next token is not '(' and not an operator symbol, it's likely a conversion operator
+						bool is_conversion = false;
+						if (peek() != "("_tok &&
+						    !peek().is_operator() &&
+						    peek() != "["_tok && peek() != "new"_tok && peek() != "delete"_tok) {
+							// Try to parse the target type
+							auto type_result = parse_type_specifier();
+							if (!type_result.is_error() && type_result.node().has_value()) {
+								TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();
+								
+								// Consume pointer/reference modifiers: operator _Tp&(), operator _Tp*(), etc.
+								consume_conversion_operator_target_modifiers(target_type);
+								
+								// Check for ()
+								if (peek() == "("_tok) {
+									is_conversion = true;
+									
+									StringBuilder op_name_builder;
+									op_name_builder.append("operator ");
+									op_name_builder.append(target_type.getReadableString());
+									std::string_view operator_name = op_name_builder.commit();
+									
+									Token identifier_token = Token(Token::Type::Identifier, operator_name,
+									                              operator_keyword_token.line(), operator_keyword_token.column(),
+									                              operator_keyword_token.file_index());
+									
+									ASTNode decl_node = emplace_node<DeclarationNode>(
+										type_result.node().value(),
+										identifier_token
+									);
+									
+									discard_saved_token(op_saved);
+									discard_saved_token(conv_saved);
+									member_result = ParseResult::success(decl_node);
+									found_conversion_op = true;
+								}
+							}
+						}
+						if (!is_conversion) {
+							restore_token_position(op_saved);
+						}
+					}
+					if (!found_conversion_op) {
+						restore_token_position(conv_saved);
+						// Parse member declaration (use same logic as regular struct parsing)
+						member_result = parse_type_and_name();
+					}
+				}
 				if (member_result.is_error()) {
 					return member_result;
 				}
