@@ -3327,6 +3327,43 @@
 		return true;
 	}
 
+	// Helper: build return vector for member access results — [type, size_bits, temp_var] or [type, size_bits, temp_var, type_index]
+	static std::vector<IrOperand> makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index = 0) {
+		if (type == Type::Struct) {
+			return { type, size_bits, result_var, static_cast<unsigned long long>(type_index) };
+		}
+		return { type, size_bits, result_var };
+	}
+
+	// Helper: set up base object from an identifier, handling 'this' in lambdas and normal identifiers
+	bool setupBaseFromIdentifier(
+		std::string_view object_name,
+		const Token& member_token,
+		std::variant<StringHandle, TempVar>& base_object,
+		Type& base_type,
+		size_t& base_type_index,
+		bool& is_pointer_dereference) {
+
+		if (object_name == "this") {
+			// First try [*this] capture - returns copy of the object
+			if (auto copy_this_temp = emitLoadCopyThis(member_token)) {
+				base_object = *copy_this_temp;
+				base_type = Type::Struct;
+				base_type_index = current_lambda_context_.enclosing_struct_type_index;
+				return true;
+			}
+			// Then try [this] capture - returns pointer to the object
+			if (auto this_ptr_temp = emitLoadThisPointer(member_token)) {
+				base_object = *this_ptr_temp;
+				base_type = Type::Struct;
+				base_type_index = current_lambda_context_.enclosing_struct_type_index;
+				is_pointer_dereference = true;
+				return true;
+			}
+		}
+		return validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference);
+	}
+
 	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	                                               ExpressionContext context = ExpressionContext::Load) {
 		std::vector<IrOperand> irOperands;
@@ -3343,194 +3380,146 @@
 		bool is_pointer_dereference = false;  // Track if we're accessing through pointer (ptr->member)
 		bool base_setup_complete = false;
 
+		// Normalize: unwrap ExpressionNode to get the concrete variant pointer for unified dispatch
+		const ExpressionNode* expr = object_node.is<ExpressionNode>() ? &object_node.as<ExpressionNode>() : nullptr;
+
+		// Helper lambdas to check node types across both ExpressionNode variant and top-level ASTNode
+		auto get_identifier = [&]() -> const IdentifierNode* {
+			if (expr && std::holds_alternative<IdentifierNode>(*expr)) return &std::get<IdentifierNode>(*expr);
+			if (object_node.is<IdentifierNode>()) return &object_node.as<IdentifierNode>();
+			return nullptr;
+		};
+		auto get_member_func_call = [&]() -> const MemberFunctionCallNode* {
+			if (expr && std::holds_alternative<MemberFunctionCallNode>(*expr)) return &std::get<MemberFunctionCallNode>(*expr);
+			if (object_node.is<MemberFunctionCallNode>()) return &object_node.as<MemberFunctionCallNode>();
+			return nullptr;
+		};
+
 		// OPERATOR-> OVERLOAD RESOLUTION
 		// If this is arrow access (obj->member), check if the object has operator->() overload
-		if (is_arrow && object_node.is<ExpressionNode>()) {
-			const ExpressionNode& expr = object_node.as<ExpressionNode>();
+		if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
+			StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident->name());
 			
-			// For now, only handle simple identifiers  
-			if (std::holds_alternative<IdentifierNode>(expr)) {
-				const IdentifierNode& ident = std::get<IdentifierNode>(expr);
-				StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
-				
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier_handle);
+			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(identifier_handle);
+			}
+			
+			if (symbol.has_value()) {
+				const TypeSpecifierNode* type_node = nullptr;
+				if (symbol->is<DeclarationNode>()) {
+					type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				} else if (symbol->is<VariableDeclarationNode>()) {
+					type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
 				}
 				
-				if (symbol.has_value()) {
-					const TypeSpecifierNode* type_node = nullptr;
-					if (symbol->is<DeclarationNode>()) {
-						type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					} else if (symbol->is<VariableDeclarationNode>()) {
-						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-					}
+				// Check if it's a struct with operator-> overload
+				if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+					auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "->");
 					
-					// Check if it's a struct with operator-> overload
-					if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
-						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "->");
+					if (overload_result.has_overload) {
+						// Found an overload! Call operator->() to get pointer, then access member
+						FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}", 
+						         type_node->type_index());
 						
-						if (overload_result.has_overload) {
-							// Found an overload! Call operator->() to get pointer, then access member
-							FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}", 
-							         type_node->type_index());
-							
-							const StructMemberFunction& member_func = *overload_result.member_overload;
-							const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-							
-							// Get struct name for mangling
-							std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
-							
-							// Get the return type from the function declaration (should be a pointer)
-							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-							
-							// Generate mangled name for operator->
-							std::string_view operator_func_name = "operator->";
-							std::vector<TypeSpecifierNode> empty_params;
-							std::vector<std::string_view> empty_namespace;
-							auto mangled_name = NameMangling::generateMangledName(
-								operator_func_name,
-								return_type,
-								empty_params,
-								false,
-								struct_name,
-								empty_namespace,
-								Linkage::CPlusPlus
-							);
-							
-							// Generate the call to operator->()
-							TempVar ptr_result = var_counter.next();
-							
-							CallOp call_op;
-							call_op.result = ptr_result;
-							call_op.return_type = return_type.type();
-							call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-							if (call_op.return_size_in_bits == 0) {
-								call_op.return_size_in_bits = get_type_size_bits(return_type.type());
-							}
-							call_op.function_name = mangled_name;
-							call_op.is_variadic = false;
-							call_op.is_member_function = true;
-							
-							// Add 'this' pointer as first argument
-							call_op.args.push_back(TypedValue{
-								.type = type_node->type(),
-								.size_in_bits = 64,  // Pointer size
-								.value = IrValue(identifier_handle)
-							});
-							
-							// Add the function call instruction
-							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
-							
-							// Now we have a pointer in ptr_result
-							// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
-							// Set up base_object info for the dereferenced pointer
-							if (return_type.pointer_depth() > 0) {
-								base_object = ptr_result;
-								base_type = return_type.type();
-								base_type_index = return_type.type_index();
-								is_pointer_dereference = true;  // We'll dereference this pointer to access the member
-								base_setup_complete = true;
-							}
+						const StructMemberFunction& member_func = *overload_result.member_overload;
+						const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						
+						// Get struct name for mangling
+						std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
+						
+						// Get the return type from the function declaration (should be a pointer)
+						const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+						
+						// Generate mangled name for operator->
+						std::string_view operator_func_name = "operator->";
+						std::vector<TypeSpecifierNode> empty_params;
+						std::vector<std::string_view> empty_namespace;
+						auto mangled_name = NameMangling::generateMangledName(
+							operator_func_name,
+							return_type,
+							empty_params,
+							false,
+							struct_name,
+							empty_namespace,
+							Linkage::CPlusPlus
+						);
+						
+						// Generate the call to operator->()
+						TempVar ptr_result = var_counter.next();
+						
+						CallOp call_op;
+						call_op.result = ptr_result;
+						call_op.return_type = return_type.type();
+						call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+						if (call_op.return_size_in_bits == 0) {
+							call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+						}
+						call_op.function_name = mangled_name;
+						call_op.is_variadic = false;
+						call_op.is_member_function = true;
+						
+						// Add 'this' pointer as first argument
+						call_op.args.push_back(TypedValue{
+							.type = type_node->type(),
+							.size_in_bits = 64,  // Pointer size
+							.value = IrValue(identifier_handle)
+						});
+						
+						// Add the function call instruction
+						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
+						
+						// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
+						if (return_type.pointer_depth() > 0) {
+							base_object = ptr_result;
+							base_type = return_type.type();
+							base_type_index = return_type.type_index();
+							is_pointer_dereference = true;
+							base_setup_complete = true;
 						}
 					}
 				}
 			}
 		}
 
-		// If we haven't already set up base_object from operator-> overload, do normal processing
-		if (!base_setup_complete && object_node.is<ExpressionNode>()) {
-			const ExpressionNode& expr = object_node.as<ExpressionNode>();
-
-			// Case 1: Simple identifier (e.g., obj.member or ptr->member where ptr is raw pointer)
-			if (std::holds_alternative<IdentifierNode>(expr)) {
-				const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
-				std::string_view object_name = object_ident.name();
-				
-				bool handled = false;
-				
-				// Special handling for 'this' in lambdas with [*this] or [this] capture
-				if (object_name == "this") {
-					// First try [*this] capture - returns copy of the object
-					if (auto copy_this_temp = emitLoadCopyThis(memberAccessNode.member_token())) {
-						base_object = *copy_this_temp;
-						base_type = Type::Struct;
-						base_type_index = current_lambda_context_.enclosing_struct_type_index;
-						handled = true;
-					}
-					// Then try [this] capture - returns pointer to the object
-					else if (auto this_ptr_temp = emitLoadThisPointer(memberAccessNode.member_token())) {
-						base_object = *this_ptr_temp;
-						base_type = Type::Struct;
-						base_type_index = current_lambda_context_.enclosing_struct_type_index;
-						is_pointer_dereference = true;  // Need to dereference the pointer
-						handled = true;
-					}
-				}
-				
-				if (!handled) {
-					if (!validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference)) {
-						return {};
-					}
-					// Note: validateAndSetupIdentifierMemberAccess already sets is_pointer_dereference
-					// for pointer types, so no additional handling needed for is_arrow
+		// Resolve the base object — single dispatch chain regardless of ExpressionNode wrapping
+		if (!base_setup_complete) {
+			if (const IdentifierNode* ident = get_identifier()) {
+				if (!setupBaseFromIdentifier(ident->name(), memberAccessNode.member_token(),
+				                             base_object, base_type, base_type_index, is_pointer_dereference)) {
+					return {};
 				}
 			}
-			// Case 2: Nested member access (e.g., obj.inner.member)
-			else if (std::holds_alternative<MemberAccessNode>(expr)) {
-				const MemberAccessNode& nested_access = std::get<MemberAccessNode>(expr);
-
-				// Recursively generate IR for the nested member access
-				// Pass context to avoid loading intermediate struct values when they're part of lvalue expressions
-				std::vector<IrOperand> nested_result = generateMemberAccessIr(nested_access, context);
-				if (nested_result.empty()) {
+			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
+				auto call_result = generateMemberFunctionCallIr(*call);
+				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
 					return {};
 				}
-
-				// The result is [type, size_bits, temp_var, type_index]
-				// We need to add type_index to the return value
-				base_type = std::get<Type>(nested_result[0]);
-				// size_bits is in nested_result[1]
-				base_object = std::get<TempVar>(nested_result[2]);
-
-				// For nested member access, we need to get the type_index from the result
-				// The base_type should be Type::Struct
-				if (base_type != Type::Struct) {
-					FLASH_LOG(Codegen, Error, "nested member access on non-struct type");
-					return {};
-				}
-
-				// Get the type_index from the nested result (if available)
-				if (nested_result.size() >= 4) {
-					base_type_index = std::get<unsigned long long>(nested_result[3]);
-				} else {
-					// Fallback: search through gTypeInfo (less reliable)
-					base_type_index = 0;
-					for (const auto& ti : gTypeInfo) {
-						if (ti.type_ == Type::Struct && ti.getStructInfo()) {
-							base_type_index = ti.type_index_;
-							break;
-						}
-					}
-				}
-				
-				// If this is arrow access (->), the nested result represents a pointer that needs 
-				// dereferencing for the final member access (e.g., obj.ptr_member->field)
 				if (is_arrow) {
 					is_pointer_dereference = true;
 				}
 			}
-			// Case 3: Pointer dereference (e.g., ptr->member, which is transformed to (*ptr).member)
-			else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-				const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(expr);
+			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
+				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
+				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
+					return {};
+				}
+				if (base_type != Type::Struct) {
+					FLASH_LOG(Codegen, Error, "nested member access on non-struct type");
+					return {};
+				}
+				if (is_arrow) {
+					is_pointer_dereference = true;
+				}
+			}
+			else if (expr && std::holds_alternative<UnaryOperatorNode>(*expr)) {
+				const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(*expr);
 
-				// This should be a dereference operator (*)
 				if (unary_op.op() != "*") {
 					FLASH_LOG(Codegen, Error, "member access on non-dereference unary operator");
 					return {};
 				}
 
-				// Get the pointer operand
 				const ASTNode& operand_node = unary_op.get_operand();
 				if (!operand_node.is<ExpressionNode>()) {
 					FLASH_LOG(Codegen, Error, "dereference operand is not an expression");
@@ -3539,7 +3528,6 @@
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 				
 				// Special handling for 'this' in lambdas with [this] or [*this] capture
-				// Check this first before evaluating the expression
 				bool is_lambda_this = false;
 				if (std::holds_alternative<IdentifierNode>(operand_expr)) {
 					const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
@@ -3548,8 +3536,6 @@
 					if (ptr_name == "this" && current_lambda_context_.isActive() && 
 					    current_lambda_context_.captures.find(StringTable::getOrInternStringHandle("this"sv)) != current_lambda_context_.captures.end()) {
 						is_lambda_this = true;
-						// We're in a lambda that captured [this] or [*this]
-						// Check which kind of capture it is
 						auto capture_kind_it = current_lambda_context_.capture_kinds.find(StringTable::getOrInternStringHandle("this"sv));
 						if (capture_kind_it != current_lambda_context_.capture_kinds.end() && 
 						    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
@@ -3563,8 +3549,8 @@
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
 							load_copy_this.result.type = Type::Struct;
-							load_copy_this.result.size_in_bits = copy_this_size_bits;  // Actual size of the copied struct
-							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);  // Lambda's this (the closure)
+							load_copy_this.result.size_in_bits = copy_this_size_bits;
+							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);
 							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							load_copy_this.offset = copy_this_offset;
 							load_copy_this.is_reference = false;
@@ -3572,18 +3558,15 @@
 							load_copy_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
 							
-							// Mark this temp var as an lvalue pointing to %this.__copy_this
-							// This allows subsequent member accesses and stores to properly chain offsets
 							LValueInfo lvalue_info(
 								LValueInfo::Kind::Member,
 								StringTable::getOrInternStringHandle("this"sv),
 								copy_this_offset
 							);
 							lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
-							lvalue_info.is_pointer_to_member = true;  // Treat closure 'this' as a pointer
+							lvalue_info.is_pointer_to_member = true;
 							setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info));
 							
-							// Use this as the base (it's a struct value, not a pointer)
 							base_object = copy_this_ref;
 							base_type = Type::Struct;
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
@@ -3596,7 +3579,7 @@
 							load_this.result.value = this_ptr;
 							load_this.result.type = Type::Void;
 							load_this.result.size_in_bits = 64;
-							load_this.object = StringTable::getOrInternStringHandle("this"sv);  // Lambda's this (the closure)
+							load_this.object = StringTable::getOrInternStringHandle("this"sv);
 							load_this.member_name = StringTable::getOrInternStringHandle("__this");
 							load_this.offset = this_member_offset;
 							load_this.is_reference = false;
@@ -3604,7 +3587,6 @@
 							load_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
 							
-							// Use this loaded pointer as the base
 							base_object = this_ptr;
 							base_type = Type::Struct;
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
@@ -3613,35 +3595,21 @@
 				}
 				
 				if (!is_lambda_this) {
-					// Normal pointer handling - evaluate the pointer expression
 					auto pointer_operands = visitExpressionNode(operand_expr);
 					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
 						return {};
 					}
-					is_pointer_dereference = true;  // Mark that we're accessing through a pointer
+					is_pointer_dereference = true;
 				}
 			}
-			// Case 4: Array subscript (e.g., arr[i].member)
-			else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
-				const ArraySubscriptNode& array_sub = std::get<ArraySubscriptNode>(expr);
-				auto array_operands = generateArraySubscriptIr(array_sub);
+			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
+				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
 				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
 					return {};
 				}
 			}
-			// Case 5: Member function call (e.g., wrapper.get()->value)
-			else if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
-				auto call_result = generateMemberFunctionCallIr(std::get<MemberFunctionCallNode>(expr));
-				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
-					return {};
-				}
-				if (is_arrow) {
-					is_pointer_dereference = true;
-				}
-			}
-			// Case 6: Free function call (e.g., getPtr()->value)
-			else if (std::holds_alternative<FunctionCallNode>(expr)) {
-				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(expr));
+			else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
+				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
 				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
 					return {};
 				}
@@ -3650,51 +3618,16 @@
 				}
 			}
 			else {
-				FLASH_LOG(Codegen, Error, "member access on unsupported expression type");
+				FLASH_LOG(Codegen, Error, "member access on unsupported object type");
 				return {};
 			}
-		}
-		else if (object_node.is<IdentifierNode>()) {
-			const IdentifierNode& object_ident = object_node.as<IdentifierNode>();
-			std::string_view object_name = object_ident.name();
-			
-			bool handled = false;
-			
-			// Special handling for 'this' in lambdas with [*this] capture
-			if (object_name == "this") {
-				if (auto copy_this_temp = emitLoadCopyThis(memberAccessNode.member_token())) {
-					base_object = *copy_this_temp;
-					base_type = Type::Struct;
-					base_type_index = current_lambda_context_.enclosing_struct_type_index;
-					handled = true;
-				}
-			}
-			
-			if (!handled) {
-				if (!validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference)) {
-					return {};
-				}
-			}
-		}
-		else if (object_node.is<MemberFunctionCallNode>()) {
-			auto call_result = generateMemberFunctionCallIr(object_node.as<MemberFunctionCallNode>());
-			if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
-				return {};
-			}
-			if (is_arrow) {
-				is_pointer_dereference = true;
-			}
-		}
-		else if (!base_setup_complete) {
-			std::cerr << "error: member access on unsupported object type\n";
-			return {};
 		}
 
 		// Now we have the base object (either a name or a temp var) and its type
 		// Get the struct type info
 		const TypeInfo* type_info = nullptr;
 
-		// First try to find by type_index
+		// Try to find by direct index lookup
 		if (base_type_index < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[base_type_index];
 			if (ti.type_ == Type::Struct && ti.getStructInfo()) {
@@ -3710,15 +3643,6 @@
 					type_info = &ti;
 					break;
 				}
-			}
-		}
-
-		// If still not found, try looking up by type_index in gTypeInfo directly
-		// This handles cases where the type_index is valid but the lookup above failed
-		if (!type_info && base_type_index > 0 && base_type_index < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[base_type_index];
-			if (ti.type_ == Type::Struct && ti.getStructInfo()) {
-				type_info = &ti;
 			}
 		}
 
@@ -3771,14 +3695,7 @@
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 			
-			// Return operands in the same format as regular members
-			if (static_member->type == Type::Struct) {
-				// Format: [type, size_bits, temp_var, type_index]
-				return { static_member->type, static_cast<int>(static_member->size * 8), result_var, static_cast<unsigned long long>(static_member->type_index) };
-			} else {
-				// Format: [type, size_bits, temp_var]
-				return { static_member->type, static_cast<int>(static_member->size * 8), result_var };
-			}
+			return makeMemberResult(static_member->type, static_cast<int>(static_member->size * 8), result_var, static_member->type_index);
 		}
 		
 		// Use recursive lookup to find instance members in base classes as well
@@ -3863,29 +3780,11 @@
 		member_load.result.type = member->type;
 		member_load.result.size_in_bits = static_cast<int>(member->size * 8);  // Convert bytes to bits
 
-		// Add the base object
-		// In LValueAddress context with unwrapping: use ultimate_base
-		// In Load context: use immediate base_object
-		if (did_unwrap) {
-			if (std::holds_alternative<StringHandle>(ultimate_base)) {
-				member_load.object = std::get<StringHandle>(ultimate_base);
-			} else {
-				member_load.object = std::get<TempVar>(ultimate_base);
-			}
-			member_load.member_name = ultimate_member_name;
-			member_load.offset = accumulated_offset;
-		} else {
-			if (std::holds_alternative<StringHandle>(base_object)) {
-				member_load.object = std::get<StringHandle>(base_object);
-			} else {
-				member_load.object = std::get<TempVar>(base_object);
-			}
-			member_load.member_name = StringTable::getOrInternStringHandle(member_name);
-			// Use adjusted_offset from member_result to handle inheritance correctly
-			// member->offset is the offset within the owning struct, but for inherited members
-			// we need the adjusted offset that includes the base class offset in the derived class
-			member_load.offset = static_cast<int>(member_result.adjusted_offset);
-		}
+		// Set base object, member name, and offset — using unwrapped values when applicable
+		auto& effective_base = did_unwrap ? ultimate_base : base_object;
+		std::visit([&](auto& v) { member_load.object = v; }, effective_base);
+		member_load.member_name = did_unwrap ? ultimate_member_name : StringTable::getOrInternStringHandle(member_name);
+		member_load.offset = did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset);
 	
 		// Add reference metadata (required for proper handling of reference members)
 		member_load.is_reference = member->is_reference;
@@ -3893,20 +3792,13 @@
 		member_load.struct_type_info = nullptr;
 		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 
+		int member_size_bits = static_cast<int>(member->size * 8);
+
 		// When context is LValueAddress, skip the load and return address/metadata only
 		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
 		// because references store a pointer value that needs to be returned
 		if (context == ExpressionContext::LValueAddress && !member->is_reference) {
-			// Don't emit MemberAccess instruction (no load)
-			// Just return the metadata with the result temp var
-			// The metadata contains all information needed for store operations
-			if (member->type == Type::Struct) {
-				// Format: [type, size_bits, temp_var, type_index]
-				return { member->type, static_cast<int>(member->size * 8), result_var, static_cast<unsigned long long>(member->type_index) };
-			} else {
-				// Format: [type, size_bits, temp_var]
-				return { member->type, static_cast<int>(member->size * 8), result_var };
-			}
+			return makeMemberResult(member->type, member_size_bits, result_var, member->type_index);
 		}
 
 		// Add the member access instruction (Load context - default)
@@ -3924,16 +3816,7 @@
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
 		}
 
-		// Return the result variable with its type, size, and optionally type_index
-		// For struct types, we need to include type_index for nested member access (e.g., obj.inner.member)
-		// For primitive types, we only return 3 operands to maintain compatibility with binary operators
-		if (member->type == Type::Struct) {
-			// Format: [type, size_bits, temp_var, type_index]
-			return { member->type, static_cast<int>(member->size * 8), result_var, static_cast<unsigned long long>(member->type_index) };
-		} else {
-			// Format: [type, size_bits, temp_var]
-			return { member->type, static_cast<int>(member->size * 8), result_var };
-		}
+		return makeMemberResult(member->type, member_size_bits, result_var, member->type_index);
 	}
 
 	// Helper function to calculate array size from a DeclarationNode
