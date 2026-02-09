@@ -1612,6 +1612,48 @@ ParseResult Parser::parse_type_specifier()
 									.commit();
 							}
 							
+							// Handle further nested type access after member template arguments
+							// e.g., ::template rebind<_Tp>::other
+							while (peek() == "::"_tok) {
+								SaveHandle nested_pos = save_token_position();
+								advance(); // consume '::'
+								
+								// Handle optional 'template' keyword
+								if (peek() == "template"_tok) {
+									advance(); // consume 'template'
+								}
+								
+								if (peek().is_identifier()) {
+									std::string_view nested_member = peek_info().value();
+									advance(); // consume identifier
+									
+									StringBuilder nested_builder;
+									qualified_type_name = nested_builder
+										.append(qualified_type_name)
+										.append("::")
+										.append(nested_member)
+										.commit();
+									discard_saved_token(nested_pos);
+									
+									// Check for more template arguments on this nested member
+									if (peek() == "<"_tok) {
+										auto nested_tmpl_args = parse_explicit_template_arguments();
+										if (nested_tmpl_args.has_value()) {
+											StringBuilder tmpl_builder;
+											qualified_type_name = tmpl_builder
+												.append(qualified_type_name)
+												.append("<")
+												.append(nested_tmpl_args->size())
+												.append(" args>")
+												.commit();
+										}
+									}
+								} else {
+									restore_token_position(nested_pos);
+									break;
+								}
+							}
+							
 							// Create a placeholder for the dependent qualified type
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);

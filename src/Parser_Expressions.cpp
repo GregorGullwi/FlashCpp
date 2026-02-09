@@ -3261,6 +3261,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				advance(); // consume identifier
 			}
 			
+			// Skip template arguments if present (e.g., ~_Rb_tree_node<_Val>())
+			if (peek() == "<"_tok) {
+				skip_template_arguments();
+			}
+			
 			// Expect '(' for the destructor call
 			if (peek() != "("_tok) {
 				return ParseResult::error("Expected '(' after destructor name", current_token_);

@@ -1121,6 +1121,9 @@ ParseResult Parser::parse_type_and_name() {
         }
     }
 
+    // Skip C++ attributes after identifier (e.g., func_name [[nodiscard]] (params))
+    skip_cpp_attributes();
+
     // Check for array declaration: identifier[size] or identifier[size1][size2]...
     std::vector<ASTNode> array_dimensions;
     bool is_unsized_array = false;

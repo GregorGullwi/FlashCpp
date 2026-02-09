@@ -3630,6 +3630,54 @@ if (struct_type_info.getStructInfo()) {
 					if (!guide_params.empty() && guide_params.back().is<TypeSpecifierNode>()) {
 						TypeSpecifierNode& param_type = guide_params.back().as<TypeSpecifierNode>();
 
+						// Handle array reference pattern: _Type(&)[_ArrayExtent] or _Type(&&)[_ArrayExtent]
+						if (peek() == "("_tok) {
+							SaveHandle paren_pos = save_token_position();
+							advance(); // consume '('
+							
+							bool is_rvalue_ref = false;
+							bool is_ref = false;
+							if (peek() == "&"_tok) {
+								advance(); // consume '&'
+								if (peek() == "&"_tok) {
+									advance(); // consume second '&'
+									is_rvalue_ref = true;
+								}
+								is_ref = true;
+							}
+							
+							// Optional identifier inside parens
+							if (is_ref && peek().is_identifier()) {
+								advance(); // skip name
+							}
+							
+							if (is_ref && peek() == ")"_tok) {
+								advance(); // consume ')'
+								if (peek() == "["_tok) {
+									advance(); // consume '['
+									// Skip array extent expression
+									while (!peek().is_eof() && peek() != "]"_tok) {
+										advance();
+									}
+									if (peek() == "]"_tok) {
+										advance(); // consume ']'
+									}
+									// Mark as reference
+									if (is_rvalue_ref) {
+										param_type.set_reference(true);
+									} else {
+										param_type.set_lvalue_reference(true);
+									}
+									param_type.set_array(true);
+									discard_saved_token(paren_pos);
+								} else {
+									restore_token_position(paren_pos);
+								}
+							} else {
+								restore_token_position(paren_pos);
+							}
+						}
+
 						// Parse pointer levels with optional CV-qualifiers
 						while (peek() == "*"_tok) {
 							advance(); // consume '*'
