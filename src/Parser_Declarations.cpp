@@ -2049,8 +2049,25 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition with brace init: ", 
 			          class_name.view(), "::", function_name_token.value());
 			
-			// Skip the brace initializer
-			skip_balanced_braces();
+			advance();  // consume '{'
+			
+			// Parse the initializer expression if present (empty braces = default init)
+			std::optional<ASTNode> init_expr;
+			if (peek() != "}"_tok) {
+				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (init_result.is_error() || !init_result.node().has_value()) {
+					FLASH_LOG(Parser, Error, "Failed to parse brace initializer for static member variable '",
+					          class_name.view(), "::", function_name_token.value(), "'");
+					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				}
+				init_expr = *init_result.node();
+			}
+			
+			// Expect closing brace
+			if (!consume("}"_tok)) {
+				FLASH_LOG(Parser, Error, "Expected '}' after static member variable brace initializer");
+				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			}
 			
 			// Expect semicolon
 			if (!consume(";"_tok)) {
@@ -2058,17 +2075,28 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 			}
 			
+			// Update the static member's initializer in the struct if we have one
+			if (init_expr.has_value()) {
+				StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
+				mutable_member->initializer = *init_expr;
+			}
+			
 			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member brace init: ",
 			          class_name.view(), "::", function_name_token.value());
 			
-			// Return success with a placeholder node
+			// Return success with a properly initialized node
 			ASTNode return_type_node = decl_node.type_node();
 			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
-			Token zero_token(Token::Type::Literal, "0"sv, 0, 0, 0);
-			auto literal = emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
-			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, literal);
-			
-			return saved_position.success(var_node);
+			if (init_expr.has_value()) {
+				auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_expr);
+				return saved_position.success(var_node);
+			} else {
+				// Default (empty) brace init - use zero
+				Token zero_token(Token::Type::Literal, "0"sv, 0, 0, 0);
+				auto literal = emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+				auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, literal);
+				return saved_position.success(var_node);
+			}
 		}
 		
 		// Create a new declaration node with the function name
