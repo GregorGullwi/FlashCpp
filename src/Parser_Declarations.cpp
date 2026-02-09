@@ -2099,6 +2099,43 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 		}
 		
+		// Check if this is an out-of-line static member variable definition with copy initializer
+		// Pattern: Type ClassName::member_name = expr;
+		if (static_member != nullptr && peek() == "="_tok) {
+			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition with = init: ", 
+			          class_name.view(), "::", function_name_token.value());
+			
+			advance();  // consume '='
+			
+			// Parse the initializer expression
+			auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (init_result.is_error() || !init_result.node().has_value()) {
+				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
+				          class_name.view(), "::", function_name_token.value(), "'");
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+			
+			// Expect semicolon
+			if (!consume(";"_tok)) {
+				FLASH_LOG(Parser, Error, "Expected ';' after static member variable definition");
+				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			}
+			
+			// Update the static member's initializer in the struct
+			StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
+			mutable_member->initializer = *init_result.node();
+			
+			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member = init: ",
+			          class_name.view(), "::", function_name_token.value());
+			
+			// Return success with a properly initialized node
+			ASTNode return_type_node = decl_node.type_node();
+			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_result.node());
+			
+			return saved_position.success(var_node);
+		}
+		
 		// Create a new declaration node with the function name
 		ASTNode return_type_node = decl_node.type_node();
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
