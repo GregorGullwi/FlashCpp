@@ -3308,7 +3308,7 @@
 		size_t& base_type_index,
 		std::string_view error_context) {
 
-		if (operands.empty() || operands.size() < 3) {
+		if (operands.size() < 3) {
 			FLASH_LOG(Codegen, Error, "Failed to evaluate ", error_context, " for member access");
 			return false;
 		}
