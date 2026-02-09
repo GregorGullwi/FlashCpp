@@ -41,6 +41,10 @@ ParseResult Parser::parse_block()
 
 ParseResult Parser::parse_statement_or_declaration()
 {
+	// Clear any leaked pending template arguments from previous expression parsing.
+	// This prevents template args from one expression leaking into unrelated function calls.
+	pending_explicit_template_args_.reset();
+
 	// Define a function pointer type for parsing functions
 	using ParsingFunction = ParseResult(Parser::*)();
 

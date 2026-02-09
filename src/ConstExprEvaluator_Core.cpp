@@ -1512,13 +1512,16 @@ private:
 				// Search member functions in this struct
 				for (const auto& member_func : type_info.struct_info_->member_functions) {
 					if (member_func.name == StringTable::getOrInternStringHandle(func_name)) {
-						// Found a matching member function - check if it's constexpr
+						// Found a matching member function
 						const ASTNode& func_node = member_func.function_decl;
 						if (func_node.is<FunctionDeclarationNode>()) {
 							const FunctionDeclarationNode& func_decl = func_node.as<FunctionDeclarationNode>();
 							
-							// Only constexpr functions can be evaluated at compile time
-							if (func_decl.is_constexpr()) {
+							// For static storage duration, also try non-constexpr functions with simple bodies
+							// (static initializers can call any function whose body is available)
+							bool can_evaluate = func_decl.is_constexpr() ||
+								(context.storage_duration == ConstExpr::StorageDuration::Static);
+							if (can_evaluate) {
 								// Get the function body
 								const auto& definition = func_decl.get_definition();
 								if (definition.has_value()) {
@@ -1560,8 +1563,9 @@ private:
 		if (symbol_node.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
 			
-			// Check if it's a constexpr function
-			if (!func_decl.is_constexpr()) {
+			// For static storage duration, also try non-constexpr functions with simple bodies
+			// (static initializers can call any function whose body is available)
+			if (!func_decl.is_constexpr() && context.storage_duration != ConstExpr::StorageDuration::Static) {
 				return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
 			}
 

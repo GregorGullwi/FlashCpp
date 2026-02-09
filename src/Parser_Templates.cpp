@@ -3092,9 +3092,69 @@ ParseResult Parser::parse_template_declaration() {
 					continue;
 				}
 				
-				// Parse member declaration using delayed parsing for function bodies
-				// (Same approach as full specialization to ensure member_function_context is available)
-				auto member_result = parse_type_and_name();
+				// Special handling for conversion operators: operator type()
+				// Conversion operators don't have a return type, so we need to detect them early
+				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
+				ParseResult member_result;
+				FlashCpp::MemberLeadingSpecifiers conv_specs;
+				{
+					SaveHandle conv_saved = save_token_position();
+					bool found_conversion_op = false;
+					conv_specs = parse_member_leading_specifiers();
+					if (peek() == "operator"_tok) {
+						// Check if this is a conversion operator (not operator() or operator<< etc.)
+						SaveHandle op_saved = save_token_position();
+						Token operator_keyword_token = peek_info();
+						advance(); // consume 'operator'
+						
+						// If next token is not '(' and not an operator symbol, it's likely a conversion operator
+						bool is_conversion = false;
+						if (peek() != "("_tok &&
+						    !peek().is_operator() &&
+						    peek() != "["_tok && peek() != "new"_tok && peek() != "delete"_tok) {
+							// Try to parse the target type
+							auto type_result = parse_type_specifier();
+							if (!type_result.is_error() && type_result.node().has_value()) {
+								TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();
+								
+								// Consume pointer/reference modifiers: operator _Tp&(), operator _Tp*(), etc.
+								consume_conversion_operator_target_modifiers(target_type);
+								
+								// Check for ()
+								if (peek() == "("_tok) {
+									is_conversion = true;
+									
+									StringBuilder op_name_builder;
+									op_name_builder.append("operator ");
+									op_name_builder.append(target_type.getReadableString());
+									std::string_view operator_name = op_name_builder.commit();
+									
+									Token identifier_token = Token(Token::Type::Identifier, operator_name,
+									                              operator_keyword_token.line(), operator_keyword_token.column(),
+									                              operator_keyword_token.file_index());
+									
+									ASTNode decl_node = emplace_node<DeclarationNode>(
+										type_result.node().value(),
+										identifier_token
+									);
+									
+									discard_saved_token(op_saved);
+									discard_saved_token(conv_saved);
+									member_result = ParseResult::success(decl_node);
+									found_conversion_op = true;
+								}
+							}
+						}
+						if (!is_conversion) {
+							restore_token_position(op_saved);
+						}
+					}
+					if (!found_conversion_op) {
+						restore_token_position(conv_saved);
+						// Parse member declaration (use same logic as regular struct parsing)
+						member_result = parse_type_and_name();
+					}
+				}
 				if (member_result.is_error()) {
 					return member_result;
 				}
@@ -3133,6 +3193,11 @@ ParseResult Parser::parse_template_declaration() {
 					for (const auto& param : func_decl.parameter_nodes()) {
 						member_func_ref.add_parameter_node(param);
 					}
+					
+					// Apply leading specifiers to the member function
+					member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
+					member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
+					member_func_ref.set_inline_always(conv_specs & FlashCpp::MLS_Inline);
 					
 					// Parse trailing specifiers (const, volatile, noexcept, override, final, = default, = delete)
 					FlashCpp::MemberQualifiers member_quals;
@@ -3916,13 +3981,24 @@ if (struct_type_info.getStructInfo()) {
 		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
 		
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
+		// Note: struct_decl.name() may already be qualified (e.g., "std::numeric_limits")
+		// if parse_struct_declaration prepended the namespace. Extract the unqualified name
+		// to avoid double-prefixing (e.g., "std::std::numeric_limits").
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 		if (!current_handle.isGlobal()) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(simple_name);
+			std::string_view unqualified_name = simple_name;
+			auto last_colon = simple_name.rfind("::");
+			if (last_colon != std::string_view::npos) {
+				unqualified_name = simple_name.substr(last_colon + 2);
+			}
+			StringHandle name_handle = StringTable::getOrInternStringHandle(unqualified_name);
 			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
 			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
-			gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
+			// Only register if the qualified name is different from the simple name
+			if (qualified_name != simple_name) {
+				FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
+				gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
+			}
 		}
 
 		// Primary templates shouldn't be added to AST - only instantiations and specializations

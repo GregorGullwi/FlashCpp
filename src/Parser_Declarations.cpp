@@ -1983,6 +1983,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		const TypeInfo* type_info = struct_iter->second;
 		StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_info->getStructInfo());
 		if (!struct_info) {
+			// Type alias resolution: follow type_index_ to find the actual struct type
+			// e.g., using Alias = SomeStruct; then Alias::member() needs to resolve to SomeStruct
+			if (type_info->type_index_ < gTypeInfo.size() && &gTypeInfo[type_info->type_index_] != type_info) {
+				const TypeInfo& resolved_type = gTypeInfo[type_info->type_index_];
+				struct_info = const_cast<StructTypeInfo*>(resolved_type.getStructInfo());
+			}
+		}
+		if (!struct_info) {
 			FLASH_LOG(Parser, Error, "'", class_name.view(), "' is not a struct/class type");
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
@@ -2028,6 +2036,115 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			          class_name.view(), "::", function_name_token.value());
 			
 			// Return success with a placeholder node (the static member is already registered in the struct)
+			ASTNode return_type_node = decl_node.type_node();
+			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_result.node());
+			
+			return saved_position.success(var_node);
+		}
+		
+		// Check if this is an out-of-line static member variable definition with brace initializer
+		// Pattern: inline Type ClassName::member_name{};  or  ClassName::member_name{value};
+		if (static_member != nullptr && peek() == "{"_tok) {
+			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition with brace init: ", 
+			          class_name.view(), "::", function_name_token.value());
+			
+			advance();  // consume '{'
+			
+			// Parse the initializer expression if present (empty braces = default init)
+			std::optional<ASTNode> init_expr;
+			if (peek() != "}"_tok) {
+				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (init_result.is_error() || !init_result.node().has_value()) {
+					FLASH_LOG(Parser, Error, "Failed to parse brace initializer for static member variable '",
+					          class_name.view(), "::", function_name_token.value(), "'");
+					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				}
+				init_expr = *init_result.node();
+			}
+			
+			// Expect closing brace
+			if (!consume("}"_tok)) {
+				FLASH_LOG(Parser, Error, "Expected '}' after static member variable brace initializer");
+				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			}
+			
+			// Expect semicolon
+			if (!consume(";"_tok)) {
+				FLASH_LOG(Parser, Error, "Expected ';' after static member variable brace initializer");
+				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			}
+			
+			// Update the static member's initializer in the struct if we have one
+			// Update the static member's initializer in the struct
+			StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
+			if (init_expr.has_value()) {
+				mutable_member->initializer = *init_expr;
+			}
+			
+			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member brace init: ",
+			          class_name.view(), "::", function_name_token.value());
+			
+			// Return success with a properly initialized node
+			ASTNode return_type_node = decl_node.type_node();
+			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+			if (init_expr.has_value()) {
+				auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_expr);
+				return saved_position.success(var_node);
+			} else {
+				// Default (empty) brace init - create zero literal matching the static member's type
+				Type member_type = static_member->type;
+				unsigned char member_size_bits = static_cast<unsigned char>(static_member->size * 8);
+				// Use sensible defaults if size is unknown
+				if (member_size_bits == 0) {
+					member_size_bits = 32;
+				}
+				NumericLiteralValue zero_value;
+				std::string_view zero_str;
+				if (member_type == Type::Float || member_type == Type::Double || member_type == Type::LongDouble) {
+					zero_value = 0.0;
+					zero_str = "0.0"sv;
+				} else {
+					zero_value = 0ULL;
+					zero_str = "0"sv;
+				}
+				Token zero_token(Token::Type::Literal, zero_str, 0, 0, 0);
+				auto literal = emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, zero_value, member_type, TypeQualifier::None, member_size_bits));
+				auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, literal);
+				return saved_position.success(var_node);
+			}
+		}
+		
+		// Check if this is an out-of-line static member variable definition with copy initializer
+		// Pattern: Type ClassName::member_name = expr;
+		if (static_member != nullptr && peek() == "="_tok) {
+			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition with = init: ", 
+			          class_name.view(), "::", function_name_token.value());
+			
+			advance();  // consume '='
+			
+			// Parse the initializer expression
+			auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (init_result.is_error() || !init_result.node().has_value()) {
+				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
+				          class_name.view(), "::", function_name_token.value(), "'");
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+			
+			// Expect semicolon
+			if (!consume(";"_tok)) {
+				FLASH_LOG(Parser, Error, "Expected ';' after static member variable definition");
+				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			}
+			
+			// Update the static member's initializer in the struct
+			StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
+			mutable_member->initializer = *init_result.node();
+			
+			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member = init: ",
+			          class_name.view(), "::", function_name_token.value());
+			
+			// Return success with a properly initialized node
 			ASTNode return_type_node = decl_node.type_node();
 			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
 			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_result.node());
