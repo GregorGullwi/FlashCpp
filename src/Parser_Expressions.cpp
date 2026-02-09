@@ -4920,6 +4920,55 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					
 					// Create QualifiedIdentifierNode with the complete path
 					auto full_qualified_node = emplace_node<QualifiedIdentifierNode>(full_ns_handle, member_token);
+					
+					// Look up the member in the instantiated struct's symbol table
+					auto member_lookup = gSymbolTable.lookup_qualified(full_ns_handle, member_token.value());
+					
+					// If followed by '(', handle as function call (e.g., Template<T>::method())
+					if (current_token_.value() == "(") {
+						advance(); // consume '('
+						
+						auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+							.handle_pack_expansion = true,
+							.collect_types = true,
+							.expand_simple_packs = true
+						});
+						if (!args_result.success) {
+							return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+						}
+						ChunkedVector<ASTNode> args = std::move(args_result.args);
+						
+						if (!consume(")"_tok)) {
+							return ParseResult::error("Expected ')' after function call arguments", current_token_);
+						}
+						
+						// Get the declaration node for the function
+						const DeclarationNode* decl_ptr = nullptr;
+						if (member_lookup.has_value()) {
+							decl_ptr = getDeclarationNode(*member_lookup);
+						}
+						if (!decl_ptr) {
+							// Create a forward declaration
+							auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+							auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
+							member_lookup = forward_decl;
+							decl_ptr = &forward_decl.as<DeclarationNode>();
+						}
+						
+						result = emplace_node<ExpressionNode>(
+							FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), member_token));
+						
+						// Set mangled name if available
+						if (member_lookup.has_value() && member_lookup->is<FunctionDeclarationNode>()) {
+							const FunctionDeclarationNode& func_decl = member_lookup->as<FunctionDeclarationNode>();
+							if (func_decl.has_mangled_name()) {
+								std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+							}
+						}
+						
+						return ParseResult::success(*result);
+					}
+					
 					result = emplace_node<ExpressionNode>(full_qualified_node.as<QualifiedIdentifierNode>());
 					return ParseResult::success(*result);
 				}
@@ -5815,6 +5864,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							identifierType = member_func.function_declaration;
 							// Register in symbol table so overload resolution can find it
 							gSymbolTable.insert(idenfifier_token.value(), member_func.function_declaration);
+							// Mark that we found a static member to prevent MemberFunctionCallNode path
+							found_member_function_in_context = false;
 							FLASH_LOG_FORMAT(Parser, Debug, "Resolved '{}' as static member function of current class (overrides namespace template)", idenfifier_token.value());
 							return true;
 						}
@@ -5995,14 +6046,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
-				// Template instantiation failed
-				if (in_sfinae_context_) {
-					// In SFINAE context (e.g., requires expression), treat as soft failure
-					result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
-				} else {
-					FLASH_LOG(Parser, Error, "Template instantiation failed");
-					return ParseResult::error("Failed to instantiate template function", idenfifier_token);
-				}
+				// Template instantiation failed - always return error.
+				// In SFINAE context (e.g., requires expression), the caller
+				// (parse_requires_expression) handles errors by marking the
+				// requirement as unsatisfied (false node).
+				FLASH_LOG(Parser, Error, "Template instantiation failed");
+				return ParseResult::error("Failed to instantiate template function", idenfifier_token);
 			}
 		}
 

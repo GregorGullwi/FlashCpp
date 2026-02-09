@@ -1,20 +1,33 @@
 // Test that member function templates in class template specializations
 // don't cause bad_any_cast during template instantiation
-// The key test is that this compiles without crashing
+namespace std {
+template<typename T> struct allocator { using value_type = T; };
 
-template<typename Alloc> struct alloc_traits {
+template<typename Alloc> struct allocator_traits {
+    template<typename Up, typename... Args>
+    static void construct(Alloc& a, Up* p, Args&&... args) {}
+    
     template<typename Up>
-    static int construct(Up*) { return 0; }
+    static void destroy(Alloc& a, Up* p) {}
+    
+    static typename Alloc::value_type* allocate(Alloc& a, unsigned long n) { return nullptr; }
 };
-
-template<typename T> struct my_alloc { using value_type = T; };
 
 template<typename Tp>
-struct alloc_traits<my_alloc<Tp>> {
+struct allocator_traits<allocator<Tp>> {
+    template<typename Up, typename... Args>
+    static void construct(allocator<Tp>& a, Up* p, Args&&... args) {}
+    
     template<typename Up>
-    static int construct(Up*) { return 0; }
+    static void destroy(allocator<Tp>& a, Up* p) {}
+    
+    static Tp* allocate(allocator<Tp>& a, unsigned long n) { return nullptr; }
 };
+}
 
 int main() {
-    return 0;
+    // This should compile without bad_any_cast
+    std::allocator<int> a;
+    int* p = std::allocator_traits<std::allocator<int>>::allocate(a, 10);
+    return p == nullptr ? 0 : 1;
 }

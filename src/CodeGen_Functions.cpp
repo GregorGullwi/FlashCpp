@@ -446,6 +446,34 @@
 			}
 		}
 
+		// Fallback: if the function is a qualified static member call (ClassName::method),
+		// look up the struct by iterating over known types and matching the function.
+		// This handles cases where the function isn't in the global symbol table scope.
+		if (!matched_func_decl && !has_precomputed_mangled) {
+			// Search all struct types for this function (by matching function name)
+			for (const auto& [name_handle, type_info_ptr] : gTypesByName) {
+				if (!type_info_ptr->isStruct()) continue;
+				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
+				if (!struct_info) continue;
+				for (const auto& member_func : struct_info->member_functions) {
+					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						if (func_decl.decl_node().identifier_token().value() == func_name_view) {
+							matched_func_decl = &func_decl;
+							if (func_decl.has_mangled_name()) {
+								function_name = func_decl.mangled_name();
+							} else if (func_decl.linkage() != Linkage::C) {
+								function_name = generateMangledNameForCall(func_decl, func_decl.parent_struct_name());
+							}
+							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved static member function via struct search: {} -> {}", func_name_view, function_name);
+							break;
+						}
+					}
+				}
+				if (matched_func_decl) break;
+			}
+		}
+
 		// Handle dependent qualified function names: Base$dependentHash::member
 		// These occur when a template body contains Base<T>::member() and T is substituted
 		// but the hash was computed with the dependent type, not the concrete type.

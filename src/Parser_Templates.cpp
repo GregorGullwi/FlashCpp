@@ -4967,9 +4967,8 @@ ParseResult Parser::parse_template_function_declaration_body(
 	FlashCpp::MemberQualifiers member_quals;
 	skip_function_trailing_specifiers(member_quals);
 
-	// Skip trailing requires clause during template instantiation
-	// (the constraint was already evaluated during template argument deduction)
-	skip_trailing_requires_clause();
+	// Note: trailing requires clause is parsed below (line ~5030) and stored
+	// on the TemplateFunctionDeclarationNode for constraint checking during instantiation.
 
 	// Handle trailing return type for auto return type
 	// This must be done AFTER skipping cv-qualifiers/noexcept but BEFORE semicolon/body
