@@ -887,9 +887,10 @@ public:
 		// Determine flags based on exception type
 		uint8_t unwind_flags = 0x00;
 		if (is_seh) {
-			// SEH uses UNW_FLAG_EHANDLER (0x01) for __except or UNW_FLAG_UHANDLER (0x02) for __finally
-			// We'll use UNW_FLAG_EHANDLER (0x01) since __C_specific_handler handles both
-			unwind_flags = 0x01;  // UNW_FLAG_EHANDLER
+			// SEH needs both UNW_FLAG_EHANDLER (0x01) and UNW_FLAG_UHANDLER (0x02)
+			// EHANDLER triggers __C_specific_handler during the dispatch phase (__except filters)
+			// UHANDLER triggers it during the unwind phase (__finally handlers)
+			unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
 		} else if (is_cpp) {
 			// C++ uses UNW_FLAG_EHANDLER (0x01) for __CxxFrameHandler3
 			unwind_flags = 0x01;  // UNW_FLAG_EHANDLER
@@ -1038,10 +1039,13 @@ public:
 						FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: constant filter={}, jump_target={:x}",
 						                 seh_block.except_handler.constant_filter_value, jump_target);
 					} else {
-						handler_address = 0;  // TODO: filter funclet RVA (not implemented yet)
+						// Non-constant filter: handler_address = RVA of filter funclet
+						handler_address = function_start + seh_block.except_handler.filter_funclet_offset;
+						reloc_info.needs_handler_reloc = true;
 						jump_target = function_start + seh_block.except_handler.handler_offset;
 						reloc_info.needs_jump_reloc = true;
-						FLASH_LOG(Codegen, Debug, "SEH __except: non-constant filter (not supported yet)");
+						FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: filter funclet at offset {:x}, jump_target={:x}",
+						                 seh_block.except_handler.filter_funclet_offset, jump_target);
 					}
 				} else if (seh_block.has_finally_handler) {
 					handler_address = function_start + seh_block.finally_handler.handler_offset;

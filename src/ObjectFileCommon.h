@@ -61,6 +61,7 @@ namespace ObjectFileCommon {
 		uint32_t filter_result;   // Filter expression evaluation result (temp var number)
 		bool is_constant_filter;  // True if filter is a compile-time constant
 		int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
+		uint32_t filter_funclet_offset = 0; // Code offset of filter funclet (for non-constant filters)
 	};
 
 	// SEH __finally handler information

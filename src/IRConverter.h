@@ -3544,6 +3544,15 @@ public:
 			case IrOpcode::SehFinallyEnd:
 				handleSehFinallyEnd(instruction);
 				break;
+			case IrOpcode::SehFinallyCall:
+				handleSehFinallyCall(instruction);
+				break;
+			case IrOpcode::SehFilterBegin:
+				handleSehFilterBegin(instruction);
+				break;
+			case IrOpcode::SehFilterEnd:
+				handleSehFilterEnd(instruction);
+				break;
 			case IrOpcode::SehLeave:
 				handleSehLeave(instruction);
 				break;
@@ -3760,6 +3769,7 @@ private:
 				block_info.except_handler.filter_result = seh_try_block.except_handler->filter_result;
 				block_info.except_handler.is_constant_filter = seh_try_block.except_handler->is_constant_filter;
 				block_info.except_handler.constant_filter_value = seh_try_block.except_handler->constant_filter_value;
+				block_info.except_handler.filter_funclet_offset = seh_try_block.except_handler->filter_funclet_offset;
 			} else {
 				block_info.has_except_handler = false;
 			}
@@ -3774,6 +3784,11 @@ private:
 
 			seh_try_blocks.push_back(block_info);
 		}
+
+		// Reverse order: innermost scope entries must come first in the scope table
+		// __C_specific_handler walks entries linearly and for nested __try blocks,
+		// inner handlers (__finally) must be processed before outer handlers (__except)
+		std::reverse(seh_try_blocks.begin(), seh_try_blocks.end());
 
 		return seh_try_blocks;
 	}
@@ -9224,7 +9239,8 @@ private:
 			current_function_unwind_map_.clear();  // Clear unwind map
 			current_exception_state_ = -1;  // Reset state counter
 			current_function_seh_try_blocks_.clear();  // Clear SEH tracking for next function
-			current_seh_try_block_ = nullptr;
+			seh_try_block_stack_.clear();
+			current_seh_filter_funclet_offset_ = 0;
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				current_function_cfi_.clear();  // Clear CFI tracking for next function
 			}
@@ -16058,7 +16074,7 @@ private:
 		seh_try_block.try_end_offset = 0;  // Will be set in handleSehTryEnd
 
 		current_function_seh_try_blocks_.push_back(seh_try_block);
-		current_seh_try_block_ = &current_function_seh_try_blocks_.back();
+		seh_try_block_stack_.push_back(current_function_seh_try_blocks_.size() - 1);
 
 		FLASH_LOG(Codegen, Debug, "SEH __try block begin at offset ", seh_try_block.try_start_offset);
 	}
@@ -16067,12 +16083,13 @@ private:
 		// SehTryEnd marks the end of a __try block
 		// Record the current code offset as the end of the SEH try block
 
-		if (current_seh_try_block_) {
-			current_seh_try_block_->try_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+		if (!seh_try_block_stack_.empty()) {
+			auto& block = current_function_seh_try_blocks_[seh_try_block_stack_.back()];
+			block.try_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
-			FLASH_LOG(Codegen, Debug, "SEH __try block end at offset ", current_seh_try_block_->try_end_offset);
+			FLASH_LOG(Codegen, Debug, "SEH __try block end at offset ", block.try_end_offset);
 
-			// Don't clear current_seh_try_block_ yet - we need it for the handler
+			// Don't pop from stack yet - we need the block for the handler
 		}
 	}
 
@@ -16082,54 +16099,173 @@ private:
 
 		const auto& except_op = instruction.getTypedPayload<SehExceptBeginOp>();
 
-		if (current_seh_try_block_) {
+		if (!seh_try_block_stack_.empty()) {
+			auto& block = current_function_seh_try_blocks_[seh_try_block_stack_.back()];
 			SehExceptHandler handler;
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			handler.filter_result = except_op.filter_result.var_number;
 			handler.is_constant_filter = except_op.is_constant_filter;
 			handler.constant_filter_value = except_op.constant_filter_value;
 
-			current_seh_try_block_->except_handler = handler;
+			// For non-constant filters, use the most recently recorded filter funclet offset
+			if (!except_op.is_constant_filter) {
+				handler.filter_funclet_offset = current_seh_filter_funclet_offset_;
+			}
+
+			block.except_handler = handler;
 
 			FLASH_LOG(Codegen, Debug, "SEH __except handler begin at offset ", handler.handler_offset,
 			          " is_constant=", handler.is_constant_filter,
 			          " constant_value=", handler.constant_filter_value,
-			          " filter_result=", handler.filter_result);
+			          " filter_result=", handler.filter_result,
+			          " filter_funclet=", handler.filter_funclet_offset);
 		}
 	}
 
 	void handleSehExceptEnd([[maybe_unused]] const IrInstruction& instruction) {
 		// SehExceptEnd marks the end of a __except handler
-		// Clear the current SEH try block pointer
+		// Pop this try block from the stack
 
 		FLASH_LOG(Codegen, Debug, "SEH __except handler end at offset ",
 		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
 
-		current_seh_try_block_ = nullptr;
-	}
-
-	void handleSehFinallyBegin([[maybe_unused]] const IrInstruction& instruction) {
-		// SehFinallyBegin marks the start of a __finally handler
-		// Record this handler in the most recent SEH try block
-
-		if (current_seh_try_block_) {
-			SehFinallyHandler handler;
-			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-
-			current_seh_try_block_->finally_handler = handler;
-
-			FLASH_LOG(Codegen, Debug, "SEH __finally handler begin at offset ", handler.handler_offset);
+		if (!seh_try_block_stack_.empty()) {
+			seh_try_block_stack_.pop_back();
 		}
 	}
 
-	void handleSehFinallyEnd([[maybe_unused]] const IrInstruction& instruction) {
-		// SehFinallyEnd marks the end of a __finally handler
-		// Clear the current SEH try block pointer
+	void handleSehFinallyCall(const IrInstruction& instruction) {
+		// SehFinallyCall: normal-flow call to the __finally funclet
+		// Emits: xor ecx,ecx; mov rdx,rbp; call funclet_label; jmp end_label
+		// ECX=0 means "normal termination" (AbnormalTermination() returns false)
+		// RDX=frame pointer (establisher frame for the funclet)
 
-		FLASH_LOG(Codegen, Debug, "SEH __finally handler end at offset ",
+		const auto& op = instruction.getTypedPayload<SehFinallyCallOp>();
+
+		FLASH_LOG(Codegen, Debug, "SEH __finally call: funclet=", op.funclet_label, " end=", op.end_label);
+
+		// Flush all dirty registers before the call
+		flushAllDirtyRegisters();
+
+		// xor ecx, ecx (AbnormalTermination = false)
+		// Use 32-bit XOR (no REX.W) since we only need ECX zeroed
+		textSectionData.push_back(0x31); // XOR r/m32, r32
+		textSectionData.push_back(0xC9); // ModR/M: ECX, ECX
+
+		// mov rdx, rbp (establisher frame)
+		emitMovRegReg(X64Register::RDX, X64Register::RBP);
+
+		// call funclet_label (CALL rel32 - patched later)
+		textSectionData.push_back(0xE8);
+		uint32_t call_patch = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		pending_branches_.push_back({StringTable::getOrInternStringHandle(op.funclet_label), call_patch});
+
+		// jmp end_label (JMP rel32 - patched later)
+		textSectionData.push_back(0xE9);
+		uint32_t jmp_patch = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		pending_branches_.push_back({StringTable::getOrInternStringHandle(op.end_label), jmp_patch});
+	}
+
+	void handleSehFinallyBegin([[maybe_unused]] const IrInstruction& instruction) {
+		// SehFinallyBegin marks the start of a __finally funclet
+		// This is both the normal-flow entry and the unwind-phase entry.
+		// __C_specific_handler calls it with: ECX=AbnormalTermination, RDX=EstablisherFrame
+		// Normal flow calls it with: ECX=0, RDX=RBP
+
+		// Record handler offset in the current SEH try block
+		if (!seh_try_block_stack_.empty()) {
+			auto& block = current_function_seh_try_blocks_[seh_try_block_stack_.back()];
+			SehFinallyHandler handler;
+			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+			block.finally_handler = handler;
+
+			FLASH_LOG(Codegen, Debug, "SEH __finally funclet begin at offset ", handler.handler_offset);
+		}
+
+		// Emit funclet prologue:
+		//   push rbp
+		//   sub rsp, 32     (shadow space for any calls within __finally)
+		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		emitPushReg(X64Register::RBP);
+		emitSubRSP(32);
+		emitMovRegReg(X64Register::RBP, X64Register::RDX);
+	}
+
+	void handleSehFinallyEnd([[maybe_unused]] const IrInstruction& instruction) {
+		// SehFinallyEnd marks the end of a __finally funclet
+		// Emit funclet epilogue + ret
+
+		FLASH_LOG(Codegen, Debug, "SEH __finally funclet end at offset ",
 		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
 
-		current_seh_try_block_ = nullptr;
+		// Flush all dirty registers before returning
+		flushAllDirtyRegisters();
+
+		// Emit funclet epilogue:
+		//   add rsp, 32
+		//   pop rbp
+		//   ret
+		emitAddRSP(32);
+		emitPopReg(X64Register::RBP);
+		textSectionData.push_back(0xC3); // RET
+
+		// Pop this try block from the stack
+		if (!seh_try_block_stack_.empty()) {
+			seh_try_block_stack_.pop_back();
+		}
+	}
+
+	void handleSehFilterBegin([[maybe_unused]] const IrInstruction& instruction) {
+		// SehFilterBegin marks the start of a filter funclet
+		// __C_specific_handler calls it with: RCX=EXCEPTION_POINTERS*, RDX=EstablisherFrame
+		// The filter must return the filter result in EAX
+
+		// Record filter funclet offset
+		current_seh_filter_funclet_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+		FLASH_LOG(Codegen, Debug, "SEH filter funclet begin at offset ", current_seh_filter_funclet_offset_);
+
+		// Emit funclet prologue:
+		//   push rbp
+		//   sub rsp, 32     (shadow space)
+		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		emitPushReg(X64Register::RBP);
+		emitSubRSP(32);
+		emitMovRegReg(X64Register::RBP, X64Register::RDX);
+	}
+
+	void handleSehFilterEnd(const IrInstruction& instruction) {
+		// SehFilterEnd marks the end of a filter funclet
+		// Move filter result to EAX and return
+
+		const auto& op = instruction.getTypedPayload<SehFilterEndOp>();
+
+		FLASH_LOG(Codegen, Debug, "SEH filter funclet end, result temp=", op.filter_result.var_number);
+
+		// Flush all dirty registers to ensure filter result is on the stack
+		flushAllDirtyRegisters();
+
+		// Load the filter result from stack into EAX
+		// getStackOffsetFromTempVar returns the RBP-relative offset
+		int32_t filter_offset = getStackOffsetFromTempVar(op.filter_result, 32);
+		emitMovFromFrameBySize(X64Register::RAX, filter_offset, 32);
+
+		// Emit funclet epilogue:
+		//   add rsp, 32
+		//   pop rbp
+		//   ret
+		emitAddRSP(32);
+		emitPopReg(X64Register::RBP);
+		textSectionData.push_back(0xC3); // RET
 	}
 
 	void handleSehLeave(const IrInstruction& instruction) {
@@ -16736,6 +16872,7 @@ private:
 		uint32_t filter_result;   // Filter expression evaluation result (temp var number)
 		bool is_constant_filter;  // True if filter is a compile-time constant
 		int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
+		uint32_t filter_funclet_offset = 0; // Code offset of filter funclet (for non-constant filters)
 	};
 
 	struct SehFinallyHandler {
@@ -16750,5 +16887,6 @@ private:
 	};
 
 	std::vector<SehTryBlock> current_function_seh_try_blocks_;  // SEH try blocks in current function
-	SehTryBlock* current_seh_try_block_ = nullptr;  // Currently active SEH try block being processed
+	std::vector<size_t> seh_try_block_stack_;  // Stack of indices into current_function_seh_try_blocks_ for nesting
+	uint32_t current_seh_filter_funclet_offset_ = 0;  // Offset of the most recently emitted filter funclet
 }; // End of IrToObjConverter class

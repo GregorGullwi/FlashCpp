@@ -1134,16 +1134,53 @@
 		size_t current_seh_id = seh_try_counter++;
 
 		// Create labels
-		StringBuilder handlers_sb;
-		handlers_sb.append("__seh_except_").append(current_seh_id);
-		std::string_view except_label = handlers_sb.commit();
+		StringBuilder except_sb;
+		except_sb.append("__seh_except_").append(current_seh_id);
+		std::string_view except_label = except_sb.commit();
 
 		StringBuilder end_sb;
 		end_sb.append("__seh_end_").append(current_seh_id);
 		std::string_view end_label = end_sb.commit();
 
+		StringBuilder except_end_sb;
+		except_end_sb.append("__seh_except_end_").append(current_seh_id);
+		std::string_view except_end_label = except_end_sb.commit();
+
+		// Get the __except clause and check if filter is constant
+		const auto& except_clause = node.except_clause().as<SehExceptClauseNode>();
+		const auto& filter_expr = except_clause.filter_expression().as<SehFilterExpressionNode>();
+		const auto& filter_inner_expr = filter_expr.expression().as<ExpressionNode>();
+
+		// Detect constant filter: numeric literal or unary-minus on numeric literal
+		bool is_constant_filter = false;
+		int32_t constant_filter_value = 0;
+		TempVar filter_result = var_counter.next();
+
+		if (std::holds_alternative<NumericLiteralNode>(filter_inner_expr)) {
+			is_constant_filter = true;
+			const auto& lit = std::get<NumericLiteralNode>(filter_inner_expr);
+			constant_filter_value = static_cast<int32_t>(std::get<unsigned long long>(lit.value()));
+			FLASH_LOG(Codegen, Debug, "SEH filter is constant literal: ", constant_filter_value);
+		} else if (std::holds_alternative<UnaryOperatorNode>(filter_inner_expr)) {
+			const auto& unary = std::get<UnaryOperatorNode>(filter_inner_expr);
+			if (unary.op() == "-" && unary.get_operand().is<ExpressionNode>()) {
+				const auto& inner = unary.get_operand().as<ExpressionNode>();
+				if (std::holds_alternative<NumericLiteralNode>(inner)) {
+					is_constant_filter = true;
+					const auto& lit = std::get<NumericLiteralNode>(inner);
+					constant_filter_value = -static_cast<int32_t>(std::get<unsigned long long>(lit.value()));
+					FLASH_LOG(Codegen, Debug, "SEH filter is constant negated literal: ", constant_filter_value);
+				}
+			}
+		}
+
+		if (is_constant_filter) {
+			// For constant filters, evaluate the expression to emit any necessary IR
+			// (this is just a constant load, harmless)
+			visitExpressionNode(filter_inner_expr);
+		}
+
 		// Push SEH context for __leave statement resolution
-		// __try/__except doesn't have a __finally, so finally_label is empty
 		pushSehContext(end_label, std::string_view(), false);
 
 		// Emit SehTryBegin marker
@@ -1161,36 +1198,35 @@
 		// Jump to end after successful __try block execution
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 
-		// Emit label for __except handler
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(except_label)}, node.try_token()));
+		// For non-constant filters, emit a filter funclet between the try block and except handler
+		if (!is_constant_filter) {
+			StringBuilder filter_sb;
+			filter_sb.append("__seh_filter_").append(current_seh_id);
+			std::string_view filter_label = filter_sb.commit();
 
-		// Get the __except clause
-		const auto& except_clause = node.except_clause().as<SehExceptClauseNode>();
+			// Emit filter funclet label
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(filter_label)}, except_clause.except_token()));
 
-		// Evaluate the filter expression
-		const auto& filter_expr = except_clause.filter_expression().as<SehFilterExpressionNode>();
-		auto filter_operands = visitExpressionNode(filter_expr.expression().as<ExpressionNode>());
+			// Emit SehFilterBegin marker (funclet prologue)
+			ir_.addInstruction(IrOpcode::SehFilterBegin, {}, except_clause.except_token());
 
-		// Detect if filter is a compile-time constant or requires runtime evaluation
-		bool is_constant_filter = false;
-		int32_t constant_filter_value = 0;
-		TempVar filter_result = var_counter.next();
-
-		if (filter_operands.size() >= 3) {
-			if (std::holds_alternative<unsigned long long>(filter_operands[2])) {
-				is_constant_filter = true;
-				constant_filter_value = static_cast<int32_t>(std::get<unsigned long long>(filter_operands[2]));
-				FLASH_LOG(Codegen, Debug, "SEH filter is constant: ", constant_filter_value);
-			} else if (std::holds_alternative<TempVar>(filter_operands[2])) {
+			// Evaluate the filter expression inside the funclet
+			// The funclet has rbp set to the parent's frame, so local variable access works
+			auto filter_operands = visitExpressionNode(filter_inner_expr);
+			if (filter_operands.size() >= 3 && std::holds_alternative<TempVar>(filter_operands[2])) {
 				filter_result = std::get<TempVar>(filter_operands[2]);
-				FLASH_LOG(Codegen, Debug, "SEH filter is runtime expression in temp ", filter_result.var_number);
 			}
+
+			// Emit SehFilterEnd marker (moves result to EAX, funclet epilogue + ret)
+			SehFilterEndOp filter_end_op;
+			filter_end_op.filter_result = filter_result;
+			ir_.addInstruction(IrInstruction(IrOpcode::SehFilterEnd, std::move(filter_end_op), except_clause.except_token()));
+
+			FLASH_LOG(Codegen, Debug, "SEH filter is runtime expression, funclet filter_result=", filter_result.var_number);
 		}
 
-		// Generate unique label for except end
-		StringBuilder except_end_sb;
-		except_end_sb.append("__seh_except_end_").append(current_seh_id);
-		std::string_view except_end_label = except_end_sb.commit();
+		// Emit label for __except handler entry
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(except_label)}, node.try_token()));
 
 		// Emit SehExceptBegin marker with filter result
 		SehExceptBeginOp except_op;
@@ -1260,17 +1296,19 @@
 		// Pop SEH context after __try block
 		popSehContext();
 
-		// CRITICAL FIX: Jump to __finally handler on normal exit
-		// Without this, the __finally block is skipped and execution falls through to garbage memory
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
+		// Normal flow: call the __finally funclet then jump to end
+		SehFinallyCallOp call_op;
+		call_op.funclet_label = finally_label;
+		call_op.end_label = end_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), node.try_token()));
 
-		// Emit label for __finally handler
+		// Emit label for __finally funclet entry point
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
 
 		// Get the __finally clause
 		const auto& finally_clause = node.finally_clause().as<SehFinallyClauseNode>();
 
-		// Emit SehFinallyBegin marker
+		// Emit SehFinallyBegin marker (sets up funclet prologue)
 		ir_.addInstruction(IrOpcode::SehFinallyBegin, {}, finally_clause.finally_token());
 
 		// Enter scope for __finally block
@@ -1279,23 +1317,20 @@
 		// Visit __finally block body
 		visit(finally_clause.body());
 
-		// Emit SehFinallyEnd marker
+		// Emit SehFinallyEnd marker (funclet epilogue + ret)
 		ir_.addInstruction(IrOpcode::SehFinallyEnd, {}, finally_clause.finally_token());
 
 		// Exit __finally block scope
 		symbol_table.exit_scope();
 
-		// Jump to end after __finally block (fall through to end label)
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, finally_clause.finally_token()));
-
-		// Emit end label
+		// Emit end label (execution continues here after SehFinallyCall)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 	}
 
 	void visitSehLeaveStatementNode(const SehLeaveStatementNode& node) {
 		// Generate __leave statement
 		// __leave jumps to the end of the current __try block
-		// If the __try has a __finally, it executes the __finally first
+		// If the __try has a __finally, it calls the __finally funclet first
 
 		const SehContext* seh_ctx = getCurrentSehContext();
 		if (!seh_ctx) {
@@ -1304,20 +1339,18 @@
 			return;
 		}
 
-		// Determine the target label for __leave
-		// If there's a __finally, jump to the __finally handler
-		// Otherwise, jump to the end of the __try block
-		std::string_view leave_target;
 		if (seh_ctx->has_finally) {
-			leave_target = seh_ctx->finally_label;
+			// __leave inside __try/__finally: call the funclet then jump to end
+			SehFinallyCallOp call_op;
+			call_op.funclet_label = seh_ctx->finally_label;
+			call_op.end_label = seh_ctx->try_end_label;
+			ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), node.leave_token()));
 		} else {
-			leave_target = seh_ctx->try_end_label;
+			// __leave inside __try/__except: just jump to end of __try block
+			SehLeaveOp leave_op;
+			leave_op.target_label = seh_ctx->try_end_label;
+			ir_.addInstruction(IrInstruction(IrOpcode::SehLeave, std::move(leave_op), node.leave_token()));
 		}
-
-		// Emit SehLeave instruction
-		SehLeaveOp leave_op;
-		leave_op.target_label = leave_target;
-		ir_.addInstruction(IrInstruction(IrOpcode::SehLeave, std::move(leave_op), node.leave_token()));
 	}
 
 	void visitVariableDeclarationNode(const ASTNode& ast_node) {

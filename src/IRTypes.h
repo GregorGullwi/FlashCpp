@@ -147,8 +147,11 @@ enum class IrOpcode : int_fast16_t {
 	SehTryEnd,           // End __try block
 	SehExceptBegin,      // Begin __except handler: [filter_result_temp, except_end_label]
 	SehExceptEnd,        // End __except handler
-	SehFinallyBegin,     // Begin __finally handler
-	SehFinallyEnd,       // End __finally handler
+	SehFinallyBegin,     // Begin __finally handler (funclet entry point)
+	SehFinallyEnd,       // End __finally handler (funclet return)
+	SehFinallyCall,      // Call __finally funclet for normal flow
+	SehFilterBegin,      // Begin filter funclet (RCX=EXCEPTION_POINTERS*, RDX=EstablisherFrame)
+	SehFilterEnd,        // End filter funclet (return filter result in EAX)
 	SehLeave,            // __leave statement: jump to end of __try block
 };
 
@@ -1468,6 +1471,17 @@ struct SehExceptBeginOp {
 	bool is_constant_filter;      // True if filter is a compile-time constant
 	int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
 	std::string_view except_end_label;  // Label to jump to after __except block
+};
+
+// SEH __finally funclet call for normal (non-exception) flow
+struct SehFinallyCallOp {
+	std::string_view funclet_label;  // __finally funclet entry label
+	std::string_view end_label;      // Label after __finally (continue execution)
+};
+
+// SEH filter funclet end - return filter result in EAX
+struct SehFilterEndOp {
+	TempVar filter_result;  // Temporary holding the filter expression result
 };
 
 // SEH __leave operation - jumps to end of current __try block
@@ -2864,6 +2878,24 @@ public:
 		case IrOpcode::SehFinallyEnd:
 			oss << "seh_finally_end";
 			break;
+
+		case IrOpcode::SehFinallyCall:
+		{
+			const auto& op = getTypedPayload<SehFinallyCallOp>();
+			oss << "seh_finally_call @" << op.funclet_label << " -> @" << op.end_label;
+		}
+		break;
+
+		case IrOpcode::SehFilterBegin:
+			oss << "seh_filter_begin";
+			break;
+
+		case IrOpcode::SehFilterEnd:
+		{
+			const auto& op = getTypedPayload<SehFilterEndOp>();
+			oss << "seh_filter_end %" << op.filter_result.var_number;
+		}
+		break;
 
 		case IrOpcode::SehLeave:
 		{
