@@ -223,7 +223,7 @@ public:
 	void generateDeferredMemberFunctions() {
 		size_t processed = 0;
 		while (processed < deferred_member_functions_.size()) {
-			auto& info = deferred_member_functions_[processed++];
+		DeferredMemberFunctionInfo info = deferred_member_functions_[processed++];
 			StringHandle saved_function = current_function_name_;
 			auto saved_namespace = current_namespace_stack_;
 			current_struct_name_ = info.struct_name;
