@@ -3300,6 +3300,33 @@
 		return true;
 	}
 
+	// Helper: extract base_type, base_object, and base_type_index from IR operands [type, size_bits, value, type_index?]
+	bool extractBaseFromOperands(
+		const std::vector<IrOperand>& operands,
+		std::variant<StringHandle, TempVar>& base_object,
+		Type& base_type,
+		size_t& base_type_index,
+		std::string_view error_context) {
+
+		if (operands.empty() || operands.size() < 3) {
+			FLASH_LOG(Codegen, Error, "Failed to evaluate ", error_context, " for member access");
+			return false;
+		}
+		base_type = std::get<Type>(operands[0]);
+		if (std::holds_alternative<TempVar>(operands[2])) {
+			base_object = std::get<TempVar>(operands[2]);
+		} else if (std::holds_alternative<StringHandle>(operands[2])) {
+			base_object = std::get<StringHandle>(operands[2]);
+		} else {
+			FLASH_LOG(Codegen, Error, error_context, " result has unsupported value type");
+			return false;
+		}
+		if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
+			base_type_index = static_cast<size_t>(std::get<unsigned long long>(operands[3]));
+		}
+		return true;
+	}
+
 	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	                                               ExpressionContext context = ExpressionContext::Load) {
 		std::vector<IrOperand> irOperands;
@@ -3587,116 +3614,38 @@
 				
 				if (!is_lambda_this) {
 					// Normal pointer handling - evaluate the pointer expression
-					// This supports any expression that evaluates to a pointer:
-					// - Simple identifiers (ptr)
-					// - Function calls (getPtr())
-					// - Nested member access (obj.ptr_member)
-					// etc.
 					auto pointer_operands = visitExpressionNode(operand_expr);
-					if (pointer_operands.empty() || pointer_operands.size() < 3) {
-						FLASH_LOG(Codegen, Error, "Failed to evaluate pointer expression for member access");
+					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
 						return {};
 					}
-					
-					// Extract type information from the evaluated expression
-					Type pointer_type = std::get<Type>(pointer_operands[0]);
-					
-					// Get the type_index if available (for struct pointers)
-					size_t pointer_type_index = 0;
-					if (pointer_operands.size() >= 4 && std::holds_alternative<unsigned long long>(pointer_operands[3])) {
-						pointer_type_index = static_cast<size_t>(std::get<unsigned long long>(pointer_operands[3]));
-					}
-					
-					// The pointer value can be a string_view (identifier name) or TempVar (expression result)
-					if (std::holds_alternative<StringHandle>(pointer_operands[2])) {
-						base_object = std::get<StringHandle>(pointer_operands[2]);
-					} else if (std::holds_alternative<TempVar>(pointer_operands[2])) {
-						base_object = std::get<TempVar>(pointer_operands[2]);
-					} else {
-						FLASH_LOG(Codegen, Error, "Pointer expression result has unsupported value type");
-						return {};
-					}
-					
-					base_type = pointer_type;
-					base_type_index = pointer_type_index;
 					is_pointer_dereference = true;  // Mark that we're accessing through a pointer
 				}
 			}
 			// Case 4: Array subscript (e.g., arr[i].member)
 			else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
 				const ArraySubscriptNode& array_sub = std::get<ArraySubscriptNode>(expr);
-				
-				// Generate IR for the array subscript expression
-				// This will evaluate arr[i] and return the element
-				// array_operands = [element_type, element_size_bits, temp_var, struct_type_index (optional)]
 				auto array_operands = generateArraySubscriptIr(array_sub);
-				if (array_operands.empty() || array_operands.size() < 3) {
-					FLASH_LOG(Codegen, Error, "Failed to evaluate array subscript for member access");
+				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
 					return {};
 				}
-				
-				// Extract type information from the evaluated array element
-				// array_operands = [type, size_bits, temp_var, type_index (optional)]
-				Type element_type = std::get<Type>(array_operands[0]);
-				
-				// Get the type_index if available (for struct elements)
-				size_t element_type_index = 0;
-				if (array_operands.size() >= 4 && std::holds_alternative<unsigned long long>(array_operands[3])) {
-					element_type_index = static_cast<size_t>(std::get<unsigned long long>(array_operands[3]));
-				}
-				
-				// The array element should be stored in a temp var
-				if (std::holds_alternative<TempVar>(array_operands[2])) {
-					base_object = std::get<TempVar>(array_operands[2]);
-				} else {
-					FLASH_LOG(Codegen, Error, "Array subscript result has unsupported value type");
-					return {};
-				}
-				
-				base_type = element_type;
-				base_type_index = element_type_index;
 			}
 			// Case 5: Member function call (e.g., wrapper.get()->value)
 			else if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
-				const MemberFunctionCallNode& call_node = std::get<MemberFunctionCallNode>(expr);
-				auto call_result = generateMemberFunctionCallIr(call_node);
-				if (call_result.empty() || call_result.size() < 3) {
-					FLASH_LOG(Codegen, Error, "Failed to evaluate member function call for member access");
+				auto call_result = generateMemberFunctionCallIr(std::get<MemberFunctionCallNode>(expr));
+				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
 					return {};
 				}
-				base_type = std::get<Type>(call_result[0]);
-				if (std::holds_alternative<TempVar>(call_result[2])) {
-					base_object = std::get<TempVar>(call_result[2]);
-				} else {
-					FLASH_LOG(Codegen, Error, "Member function call result has unsupported value type");
-					return {};
-				}
-				if (call_result.size() >= 4 && std::holds_alternative<unsigned long long>(call_result[3])) {
-					base_type_index = static_cast<size_t>(std::get<unsigned long long>(call_result[3]));
-				}
-				if (memberAccessNode.is_arrow()) {
+				if (is_arrow) {
 					is_pointer_dereference = true;
 				}
 			}
 			// Case 6: Free function call (e.g., getPtr()->value)
 			else if (std::holds_alternative<FunctionCallNode>(expr)) {
-				const FunctionCallNode& call_node = std::get<FunctionCallNode>(expr);
-				auto call_result = generateFunctionCallIr(call_node);
-				if (call_result.empty() || call_result.size() < 3) {
-					FLASH_LOG(Codegen, Error, "Failed to evaluate function call for member access");
+				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(expr));
+				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
 					return {};
 				}
-				base_type = std::get<Type>(call_result[0]);
-				if (std::holds_alternative<TempVar>(call_result[2])) {
-					base_object = std::get<TempVar>(call_result[2]);
-				} else {
-					FLASH_LOG(Codegen, Error, "Function call result has unsupported value type");
-					return {};
-				}
-				if (call_result.size() >= 4 && std::holds_alternative<unsigned long long>(call_result[3])) {
-					base_type_index = static_cast<size_t>(std::get<unsigned long long>(call_result[3]));
-				}
-				if (memberAccessNode.is_arrow()) {
+				if (is_arrow) {
 					is_pointer_dereference = true;
 				}
 			}
@@ -3728,26 +3677,11 @@
 			}
 		}
 		else if (object_node.is<MemberFunctionCallNode>()) {
-			// Case: member access on a member function call result (e.g., wrapper.get()->value)
-			const MemberFunctionCallNode& call_node = object_node.as<MemberFunctionCallNode>();
-			auto call_result = generateMemberFunctionCallIr(call_node);
-			if (call_result.empty() || call_result.size() < 3) {
-				FLASH_LOG(Codegen, Error, "Failed to evaluate member function call for member access");
+			auto call_result = generateMemberFunctionCallIr(object_node.as<MemberFunctionCallNode>());
+			if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
 				return {};
 			}
-			base_type = std::get<Type>(call_result[0]);
-			if (std::holds_alternative<TempVar>(call_result[2])) {
-				base_object = std::get<TempVar>(call_result[2]);
-			} else {
-				FLASH_LOG(Codegen, Error, "Member function call result has unsupported value type");
-				return {};
-			}
-			// Get type_index from call result if available
-			if (call_result.size() >= 4 && std::holds_alternative<unsigned long long>(call_result[3])) {
-				base_type_index = static_cast<size_t>(std::get<unsigned long long>(call_result[3]));
-			}
-			// If the function returns a pointer and we're using ->, set up pointer dereference
-			if (memberAccessNode.is_arrow()) {
+			if (is_arrow) {
 				is_pointer_dereference = true;
 			}
 		}
