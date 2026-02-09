@@ -2092,9 +2092,24 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_expr);
 				return saved_position.success(var_node);
 			} else {
-				// Default (empty) brace init - use zero
-				Token zero_token(Token::Type::Literal, "0"sv, 0, 0, 0);
-				auto literal = emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+				// Default (empty) brace init - create zero literal matching the static member's type
+				Type member_type = static_member->type;
+				unsigned char member_size_bits = static_cast<unsigned char>(static_member->size * 8);
+				// Use sensible defaults if size is unknown
+				if (member_size_bits == 0) {
+					member_size_bits = 32;
+				}
+				NumericLiteralValue zero_value;
+				std::string_view zero_str;
+				if (member_type == Type::Float || member_type == Type::Double || member_type == Type::LongDouble) {
+					zero_value = 0.0;
+					zero_str = "0.0"sv;
+				} else {
+					zero_value = 0ULL;
+					zero_str = "0"sv;
+				}
+				Token zero_token(Token::Type::Literal, zero_str, 0, 0, 0);
+				auto literal = emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, zero_value, member_type, TypeQualifier::None, member_size_bits));
 				auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, literal);
 				return saved_position.success(var_node);
 			}

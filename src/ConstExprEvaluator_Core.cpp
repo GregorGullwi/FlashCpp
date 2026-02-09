@@ -1563,8 +1563,9 @@ private:
 		if (symbol_node.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
 			
-			// Check if it's a constexpr function
-			if (!func_decl.is_constexpr()) {
+			// For static storage duration, also try non-constexpr functions with simple bodies
+			// (static initializers can call any function whose body is available)
+			if (!func_decl.is_constexpr() && context.storage_duration != ConstExpr::StorageDuration::Static) {
 				return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
 			}
 
