@@ -693,10 +693,13 @@ public:
 	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, [[maybe_unused]] uint32_t xdata_offset) {
 		if (g_enable_debug_output) std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
-		// Get the function symbol using mangled name
-		auto* function_symbol = coffi_.get_symbol(mangled_name);
-		if (!function_symbol) {
-			throw std::runtime_error(std::string("Function symbol not found: ") + std::string(mangled_name));
+		// Use the .text section symbol (value=0) for BeginAddress/EndAddress relocations.
+		// The pdata data already contains absolute .text offsets as addends, so:
+		//   result = text_RVA + 0 + addend = text_RVA + addend = correct
+		// Using the function symbol would double-count: text_RVA + func_start + func_start
+		auto* text_symbol = coffi_.get_symbol(".text");
+		if (!text_symbol) {
+			throw std::runtime_error("Text section symbol not found");
 		}
 
 		// Get the .xdata section symbol
@@ -708,24 +711,26 @@ public:
 		auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
 
 		// Relocation 1: Function start address (offset 0 in PDATA entry)
+		// Addend in data = function_start (absolute .text offset)
 		COFFI::rel_entry_generic reloc1;
 		reloc1.virtual_address = pdata_offset + 0;
-		reloc1.symbol_table_index = function_symbol->get_index();
-		reloc1.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
+		reloc1.symbol_table_index = text_symbol->get_index();
+		reloc1.type = IMAGE_REL_AMD64_ADDR32NB;
 		pdata_section->add_relocation_entry(&reloc1);
 
 		// Relocation 2: Function end address (offset 4 in PDATA entry)
+		// Addend in data = function_start + function_size (absolute .text offset)
 		COFFI::rel_entry_generic reloc2;
 		reloc2.virtual_address = pdata_offset + 4;
-		reloc2.symbol_table_index = function_symbol->get_index();
-		reloc2.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
+		reloc2.symbol_table_index = text_symbol->get_index();
+		reloc2.type = IMAGE_REL_AMD64_ADDR32NB;
 		pdata_section->add_relocation_entry(&reloc2);
 
 		// Relocation 3: Unwind info address (offset 8 in PDATA entry)
 		COFFI::rel_entry_generic reloc3;
 		reloc3.virtual_address = pdata_offset + 8;
 		reloc3.symbol_table_index = xdata_symbol->get_index();
-		reloc3.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
+		reloc3.type = IMAGE_REL_AMD64_ADDR32NB;
 		pdata_section->add_relocation_entry(&reloc3);
 
 		if (g_enable_debug_output) std::cerr << "Added 3 PDATA relocations for function " << mangled_name << std::endl;
@@ -1003,16 +1008,16 @@ public:
 			for (const auto& seh_block : seh_try_blocks) {
 				ScopeTableReloc reloc_info;
 
-				// BeginAddress - addend is offset within function (relocation against function symbol adds function_start)
-				uint32_t begin_address = seh_block.try_start_offset;
+				// BeginAddress - absolute .text offset (relocation against .text section symbol with value=0)
+				uint32_t begin_address = function_start + seh_block.try_start_offset;
 				reloc_info.begin_offset = static_cast<uint32_t>(xdata.size());
 				xdata.push_back(static_cast<char>(begin_address & 0xFF));
 				xdata.push_back(static_cast<char>((begin_address >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((begin_address >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((begin_address >> 24) & 0xFF));
 
-				// EndAddress - addend is offset within function
-				uint32_t end_address = seh_block.try_end_offset;
+				// EndAddress - absolute .text offset
+				uint32_t end_address = function_start + seh_block.try_end_offset;
 				reloc_info.end_offset = static_cast<uint32_t>(xdata.size());
 				xdata.push_back(static_cast<char>(end_address & 0xFF));
 				xdata.push_back(static_cast<char>((end_address >> 8) & 0xFF));
@@ -1028,18 +1033,18 @@ public:
 				if (seh_block.has_except_handler) {
 					if (seh_block.except_handler.is_constant_filter) {
 						handler_address = static_cast<uint32_t>(static_cast<int32_t>(seh_block.except_handler.constant_filter_value));
-						jump_target = seh_block.except_handler.handler_offset;
+						jump_target = function_start + seh_block.except_handler.handler_offset;
 						reloc_info.needs_jump_reloc = true;
 						FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: constant filter={}, jump_target={:x}",
-						                 seh_block.except_handler.constant_filter_value, function_start + jump_target);
+						                 seh_block.except_handler.constant_filter_value, jump_target);
 					} else {
 						handler_address = 0;  // TODO: filter funclet RVA (not implemented yet)
-						jump_target = seh_block.except_handler.handler_offset;
+						jump_target = function_start + seh_block.except_handler.handler_offset;
 						reloc_info.needs_jump_reloc = true;
 						FLASH_LOG(Codegen, Debug, "SEH __except: non-constant filter (not supported yet)");
 					}
 				} else if (seh_block.has_finally_handler) {
-					handler_address = seh_block.finally_handler.handler_offset;
+					handler_address = function_start + seh_block.finally_handler.handler_offset;
 					reloc_info.needs_handler_reloc = true;
 					jump_target = 0;  // JumpTarget = 0 identifies __finally (termination handler) entries
 				} else {
@@ -1375,23 +1380,24 @@ public:
 			FLASH_LOG(Codegen, Debug, "Added relocation to __C_specific_handler for SEH");
 
 			// Add IMAGE_REL_AMD64_ADDR32NB relocations for scope table entries
-			// These relocations are against the function symbol so the linker can compute
-			// proper image-relative RVAs: result = function_RVA + addend
-			auto* function_symbol = coffi_.get_symbol(mangled_name);
-			if (function_symbol) {
+			// These relocations are against the .text section symbol (value=0) so the linker computes:
+			//   result = text_RVA + 0 + addend = text_RVA + addend
+			// The addend in data is the absolute .text offset (function_start + offset_within_func)
+			auto* text_symbol = coffi_.get_symbol(".text");
+			if (text_symbol) {
 				auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 				for (const auto& sr : scope_relocs) {
 					// BeginAddress relocation
 					COFFI::rel_entry_generic reloc_begin;
 					reloc_begin.virtual_address = xdata_offset + sr.begin_offset;
-					reloc_begin.symbol_table_index = function_symbol->get_index();
+					reloc_begin.symbol_table_index = text_symbol->get_index();
 					reloc_begin.type = IMAGE_REL_AMD64_ADDR32NB;
 					xdata_sec->add_relocation_entry(&reloc_begin);
 
 					// EndAddress relocation
 					COFFI::rel_entry_generic reloc_end;
 					reloc_end.virtual_address = xdata_offset + sr.end_offset;
-					reloc_end.symbol_table_index = function_symbol->get_index();
+					reloc_end.symbol_table_index = text_symbol->get_index();
 					reloc_end.type = IMAGE_REL_AMD64_ADDR32NB;
 					xdata_sec->add_relocation_entry(&reloc_end);
 
@@ -1399,7 +1405,7 @@ public:
 					if (sr.needs_handler_reloc) {
 						COFFI::rel_entry_generic reloc_handler;
 						reloc_handler.virtual_address = xdata_offset + sr.handler_offset;
-						reloc_handler.symbol_table_index = function_symbol->get_index();
+						reloc_handler.symbol_table_index = text_symbol->get_index();
 						reloc_handler.type = IMAGE_REL_AMD64_ADDR32NB;
 						xdata_sec->add_relocation_entry(&reloc_handler);
 					}
@@ -1408,7 +1414,7 @@ public:
 					if (sr.needs_jump_reloc) {
 						COFFI::rel_entry_generic reloc_jump;
 						reloc_jump.virtual_address = xdata_offset + sr.jump_offset;
-						reloc_jump.symbol_table_index = function_symbol->get_index();
+						reloc_jump.symbol_table_index = text_symbol->get_index();
 						reloc_jump.type = IMAGE_REL_AMD64_ADDR32NB;
 						xdata_sec->add_relocation_entry(&reloc_jump);
 					}
