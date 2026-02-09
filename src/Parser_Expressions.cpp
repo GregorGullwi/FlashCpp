@@ -9446,7 +9446,7 @@ ParseResult Parser::parse_seh_try_statement() {
     ASTNode try_block = *try_block_result.node();
 
     // Check what follows: __except or __finally
-    if (peek().type() != Token::Type::Keyword) {
+    if (!peek().is_keyword()) {
         return ParseResult::error("Expected '__except' or '__finally' after '__try' block", current_token_);
     }
 

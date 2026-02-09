@@ -845,7 +845,7 @@ public:
 		debug_builder_.finalizeCurrentFunction();
 	}
 
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}) {
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}, uint32_t stack_frame_size = 0) {
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
 			if (existing == mangled_name) {
@@ -890,16 +890,72 @@ public:
 			unwind_flags = 0x01;  // UNW_FLAG_EHANDLER
 		}
 
+		// Build unwind codes array dynamically based on actual prologue:
+		//   Offset 0:  push rbp           (1 byte)
+		//   Offset 1:  mov rbp, rsp       (3 bytes)
+		//   Offset 4:  sub rsp, imm32     (7 bytes)
+		// Total prologue size: 11 bytes
+		//
+		// Unwind codes are listed in REVERSE order of prologue operations:
+		// Each UNWIND_CODE is 2 bytes: [offset_in_prolog, (info << 4) | operation]
+		//   UWOP_PUSH_NONVOL = 0, UWOP_ALLOC_LARGE = 1, UWOP_ALLOC_SMALL = 2, UWOP_SET_FPREG = 3
+
+		std::vector<uint8_t> unwind_codes;
+		uint8_t prolog_size = 11;  // push rbp(1) + mov rbp,rsp(3) + sub rsp,imm32(7)
+
+		if (stack_frame_size > 0) {
+			if (stack_frame_size <= 128) {
+				// UWOP_ALLOC_SMALL: allocation size = (info + 1) * 8, info = size/8 - 1
+				uint8_t info = static_cast<uint8_t>(stack_frame_size / 8 - 1);
+				unwind_codes.push_back(prolog_size);  // offset at end of sub rsp instruction
+				unwind_codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));  // UWOP_ALLOC_SMALL
+			} else {
+				// UWOP_ALLOC_LARGE with 16-bit operand (info=0): size/8 in next slot
+				unwind_codes.push_back(prolog_size);
+				unwind_codes.push_back(0x01);  // UWOP_ALLOC_LARGE, info=0
+				uint16_t size_in_8bytes = static_cast<uint16_t>(stack_frame_size / 8);
+				unwind_codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
+				unwind_codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
+			}
+		}
+
+		// UWOP_SET_FPREG at offset 4 (after mov rbp, rsp)
+		unwind_codes.push_back(0x04);  // offset in prolog
+		unwind_codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
+
+		// UWOP_PUSH_NONVOL(RBP) at offset 1 (after push rbp)
+		unwind_codes.push_back(0x01);  // offset in prolog
+		unwind_codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));  // info=5 (RBP), UWOP_PUSH_NONVOL
+
+		// Pad to DWORD alignment (even number of unwind code slots)
+		if (unwind_codes.size() % 4 != 0) {
+			while (unwind_codes.size() % 4 != 0) {
+				unwind_codes.push_back(0x00);
+			}
+		}
+
+		uint8_t count_of_codes = static_cast<uint8_t>(unwind_codes.size() / 2);
+		// Adjust count_of_codes to actual number of UNWIND_CODE entries (excluding padding)
+		// For UWOP_ALLOC_SMALL: 1 slot; UWOP_ALLOC_LARGE(info=0): 2 slots; SET_FPREG: 1 slot; PUSH_NONVOL: 1 slot
+		if (stack_frame_size > 0) {
+			if (stack_frame_size <= 128) {
+				count_of_codes = 3;  // ALLOC_SMALL(1) + SET_FPREG(1) + PUSH_NONVOL(1)
+			} else {
+				count_of_codes = 4;  // ALLOC_LARGE(2) + SET_FPREG(1) + PUSH_NONVOL(1)
+			}
+		} else {
+			count_of_codes = 2;  // SET_FPREG(1) + PUSH_NONVOL(1)
+		}
+
 		std::vector<char> xdata = {
-			static_cast<char>(0x01 | (unwind_flags << 3)),  // Version 1, Flags (shifted left by 3)
-			0x04,  // Size of prolog (4 bytes: push rbp + mov rbp, rsp)
-			0x02,  // Count of unwind codes
-			0x00,  // Frame register (none)
-			0x42,  // Unwind code: UWOP_ALLOC_SMALL at offset 4
-			0x00,  // Unwind code: UWOP_PUSH_NONVOL (push rbp) at offset 0
-			0x00,  // Padding
-			0x00   // Padding
+			static_cast<char>(0x01 | (unwind_flags << 3)),  // Version 1, Flags
+			static_cast<char>(prolog_size),                  // Size of prolog
+			static_cast<char>(count_of_codes),               // Count of unwind codes
+			static_cast<char>(0x05)                          // Frame register = RBP (register 5), offset = 0
 		};
+		for (auto b : unwind_codes) {
+			xdata.push_back(static_cast<char>(b));
+		}
 		
 		// Add placeholder for exception handler RVA (4 bytes)
 		// This will point to __C_specific_handler (SEH) or __CxxFrameHandler3 (C++)
@@ -911,6 +967,17 @@ public:
 		xdata.push_back(0x00);
 
 		// Generate SEH-specific exception data
+		// Track scope table entry offsets for relocations
+		struct ScopeTableReloc {
+			uint32_t begin_offset;    // Offset of BeginAddress field within xdata
+			uint32_t end_offset;      // Offset of EndAddress field within xdata
+			uint32_t handler_offset;  // Offset of HandlerAddress field within xdata
+			uint32_t jump_offset;     // Offset of JumpTarget field within xdata
+			bool needs_handler_reloc; // True if HandlerAddress needs a relocation (RVA, not constant)
+			bool needs_jump_reloc;    // True if JumpTarget needs a relocation (non-zero RVA)
+		};
+		std::vector<ScopeTableReloc> scope_relocs;
+
 		if (is_seh) {
 			// SEH uses a scope table instead of FuncInfo
 			// Scope table format:
@@ -918,10 +985,10 @@ public:
 			//   SCOPE_TABLE_ENTRY Entries[Count]
 			//
 			// Each SCOPE_TABLE_ENTRY:
-			//   DWORD BeginAddress (RVA of try block start)
-			//   DWORD EndAddress (RVA of try block end)
-			//   DWORD HandlerAddress (RVA of __except/__finally handler, or filter for __except)
-			//   DWORD JumpTarget (RVA to jump to after handler, or 1 for __finally)
+			//   DWORD BeginAddress (image-relative RVA of try block start)
+			//   DWORD EndAddress (image-relative RVA of try block end)
+			//   DWORD HandlerAddress (RVA of filter funclet, or constant filter value for __except)
+			//   DWORD JumpTarget (image-relative RVA of __except handler, or 0 for __finally)
 
 			FLASH_LOG_FORMAT(Codegen, Debug, "Generating SEH scope table with {} entries", seh_try_blocks.size());
 
@@ -934,15 +1001,19 @@ public:
 
 			// Generate scope table entries
 			for (const auto& seh_block : seh_try_blocks) {
-				// BeginAddress - RVA of try block start (relative to function start)
-				uint32_t begin_address = function_start + seh_block.try_start_offset;
+				ScopeTableReloc reloc_info;
+
+				// BeginAddress - addend is offset within function (relocation against function symbol adds function_start)
+				uint32_t begin_address = seh_block.try_start_offset;
+				reloc_info.begin_offset = static_cast<uint32_t>(xdata.size());
 				xdata.push_back(static_cast<char>(begin_address & 0xFF));
 				xdata.push_back(static_cast<char>((begin_address >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((begin_address >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((begin_address >> 24) & 0xFF));
 
-				// EndAddress - RVA of try block end (relative to function start)
-				uint32_t end_address = function_start + seh_block.try_end_offset;
+				// EndAddress - addend is offset within function
+				uint32_t end_address = seh_block.try_end_offset;
+				reloc_info.end_offset = static_cast<uint32_t>(xdata.size());
 				xdata.push_back(static_cast<char>(end_address & 0xFF));
 				xdata.push_back(static_cast<char>((end_address >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((end_address >> 16) & 0xFF));
@@ -951,33 +1022,43 @@ public:
 				// HandlerAddress - RVA of handler (or constant filter value for __except with constant filter)
 				uint32_t handler_address;
 				uint32_t jump_target;
+				reloc_info.needs_handler_reloc = false;
+				reloc_info.needs_jump_reloc = false;
+
 				if (seh_block.has_except_handler) {
 					if (seh_block.except_handler.is_constant_filter) {
 						handler_address = static_cast<uint32_t>(static_cast<int32_t>(seh_block.except_handler.constant_filter_value));
-						jump_target = function_start + seh_block.except_handler.handler_offset;
+						jump_target = seh_block.except_handler.handler_offset;
+						reloc_info.needs_jump_reloc = true;
 						FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: constant filter={}, jump_target={:x}",
-						                 seh_block.except_handler.constant_filter_value, jump_target);
+						                 seh_block.except_handler.constant_filter_value, function_start + jump_target);
 					} else {
-						handler_address = 0;  // TODO: filter function (not implemented yet)
-						jump_target = function_start + seh_block.except_handler.handler_offset;
+						handler_address = 0;  // TODO: filter funclet RVA (not implemented yet)
+						jump_target = seh_block.except_handler.handler_offset;
+						reloc_info.needs_jump_reloc = true;
 						FLASH_LOG(Codegen, Debug, "SEH __except: non-constant filter (not supported yet)");
 					}
 				} else if (seh_block.has_finally_handler) {
-					handler_address = function_start + seh_block.finally_handler.handler_offset;
-					jump_target = 1;  // __finally is a termination handler
+					handler_address = seh_block.finally_handler.handler_offset;
+					reloc_info.needs_handler_reloc = true;
+					jump_target = 0;  // JumpTarget = 0 identifies __finally (termination handler) entries
 				} else {
 					handler_address = 0;  // No handler (shouldn't happen)
 					jump_target = 0;
 				}
+				reloc_info.handler_offset = static_cast<uint32_t>(xdata.size());
 				xdata.push_back(static_cast<char>(handler_address & 0xFF));
 				xdata.push_back(static_cast<char>((handler_address >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((handler_address >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((handler_address >> 24) & 0xFF));
 
+				reloc_info.jump_offset = static_cast<uint32_t>(xdata.size());
 				xdata.push_back(static_cast<char>(jump_target & 0xFF));
 				xdata.push_back(static_cast<char>((jump_target >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((jump_target >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((jump_target >> 24) & 0xFF));
+
+				scope_relocs.push_back(reloc_info);
 
 				FLASH_LOG_FORMAT(Codegen, Debug, "SEH scope: begin={} end={} handler={} type={}",
 				                 seh_block.try_start_offset, seh_block.try_end_offset,
@@ -1292,6 +1373,48 @@ public:
 		if (is_seh) {
 			add_xdata_relocation(xdata_offset + handler_rva_offset, "__C_specific_handler");
 			FLASH_LOG(Codegen, Debug, "Added relocation to __C_specific_handler for SEH");
+
+			// Add IMAGE_REL_AMD64_ADDR32NB relocations for scope table entries
+			// These relocations are against the function symbol so the linker can compute
+			// proper image-relative RVAs: result = function_RVA + addend
+			auto* function_symbol = coffi_.get_symbol(mangled_name);
+			if (function_symbol) {
+				auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+				for (const auto& sr : scope_relocs) {
+					// BeginAddress relocation
+					COFFI::rel_entry_generic reloc_begin;
+					reloc_begin.virtual_address = xdata_offset + sr.begin_offset;
+					reloc_begin.symbol_table_index = function_symbol->get_index();
+					reloc_begin.type = IMAGE_REL_AMD64_ADDR32NB;
+					xdata_sec->add_relocation_entry(&reloc_begin);
+
+					// EndAddress relocation
+					COFFI::rel_entry_generic reloc_end;
+					reloc_end.virtual_address = xdata_offset + sr.end_offset;
+					reloc_end.symbol_table_index = function_symbol->get_index();
+					reloc_end.type = IMAGE_REL_AMD64_ADDR32NB;
+					xdata_sec->add_relocation_entry(&reloc_end);
+
+					// HandlerAddress relocation (only for __finally handlers that need RVA)
+					if (sr.needs_handler_reloc) {
+						COFFI::rel_entry_generic reloc_handler;
+						reloc_handler.virtual_address = xdata_offset + sr.handler_offset;
+						reloc_handler.symbol_table_index = function_symbol->get_index();
+						reloc_handler.type = IMAGE_REL_AMD64_ADDR32NB;
+						xdata_sec->add_relocation_entry(&reloc_handler);
+					}
+
+					// JumpTarget relocation (for __except handlers)
+					if (sr.needs_jump_reloc) {
+						COFFI::rel_entry_generic reloc_jump;
+						reloc_jump.virtual_address = xdata_offset + sr.jump_offset;
+						reloc_jump.symbol_table_index = function_symbol->get_index();
+						reloc_jump.type = IMAGE_REL_AMD64_ADDR32NB;
+						xdata_sec->add_relocation_entry(&reloc_jump);
+					}
+				}
+				FLASH_LOG_FORMAT(Codegen, Debug, "Added {} scope table relocations for SEH", scope_relocs.size());
+			}
 		} else if (is_cpp) {
 			add_xdata_relocation(xdata_offset + handler_rva_offset, "__CxxFrameHandler3");
 			FLASH_LOG(Codegen, Debug, "Added relocation to __CxxFrameHandler3 for C++");

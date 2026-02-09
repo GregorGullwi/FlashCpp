@@ -52,6 +52,7 @@ enum class KeywordId : uint16_t {
 	MSVC_Uptr, MSVC_Sptr,
 	MSVC_Inline, MSVC_Forceinline,
 	MSVC_Declspec,
+	MSVC_Try, MSVC_Except, MSVC_Finally, MSVC_Leave,
 };
 
 class TokenKind {
@@ -274,4 +275,8 @@ namespace tok {
 	inline constexpr auto KW___inline     = TokenKind::kw(KeywordId::MSVC_Inline);
 	inline constexpr auto KW___forceinline = TokenKind::kw(KeywordId::MSVC_Forceinline);
 	inline constexpr auto KW___declspec   = TokenKind::kw(KeywordId::MSVC_Declspec);
+	inline constexpr auto KW___try        = TokenKind::kw(KeywordId::MSVC_Try);
+	inline constexpr auto KW___except     = TokenKind::kw(KeywordId::MSVC_Except);
+	inline constexpr auto KW___finally    = TokenKind::kw(KeywordId::MSVC_Finally);
+	inline constexpr auto KW___leave      = TokenKind::kw(KeywordId::MSVC_Leave);
 } // namespace tok

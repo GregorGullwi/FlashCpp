@@ -9206,9 +9206,9 @@ private:
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
 			} else {
-				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks);
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
 			}
-		
+
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
 			if (!variable_scopes.empty()) {
@@ -16232,10 +16232,11 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+			auto seh_try_blocks = convertSehInfoToWriterFormat();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
 			} else {
-				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
 			}
 
 			// Clear the current function state
