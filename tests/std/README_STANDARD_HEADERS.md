@@ -14,25 +14,25 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Template lookup failure for `__ratio_add_impl` (non-type bool default params); memory corruption fixed |
-| `<vector>` | `test_std_vector.cpp` | ❌ Runtime Crash | Progressed past `alloc_traits.h`; hits `bad_any_cast` in deeper template instantiation |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now fails at `stl_vector.h:87` (`typename ...::template rebind<T>::other` typedef) |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `bad_any_cast` fixed; SFINAE in requires fixed; now fails at `ranges_util.h:298` (constrained `auto` parameters) |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed past `_Destroy` call; now fails at `variant:694` (type specifier in partial specialization) |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~300ms (previously blocked by out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | `numeric_limits` now found (double-namespace fix); fails at `max_size_type.h:790` (`min()` static member resolution) |
-| `<string>` | `test_std_string.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | `min()` resolution fixed; `operator""sv` parsing fixed; now fails at `string_view:863` (`return basic_string_view<char>{...}` template brace-init) |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `string_view:863` (same as `<string_view>`) |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~738ms (2026-02-08: Fixed with deduction guide and namespace-qualified call fixes) |
-| `<memory>` | `test_std_memory.cpp` | ❌ Runtime Crash | Progressed past `stl_tempbuf.h` (out-of-line ctor fix); now hits `bad_any_cast` |
-| `<functional>` | `test_std_functional.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` during template instantiation |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Runtime Crash | Progressed past `uniform_int_dist.h` (nested template + operator fix); now hits `bad_any_cast` |
-| `<map>` | `test_std_map.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
-| `<set>` | `test_std_set.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | `numeric_limits` now found; fails at `max_size_type.h:790` (`min()` static member resolution) |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Runtime Crash | `__builtin_va_start` fixed; now hits `bad_any_cast` in `allocator_traits` instantiation |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Runtime Crash | Hits `bad_any_cast` in deeper template instantiation |
+| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `ranges_util.h:298` (constrained `auto` parameters) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `ranges_util.h:298` (constrained `auto` parameters) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now fails at `uniform_int_dist.h:289` (type specifier in expression) |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now fails at `stl_tree.h:426` (`typename ...::template rebind<T>::other` typedef) |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now fails at `stl_tree.h:426` (`typename ...::template rebind<T>::other` typedef) |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | `min()` resolution fixed; now fails at `span:452` (deduction guide with array reference syntax) |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `string_view:863` (template brace-init) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `string_view:863` (template brace-init) |
 | `<chrono>` | `test_std_chrono.cpp` | ✅ Compiled | ~287ms (2026-02-08: Fixed with ref-qualifier and attribute fixes) |
 | `<atomic>` | N/A | ❌ Parse Error | Conversion operator in partial specialization fixed; now fails at `atomic_base.h:1562` (`compare_exchange_weak` template instantiation) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
@@ -112,11 +112,30 @@ The following parser issues were fixed to unblock standard header compilation:
 
 | Blocker | Affected Headers | Details |
 |---------|-----------------|---------|
-| `bad_any_cast` runtime crash | `<string>`, `<iostream>`, `<vector>`, `<map>`, `<set>`, `<tuple>`, `<functional>`, `<ranges>`, `<algorithm>`, `<memory>` | Crash during `allocator_traits` template instantiation; ASTNode variant access issue in `rebind_alloc` processing |
-| `min()` static member resolution | `<string_view>`, `<span>` | `numeric_limits<__max_size_type>::lowest()` calls `min()` but lookup finds `std::min` template instead of local static member |
+| `return Type<T>{args}` template brace-init | `<string_view>`, `<string>`, `<iostream>`, `<ranges>` | `operator""sv` body: `return basic_string_view<char>{__str, __len};` — template type with brace initialization in return |
+| Constrained `auto` parameters | `<tuple>`, `<functional>`, `<memory>` | `subrange(ConceptName auto __i, _Sent __s)` — C++20 `Concept auto` syntax not yet parsed |
+| `typename ...::template rebind<T>::other` typedef | `<vector>`, `<map>`, `<set>` | Dependent template member type access in typedef not parsed |
 | `compare_exchange_weak` template | `<atomic>`, `<barrier>` | Template instantiation failure for member function with `__cmpexch_failure_order()` call |
 | Lambda in partial specialization | `<variant>` | Complex lambda with `if constexpr`, `auto&&` params in `_Copy_assign_base` operator= body |
-| `__ratio_add_impl` template lookup | `<ratio>` | Template with non-type bool default parameters not found during instantiation |
+| `<ratio>` heap corruption | `<ratio>` | Crash with malloc assertion failure during template instantiation |
+
+### Recent Fixes (2026-02-09, PR #2)
+
+The following parser issues were fixed to unblock standard header compilation:
+
+1. **`bad_any_cast` crash in `allocator_traits` template instantiation**: Member function templates (e.g., `construct`, `destroy` in `allocator_traits<allocator<_Tp>>`) stored as `TemplateFunctionDeclarationNode` were not handled during class template instantiation. The code assumed all non-constructor/destructor members are `FunctionDeclarationNode`. Fixed in two locations in `try_instantiate_class_template()`. Unblocks 10+ headers past the `bad_any_cast` crash.
+
+2. **`min()` static member function resolution**: When inside a class body, unqualified calls like `min()` found namespace-scope template functions (e.g., `std::min`) instead of the class's own static member function. Added class member priority check before template function instantiation, searching both `struct_parsing_context_stack_` and `member_function_context_stack_`. Unblocks `<string_view>`, `<span>`.
+
+3. **`__cpp_exceptions` macro removed**: FlashCpp doesn't implement exception handling. Previously, defining `__cpp_exceptions` caused standard headers to include try/catch code paths that can't be parsed. Without it, headers use simpler non-exception fallback paths (e.g., `if(true)`/`if(false)` macros from `exception_defines.h`).
+
+4. **SFINAE in requires expressions**: Template function instantiation failures inside requires expression bodies now create placeholder nodes instead of hard errors when `in_sfinae_context_` is true. This fixes `__is_derived_from_view_interface_fn` constraint evaluation in `ranges_base.h`.
+
+5. **Compound requirement SFINAE handling**: In requires expression bodies, compound requirements (`{ expr } -> type;`) and simple requirements now gracefully handle expression parsing failures by skipping the requirement and adding a false literal (unsatisfied requirement), instead of propagating hard errors.
+
+6. **User-defined literal operator parsing (`operator""sv`)**: Added parsing of user-defined literal operators in both operator parsing locations in `parse_type_and_name()`. Handles `operator""suffix` syntax for literals like `operator""sv`, `operator""_ms`. Progresses `<string_view>`.
+
+**Headers with changed status:** All `bad_any_cast` crash headers (`<string>`, `<iostream>`, `<vector>`, `<map>`, `<set>`, `<tuple>`, `<functional>`, `<ranges>`, `<algorithm>`, `<memory>`) now progress past the crash to parse errors. `<string_view>` progresses to near end of file (line 862→863). `<span>` progresses to deduction guide parsing.
 
 ### Recent Fixes (2026-02-09)
 
