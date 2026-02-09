@@ -236,6 +236,11 @@ public:
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
 			} else if (info.function_node.is<DestructorDeclarationNode>()) {
 				visitDestructorDeclarationNode(info.function_node.as<DestructorDeclarationNode>());
+			} else if (info.function_node.is<TemplateFunctionDeclarationNode>()) {
+				const auto& tmpl = info.function_node.as<TemplateFunctionDeclarationNode>();
+				if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
+				}
 			}
 			
 			current_function_name_ = saved_function;
@@ -3137,6 +3142,18 @@ private:
 						visitConstructorDeclarationNode(func_decl.as<ConstructorDeclarationNode>());
 					} else if (func_decl.is<DestructorDeclarationNode>()) {
 						visitDestructorDeclarationNode(func_decl.as<DestructorDeclarationNode>());
+					} else if (func_decl.is<TemplateFunctionDeclarationNode>()) {
+						// For member functions of class template instantiations that are wrapped in
+						// TemplateFunctionDeclarationNode. If the inner function has a definition,
+						// it's a regular member of a class template (not a member function template).
+						// Generate code for it.
+						const auto& tmpl = func_decl.as<TemplateFunctionDeclarationNode>();
+						if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+							const auto& inner_func = tmpl.function_declaration().as<FunctionDeclarationNode>();
+							if (inner_func.get_definition().has_value()) {
+								visitFunctionDeclarationNode(inner_func);
+							}
+						}
 					}
 				} catch (const std::exception& ex) {
 					FLASH_LOG(Codegen, Error, "Exception while visiting member function in struct ",

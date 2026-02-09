@@ -467,15 +467,19 @@
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						// Also skip if the function's parent_struct_name is a pattern
-						if (func_decl.parent_struct_name().find("_pattern_") != std::string_view::npos) continue;
 						if (func_decl.decl_node().identifier_token().value() == func_name_view
 						    && func_decl.parameter_nodes().size() == expected_param_count) {
 							matched_func_decl = &func_decl;
+							// Use the struct type name for mangling (not parent_struct_name which
+							// may reference a template pattern)
+							std::string_view parent_for_mangling = func_decl.parent_struct_name();
+							if (parent_for_mangling.find("_pattern_") != std::string_view::npos) {
+								parent_for_mangling = struct_type_name;
+							}
 							if (func_decl.has_mangled_name()) {
 								function_name = func_decl.mangled_name();
 							} else if (func_decl.linkage() != Linkage::C) {
-								function_name = generateMangledNameForCall(func_decl, func_decl.parent_struct_name());
+								function_name = generateMangledNameForCall(func_decl, parent_for_mangling);
 							}
 							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved static member function via struct search: {} -> {}", func_name_view, function_name);
 							
