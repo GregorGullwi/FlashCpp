@@ -3096,11 +3096,11 @@ ParseResult Parser::parse_template_declaration() {
 				// Conversion operators don't have a return type, so we need to detect them early
 				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
 				ParseResult member_result;
+				FlashCpp::MemberLeadingSpecifiers conv_specs;
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
-					auto conv_specs = parse_member_leading_specifiers();
-					(void)conv_specs;
+					conv_specs = parse_member_leading_specifiers();
 					if (peek() == "operator"_tok) {
 						// Check if this is a conversion operator (not operator() or operator<< etc.)
 						SaveHandle op_saved = save_token_position();
@@ -3193,6 +3193,11 @@ ParseResult Parser::parse_template_declaration() {
 					for (const auto& param : func_decl.parameter_nodes()) {
 						member_func_ref.add_parameter_node(param);
 					}
+					
+					// Apply leading specifiers to the member function
+					member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
+					member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
+					member_func_ref.set_inline_always(conv_specs & FlashCpp::MLS_Inline);
 					
 					// Parse trailing specifiers (const, volatile, noexcept, override, final, = default, = delete)
 					FlashCpp::MemberQualifiers member_quals;
