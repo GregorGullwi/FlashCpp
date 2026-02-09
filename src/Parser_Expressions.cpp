@@ -1892,15 +1892,26 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 // where the constraint was already recorded during the in-class declaration).
 // For call sites that need parameter scope (e.g., parse_static_member_function),
 // handle the requires clause directly instead of using this helper.
-void Parser::skip_trailing_requires_clause()
+std::optional<ASTNode> Parser::parse_trailing_requires_clause()
 {
 	if (peek() == "requires"_tok) {
+		Token requires_token = peek_info();
 		advance(); // consume 'requires'
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			FLASH_LOG(Parser, Warning, "Failed to parse trailing requires clause: ", constraint_result.error_message());
+			return std::nullopt;
+		}
+		if (auto node = constraint_result.node()) {
+			return emplace_node<RequiresClauseNode>(*node, requires_token);
 		}
 	}
+	return std::nullopt;
+}
+
+void Parser::skip_trailing_requires_clause()
+{
+	(void)parse_trailing_requires_clause();
 }
 
 // Apply reference qualifiers (& or &&) to a type specifier if present

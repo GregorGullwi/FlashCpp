@@ -1576,8 +1576,10 @@ ParseResult Parser::parse_template_declaration() {
 							ctor_ref.set_noexcept(true);
 						}
 						
-						// Skip trailing requires clause if present
-						skip_trailing_requires_clause();
+						// Parse trailing requires clause if present and store on constructor
+						if (auto req = parse_trailing_requires_clause()) {
+							ctor_ref.set_requires_clause(*req);
+						}
 						
 						// Parse member initializer list if present
 						if (peek() == ":"_tok) {
@@ -2807,8 +2809,10 @@ ParseResult Parser::parse_template_declaration() {
 							ctor_ref.set_noexcept(true);
 						}
 						
-						// Skip trailing requires clause if present
-						skip_trailing_requires_clause();
+						// Parse trailing requires clause if present and store on constructor
+						if (auto req = parse_trailing_requires_clause()) {
+							ctor_ref.set_requires_clause(*req);
+						}
 						
 						// Parse member initializer list if present
 						if (peek() == ":"_tok) {
@@ -5360,8 +5364,10 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					ctor_ref.set_noexcept(true);
 				}
 				
-				// Skip trailing requires clause if present
-				skip_trailing_requires_clause();
+				// Parse trailing requires clause if present and store on constructor
+				if (auto req = parse_trailing_requires_clause()) {
+					ctor_ref.set_requires_clause(*req);
+				}
 				
 				// Parse member initializer list if present
 				if (peek() == ":"_tok) {
@@ -8730,6 +8736,37 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 	}
 
+	// CHECK CONCEPT CONSTRAINTS ON TEMPLATE PARAMETERS (C++20 abbreviated templates)
+	// For parameters like `template<IsInt _T0>` (from `IsInt auto x`), evaluate the concept
+	{
+		size_t arg_idx = 0;
+		for (const auto& tparam_node : template_params) {
+			if (!tparam_node.is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = tparam_node.as<TemplateParameterNode>();
+			if (param.has_concept_constraint() && arg_idx < explicit_types.size()) {
+				std::string_view concept_name = param.concept_constraint();
+				auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
+				if (concept_opt.has_value()) {
+					const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+					const auto& concept_params = concept_node.template_params();
+					std::vector<TemplateTypeArg> concept_args = { explicit_types[arg_idx] };
+					std::vector<std::string_view> concept_param_names;
+					if (!concept_params.empty()) {
+						concept_param_names.push_back(concept_params[0].name());
+					}
+					auto constraint_result = evaluateConstraint(
+						concept_node.constraint_expr(), concept_args, concept_param_names);
+					if (!constraint_result.satisfied) {
+						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
+						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+						return std::nullopt;
+					}
+				}
+			}
+			if (!param.is_variadic()) ++arg_idx;
+		}
+	}
+
 	// Instantiate the template (same logic as try_instantiate_template)
 	// Generate mangled name first - it now includes reference qualifiers
 	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
@@ -9413,6 +9450,36 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// Don't create instantiation - constraint failed
 
 			return std::nullopt;
+		}
+	}
+
+	// CHECK CONCEPT CONSTRAINTS ON TEMPLATE PARAMETERS (C++20 abbreviated templates)
+	{
+		size_t arg_idx = 0;
+		for (const auto& tparam_node : template_params) {
+			if (!tparam_node.is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = tparam_node.as<TemplateParameterNode>();
+			if (param.has_concept_constraint() && arg_idx < template_args_as_type_args.size()) {
+				std::string_view concept_name = param.concept_constraint();
+				auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
+				if (concept_opt.has_value()) {
+					const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+					const auto& concept_params = concept_node.template_params();
+					std::vector<TemplateTypeArg> concept_args = { template_args_as_type_args[arg_idx] };
+					std::vector<std::string_view> concept_param_names;
+					if (!concept_params.empty()) {
+						concept_param_names.push_back(concept_params[0].name());
+					}
+					auto constraint_result = evaluateConstraint(
+						concept_node.constraint_expr(), concept_args, concept_param_names);
+					if (!constraint_result.satisfied) {
+						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
+						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+						return std::nullopt;
+					}
+				}
+			}
+			if (!param.is_variadic()) ++arg_idx;
 		}
 	}
 

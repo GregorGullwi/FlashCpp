@@ -1527,6 +1527,73 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		return ConstraintEvaluationResult::success();
 	}
 	
+	// For TypeTraitExprNode (e.g., __is_same(T, int), __is_integral(T))
+	// These can appear either directly or wrapped in ExpressionNode (handled above)
+	// After ExpressionNode unwrapping, this handles the inner TypeTraitExprNode
+	if (constraint_expr.is<TypeTraitExprNode>()) {
+		const TypeTraitExprNode& trait_expr = constraint_expr.as<TypeTraitExprNode>();
+		
+		// Helper to resolve a type specifier, substituting template parameters
+		auto resolve_type = [&](const ASTNode& type_node) -> std::pair<Type, TypeIndex> {
+			if (!type_node.is<TypeSpecifierNode>()) return {Type::Void, 0};
+			const TypeSpecifierNode& ts = type_node.as<TypeSpecifierNode>();
+			if (ts.type() == Type::UserDefined) {
+				std::string_view name = ts.token().value();
+				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
+					if (template_param_names[i] == name) {
+						return {template_args[i].base_type, template_args[i].type_index};
+					}
+				}
+			}
+			return {ts.type(), ts.type_index()};
+		};
+		
+		auto [first_type, first_idx] = resolve_type(trait_expr.type_node());
+		
+		bool result = false;
+		switch (trait_expr.kind()) {
+			case TypeTraitKind::IsSame: {
+				if (trait_expr.has_second_type()) {
+					auto [second_type, second_idx] = resolve_type(trait_expr.second_type_node());
+					result = (first_type == second_type && first_idx == second_idx);
+				}
+				break;
+			}
+			case TypeTraitKind::IsIntegral:
+				result = (first_type == Type::Bool || first_type == Type::Char ||
+				         first_type == Type::Short || first_type == Type::Int ||
+				         first_type == Type::Long || first_type == Type::LongLong ||
+				         first_type == Type::UnsignedChar || first_type == Type::UnsignedShort ||
+				         first_type == Type::UnsignedInt || first_type == Type::UnsignedLong ||
+				         first_type == Type::UnsignedLongLong);
+				break;
+			case TypeTraitKind::IsFloatingPoint:
+				result = (first_type == Type::Float || first_type == Type::Double || first_type == Type::LongDouble);
+				break;
+			case TypeTraitKind::IsVoid:
+				result = (first_type == Type::Void);
+				break;
+			case TypeTraitKind::IsPointer:
+				if (trait_expr.has_type()) {
+					const TypeSpecifierNode& ts = trait_expr.type_node().as<TypeSpecifierNode>();
+					result = (ts.pointer_depth() > 0);
+				}
+				break;
+			default:
+				// For unhandled type traits, assume satisfied
+				return ConstraintEvaluationResult::success();
+		}
+		
+		if (!result) {
+			return ConstraintEvaluationResult::failure(
+				std::string("constraint not satisfied: type trait '") + std::string(trait_expr.trait_name()) + "' evaluated to false",
+				std::string(trait_expr.trait_name()),
+				"check that the template argument satisfies the type trait"
+			);
+		}
+		return ConstraintEvaluationResult::success();
+	}
+	
 	// Default: assume satisfied for unknown expressions
 	// This allows templates to compile even with complex constraints
 	return ConstraintEvaluationResult::success();

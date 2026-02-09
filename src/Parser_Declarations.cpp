@@ -401,11 +401,15 @@ ParseResult Parser::parse_type_and_name() {
     // C++20 constrained auto parameters: ConceptName auto param or Concept<T> auto param
     // The concept constraint was parsed as a UserDefined type by parse_type_specifier().
     // If followed by 'auto', this is an abbreviated function template parameter.
-    // Treat as 'auto' (the constraint is noted but not enforced during parsing).
+    // Store the concept name on the TypeSpecifierNode for requires clause generation.
     if (type_spec.type() == Type::UserDefined && peek() == "auto"_tok) {
-        FLASH_LOG(Parser, Debug, "parse_type_and_name: Constrained auto parameter detected, consuming 'auto'");
+        // Capture the concept name before converting the type to Auto
+        std::string_view concept_name = type_spec.token().value();
+        FLASH_LOG(Parser, Debug, "parse_type_and_name: Constrained auto parameter detected (concept='", concept_name, "'), consuming 'auto'");
         advance(); // consume 'auto'
         type_spec.set_type(Type::Auto);
+        // Store the concept constraint so abbreviated template generation can build a requires clause
+        type_spec.set_concept_constraint(concept_name);
     }
 
     // Extract calling convention specifiers that can appear after the type
@@ -2458,15 +2462,21 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (auto func_node_ptr = function_definition_result.node()) {
 			FunctionDeclarationNode& func_decl = func_node_ptr->as<FunctionDeclarationNode>();
 			
-			// Count auto parameters and collect their info
-			std::vector<std::pair<size_t, Token>> auto_params;  // (param_index, param_token)
+			// Count auto parameters and collect their info including concept constraints
+			struct AutoParamInfo {
+				size_t index;
+				Token token;
+				std::string_view concept_name;  // Empty if unconstrained
+			};
+			std::vector<AutoParamInfo> auto_params;
 			const auto& params = func_decl.parameter_nodes();
 			for (size_t i = 0; i < params.size(); ++i) {
 				if (params[i].is<DeclarationNode>()) {
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					if (param_type.type() == Type::Auto) {
-						auto_params.emplace_back(i, param_decl.identifier_token());
+						std::string_view concept_constraint = param_type.has_concept_constraint() ? param_type.concept_constraint() : std::string_view{};
+						auto_params.push_back({i, param_decl.identifier_token(), concept_constraint});
 					}
 				}
 			}
@@ -2485,10 +2495,16 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					StringHandle param_name = StringTable::getOrInternStringHandle(StringBuilder().append("_T"sv).append(static_cast<int64_t>(i)));
 					
 					// Use the auto parameter's token for position/error reporting
-					Token param_token = auto_params[i].second;
+					Token param_token = auto_params[i].token;
 					
 					// Create a type template parameter node
 					auto param_node = emplace_node<TemplateParameterNode>(param_name, param_token);
+					
+					// Set concept constraint if the auto parameter was constrained (e.g., IsInt auto x)
+					if (!auto_params[i].concept_name.empty()) {
+						param_node.as<TemplateParameterNode>().set_concept_constraint(auto_params[i].concept_name);
+					}
+					
 					template_params.push_back(param_node);
 					template_param_names.push_back(param_name);
 				}

@@ -1452,6 +1452,13 @@ private:
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;  // True if this type is followed by ... (pack expansion)
 	std::optional<StringHandle> member_class_name_;  // For pointer-to-member types (int Class::*)
+	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
+
+public:
+	// For concept constraints on auto parameters (C++20)
+	bool has_concept_constraint() const { return !concept_constraint_.empty(); }
+	std::string_view concept_constraint() const { return concept_constraint_; }
+	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
 
 class DeclarationNode {
@@ -2328,6 +2335,11 @@ public:
 	void set_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
 	bool is_constexpr() const { return is_constexpr_; }
 
+	// requires clause support (C++20)
+	void set_requires_clause(ASTNode requires_clause) { requires_clause_ = requires_clause; }
+	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
+	bool has_requires_clause() const { return requires_clause_.has_value(); }
+
 private:
 	StringHandle struct_name_;
 	StringHandle name_;
@@ -2341,6 +2353,7 @@ private:
 	bool is_explicit_ = false;  // explicit specifier
 	bool is_constexpr_ = false;  // constexpr specifier
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
+	std::optional<ASTNode> requires_clause_;  // C++20 trailing requires clause
 };
 
 // Destructor declaration node
