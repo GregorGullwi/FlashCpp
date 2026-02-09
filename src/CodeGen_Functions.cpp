@@ -1037,9 +1037,18 @@
 		// Get return type information
 		// Prefer the matched function declaration's return type over the original call's,
 		// since template instantiation may have resolved dependent types (e.g., Tp* → int*)
-		const auto& return_type = matched_func_decl 
-			? matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>()
-			: decl_node.type_node().as<TypeSpecifierNode>();
+		// But DON'T use it if the return type is still unresolved (UserDefined = template param)
+		const TypeSpecifierNode* best_return_type = nullptr;
+		if (matched_func_decl) {
+			const auto& mrt = matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
+			if (mrt.type() != Type::UserDefined) {
+				best_return_type = &mrt;
+			}
+		}
+		if (!best_return_type) {
+			best_return_type = &decl_node.type_node().as<TypeSpecifierNode>();
+		}
+		const auto& return_type = *best_return_type;
 		call_op.return_type = return_type.type();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
