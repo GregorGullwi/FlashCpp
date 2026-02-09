@@ -4312,10 +4312,33 @@ ParseResult Parser::parse_requires_expression() {
 			Token lbrace_token = peek_info();
 			advance(); // consume '{'
 			
-			// Parse the expression
+			// Parse the expression - in SFINAE context, failures mean the requirement is not satisfied
 			auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (expr_result.is_error()) {
-				return expr_result;
+				// In a requires expression, expression failure means the requirement is not satisfied
+				// Skip the rest of this compound requirement: } noexcept_opt -> type-constraint_opt ;
+				int brace_depth = 1;
+				while (brace_depth > 0 && !peek().is_eof()) {
+					if (peek() == "{"_tok) brace_depth++;
+					else if (peek() == "}"_tok) brace_depth--;
+					if (brace_depth > 0) advance();
+				}
+				if (peek() == "}"_tok) advance(); // consume '}'
+				// Skip optional noexcept
+				if (peek() == "noexcept"_tok) advance();
+				// Skip optional -> type-constraint
+				if (peek() == "->"_tok) {
+					advance(); // consume '->'
+					// Skip to semicolon
+					while (!peek().is_eof() && peek() != ";"_tok) advance();
+				}
+				if (peek() == ";"_tok) advance(); // consume ';'
+				
+				// Create a false boolean literal to indicate unsatisfied requirement
+				Token false_token(Token::Type::Keyword, "false"sv, lbrace_token.line(), lbrace_token.column(), lbrace_token.file_index());
+				auto false_node = emplace_node<ExpressionNode>(BoolLiteralNode(false_token, false));
+				requirements.push_back(false_node);
+				continue;
 			}
 			
 			// Expect '}'
@@ -4388,7 +4411,15 @@ ParseResult Parser::parse_requires_expression() {
 		// Simple requirement: just an expression
 		auto req_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (req_result.is_error()) {
-			return req_result;
+			// In a requires expression, expression failure means the requirement is not satisfied
+			// Skip to the next ';' and add a false requirement
+			while (!peek().is_eof() && peek() != ";"_tok && peek() != "}"_tok) advance();
+			if (peek() == ";"_tok) advance();
+			
+			Token false_token(Token::Type::Keyword, "false"sv, requires_token.line(), requires_token.column(), requires_token.file_index());
+			auto false_node = emplace_node<ExpressionNode>(BoolLiteralNode(false_token, false));
+			requirements.push_back(false_node);
+			continue;
 		}
 		requirements.push_back(*req_result.node());
 		

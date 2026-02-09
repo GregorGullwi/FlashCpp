@@ -5995,8 +5995,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
-				FLASH_LOG(Parser, Error, "Template instantiation failed");
-				return ParseResult::error("Failed to instantiate template function", idenfifier_token);
+				// Template instantiation failed
+				if (in_sfinae_context_) {
+					// In SFINAE context (e.g., requires expression), treat as soft failure
+					result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+				} else {
+					FLASH_LOG(Parser, Error, "Template instantiation failed");
+					return ParseResult::error("Failed to instantiate template function", idenfifier_token);
+				}
 			}
 		}
 
