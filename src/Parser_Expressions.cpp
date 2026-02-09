@@ -6847,6 +6847,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Look up the instantiated type
 								auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
 								auto type_it = gTypesByName.find(type_handle);
+								
+								// If not found, the type may have been registered with filled-in default template args
+								// (e.g., basic_string_view<char> → basic_string_view<char, char_traits<char>>)
+								// Check the V2 cache for the instantiated struct node to get the correct name
+								if (type_it == gTypesByName.end()) {
+									auto cached = gTemplateRegistry.getInstantiationV2(
+										StringTable::getOrInternStringHandle(idenfifier_token.value()),
+										*explicit_template_args);
+									if (cached.has_value() && cached->is<StructDeclarationNode>()) {
+										StringHandle cached_name = cached->as<StructDeclarationNode>().name();
+										auto cached_it = gTypesByName.find(cached_name);
+										if (cached_it != gTypesByName.end()) {
+											type_handle = cached_name;
+											type_it = cached_it;
+										}
+									}
+								}
+								
 								if (type_it != gTypesByName.end()) {
 									// Found the instantiated type - now parse the brace initializer
 									advance(); // consume '{'
