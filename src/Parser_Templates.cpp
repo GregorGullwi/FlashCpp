@@ -168,7 +168,7 @@ ParseResult Parser::parse_template_declaration() {
 	}
 	
 	// Set the flag to enable fold expression parsing if we have parameter packs
-	[[maybe_unused]] bool saved_has_packs = has_parameter_packs_;
+	bool saved_has_packs = has_parameter_packs_;
 	has_parameter_packs_ = has_packs;
 	
 	// Set template parameter context EARLY, before any code that might call parse_type_specifier()
@@ -182,11 +182,12 @@ ParseResult Parser::parse_template_declaration() {
 	// At this point, outer template params are registered, so the inner parse can see them.
 	if (peek() == "template"_tok) {
 		// Helper to clean up template state before early returns from this block.
-		// parsing_template_body_ and current_template_param_names_ were set above
-		// and would normally be cleaned up at end-of-function (~line 3805).
-		auto cleanup_template_state = [this]() {
+		// parsing_template_body_, current_template_param_names_, and has_parameter_packs_
+		// were set above and would normally be cleaned up at end-of-function (~line 3805).
+		auto cleanup_template_state = [this, saved_has_packs]() {
 			current_template_param_names_.clear();
 			parsing_template_body_ = false;
+			has_parameter_packs_ = saved_has_packs;
 		};
 
 		auto inner_saved = save_token_position();
@@ -248,8 +249,9 @@ ParseResult Parser::parse_template_declaration() {
 			bool found_nested_def = false;
 
 			// Skip return type and everything up to ClassName<...>::FunctionName(
-			// Strategy: skip tokens looking for the pattern: identifier < ... > :: identifier (
-			// We track the class name from before the < ... > :: pattern.
+			// Strategy: scan tokens looking for the pattern: identifier < ... > :: identifier
+			// We take the LAST such match before '(' to avoid misidentifying qualified
+			// return types (e.g. typename Container<T>::value_type) as the class::function pattern.
 			{
 				Token last_ident;
 				while (!peek().is_eof()) {
@@ -263,6 +265,7 @@ ParseResult Parser::parse_template_declaration() {
 							if (peek() == "::"_tok) {
 								advance(); // consume '::'
 								if (peek().is_identifier()) {
+									// Tentatively record this match
 									nested_class_name = class_token.value();
 									nested_func_name_token = peek_info();
 									advance(); // consume function name
@@ -276,7 +279,11 @@ ParseResult Parser::parse_template_declaration() {
 										} else break;
 									}
 									found_nested_def = true;
-									break;
+									// If '(' follows, this is the actual definition - stop
+									if (peek() == "("_tok) {
+										break;
+									}
+									// Otherwise, this was a qualified return type - keep scanning
 								}
 							}
 						}
@@ -3816,6 +3823,7 @@ if (struct_type_info.getStructInfo()) {
 		// Clean up template parameter context
 		current_template_param_names_.clear();
 		parsing_template_body_ = false;
+		has_parameter_packs_ = saved_has_packs;
 		
 		if (body_result.is_error()) {
 			return body_result;
@@ -16585,8 +16593,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		Token()
 	);
 	
-	// Copy pointer levels from the original return type specifier
+	// Copy pointer levels and set type_index from the resolved type
 	auto& substituted_return_type_spec = substituted_return_type.as<TypeSpecifierNode>();
+	substituted_return_type_spec.set_type_index(return_type_index);
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 	}
@@ -16611,8 +16620,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				Token()
 			);
 			
-			// Copy pointer levels from the original parameter type specifier
+			// Copy pointer levels and set type_index from the resolved type
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
+			substituted_param_type_spec.set_type_index(param_type_index);
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 			}
@@ -16983,8 +16993,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		Token()
 	);
 	
-	// Copy pointer levels from the original return type specifier
+	// Copy pointer levels and set type_index from the resolved type
 	auto& substituted_return_type_spec = substituted_return_type.as<TypeSpecifierNode>();
+	substituted_return_type_spec.set_type_index(return_type_index);
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 	}
@@ -17009,8 +17020,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				Token()
 			);
 			
-			// Copy pointer levels from the original parameter type specifier
+			// Copy pointer levels and set type_index from the resolved type
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
+			substituted_param_type_spec.set_type_index(param_type_index);
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 			}
