@@ -3328,6 +3328,7 @@
 	}
 
 	// Helper: build return vector for member access results — [type, size_bits, temp_var] or [type, size_bits, temp_var, type_index]
+	// type_index is only included in the result when type == Type::Struct (ignored otherwise)
 	static std::vector<IrOperand> makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index = 0) {
 		if (type == Type::Struct) {
 			return { type, size_bits, result_var, static_cast<unsigned long long>(type_index) };
@@ -3782,7 +3783,7 @@
 
 		// Set base object, member name, and offset — using unwrapped values when applicable
 		auto& effective_base = did_unwrap ? ultimate_base : base_object;
-		std::visit([&](auto& v) { member_load.object = v; }, effective_base);
+		std::visit([&](auto& base_value) { member_load.object = base_value; }, effective_base);
 		member_load.member_name = did_unwrap ? ultimate_member_name : StringTable::getOrInternStringHandle(member_name);
 		member_load.offset = did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset);
 	
