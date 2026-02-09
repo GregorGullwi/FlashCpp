@@ -8215,8 +8215,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					
 					// Create a NumericLiteralNode for the length
-					std::string_view zero_sv = "0";
-					Token len_token(Token::Type::Literal, zero_sv, suffix_token.line(), suffix_token.column(), suffix_token.file_index());
+					std::string_view len_placeholder_sv = "0";
+					Token len_token(Token::Type::Literal, len_placeholder_sv, suffix_token.line(), suffix_token.column(), suffix_token.file_index());
 					auto len_node = emplace_node<ExpressionNode>(
 						NumericLiteralNode(len_token, static_cast<unsigned long long>(str_len), Type::UnsignedLong, TypeQualifier::None, 64));
 					args.push_back(len_node);

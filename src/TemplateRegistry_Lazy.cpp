@@ -1465,7 +1465,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			// For binary operator expressions like a + b, we need to check if the operation is valid for the type
 			if (requirement.is<ExpressionNode>()) {
 				const ExpressionNode& expr = requirement.as<ExpressionNode>();
-				// Check if this is a false literal (SFINAE recovery created this)
+				// Check if this is a false literal (SFINAE recovery created this when wrapped in ExpressionNode)
 				if (std::holds_alternative<BoolLiteralNode>(expr)) {
 					const BoolLiteralNode& bool_lit = std::get<BoolLiteralNode>(expr);
 					if (!bool_lit.value()) {
