@@ -1573,12 +1573,24 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			case TypeTraitKind::IsVoid:
 				result = (first_type == Type::Void);
 				break;
-			case TypeTraitKind::IsPointer:
+			case TypeTraitKind::IsPointer: {
 				if (trait_expr.has_type()) {
 					const TypeSpecifierNode& ts = trait_expr.type_node().as<TypeSpecifierNode>();
-					result = (ts.pointer_depth() > 0);
+					// Check the substituted pointer depth for template parameters
+					size_t effective_pointer_depth = ts.pointer_depth();
+					if (ts.type() == Type::UserDefined) {
+						std::string_view name = ts.token().value();
+						for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
+							if (template_param_names[i] == name) {
+								effective_pointer_depth = template_args[i].pointer_depth;
+								break;
+							}
+						}
+					}
+					result = (effective_pointer_depth > 0);
 				}
 				break;
+			}
 			default:
 				// For unhandled type traits, assume satisfied
 				return ConstraintEvaluationResult::success();
