@@ -2076,8 +2076,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 			
 			// Update the static member's initializer in the struct if we have one
+			// Update the static member's initializer in the struct
+			StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
 			if (init_expr.has_value()) {
-				StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
 				mutable_member->initializer = *init_expr;
 			}
 			
