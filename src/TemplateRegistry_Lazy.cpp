@@ -1533,64 +1533,91 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	if (constraint_expr.is<TypeTraitExprNode>()) {
 		const TypeTraitExprNode& trait_expr = constraint_expr.as<TypeTraitExprNode>();
 		
+		// Holds fully resolved type info including indirection and qualifiers
+		struct ResolvedTypeInfo {
+			Type base_type = Type::Void;
+			TypeIndex type_index = 0;
+			uint8_t pointer_depth = 0;
+			bool is_reference = false;
+			bool is_rvalue_reference = false;
+			CVQualifier cv_qualifier = CVQualifier::None;
+		};
+		
 		// Helper to resolve a type specifier, substituting template parameters
-		auto resolve_type = [&](const ASTNode& type_node) -> std::pair<Type, TypeIndex> {
-			if (!type_node.is<TypeSpecifierNode>()) return {Type::Void, 0};
+		auto resolve_type = [&](const ASTNode& type_node) -> ResolvedTypeInfo {
+			if (!type_node.is<TypeSpecifierNode>()) return {};
 			const TypeSpecifierNode& ts = type_node.as<TypeSpecifierNode>();
 			if (ts.type() == Type::UserDefined) {
 				std::string_view name = ts.token().value();
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == name) {
-						return {template_args[i].base_type, template_args[i].type_index};
+						const auto& arg = template_args[i];
+						return {arg.base_type, arg.type_index, arg.pointer_depth,
+						        arg.is_reference, arg.is_rvalue_reference, arg.cv_qualifier};
 					}
 				}
 			}
-			return {ts.type(), ts.type_index()};
+			return {ts.type(), ts.type_index(), static_cast<uint8_t>(ts.pointer_depth()),
+			        ts.is_lvalue_reference(), ts.is_rvalue_reference(), ts.cv_qualifier()};
 		};
 		
-		auto [first_type, first_idx] = resolve_type(trait_expr.type_node());
+		auto first = resolve_type(trait_expr.type_node());
 		
 		bool result = false;
 		switch (trait_expr.kind()) {
 			case TypeTraitKind::IsSame: {
 				if (trait_expr.has_second_type()) {
-					auto [second_type, second_idx] = resolve_type(trait_expr.second_type_node());
-					result = (first_type == second_type && first_idx == second_idx);
+					auto second = resolve_type(trait_expr.second_type_node());
+					FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.base_type), 
+						", idx=", first.type_index, ", ptr=", static_cast<int>(first.pointer_depth),
+						", ref=", first.is_reference, ", rref=", first.is_rvalue_reference,
+						", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.base_type),
+						", idx=", second.type_index, ", ptr=", static_cast<int>(second.pointer_depth),
+						", ref=", second.is_reference, ", rref=", second.is_rvalue_reference,
+						", cv=", static_cast<int>(second.cv_qualifier), "}");
+					result = (first.base_type == second.base_type &&
+					          first.type_index == second.type_index &&
+					          first.pointer_depth == second.pointer_depth &&
+					          first.is_reference == second.is_reference &&
+					          first.is_rvalue_reference == second.is_rvalue_reference &&
+					          first.cv_qualifier == second.cv_qualifier);
 				}
 				break;
 			}
 			case TypeTraitKind::IsIntegral:
-				result = (first_type == Type::Bool || first_type == Type::Char ||
-				         first_type == Type::Short || first_type == Type::Int ||
-				         first_type == Type::Long || first_type == Type::LongLong ||
-				         first_type == Type::UnsignedChar || first_type == Type::UnsignedShort ||
-				         first_type == Type::UnsignedInt || first_type == Type::UnsignedLong ||
-				         first_type == Type::UnsignedLongLong);
+				result = (first.base_type == Type::Bool || first.base_type == Type::Char ||
+				         first.base_type == Type::Short || first.base_type == Type::Int ||
+				         first.base_type == Type::Long || first.base_type == Type::LongLong ||
+				         first.base_type == Type::UnsignedChar || first.base_type == Type::UnsignedShort ||
+				         first.base_type == Type::UnsignedInt || first.base_type == Type::UnsignedLong ||
+				         first.base_type == Type::UnsignedLongLong)
+				         && !first.is_reference && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsFloatingPoint:
-				result = (first_type == Type::Float || first_type == Type::Double || first_type == Type::LongDouble);
+				result = (first.base_type == Type::Float || first.base_type == Type::Double || first.base_type == Type::LongDouble)
+				         && !first.is_reference && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsVoid:
-				result = (first_type == Type::Void);
+				result = (first.base_type == Type::Void && !first.is_reference && first.pointer_depth == 0);
 				break;
-			case TypeTraitKind::IsPointer: {
-				if (trait_expr.has_type()) {
-					const TypeSpecifierNode& ts = trait_expr.type_node().as<TypeSpecifierNode>();
-					// Check the substituted pointer depth for template parameters
-					size_t effective_pointer_depth = ts.pointer_depth();
-					if (ts.type() == Type::UserDefined) {
-						std::string_view name = ts.token().value();
-						for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
-							if (template_param_names[i] == name) {
-								effective_pointer_depth = template_args[i].pointer_depth;
-								break;
-							}
-						}
-					}
-					result = (effective_pointer_depth > 0);
-				}
+			case TypeTraitKind::IsPointer:
+				result = (first.pointer_depth > 0) && !first.is_reference;
 				break;
-			}
+			case TypeTraitKind::IsReference:
+				result = first.is_reference || first.is_rvalue_reference;
+				break;
+			case TypeTraitKind::IsLvalueReference:
+				result = first.is_reference && !first.is_rvalue_reference;
+				break;
+			case TypeTraitKind::IsRvalueReference:
+				result = first.is_rvalue_reference;
+				break;
+			case TypeTraitKind::IsConst:
+				result = (static_cast<uint8_t>(first.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+				break;
+			case TypeTraitKind::IsVolatile:
+				result = (static_cast<uint8_t>(first.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0;
+				break;
 			default:
 				// For unhandled type traits, assume satisfied
 				return ConstraintEvaluationResult::success();

@@ -8666,7 +8666,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (concept_opt.has_value()) {
 					const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
 					const auto& concept_params = concept_node.template_params();
-					std::vector<TemplateTypeArg> concept_args = { explicit_types[arg_idx] };
+					// Strip lvalue reference that deduction adds for lvalue arguments.
+					TemplateTypeArg concept_arg = explicit_types[arg_idx];
+					concept_arg.is_reference = false;
+					concept_arg.is_rvalue_reference = false;
+					std::vector<TemplateTypeArg> concept_args = { concept_arg };
 					std::vector<std::string_view> concept_param_names;
 					if (!concept_params.empty()) {
 						concept_param_names.push_back(concept_params[0].name());
@@ -9382,7 +9386,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (concept_opt.has_value()) {
 					const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
 					const auto& concept_params = concept_node.template_params();
-					std::vector<TemplateTypeArg> concept_args = { template_args_as_type_args[arg_idx] };
+					// Strip the lvalue reference that deduction adds for lvalue arguments.
+					// For abbreviated function templates (ConceptName auto x), the deduced
+					// type T is the parameter type without reference qualification.
+					TemplateTypeArg concept_arg = template_args_as_type_args[arg_idx];
+					concept_arg.is_reference = false;
+					concept_arg.is_rvalue_reference = false;
+					std::vector<TemplateTypeArg> concept_args = { concept_arg };
 					std::vector<std::string_view> concept_param_names;
 					if (!concept_params.empty()) {
 						concept_param_names.push_back(concept_params[0].name());
