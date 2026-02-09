@@ -865,6 +865,22 @@ ParseResult Parser::parse_type_and_name() {
                 operator_name = is_array ? op_delete_array : op_delete;
             }
         }
+        // Check for user-defined literal operator: operator""suffix or operator "" suffix
+        else if (peek().is_string_literal()) {
+            Token string_token = peek_info();
+            advance(); // consume ""
+            
+            // Parse the suffix identifier (e.g., 'sv' in operator""sv)
+            if (peek().is_identifier()) {
+                std::string_view suffix = peek_info().value();
+                advance(); // consume suffix
+                
+                StringBuilder op_name_builder;
+                operator_name = op_name_builder.append("operator\"\"").append(suffix).commit();
+            } else {
+                return ParseResult::error("Expected identifier suffix after operator\"\"", string_token);
+            }
+        }
         else {
             // Try to parse conversion operator: operator type()
             auto type_result = parse_type_specifier();
@@ -1010,6 +1026,22 @@ ParseResult Parser::parse_type_and_name() {
                     static const std::string op_delete = "operator delete";
                     static const std::string op_delete_array = "operator delete[]";
                     operator_name = is_array ? op_delete_array : op_delete;
+                }
+            }
+            // Check for user-defined literal operator: operator""suffix or operator "" suffix
+            else if (peek().is_string_literal()) {
+                Token string_token = peek_info();
+                advance(); // consume ""
+                
+                // Parse the suffix identifier
+                if (peek().is_identifier()) {
+                    std::string_view suffix = peek_info().value();
+                    advance(); // consume suffix
+                    
+                    StringBuilder op_name_builder;
+                    operator_name = op_name_builder.append("operator\"\"").append(suffix).commit();
+                } else {
+                    return ParseResult::error("Expected identifier suffix after operator\"\"", string_token);
                 }
             }
             else {

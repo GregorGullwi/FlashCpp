@@ -4920,6 +4920,55 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					
 					// Create QualifiedIdentifierNode with the complete path
 					auto full_qualified_node = emplace_node<QualifiedIdentifierNode>(full_ns_handle, member_token);
+					
+					// Look up the member in the instantiated struct's symbol table
+					auto member_lookup = gSymbolTable.lookup_qualified(full_ns_handle, member_token.value());
+					
+					// If followed by '(', handle as function call (e.g., Template<T>::method())
+					if (current_token_.value() == "(") {
+						advance(); // consume '('
+						
+						auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+							.handle_pack_expansion = true,
+							.collect_types = true,
+							.expand_simple_packs = true
+						});
+						if (!args_result.success) {
+							return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+						}
+						ChunkedVector<ASTNode> args = std::move(args_result.args);
+						
+						if (!consume(")"_tok)) {
+							return ParseResult::error("Expected ')' after function call arguments", current_token_);
+						}
+						
+						// Get the declaration node for the function
+						const DeclarationNode* decl_ptr = nullptr;
+						if (member_lookup.has_value()) {
+							decl_ptr = getDeclarationNode(*member_lookup);
+						}
+						if (!decl_ptr) {
+							// Create a forward declaration
+							auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+							auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
+							member_lookup = forward_decl;
+							decl_ptr = &forward_decl.as<DeclarationNode>();
+						}
+						
+						result = emplace_node<ExpressionNode>(
+							FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), member_token));
+						
+						// Set mangled name if available
+						if (member_lookup.has_value() && member_lookup->is<FunctionDeclarationNode>()) {
+							const FunctionDeclarationNode& func_decl = member_lookup->as<FunctionDeclarationNode>();
+							if (func_decl.has_mangled_name()) {
+								std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+							}
+						}
+						
+						return ParseResult::success(*result);
+					}
+					
 					result = emplace_node<ExpressionNode>(full_qualified_node.as<QualifiedIdentifierNode>());
 					return ParseResult::success(*result);
 				}
@@ -5802,6 +5851,38 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 
 		// Check if this is a template function call
+		// First, check if the name matches a static member function of the current class
+		// This implements C++ name resolution: class scope takes priority over enclosing namespace scope
+		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
+		    peek() == "("_tok) {
+			auto check_class_members = [&](const StructDeclarationNode* struct_node) -> bool {
+				if (!struct_node) return false;
+				for (const auto& member_func : struct_node->member_functions()) {
+					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+						if (func_decl.decl_node().identifier_token().value() == idenfifier_token.value()) {
+							identifierType = member_func.function_declaration;
+							// Register in symbol table so overload resolution can find it
+							gSymbolTable.insert(idenfifier_token.value(), member_func.function_declaration);
+							// Mark that we found a static member to prevent MemberFunctionCallNode path
+							found_member_function_in_context = false;
+							FLASH_LOG_FORMAT(Parser, Debug, "Resolved '{}' as static member function of current class (overrides namespace template)", idenfifier_token.value());
+							return true;
+						}
+					}
+				}
+				return false;
+			};
+			
+			// Check struct_parsing_context_stack_ (inline member function parsing)
+			if (!struct_parsing_context_stack_.empty()) {
+				check_class_members(struct_parsing_context_stack_.back().struct_node);
+			}
+			// Check member_function_context_stack_ (delayed function body parsing)
+			if (identifierType->is<TemplateFunctionDeclarationNode>() && !member_function_context_stack_.empty()) {
+				check_class_members(member_function_context_stack_.back().struct_node);
+			}
+		}
 		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
 		    consume("("_tok)) {
 			
@@ -5965,6 +6046,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
+				// Template instantiation failed - always return error.
+				// In SFINAE context (e.g., requires expression), the caller
+				// (parse_requires_expression) handles errors by marking the
+				// requirement as unsatisfied (false node).
 				FLASH_LOG(Parser, Error, "Template instantiation failed");
 				return ParseResult::error("Failed to instantiate template function", idenfifier_token);
 			}
@@ -7521,36 +7606,125 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Handle brace initialization for type names: TypeName{} or TypeName{args}
 			// This handles expressions like "throw bad_any_cast{}" where bad_any_cast is a class
 			if (found_as_type_alias && !identifierType && peek() == "{"_tok) {
-				advance(); // consume '{'
-				
-				// Parse brace initializer arguments
-				ChunkedVector<ASTNode> args;
-				while (current_token_.value() != "}") {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
+				// Look up the actual type info to determine if this is an aggregate
+				StringHandle identifier_handle = idenfifier_token.handle();
+				auto type_it = gTypesByName.find(identifier_handle);
+				if (type_it == gTypesByName.end()) {
+					// Try namespace-qualified lookup
+					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+					if (!current_namespace.isGlobal()) {
+						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, identifier_handle);
+						type_it = gTypesByName.find(qualified_handle);
 					}
-					if (auto arg = arg_result.node()) {
-						args.push_back(*arg);
+				}
+
+				if (type_it != gTypesByName.end()) {
+					const TypeInfo* type_info_ptr = type_it->second;
+					const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
+					TypeIndex type_index = type_info_ptr->type_index_;
+					
+					// Check if this is an aggregate type (no user-declared constructors, all public, no vtable)
+					bool is_aggregate = false;
+					if (struct_info) {
+						bool has_user_ctors = false;
+						for (const auto& func : struct_info->member_functions) {
+							if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+								if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+									has_user_ctors = true;
+									break;
+								}
+							}
+						}
+						bool all_public = true;
+						for (const auto& member : struct_info->members) {
+							if (member.access == AccessSpecifier::Private || member.access == AccessSpecifier::Protected) {
+								all_public = false;
+								break;
+							}
+						}
+						is_aggregate = !has_user_ctors && !struct_info->has_vtable && all_public && !struct_info->members.empty();
 					}
 					
-					if (current_token_.value() == ",") {
-						advance(); // consume ','
-					} else if (current_token_.kind().is_eof() || current_token_.value() != "}") {
-						return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
+					if (is_aggregate) {
+						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
+						unsigned char type_size = struct_info ? static_cast<unsigned char>(struct_info->total_size * 8) : 0;
+						auto type_spec = TypeSpecifierNode(Type::Struct, type_index, type_size, idenfifier_token);
+						ParseResult init_result = parse_brace_initializer(type_spec);
+						if (init_result.is_error()) {
+							return init_result;
+						}
+						// Wrap the result in a ConstructorCallNode so codegen knows the target type
+						if (init_result.node().has_value() && init_result.node()->is<InitializerListNode>()) {
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, idenfifier_token);
+							// Convert InitializerListNode initializers to ConstructorCallNode args
+							const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
+							ChunkedVector<ASTNode> args;
+							for (const auto& init : init_list.initializers()) {
+								args.push_back(init);
+							}
+							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+							return ParseResult::success(*result);
+						}
+						return init_result;
+					} else {
+						// Non-aggregate: use constructor call with proper type info
+						advance(); // consume '{'
+						
+						ChunkedVector<ASTNode> args;
+						while (current_token_.value() != "}") {
+							auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (arg_result.is_error()) {
+								return arg_result;
+							}
+							if (auto arg = arg_result.node()) {
+								args.push_back(*arg);
+							}
+							
+							if (current_token_.value() == ",") {
+								advance(); // consume ','
+							} else if (current_token_.kind().is_eof() || current_token_.value() != "}") {
+								return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
+							}
+						}
+						
+						if (!consume("}"_tok)) {
+							return ParseResult::error("Expected '}' after brace initializer", current_token_);
+						}
+						
+						unsigned char type_size = struct_info ? static_cast<unsigned char>(struct_info->total_size * 8) : 0;
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, idenfifier_token);
+						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+						return ParseResult::success(*result);
 					}
+				} else {
+					// Type not found - fall back to generic constructor call
+					advance(); // consume '{'
+					
+					ChunkedVector<ASTNode> args;
+					while (current_token_.value() != "}") {
+						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (arg_result.is_error()) {
+							return arg_result;
+						}
+						if (auto arg = arg_result.node()) {
+							args.push_back(*arg);
+						}
+						
+						if (current_token_.value() == ",") {
+							advance(); // consume ','
+						} else if (current_token_.kind().is_eof() || current_token_.value() != "}") {
+							return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
+						}
+					}
+					
+					if (!consume("}"_tok)) {
+						return ParseResult::error("Expected '}' after brace initializer", current_token_);
+					}
+					
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, idenfifier_token);
+					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+					return ParseResult::success(*result);
 				}
-				
-				if (!consume("}"_tok)) {
-					return ParseResult::error("Expected '}' after brace initializer", current_token_);
-				}
-				
-				// Create TypeSpecifierNode for the type
-				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, idenfifier_token);
-				
-				// Create ConstructorCallNode for brace initialization
-				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
-				return ParseResult::success(*result);
 			}
 
 			// Initially set result to a simple identifier - will be upgraded to FunctionCallNode if it's a function call
@@ -8100,6 +8274,57 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		                         first_string.file_index());
 
 		result = emplace_node<ExpressionNode>(StringLiteralNode(concatenated_token));
+		
+		// Check for user-defined literal suffix: "hello"_suffix or "hello"sv
+		if (peek_info().type() == Token::Type::Identifier) {
+			std::string_view suffix = peek_info().value();
+			// UDL suffixes start with _ (user-defined) or are standard (sv, s, etc.)
+			if (suffix.size() > 0 && (suffix[0] == '_' || suffix == "sv" || suffix == "s")) {
+				// Save position before consuming suffix in case the operator is not found
+				SaveHandle pre_suffix_pos = save_token_position();
+				Token suffix_token = peek_info();
+				advance(); // consume suffix
+				
+				// Build the operator name: operator""_suffix
+				std::string_view operator_name = StringBuilder().append("operator\"\""sv).append(suffix).commit();
+				
+				// Look up the UDL operator in the symbol table
+				auto udl_lookup = gSymbolTable.lookup(operator_name);
+				if (udl_lookup.has_value() && udl_lookup->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = udl_lookup->as<FunctionDeclarationNode>();
+					DeclarationNode& decl = const_cast<DeclarationNode&>(func_decl.decl_node());
+					
+					// Build arguments: the string literal and its length
+					ChunkedVector<ASTNode> args;
+					args.push_back(*result);  // string literal
+					
+					// Calculate string length (excluding quotes)
+					std::string_view str_val = persistent_string;
+					size_t str_len = 0;
+					if (str_val.size() >= 2) {
+						str_len = str_val.size() - 2;  // Remove opening and closing quotes
+					}
+					
+					// Create a NumericLiteralNode for the length
+					std::string_view len_placeholder_sv = "0";
+					Token len_token(Token::Type::Literal, len_placeholder_sv, suffix_token.line(), suffix_token.column(), suffix_token.file_index());
+					auto len_node = emplace_node<ExpressionNode>(
+						NumericLiteralNode(len_token, static_cast<unsigned long long>(str_len), Type::UnsignedLong, TypeQualifier::None, 64));
+					args.push_back(len_node);
+					
+					result = emplace_node<ExpressionNode>(
+						FunctionCallNode(decl, std::move(args), suffix_token));
+					
+					// Set mangled name if available
+					if (func_decl.has_mangled_name()) {
+						std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+					}
+				} else {
+					// Operator not found - restore position so suffix token is not lost
+					restore_token_position(pre_suffix_pos);
+				}
+			}
+		}
 	}
 	else if (current_token_.type() == Token::Type::CharacterLiteral) {
 		// Parse character literal and convert to numeric value

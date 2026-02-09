@@ -7002,6 +7002,25 @@ private:
 					if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 						const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 						const auto& params = ctor_node.parameter_nodes();
+						
+						// Skip implicit copy/move constructors when the argument
+						// isn't the same struct type (e.g., aggregate init my_type{0})
+						if (ctor_node.is_implicit() && params.size() == 1 && num_params == 1 &&
+						    params[0].is<DeclarationNode>()) {
+							const auto& param_type = params[0].as<DeclarationNode>().type_node();
+							if (param_type.is<TypeSpecifierNode>()) {
+								const auto& pts = param_type.as<TypeSpecifierNode>();
+								if ((pts.is_reference() || pts.is_rvalue_reference()) &&
+								    (pts.type() == Type::Struct || pts.type() == Type::UserDefined)) {
+									// Check if the argument is actually the same struct type
+									const TypedValue& arg = ctor_op.arguments[0];
+									if (arg.type != Type::Struct || arg.type_index != struct_type_it->second->type_index_) {
+										continue;  // Skip implicit copy/move ctor - arg isn't same struct
+									}
+								}
+							}
+						}
+						
 						if (params.size() == num_params) {
 							actual_ctor = &ctor_node;
 							break;
@@ -7338,6 +7357,25 @@ private:
 			// Regular class: function_name = class_name = struct_name
 			function_name = struct_name;
 			class_name = struct_name;
+			// Check if the struct's constructors are registered under a namespace-qualified name.
+			// This happens when a struct is defined inside a namespace (e.g., std::my_type)
+			// but the ctor_op.struct_name only has the unqualified name (e.g., "my_type").
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				const StructTypeInfo* si = type_it->second->getStructInfo();
+				if (si && !si->member_functions.empty()) {
+					for (const auto& mf : si->member_functions) {
+						if (mf.is_constructor && mf.function_decl.is<ConstructorDeclarationNode>()) {
+							std::string_view ctor_struct = StringTable::getStringView(
+								mf.function_decl.as<ConstructorDeclarationNode>().struct_name());
+							if (!ctor_struct.empty() && ctor_struct.find("::") != std::string_view::npos) {
+								class_name = std::string(ctor_struct);
+								break;
+							}
+						}
+					}
+				}
+			}
 		}
 		
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };

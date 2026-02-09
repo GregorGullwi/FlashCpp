@@ -4312,10 +4312,33 @@ ParseResult Parser::parse_requires_expression() {
 			Token lbrace_token = peek_info();
 			advance(); // consume '{'
 			
-			// Parse the expression
+			// Parse the expression - in SFINAE context, failures mean the requirement is not satisfied
 			auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (expr_result.is_error()) {
-				return expr_result;
+				// In a requires expression, expression failure means the requirement is not satisfied
+				// Skip the rest of this compound requirement: } noexcept_opt -> type-constraint_opt ;
+				int brace_depth = 1;
+				while (brace_depth > 0 && !peek().is_eof()) {
+					if (peek() == "{"_tok) brace_depth++;
+					else if (peek() == "}"_tok) brace_depth--;
+					if (brace_depth > 0) advance();
+				}
+				if (peek() == "}"_tok) advance(); // consume '}'
+				// Skip optional noexcept
+				if (peek() == "noexcept"_tok) advance();
+				// Skip optional -> type-constraint
+				if (peek() == "->"_tok) {
+					advance(); // consume '->'
+					// Skip to semicolon
+					while (!peek().is_eof() && peek() != ";"_tok) advance();
+				}
+				if (peek() == ";"_tok) advance(); // consume ';'
+				
+				// Create a false boolean literal to indicate unsatisfied requirement
+				Token false_token(Token::Type::Keyword, "false"sv, lbrace_token.line(), lbrace_token.column(), lbrace_token.file_index());
+				auto false_node = emplace_node<ExpressionNode>(BoolLiteralNode(false_token, false));
+				requirements.push_back(false_node);
+				continue;
 			}
 			
 			// Expect '}'
@@ -4388,7 +4411,15 @@ ParseResult Parser::parse_requires_expression() {
 		// Simple requirement: just an expression
 		auto req_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (req_result.is_error()) {
-			return req_result;
+			// In a requires expression, expression failure means the requirement is not satisfied
+			// Skip to the next ';' and add a false requirement
+			while (!peek().is_eof() && peek() != ";"_tok && peek() != "}"_tok) advance();
+			if (peek() == ";"_tok) advance();
+			
+			Token false_token(Token::Type::Keyword, "false"sv, requires_token.line(), requires_token.column(), requires_token.file_index());
+			auto false_node = emplace_node<ExpressionNode>(BoolLiteralNode(false_token, false));
+			requirements.push_back(false_node);
+			continue;
 		}
 		requirements.push_back(*req_result.node());
 		
@@ -4936,9 +4967,8 @@ ParseResult Parser::parse_template_function_declaration_body(
 	FlashCpp::MemberQualifiers member_quals;
 	skip_function_trailing_specifiers(member_quals);
 
-	// Skip trailing requires clause during template instantiation
-	// (the constraint was already evaluated during template argument deduction)
-	skip_trailing_requires_clause();
+	// Note: trailing requires clause is parsed below (line ~5030) and stored
+	// on the TemplateFunctionDeclarationNode for constraint checking during instantiation.
 
 	// Handle trailing return type for auto return type
 	// This must be done AFTER skipping cv-qualifiers/noexcept but BEFORE semicolon/body
@@ -11967,6 +11997,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					mem_func.access,
 					mem_func.is_virtual
 				);
+			} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				// Member function template (e.g., template<typename _Up, typename... _Args> void construct(...))
+				// Add as-is without return type substitution - the template will handle it when instantiated
+				const TemplateFunctionDeclarationNode& tmpl_func = mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
+				const FunctionDeclarationNode& inner_func = tmpl_func.function_decl_node();
+				StringHandle func_name_handle = inner_func.decl_node().identifier_token().handle();
+				struct_info->addMemberFunction(
+					func_name_handle,
+					mem_func.function_declaration,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final
+				);
 			} else {
 				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 				DeclarationNode& orig_decl = const_cast<DeclarationNode&>(orig_func.decl_node());
@@ -12657,11 +12702,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else if (mem_func.is_destructor) {
 				// Handle destructor
 				instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
+			} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				// Member function template - add as-is without creating new node
+				// The template will be instantiated on demand when called
+				instantiated_struct_ref.add_member_function(
+					mem_func.function_declaration,
+					mem_func.access
+				);
 			} else {
 				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-				
-				// Create a NEW FunctionDeclarationNode with the instantiated struct name
-				// This will set is_member_function_ = true and parent_struct_name_ correctly
 				auto new_func_node = emplace_node<FunctionDeclarationNode>(
 					const_cast<DeclarationNode&>(orig_func.decl_node()),  // Reuse declaration
 					instantiated_name  // Set correct parent struct name

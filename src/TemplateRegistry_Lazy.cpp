@@ -970,6 +970,20 @@ inline std::optional<long long> evaluateConstraintExpression(
 				
 				FLASH_LOG(Templates, Debug, "evaluateConstraintExpression: sizeof(", type_name, "), full_type_name='", full_type_name, "', type_index=", type_idx);
 				
+				// Check if the type name is a simple template parameter (e.g., sizeof(T))
+				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
+					if (template_param_names[i] == type_name) {
+						const auto& arg = template_args[i];
+						if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+							return static_cast<long long>((gTypeInfo[arg.type_index].type_size_ + 7) / 8);
+						}
+						long long size = static_cast<long long>(get_type_size_bits(arg.base_type) / 8);
+						if (size > 0) {
+							return size;
+						}
+					}
+				}
+
 				// Check if this is a placeholder for a dependent nested type like "Op<...>::type"
 				// These are created during parsing as placeholders for template-dependent types
 				if (full_type_name.find("::") != std::string_view::npos) {
@@ -1427,6 +1441,17 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				// that the expression is valid and the return type matches
 				continue;
 			}
+			// Check for false literal (from SFINAE recovery when expression parsing failed)
+			if (requirement.is<BoolLiteralNode>()) {
+				if (!requirement.as<BoolLiteralNode>().value()) {
+					return ConstraintEvaluationResult::failure(
+						"requirement not satisfied: expression is ill-formed",
+						"false",
+						"the expression is not valid for the substituted types"
+					);
+				}
+				continue;
+			}
 			if (requirement.is<RequiresClauseNode>()) {
 				// Nested requirement: requires constraint
 				const auto& nested_req = requirement.as<RequiresClauseNode>();
@@ -1439,9 +1464,56 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			// Simple requirement: expression must be valid
 			// For binary operator expressions like a + b, we need to check if the operation is valid for the type
 			if (requirement.is<ExpressionNode>()) {
+				const ExpressionNode& expr = requirement.as<ExpressionNode>();
+				// Check if this is a false literal (SFINAE recovery created this when wrapped in ExpressionNode)
+				if (std::holds_alternative<BoolLiteralNode>(expr)) {
+					const BoolLiteralNode& bool_lit = std::get<BoolLiteralNode>(expr);
+					if (!bool_lit.value()) {
+						return ConstraintEvaluationResult::failure(
+							"requirement not satisfied: expression is not valid for the given types",
+							"false",
+							"the expression is ill-formed for the substituted types"
+						);
+					}
+					continue;
+				}
+				// Check if this is a function call to a constrained template function
+				if (std::holds_alternative<FunctionCallNode>(expr)) {
+					const FunctionCallNode& call = std::get<FunctionCallNode>(expr);
+					std::string_view called_name = call.function_declaration().identifier_token().value();
+					// Look up if this function is a template with a requires clause
+					const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(called_name);
+					if (all_templates) {
+						for (const auto& tmpl : *all_templates) {
+							if (tmpl.is<TemplateFunctionDeclarationNode>()) {
+								const auto& tfdn = tmpl.as<TemplateFunctionDeclarationNode>();
+								if (tfdn.has_requires_clause()) {
+									// Build the called function's own template parameter names
+									// and map outer template args to them via positional matching
+									std::vector<std::string_view> callee_param_names;
+									for (const auto& param_node : tfdn.template_parameters()) {
+										if (param_node.is<TemplateParameterNode>()) {
+											callee_param_names.push_back(param_node.as<TemplateParameterNode>().name());
+										}
+									}
+									// Evaluate using the callee's param names with the outer args
+									// (positional: concept's T maps to callee's T by position)
+									auto req_result = evaluateConstraint(
+										tfdn.requires_clause()->as<RequiresClauseNode>().constraint_expr(),
+										template_args, callee_param_names);
+									if (!req_result.satisfied) {
+										return ConstraintEvaluationResult::failure(
+											"requirement not satisfied: constrained function call failed",
+											std::string(called_name),
+											"check the constraint on the called function"
+										);
+									}
+								}
+							}
+						}
+					}
+				}
 				// The expression parsing succeeded, so it's syntactically valid
-				// For semantic validation, we would need to check if the types support the operations
-				// For now, we consider it satisfied if parsing succeeded
 				continue;
 			}
 			if (requirement.is<BinaryOperatorNode>()) {

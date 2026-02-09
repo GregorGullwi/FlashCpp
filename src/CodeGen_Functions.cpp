@@ -446,6 +446,79 @@
 			}
 		}
 
+		// Fallback: if the function is a qualified static member call (ClassName::method),
+		// look up the struct by iterating over known types and matching the function.
+		// This handles cases where the function isn't in the global symbol table scope.
+		// Note: We match by function name AND parameter count to avoid false positives
+		// from identically named functions on different structs.
+		if (!matched_func_decl && !has_precomputed_mangled) {
+			size_t expected_param_count = 0;
+			functionCallNode.arguments().visit([&](ASTNode) { ++expected_param_count; });
+			
+			for (const auto& [name_handle, type_info_ptr] : gTypesByName) {
+				if (!type_info_ptr->isStruct()) continue;
+				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
+				if (!struct_info) continue;
+				// Skip pattern structs (templates) - they shouldn't be used for code generation
+				std::string_view struct_type_name = StringTable::getStringView(name_handle);
+				if (struct_type_name.find("_pattern_") != std::string_view::npos) continue;
+				if (struct_type_name.find("_unknown") != std::string_view::npos) continue;
+				
+				for (const auto& member_func : struct_info->member_functions) {
+					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						if (func_decl.decl_node().identifier_token().value() == func_name_view
+						    && func_decl.parameter_nodes().size() == expected_param_count) {
+							matched_func_decl = &func_decl;
+							// Use the struct type name for mangling (not parent_struct_name which
+							// may reference a template pattern)
+							std::string_view parent_for_mangling = func_decl.parent_struct_name();
+							if (parent_for_mangling.find("_pattern_") != std::string_view::npos) {
+								parent_for_mangling = struct_type_name;
+							}
+							if (func_decl.has_mangled_name()) {
+								function_name = func_decl.mangled_name();
+							} else if (func_decl.linkage() != Linkage::C) {
+								function_name = generateMangledNameForCall(func_decl, parent_for_mangling);
+							}
+							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved static member function via struct search: {} -> {}", func_name_view, function_name);
+							
+							// Queue all member functions of this struct for deferred generation
+							// since the matched function may call other members (e.g., lowest() calls min())
+							// Extract namespace from the type name (e.g., "std::numeric_limits$hash" → ["std"])
+							std::vector<std::string> ns_stack;
+							std::string_view type_name_sv = StringTable::getStringView(type_info_ptr->name());
+							size_t ns_end = type_name_sv.rfind("::");
+							if (ns_end != std::string_view::npos) {
+								std::string_view ns_part = type_name_sv.substr(0, ns_end);
+								// Split by :: for nested namespaces
+								size_t start = 0;
+								while (start < ns_part.size()) {
+									size_t pos = ns_part.find("::", start);
+									if (pos == std::string_view::npos) {
+										ns_stack.emplace_back(ns_part.substr(start));
+										break;
+									}
+									ns_stack.emplace_back(ns_part.substr(start, pos - start));
+									start = pos + 2;
+								}
+							}
+							for (const auto& mf : struct_info->member_functions) {
+								DeferredMemberFunctionInfo deferred_info;
+								deferred_info.struct_name = type_info_ptr->name();
+								deferred_info.function_node = mf.function_decl;
+								deferred_info.namespace_stack = ns_stack;
+								deferred_member_functions_.push_back(std::move(deferred_info));
+							}
+							
+							break;
+						}
+					}
+				}
+				if (matched_func_decl) break;
+			}
+		}
+
 		// Handle dependent qualified function names: Base$dependentHash::member
 		// These occur when a template body contains Base<T>::member() and T is substituted
 		// but the hash was computed with the dependent type, not the concrete type.
@@ -962,7 +1035,20 @@
 		call_op.is_indirect_call = functionCallNode.is_indirect_call();
 		
 		// Get return type information
-		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		// Prefer the matched function declaration's return type over the original call's,
+		// since template instantiation may have resolved dependent types (e.g., Tp* → int*)
+		// But DON'T use it if the return type is still unresolved (UserDefined = template param)
+		const TypeSpecifierNode* best_return_type = nullptr;
+		if (matched_func_decl) {
+			const auto& mrt = matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
+			if (mrt.type() != Type::UserDefined) {
+				best_return_type = &mrt;
+			}
+		}
+		if (!best_return_type) {
+			best_return_type = &decl_node.type_node().as<TypeSpecifierNode>();
+		}
+		const auto& return_type = *best_return_type;
 		call_op.return_type = return_type.type();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
