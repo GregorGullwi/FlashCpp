@@ -11967,6 +11967,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					mem_func.access,
 					mem_func.is_virtual
 				);
+			} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				// Member function template (e.g., template<typename _Up, typename... _Args> void construct(...))
+				// Add as-is without return type substitution - the template will handle it when instantiated
+				const TemplateFunctionDeclarationNode& tmpl_func = mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
+				const FunctionDeclarationNode& inner_func = tmpl_func.function_decl_node();
+				StringHandle func_name_handle = inner_func.decl_node().identifier_token().handle();
+				struct_info->addMemberFunction(
+					func_name_handle,
+					mem_func.function_declaration,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final
+				);
 			} else {
 				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 				DeclarationNode& orig_decl = const_cast<DeclarationNode&>(orig_func.decl_node());
@@ -12657,11 +12672,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else if (mem_func.is_destructor) {
 				// Handle destructor
 				instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
+			} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				// Member function template - add as-is without creating new node
+				// The template will be instantiated on demand when called
+				instantiated_struct_ref.add_member_function(
+					mem_func.function_declaration,
+					mem_func.access
+				);
 			} else {
 				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-				
-				// Create a NEW FunctionDeclarationNode with the instantiated struct name
-				// This will set is_member_function_ = true and parent_struct_name_ correctly
 				auto new_func_node = emplace_node<FunctionDeclarationNode>(
 					const_cast<DeclarationNode&>(orig_func.decl_node()),  // Reuse declaration
 					instantiated_name  // Set correct parent struct name

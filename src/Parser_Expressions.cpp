@@ -5802,6 +5802,36 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 
 		// Check if this is a template function call
+		// First, check if the name matches a static member function of the current class
+		// This implements C++ name resolution: class scope takes priority over enclosing namespace scope
+		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
+		    peek() == "("_tok) {
+			auto check_class_members = [&](const StructDeclarationNode* struct_node) -> bool {
+				if (!struct_node) return false;
+				for (const auto& member_func : struct_node->member_functions()) {
+					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+						if (func_decl.decl_node().identifier_token().value() == idenfifier_token.value()) {
+							identifierType = member_func.function_declaration;
+							// Register in symbol table so overload resolution can find it
+							gSymbolTable.insert(idenfifier_token.value(), member_func.function_declaration);
+							FLASH_LOG_FORMAT(Parser, Debug, "Resolved '{}' as static member function of current class (overrides namespace template)", idenfifier_token.value());
+							return true;
+						}
+					}
+				}
+				return false;
+			};
+			
+			// Check struct_parsing_context_stack_ (inline member function parsing)
+			if (!struct_parsing_context_stack_.empty()) {
+				check_class_members(struct_parsing_context_stack_.back().struct_node);
+			}
+			// Check member_function_context_stack_ (delayed function body parsing)
+			if (identifierType->is<TemplateFunctionDeclarationNode>() && !member_function_context_stack_.empty()) {
+				check_class_members(member_function_context_stack_.back().struct_node);
+			}
+		}
 		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
 		    consume("("_tok)) {
 			
