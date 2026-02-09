@@ -1377,6 +1377,7 @@ public:
 	}
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
+	void set_type(Type t) { type_ = t; }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
 		pointer_levels_ = other.pointer_levels_;

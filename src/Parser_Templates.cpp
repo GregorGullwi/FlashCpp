@@ -1576,6 +1576,9 @@ ParseResult Parser::parse_template_declaration() {
 							ctor_ref.set_noexcept(true);
 						}
 						
+						// Skip trailing requires clause if present
+						skip_trailing_requires_clause();
+						
 						// Parse member initializer list if present
 						if (peek() == ":"_tok) {
 							advance();  // consume ':'
@@ -2803,6 +2806,9 @@ ParseResult Parser::parse_template_declaration() {
 						if (parse_constructor_exception_specifier()) {
 							ctor_ref.set_noexcept(true);
 						}
+						
+						// Skip trailing requires clause if present
+						skip_trailing_requires_clause();
 						
 						// Parse member initializer list if present
 						if (peek() == ":"_tok) {
@@ -5305,6 +5311,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				if (parse_constructor_exception_specifier()) {
 					ctor_ref.set_noexcept(true);
 				}
+				
+				// Skip trailing requires clause if present
+				skip_trailing_requires_clause();
 				
 				// Parse member initializer list if present
 				if (peek() == ":"_tok) {

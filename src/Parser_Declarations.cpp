@@ -398,6 +398,16 @@ ParseResult Parser::parse_type_and_name() {
         }
     }
 
+    // C++20 constrained auto parameters: ConceptName auto param or Concept<T> auto param
+    // The concept constraint was parsed as a UserDefined type by parse_type_specifier().
+    // If followed by 'auto', this is an abbreviated function template parameter.
+    // Treat as 'auto' (the constraint is noted but not enforced during parsing).
+    if (type_spec.type() == Type::UserDefined && peek() == "auto"_tok) {
+        FLASH_LOG(Parser, Debug, "parse_type_and_name: Constrained auto parameter detected, consuming 'auto'");
+        advance(); // consume 'auto'
+        type_spec.set_type(Type::Auto);
+    }
+
     // Extract calling convention specifiers that can appear after the type
     // Example: void __cdecl func(); or int __stdcall* func();
     // We consume them here and save to last_calling_convention_ for the caller to retrieve
