@@ -168,7 +168,7 @@ ParseResult Parser::parse_template_declaration() {
 	}
 	
 	// Set the flag to enable fold expression parsing if we have parameter packs
-	[[maybe_unused]] bool saved_has_packs = has_parameter_packs_;
+	bool saved_has_packs = has_parameter_packs_;
 	has_parameter_packs_ = has_packs;
 	
 	// Set template parameter context EARLY, before any code that might call parse_type_specifier()
@@ -180,33 +180,170 @@ ParseResult Parser::parse_template_declaration() {
 	// Check if this is a nested template (member function template of a class template)
 	// Pattern: template<typename T> template<typename U> ReturnType Class<T>::method(U u) { ... }
 	// At this point, outer template params are registered, so the inner parse can see them.
-	// TODO: Full nested template instantiation is not yet supported. Currently we skip the
-	// inner template definition entirely, which means member function templates of class
-	// templates will parse but won't generate code. Calls to such functions will fail at
-	// link time. This allows standard headers like <algorithm> to parse without errors.
 	if (peek() == "template"_tok) {
-		// Save the inner template params, then skip forward to find the function body and consume it
+		// Helper to clean up template state before early returns from this block.
+		// parsing_template_body_, current_template_param_names_, and has_parameter_packs_
+		// were set above and would normally be cleaned up at end-of-function (~line 3805).
+		auto cleanup_template_state = [this, saved_has_packs]() {
+			current_template_param_names_.clear();
+			parsing_template_body_ = false;
+			has_parameter_packs_ = saved_has_packs;
+		};
+
 		auto inner_saved = save_token_position();
 		advance(); // consume inner 'template'
 		if (peek() == "<"_tok) {
-			skip_template_arguments(); // skip inner template params
-			// Now skip everything until we find the function body '{' or a ';'
-			// We need to handle nested braces, parens, etc.
-			while (!peek().is_eof()) {
-				if (peek() == "{"_tok) {
-					skip_balanced_braces();
-					discard_saved_token(inner_saved);
-					return saved_position.success();
-				} else if (peek() == ";"_tok) {
-					advance();
-					discard_saved_token(inner_saved);
-					return saved_position.success();
-				} else if (peek() == "("_tok) {
-					skip_balanced_parens();
-				} else {
-					advance();
+			advance(); // consume '<'
+
+			// Parse inner template parameters
+			std::vector<ASTNode> inner_template_params;
+			auto inner_param_result = parse_template_parameter_list(inner_template_params);
+			if (inner_param_result.is_error()) {
+				// Fallback: skip the rest (for standard headers that use unsupported features)
+				restore_token_position(inner_saved);
+				advance(); // re-consume 'template'
+				skip_template_arguments();
+				while (!peek().is_eof()) {
+					if (peek() == "{"_tok) { skip_balanced_braces(); cleanup_template_state(); return saved_position.success(); }
+					else if (peek() == ";"_tok) { advance(); cleanup_template_state(); return saved_position.success(); }
+					else if (peek() == "("_tok) { skip_balanced_parens(); }
+					else { advance(); }
+				}
+				cleanup_template_state();
+				return saved_position.success();
+			}
+
+			if (peek() != ">"_tok) {
+				// Failed to parse inner template params - restore and fall through to skip
+				restore_token_position(inner_saved);
+				advance(); // re-consume 'template'
+				skip_template_arguments();
+				while (!peek().is_eof()) {
+					if (peek() == "{"_tok) { skip_balanced_braces(); cleanup_template_state(); return saved_position.success(); }
+					else if (peek() == ";"_tok) { advance(); cleanup_template_state(); return saved_position.success(); }
+					else if (peek() == "("_tok) { skip_balanced_parens(); }
+					else { advance(); }
+				}
+				cleanup_template_state();
+				return saved_position.success();
+			}
+			advance(); // consume '>'
+
+			// Extract inner template parameter names
+			std::vector<StringHandle> inner_template_param_names;
+			for (const auto& param : inner_template_params) {
+				if (param.is<TemplateParameterNode>()) {
+					inner_template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
 				}
 			}
+
+			discard_saved_token(inner_saved);
+
+			// Manually parse the nested template out-of-line definition.
+			// We skip to find: ReturnType ClassName<Args>::FunctionName(params) { body }
+			// and extract the class name, function name, and body position.
+			// We DON'T call try_parse_out_of_line_template_member because its save/restore
+			// logic conflicts with the nested template parameter scope.
+			std::string_view nested_class_name;
+			Token nested_func_name_token;
+			bool found_nested_def = false;
+
+			// Skip return type and everything up to ClassName<...>::FunctionName(
+			// Strategy: scan tokens looking for the pattern: identifier < ... > :: identifier
+			// We take the LAST such match before '(' to avoid misidentifying qualified
+			// return types (e.g. typename Container<T>::value_type) as the class::function pattern.
+			{
+				Token last_ident;
+				while (!peek().is_eof()) {
+					if (peek().is_identifier()) {
+						last_ident = peek_info();
+						advance();
+						if (peek() == "<"_tok) {
+							// This might be ClassName<T>
+							Token class_token = last_ident;
+							skip_template_arguments();
+							if (peek() == "::"_tok) {
+								advance(); // consume '::'
+								if (peek().is_identifier()) {
+									// Tentatively record this match
+									nested_class_name = class_token.value();
+									nested_func_name_token = peek_info();
+									advance(); // consume function name
+									// Handle nested :: for deeper nesting
+									while (peek() == "::"_tok) {
+										advance();
+										if (peek().is_identifier()) {
+											nested_class_name = nested_func_name_token.value();
+											nested_func_name_token = peek_info();
+											advance();
+										} else break;
+									}
+									found_nested_def = true;
+									// If '(' follows, this is the actual definition - stop
+									if (peek() == "("_tok) {
+										break;
+									}
+									// Otherwise, this was a qualified return type - keep scanning
+								}
+							}
+						}
+					} else if (peek() == "("_tok || peek() == "{"_tok || peek() == ";"_tok) {
+						break;
+					} else {
+						advance();
+					}
+				}
+			}
+
+			if (found_nested_def && peek() == "("_tok) {
+				// Create a stub function declaration for registration
+				auto void_type = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0, nested_func_name_token);
+				auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, nested_func_name_token);
+				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, nested_func_name_token.value());
+
+				// Skip parameter list
+				skip_balanced_parens();
+				// Skip trailing specifiers
+				FlashCpp::MemberQualifiers quals;
+				skip_function_trailing_specifiers(quals);
+
+				// Save body position and skip body
+				SaveHandle body_start = save_token_position();
+				if (peek() == "{"_tok) {
+					skip_balanced_braces();
+				} else if (peek() == ";"_tok) {
+					advance();
+				}
+
+				// Register as out-of-line member with inner template params
+				OutOfLineMemberFunction out_of_line_member;
+				out_of_line_member.template_params = template_params;
+				out_of_line_member.function_node = func_node;
+				out_of_line_member.body_start = body_start;
+				out_of_line_member.template_param_names = template_param_names;
+				out_of_line_member.inner_template_params = inner_template_params;
+				out_of_line_member.inner_template_param_names = inner_template_param_names;
+
+				gTemplateRegistry.registerOutOfLineMember(nested_class_name, std::move(out_of_line_member));
+
+				FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
+				          nested_class_name, "::", nested_func_name_token.value(),
+				          " (outer params: ", template_params.size(),
+				          ", inner params: ", inner_template_params.size(), ")");
+
+				cleanup_template_state();
+				return saved_position.success();
+			}
+
+			// Fallback: skip remaining tokens
+			while (!peek().is_eof()) {
+				if (peek() == "{"_tok) { skip_balanced_braces(); cleanup_template_state(); return saved_position.success(); }
+				else if (peek() == ";"_tok) { advance(); cleanup_template_state(); return saved_position.success(); }
+				else if (peek() == "("_tok) { skip_balanced_parens(); }
+				else { advance(); }
+			}
+			cleanup_template_state();
+			return saved_position.success();
 		}
 		restore_token_position(inner_saved);
 	}
@@ -3686,6 +3823,7 @@ if (struct_type_info.getStructInfo()) {
 		// Clean up template parameter context
 		current_template_param_names_.clear();
 		parsing_template_body_ = false;
+		has_parameter_packs_ = saved_has_packs;
 		
 		if (body_result.is_error()) {
 			return body_result;
@@ -15488,6 +15626,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// Also register with simple name for unqualified lookups
 			gTemplateRegistry.registerTemplate(decl_node.identifier_token().value(), mem_func.function_declaration);
+
+			// Register outer template parameter bindings so that when the inner template
+			// is instantiated, outer params (e.g., T→int) can be resolved in the body
+			{
+				OuterTemplateBinding outer_binding;
+				for (const auto& tp : template_params) {
+					if (tp.is<TemplateParameterNode>()) {
+						outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
+					}
+				}
+				outer_binding.param_args = template_args_to_use;
+				gTemplateRegistry.registerOuterTemplateBinding(qualified_name, std::move(outer_binding));
+				FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", qualified_name);
+			}
 		} else {
 			FLASH_LOG(Templates, Error, "Unknown member function type in template instantiation: ", 
 			          mem_func.function_declaration.type_name());
@@ -15504,6 +15656,40 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FLASH_LOG(Templates, Debug, "Processing ", out_of_line_members.size(), " out-of-line member functions for ", template_name);
 	
 	for (const auto& out_of_line_member : out_of_line_members) {
+		// Check if this is a nested template (member function template of a class template)
+		// Pattern: template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
+		if (!out_of_line_member.inner_template_params.empty()) {
+			// This is a nested template out-of-line definition
+			// Find the matching TemplateFunctionDeclarationNode in the instantiated struct
+			// and set the body_start on its inner FunctionDeclarationNode
+			const FunctionDeclarationNode& ool_func = out_of_line_member.function_node.as<FunctionDeclarationNode>();
+			const DeclarationNode& ool_decl = ool_func.decl_node();
+			std::string_view ool_func_name = ool_decl.identifier_token().value();
+
+			FLASH_LOG(Templates, Debug, "Processing nested template out-of-line member: ", ool_func_name);
+
+			bool found = false;
+			for (auto& mem_func : instantiated_struct_ref.member_functions()) {
+				if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+					auto& inst_template_func = mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
+					auto& inst_func_decl = inst_template_func.function_decl_node();
+					if (inst_func_decl.decl_node().identifier_token().value() == ool_func_name) {
+						// Set the body position from the out-of-line definition
+						inst_func_decl.set_template_body_position(out_of_line_member.body_start);
+						FLASH_LOG(Templates, Debug, "Set body position on nested template member: ", ool_func_name);
+						found = true;
+						break;
+					}
+				}
+			}
+
+			if (!found) {
+				FLASH_LOG(Templates, Warning, "Nested template out-of-line member '", ool_func_name,
+				          "' not found in instantiated struct");
+			}
+			continue;
+		}
+
 		// The function_node should be a FunctionDeclarationNode
 		if (!out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
 			FLASH_LOG(Templates, Error, "Out-of-line member function_node is not a FunctionDeclarationNode, type: ", out_of_line_member.function_node.type_name());
@@ -16308,7 +16494,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
-	// Deduce template arguments from function call arguments
+	// Look up outer template parameter bindings (for nested templates)
+	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
 	if (arg_types.empty()) {
 		return std::nullopt;  // Can't deduce without arguments
 	}
@@ -16363,25 +16550,35 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// Get the original function's declaration
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 
-	// Substitute the return type if it's a template parameter
-	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
-	Type return_type = return_type_spec.type();
-	TypeIndex return_type_index = return_type_spec.type_index();
+	// Helper lambda to resolve a UserDefined type against both inner and outer template params
+	auto resolve_template_type = [&](Type type, TypeIndex type_index) -> std::pair<Type, TypeIndex> {
+		if (type == Type::UserDefined && type_index < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[type_index];
+			std::string_view tn = StringTable::getStringView(ti.name());
 
-	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = StringTable::getStringView(type_info.name());
-
-		// Try to find which template parameter this is
-		for (size_t i = 0; i < template_params.size(); ++i) {
-			const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-			if (tparam.name() == type_name) {
-				return_type = template_args[i].type_value;
-				return_type_index = 0;
-				break;
+			// Check inner template params first
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == tn && i < template_args.size()) {
+					return { template_args[i].type_value, 0 };
+				}
+			}
+			// Check outer template params (e.g., T→int from class template)
+			if (outer_binding) {
+				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+					if (StringTable::getStringView(outer_binding->param_names[i]) == tn) {
+						const auto& arg = outer_binding->param_args[i];
+						return { arg.base_type, arg.type_index };
+					}
+				}
 			}
 		}
-	}
+		return { type, type_index };
+	};
+
+	// Substitute the return type if it's a template parameter
+	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
+	auto [return_type, return_type_index] = resolve_template_type(return_type_spec.type(), return_type_spec.type_index());
 
 	// Create mangled token
 	Token mangled_token(Token::Type::Identifier, mangled_name,
@@ -16396,8 +16593,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		Token()
 	);
 	
-	// Copy pointer levels from the original return type specifier
+	// Copy pointer levels and set type_index from the resolved type
 	auto& substituted_return_type_spec = substituted_return_type.as<TypeSpecifierNode>();
+	substituted_return_type_spec.set_type_index(return_type_index);
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 	}
@@ -16412,23 +16610,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 
-			Type param_type = param_type_spec.type();
-			TypeIndex param_type_index = param_type_spec.type_index();
-
-			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[param_type_index];
-				std::string_view type_name = StringTable::getStringView(type_info.name());
-
-				// Try to find which template parameter this is
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-					if (tparam.name() == type_name) {
-						param_type = template_args[i].type_value;
-						param_type_index = 0;
-						break;
-					}
-				}
-			}
+			auto [param_type, param_type_index] = resolve_template_type(param_type_spec.type(), param_type_spec.type_index());
 
 			// Create the substituted parameter type specifier
 			auto substituted_param_type = emplace_node<TypeSpecifierNode>(
@@ -16438,8 +16620,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				Token()
 			);
 			
-			// Copy pointer levels from the original parameter type specifier
+			// Copy pointer levels and set type_index from the resolved type
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
+			substituted_param_type_spec.set_type_index(param_type_index);
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 			}
@@ -16477,6 +16660,21 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
 		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
+	}
+
+	// Also add outer template parameter bindings (e.g., T→int from class template)
+	if (outer_binding) {
+		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+			std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
+			Type outer_concrete_type = outer_binding->param_args[i].base_type;
+			uint32_t outer_size = (outer_binding->param_args[i].type_index != 0 && outer_binding->param_args[i].type_index < gTypeInfo.size())
+				? gTypeInfo[outer_binding->param_args[i].type_index].type_size_
+				: get_type_size_bits(outer_concrete_type);
+			auto& outer_type_info = gTypeInfo.emplace_back(
+				StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
+			gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
+			template_scope.addParameter(&outer_type_info);
+		}
 	}
 
 	// Save current position
@@ -16719,6 +16917,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
+	// Look up outer template parameter bindings (for nested templates like Container<int>::convert<U>)
+	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
+
 	// Convert TemplateTypeArg to TemplateArgument
 	std::vector<TemplateArgument> template_args;
 	for (const auto& type_arg : template_type_args) {
@@ -16749,25 +16950,35 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// Get the original function's declaration
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 
-	// Substitute the return type if it's a template parameter
-	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
-	Type return_type = return_type_spec.type();
-	TypeIndex return_type_index = return_type_spec.type_index();
+	// Helper lambda to resolve a UserDefined type against both inner and outer template params
+	auto resolve_template_type = [&](Type type, TypeIndex type_index) -> std::pair<Type, TypeIndex> {
+		if (type == Type::UserDefined && type_index < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[type_index];
+			std::string_view tn = StringTable::getStringView(ti.name());
 
-	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = StringTable::getStringView(type_info.name());
-
-		// Try to find which template parameter this is
-		for (size_t i = 0; i < template_params.size(); ++i) {
-			const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-			if (tparam.name() == type_name && i < template_args.size()) {
-				return_type = template_args[i].type_value;
-				return_type_index = 0;
-				break;
+			// Check inner template params first
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == tn && i < template_args.size()) {
+					return { template_args[i].type_value, 0 };
+				}
+			}
+			// Check outer template params (e.g., T→int from class template)
+			if (outer_binding) {
+				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+					if (StringTable::getStringView(outer_binding->param_names[i]) == tn) {
+						const auto& arg = outer_binding->param_args[i];
+						return { arg.base_type, arg.type_index };
+					}
+				}
 			}
 		}
-	}
+		return { type, type_index };
+	};
+
+	// Substitute the return type if it's a template parameter
+	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
+	auto [return_type, return_type_index] = resolve_template_type(return_type_spec.type(), return_type_spec.type_index());
 
 	// Create mangled token
 	Token mangled_token(Token::Type::Identifier, mangled_name,
@@ -16782,8 +16993,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		Token()
 	);
 	
-	// Copy pointer levels from the original return type specifier
+	// Copy pointer levels and set type_index from the resolved type
 	auto& substituted_return_type_spec = substituted_return_type.as<TypeSpecifierNode>();
+	substituted_return_type_spec.set_type_index(return_type_index);
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 	}
@@ -16798,23 +17010,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 
-			Type param_type = param_type_spec.type();
-			TypeIndex param_type_index = param_type_spec.type_index();
-
-			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[param_type_index];
-				std::string_view type_name = StringTable::getStringView(type_info.name());
-
-				// Try to find which template parameter this is
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-					if (tparam.name() == type_name && i < template_args.size()) {
-						param_type = template_args[i].type_value;
-						param_type_index = 0;
-						break;
-					}
-				}
-			}
+			auto [param_type, param_type_index] = resolve_template_type(param_type_spec.type(), param_type_spec.type_index());
 
 			// Create the substituted parameter type specifier
 			auto substituted_param_type = emplace_node<TypeSpecifierNode>(
@@ -16824,8 +17020,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				Token()
 			);
 			
-			// Copy pointer levels from the original parameter type specifier
+			// Copy pointer levels and set type_index from the resolved type
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
+			substituted_param_type_spec.set_type_index(param_type_index);
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 			}
@@ -16864,6 +17061,23 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
 		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
+	}
+
+	// Also add outer template parameter bindings (e.g., T→int from class template)
+	// so that the body can resolve outer params when re-parsed
+	if (outer_binding) {
+		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+			std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
+			Type outer_concrete_type = outer_binding->param_args[i].base_type;
+			uint32_t outer_size = (outer_binding->param_args[i].type_index != 0 && outer_binding->param_args[i].type_index < gTypeInfo.size())
+				? gTypeInfo[outer_binding->param_args[i].type_index].type_size_
+				: get_type_size_bits(outer_concrete_type);
+			auto& outer_type_info = gTypeInfo.emplace_back(
+				StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
+			gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
+			template_scope.addParameter(&outer_type_info);
+		}
+		FLASH_LOG(Templates, Debug, "Added ", outer_binding->param_names.size(), " outer template param bindings for body parsing");
 	}
 
 	// Save current position
@@ -17678,7 +17892,9 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 // Returns true if successfully parsed, false if not an out-of-line definition
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	const std::vector<ASTNode>& template_params,
-	const std::vector<StringHandle>& template_param_names) {
+	const std::vector<StringHandle>& template_param_names,
+	const std::vector<ASTNode>& inner_template_params,
+	const std::vector<StringHandle>& inner_template_param_names) {
 
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
@@ -18269,8 +18485,17 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.function_node = func_node;
 		out_of_line_member.body_start = body_start;
 		out_of_line_member.template_param_names = template_param_names;
+		out_of_line_member.inner_template_params = inner_template_params;
+		out_of_line_member.inner_template_param_names = inner_template_param_names;
 
 		gTemplateRegistry.registerOutOfLineMember(class_name, std::move(out_of_line_member));
+
+		if (!inner_template_params.empty()) {
+			FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
+			          class_name, "::", function_name_token.value(),
+			          " (outer params: ", template_params.size(),
+			          ", inner params: ", inner_template_params.size(), ")");
+		}
 	}
 
 	return true;  // Successfully parsed out-of-line definition
