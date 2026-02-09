@@ -3611,6 +3611,8 @@ if (struct_type_info.getStructInfo()) {
 							SaveHandle paren_pos = save_token_position();
 							advance(); // consume '('
 							
+							auto pre_ref_qualifiers = param_type.reference_qualifier();
+							auto pre_pointer_depth = param_type.pointer_depth();
 							consume_pointer_ref_modifiers(param_type);
 							
 							// Optional identifier inside parens
@@ -3632,9 +3634,13 @@ if (struct_type_info.getStructInfo()) {
 									param_type.set_array(true);
 									discard_saved_token(paren_pos);
 								} else {
+									param_type.limit_pointer_depth(pre_pointer_depth); // restore
+									param_type.set_reference_qualifier(pre_ref_qualifiers); // restore
 									restore_token_position(paren_pos);
 								}
 							} else {
+								param_type.limit_pointer_depth(pre_pointer_depth); // restore
+								param_type.set_reference_qualifier(pre_ref_qualifiers); // restore
 								restore_token_position(paren_pos);
 							}
 						}

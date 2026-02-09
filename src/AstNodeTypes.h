@@ -1306,6 +1306,7 @@ public:
 	bool is_pointer() const { return !pointer_levels_.empty(); }
 	size_t pointer_depth() const { return pointer_levels_.empty() ? 0 : pointer_levels_.size(); }
 	const std::vector<PointerLevel>& pointer_levels() const { return pointer_levels_; }
+	void limit_pointer_depth(size_t max_depth) { pointer_levels_.resize(std::min(max_depth, pointer_levels_.size())); }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
 	void add_pointer_levels(int pointer_depth) { while (pointer_depth) { pointer_levels_.push_back(PointerLevel(CVQualifier::None)); --pointer_depth; } }
 	void remove_pointer_level() { if (!pointer_levels_.empty()) pointer_levels_.pop_back(); }
