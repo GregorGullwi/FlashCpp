@@ -1591,17 +1591,17 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				         first.base_type == Type::UnsignedChar || first.base_type == Type::UnsignedShort ||
 				         first.base_type == Type::UnsignedInt || first.base_type == Type::UnsignedLong ||
 				         first.base_type == Type::UnsignedLongLong)
-				         && !first.is_reference && first.pointer_depth == 0;
+				         && !first.is_reference && !first.is_rvalue_reference && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsFloatingPoint:
 				result = (first.base_type == Type::Float || first.base_type == Type::Double || first.base_type == Type::LongDouble)
-				         && !first.is_reference && first.pointer_depth == 0;
+				         && !first.is_reference && !first.is_rvalue_reference && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsVoid:
-				result = (first.base_type == Type::Void && !first.is_reference && first.pointer_depth == 0);
+				result = (first.base_type == Type::Void && !first.is_reference && !first.is_rvalue_reference && first.pointer_depth == 0);
 				break;
 			case TypeTraitKind::IsPointer:
-				result = (first.pointer_depth > 0) && !first.is_reference;
+				result = (first.pointer_depth > 0) && !first.is_reference && !first.is_rvalue_reference;
 				break;
 			case TypeTraitKind::IsReference:
 				result = first.is_reference || first.is_rvalue_reference;
