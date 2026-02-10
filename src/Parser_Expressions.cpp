@@ -1848,20 +1848,20 @@ void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
 // Per C++20 grammar [dcl.decl], ptr-operator (* cv-qualifier-seq? | & | &&) is part of
 // the declarator, not the type-specifier-seq. This helper is called by declarator-parsing
 // sites after parse_type_specifier() to consume the ptr-operator portion.
-// Also skips MSVC-specific pointer modifiers (__ptr32, __ptr64, __w64, __unaligned, __uptr, __sptr).
+// Also consumes and ignores MSVC-specific pointer modifiers (__ptr32, __ptr64, __w64,
+// __unaligned, __uptr, __sptr) that may appear after cv-qualifiers on pointer declarators.
 void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
+	// Microsoft-specific pointer modifier check — same list used in parse_type_specifier()
+	auto is_msvc_pointer_modifier = [](std::string_view kw) {
+		return kw == "__ptr32" || kw == "__ptr64" || kw == "__w64" ||
+		       kw == "__unaligned" || kw == "__uptr" || kw == "__sptr";
+	};
 	while (peek() == "*"_tok) {
 		advance(); // consume '*'
 		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
-		// Skip Microsoft-specific pointer modifiers (consumed and ignored)
-		while (peek().is_keyword()) {
-			std::string_view kw = peek_info().value();
-			if (kw == "__ptr32" || kw == "__ptr64" || kw == "__w64" ||
-			    kw == "__unaligned" || kw == "__uptr" || kw == "__sptr") {
-				advance();
-			} else {
-				break;
-			}
+		// Consume and ignore Microsoft-specific pointer modifiers
+		while (peek().is_keyword() && is_msvc_pointer_modifier(peek_info().value())) {
+			advance();
 		}
 		type_spec.add_pointer_level(ptr_cv);
 	}
