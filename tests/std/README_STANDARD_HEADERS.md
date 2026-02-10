@@ -15,7 +15,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Template lookup failure for `__ratio_add_impl` (non-type bool default params); memory corruption fixed |
 | `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` typedef; now fails at `stl_vector.h:133` (base class `_Tp_alloc_type` not resolved as struct) |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Progressed past `ranges_util.h` constrained auto/requires; now fails at `tuple` (`_Elements` parameter pack not found) |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Progressed past `_Elements` pack error; now fails at `tuple:2877` (out-of-line pair ctor with `sizeof...` in dependent `typename` member init) |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed past `_Destroy` call; now fails at `variant:694` (type specifier in partial specialization) |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~300ms (previously blocked by out-of-line template member) |
@@ -25,8 +25,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<string>` | `test_std_string.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~738ms (2026-02-08: Fixed with deduction guide and namespace-qualified call fixes) |
-| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Progressed past `ranges_util.h`; now fails at `tuple` (`_Elements` parameter pack not found) |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Progressed past `ranges_util.h`; now fails at `tuple` (`_Elements` parameter pack not found) |
+| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Progressed past `_Elements` pack; now fails at `tuple:2877` (same as tuple) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Progressed past `_Elements` pack; now fails at `tuple:2877` (same as tuple) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Now fails at `uniform_int_dist.h:289` (nested template `operator()` out-of-line definition) |
 | `<map>` | `test_std_map.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` and `~Type<Args>()`; now fails at `stl_tree.h:1534` (brace-init return type not resolved) |
 | `<set>` | `test_std_set.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` and `~Type<Args>()`; now fails at `stl_tree.h:1534` (brace-init return type not resolved) |
@@ -113,7 +113,7 @@ The following parser issues were fixed to unblock standard header compilation:
 | Blocker | Affected Headers | Details |
 |---------|-----------------|---------|
 | IR conversion `bad_any_cast` during template member body | `<string_view>`, `<string>`, `<iostream>`, `<ranges>` | Parsing succeeds but codegen crashes on instantiated template member functions |
-| `_Elements` parameter pack not found | `<tuple>`, `<functional>`, `<memory>` | Template parameter pack handling during tuple body parsing |
+| Out-of-line pair ctor with `sizeof...` in dependent `typename` member init | `<tuple>`, `<functional>`, `<memory>` | `pair<_T1,_T2>::pair(...)` at `tuple:2877` uses `typename _Build_index_tuple<sizeof...(_Args1)>::__type()` in delegating ctor init |
 | Base class `_Tp_alloc_type` not resolved as struct | `<vector>` | Dependent typedef used as base class not properly resolved |
 | Brace-init return type not resolved in template body | `<map>`, `<set>` | `return { expr1, expr2 };` where return type is dependent |
 | IR conversion `assert` failure in arithmetic ops | `<span>` | Parsing succeeds but codegen crashes on non-integer/float arithmetic |

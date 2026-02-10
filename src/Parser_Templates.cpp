@@ -11816,6 +11816,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		const std::vector<ASTNode>& template_params = pattern_template_params;
 		
+		// Push class template pack info for specialization path
+		ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
+		bool has_spec_pack_info = false;
+		{
+			std::vector<ClassTemplatePackInfo> pack_infos;
+			size_t non_variadic_count = 0;
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (template_params[i].is<TemplateParameterNode>()) {
+					const auto& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.is_variadic()) {
+						size_t pack_size = template_args.size() >= non_variadic_count 
+							? template_args.size() - non_variadic_count : 0;
+						pack_infos.push_back({tparam.name(), pack_size});
+					} else {
+						non_variadic_count++;
+					}
+				}
+			}
+			if (!pack_infos.empty()) {
+				spec_pack_guard.push(std::move(pack_infos));
+				has_spec_pack_info = true;
+			}
+		}
+		
 		// Create a new struct with the instantiated name
 		// Copy members from the pattern, substituting template parameters
 		// For now, if members use template parameters, we substitute them
@@ -11828,6 +11852,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringTable::getOrInternStringHandle(template_name),
 			convertToTemplateArgInfo(template_args)
 		);
+		
+		// Register class template pack sizes in persistent registry for specializations
+		// Only register if this specialization actually has variadic parameters
+		if (has_spec_pack_info) {
+			class_template_pack_registry_[instantiated_name] = class_template_pack_stack_.back();
+		}
 		
 		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
 		struct_info->is_union = pattern_struct.is_union();
@@ -12889,6 +12919,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 	
+	// Push class template pack info for sizeof...() resolution in member function templates
+	// This RAII guard ensures the pack info is available during the entire instantiation scope
+	ClassTemplatePackGuard class_pack_guard(class_template_pack_stack_);
+	if (has_parameter_pack) {
+		std::vector<ClassTemplatePackInfo> pack_infos;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			if (param.is_variadic()) {
+				size_t pack_size = template_args.size() >= non_variadic_param_count 
+					? template_args.size() - non_variadic_param_count : 0;
+				pack_infos.push_back({param.name(), pack_size});
+				FLASH_LOG(Templates, Debug, "Registered class template pack '", param.name(), "' with size ", pack_size);
+			}
+		}
+		if (!pack_infos.empty()) {
+			class_pack_guard.push(std::move(pack_infos));
+		}
+	}
+
 	// Verify we have the right number of template arguments
 	// For variadic templates: args.size() >= non_variadic_param_count
 	// For non-variadic templates: args.size() <= template_params.size()
@@ -13349,6 +13398,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		StringTable::getOrInternStringHandle(unqualified_template_name),
 		convertToTemplateArgInfo(template_args_to_use)
 	);
+	
+	// Register class template pack sizes in persistent registry for member function template lookup
+	if (has_parameter_pack) {
+		std::vector<ClassTemplatePackInfo> pack_infos;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			if (param.is_variadic()) {
+				size_t pack_size = template_args_to_use.size() >= non_variadic_param_count 
+					? template_args_to_use.size() - non_variadic_param_count : 0;
+				pack_infos.push_back({param.name(), pack_size});
+			}
+		}
+		if (!pack_infos.empty()) {
+			class_template_pack_registry_[instantiated_name] = std::move(pack_infos);
+		}
+	}
 	
 	// Create StructTypeInfo
 	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
@@ -17568,6 +17633,11 @@ if (param_decl.has_default_value()) {
 	new_func_ref.set_linkage(func_decl.linkage());
 	new_func_ref.set_calling_convention(func_decl.calling_convention());
 
+	// Compute and set the proper mangled name for code generation
+	// This is essential so that FunctionCallNode can carry the correct mangled name
+	// and codegen can resolve the correct function for each template instantiation
+	compute_and_set_mangled_name(new_func_ref);
+
 	// Add the instantiated function to the AST so it gets visited during codegen
 	// This is safe now that the StringBuilder bug is fixed
 	ast_nodes_.push_back(new_func_node);
@@ -19109,8 +19179,83 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 			
-			// Error if pack name doesn't refer to a known parameter pack
+			// If still not found, check class template pack context
+			// This handles sizeof...(_Elements) in member function templates of class templates
+			// where _Elements is the class template's parameter pack
 			if (!found_variadic) {
+				auto class_pack_size = get_class_template_pack_size(pack_name);
+				if (class_pack_size.has_value()) {
+					found_variadic = true;
+					num_pack_elements = *class_pack_size;
+				}
+			}
+			
+			// If pack name not found, check if it's a known template parameter from an enclosing
+			// class template context (e.g., sizeof...(_Elements) in a member function of tuple<_Elements...>).
+			// If so, treat as template-dependent and return unchanged.
+			// If truly unknown, throw an error.
+			if (!found_variadic) {
+				// Check if we're inside a template body and the pack name is a known template parameter
+				bool is_known_template_param = false;
+				if (parsing_template_body_) {
+					for (const auto& param_name : current_template_param_names_) {
+						if (StringTable::getStringView(param_name) == pack_name) {
+							is_known_template_param = true;
+							break;
+						}
+					}
+				}
+				// Also check if any class template in the registry has this pack name
+				if (!is_known_template_param) {
+					for (const auto& [key, infos] : class_template_pack_registry_) {
+						for (const auto& info : infos) {
+							if (info.pack_name == pack_name) {
+								is_known_template_param = true;
+								break;
+							}
+						}
+						if (is_known_template_param) break;
+					}
+				}
+				// Also check if the pack name is a template parameter of an enclosing class template
+				// (e.g., sizeof...(_Elements) inside a member function template of tuple<_Elements...>)
+				if (!is_known_template_param && !struct_parsing_context_stack_.empty()) {
+					for (auto sit = struct_parsing_context_stack_.rbegin(); sit != struct_parsing_context_stack_.rend() && !is_known_template_param; ++sit) {
+						std::string_view struct_name = sit->struct_name;
+						// Try multiple name variations: direct, with namespace prefix
+						std::array<std::string_view, 3> names_to_try = {struct_name, {}, {}};
+						size_t num_names = 1;
+						NamespaceHandle ns = gSymbolTable.get_current_namespace_handle();
+						if (!ns.isGlobal()) {
+							StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns, StringTable::getOrInternStringHandle(struct_name));
+							names_to_try[num_names++] = StringTable::getStringView(qualified);
+						}
+						// Also try "std::" + name as a common case
+						StringBuilder ns_builder;
+						ns_builder.append("std::").append(struct_name);
+						names_to_try[num_names++] = ns_builder.preview();
+						
+						for (size_t ni = 0; ni < num_names && !is_known_template_param; ++ni) {
+							auto tmpl_opt = gTemplateRegistry.lookupTemplate(names_to_try[ni]);
+							if (tmpl_opt.has_value() && tmpl_opt->is<TemplateClassDeclarationNode>()) {
+								const auto& tmpl_class = tmpl_opt->as<TemplateClassDeclarationNode>();
+								for (const auto& param : tmpl_class.template_parameters()) {
+									if (param.is<TemplateParameterNode>()) {
+										const auto& tparam = param.as<TemplateParameterNode>();
+										if (tparam.is_variadic() && tparam.name() == pack_name) {
+											is_known_template_param = true;
+											break;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				if (is_known_template_param) {
+					FLASH_LOG(Templates, Debug, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
+					return node;
+				}
 				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack");
 				throw std::runtime_error("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
 			}
@@ -19124,6 +19269,27 @@ ASTNode Parser::substituteTemplateParameters(
 			return emplace_node<ExpressionNode>(
 				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements), 
 				                  Type::Int, TypeQualifier::None, 32));
+		} else if (std::holds_alternative<StaticCastNode>(expr)) {
+			// static_cast<Type>(expr) - recursively substitute in both target type and expression
+			const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(StaticCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+		} else if (std::holds_alternative<DynamicCastNode>(expr)) {
+			const DynamicCastNode& cast_node = std::get<DynamicCastNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(DynamicCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+		} else if (std::holds_alternative<ConstCastNode>(expr)) {
+			const ConstCastNode& cast_node = std::get<ConstCastNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(ConstCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+		} else if (std::holds_alternative<ReinterpretCastNode>(expr)) {
+			const ReinterpretCastNode& cast_node = std::get<ReinterpretCastNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(ReinterpretCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
 		} else if (std::holds_alternative<SizeofExprNode>(expr)) {
 			// sizeof operator - substitute template parameters in the operand and try to evaluate
 			const SizeofExprNode& sizeof_expr = std::get<SizeofExprNode>(expr);
