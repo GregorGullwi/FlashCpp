@@ -5154,8 +5154,8 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (!peek().is_eof()) {
 			if (peek() == "delete"_tok) {
 				advance(); // consume 'delete'
-				// For deleted template functions, we just record the pattern
-				// The function is still registered as a template but will be rejected if called
+				// Mark the function as deleted so calling it produces an error
+				func_decl.set_is_deleted(true);
 			} else if (peek() == "default"_tok) {
 				advance(); // consume 'default'
 				// For defaulted template functions, the compiler generates the implementation
@@ -8916,6 +8916,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	new_func_ref.set_is_constinit(func_decl.is_constinit());
 	new_func_ref.set_noexcept(func_decl.is_noexcept());
 	new_func_ref.set_is_variadic(func_decl.is_variadic());
+	new_func_ref.set_is_deleted(func_decl.is_deleted());
 	new_func_ref.set_linkage(func_decl.linkage());
 	new_func_ref.set_calling_convention(func_decl.calling_convention());
 
