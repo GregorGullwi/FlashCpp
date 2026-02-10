@@ -9,19 +9,19 @@ struct my_val {
 
 // Template with non-type defaults: triggers the code path that previously
 // had out-of-bounds vector access when default evaluation fell through
-template<typename T, int V = 0, int W = 0>
+template<typename T, int V = 1, int W = 2>
 struct with_defaults {
     static constexpr int result = V + W;
 };
 
 // Specialization
 template<typename T, int V>
-struct with_defaults<T, V, 0> {
+struct with_defaults<T, V, 3> {
     static constexpr int result = V;
 };
 
 int main() {
     // Instantiate with only one arg - triggers default filling
     constexpr int r = with_defaults<int>::result;
-    return r;  // Should return 0
+    return r - 3;  // Should return 0
 }
