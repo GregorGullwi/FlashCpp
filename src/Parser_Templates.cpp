@@ -13019,6 +13019,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt;  // Missing required template argument
 		}
 		
+		// Track size before processing to detect if a value was pushed.
+		// Every non-variadic iteration MUST push exactly one element so that
+		// filled_template_args[j] stays in sync with template_params[j].
+		size_t size_before = filled_template_args.size();
+		
 		// Use the default value
 		if (param.kind() == TemplateParameterKind::Type) {
 			// For type parameters with defaults, extract the type
@@ -13053,9 +13058,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// For non-type parameters with defaults, evaluate the expression
 			const ASTNode& default_node = param.default_value();
 			FLASH_LOG(Templates, Debug, "Processing non-type param default, is_expression=", default_node.is<ExpressionNode>());
-			
-			// Track size before evaluation to detect if a value was pushed
-			size_t size_before = filled_template_args.size();
 			
 			// Build parameter substitution map for already-filled template arguments
 			// This allows the default expression to reference earlier template parameters
@@ -13148,7 +13150,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 						
-						if (is_dependent) {
+						if (is_dependent && !filled_template_args.empty()) {
 							
 							// Build the instantiated template name using hash-based naming
 							std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
@@ -13369,7 +13371,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 			
-			// Fallback: if no handler above pushed a value, try ConstExprEvaluator on the substituted expression
+			// NonType fallback: if no handler above pushed a value, try ConstExprEvaluator
 			if (filled_template_args.size() == size_before) {
 				if (substituted_default_node.is<ExpressionNode>()) {
 					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
@@ -13377,18 +13379,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (eval_result.success()) {
 						filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
 						FLASH_LOG(Templates, Debug, "Evaluated non-type default via ConstExprEvaluator: ", eval_result.as_int());
-					} else {
-						// Last resort: push default value of 0 to maintain invariant that
-						// filled_template_args grows by 1 per parameter
-						filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
-						FLASH_LOG(Templates, Warning, "Could not evaluate non-type default for param ", i,
-						          " of '", template_name, "', using 0: ", eval_result.error_message);
 					}
-				} else {
-					filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
-					FLASH_LOG(Templates, Warning, "Non-type default for param ", i,
-					          " of '", template_name, "' is not an expression, using 0");
 				}
+			}
+		}
+		
+		// Catch-all: ensure filled_template_args grows by exactly 1 per non-variadic
+		// parameter so that filled_template_args[j] stays in sync with template_params[j].
+		// This covers: Type defaults whose node isn't TypeSpecifierNode, NonType defaults
+		// that no handler could evaluate, and any other unhandled parameter kind.
+		if (filled_template_args.size() == size_before) {
+			if (param.kind() == TemplateParameterKind::Type) {
+				// Push a void-like placeholder type
+				TemplateTypeArg placeholder;
+				placeholder.base_type = Type::Void;
+				filled_template_args.push_back(placeholder);
+				FLASH_LOG(Templates, Warning, "Could not resolve type default for param ", i,
+				          " of '", template_name, "', using placeholder");
+			} else {
+				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
+				FLASH_LOG(Templates, Warning, "Could not evaluate default for param ", i,
+				          " of '", template_name, "', using 0");
 			}
 		}
 	}
