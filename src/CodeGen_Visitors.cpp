@@ -502,11 +502,29 @@ public:
 								          qualified_name, "' = ", evaluated_value);
 								append_bytes(evaluated_value, op.size_in_bits, op.init_data);
 							} else {
-								FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
-								          qualified_name, "' - skipping evaluation");
-								// For unknown expression types, skip evaluation to avoid crashes
-								// Initialize to zero as a safe default
-								append_bytes(0, op.size_in_bits, op.init_data);
+								// Try triggering lazy instantiation for template static members
+								// The initializer may contain unsubstituted template parameters
+								bool resolved_via_lazy = false;
+								if (parser_) {
+									parser_->instantiateLazyStaticMember(struct_info->name, static_member.getName());
+									// Re-lookup the member after lazy instantiation may have updated it
+									const StructStaticMember* updated = struct_info->findStaticMember(static_member.getName());
+									if (updated && updated->initializer.has_value()) {
+										if (evaluate_static_initializer(*updated->initializer, evaluated_value, struct_info)) {
+											FLASH_LOG(Codegen, Debug, "Evaluated lazy-instantiated constexpr initializer for static member '",
+											          qualified_name, "' = ", evaluated_value);
+											append_bytes(evaluated_value, op.size_in_bits, op.init_data);
+											resolved_via_lazy = true;
+										}
+									}
+								}
+								if (!resolved_via_lazy) {
+									FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
+									          qualified_name, "' - skipping evaluation");
+									// For unknown expression types, skip evaluation to avoid crashes
+									// Initialize to zero as a safe default
+									append_bytes(0, op.size_in_bits, op.init_data);
+								}
 							}
 						}
 					}

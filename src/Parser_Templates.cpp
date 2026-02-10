@@ -14734,6 +14734,41 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 			
+			// General fallback: use ExpressionSubstitutor to substitute any remaining template
+			// parameters in the initializer. This handles cases like V + W where V and W are
+			// non-type template parameters that the specific handlers above didn't cover.
+			if (substituted_initializer.has_value()) {
+				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+				for (size_t pi = 0; pi < template_params.size() && pi < template_args_to_use.size(); ++pi) {
+					if (template_params[pi].is<TemplateParameterNode>()) {
+						const TemplateParameterNode& param = template_params[pi].as<TemplateParameterNode>();
+						param_map[param.name()] = template_args_to_use[pi];
+					}
+				}
+				if (!param_map.empty()) {
+					ExpressionSubstitutor substitutor(param_map, *this);
+					substituted_initializer = substitutor.substitute(substituted_initializer.value());
+					FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
+					
+					// Try to evaluate the substituted expression to a constant value
+					// This turns expressions like "1 + 2" into a single NumericLiteralNode(3)
+					if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
+						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						eval_ctx.parser = this;
+						auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
+						if (eval_result.success()) {
+							int64_t val = eval_result.as_int();
+							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
+							Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+							substituted_initializer = emplace_node<ExpressionNode>(
+								NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 32)
+							);
+							FLASH_LOG(Templates, Debug, "Evaluated substituted static member initializer to: ", val);
+						}
+					}
+				}
+			}
+			
 			// Substitute type if it's a template parameter (e.g., "T" in "static constexpr T value = v;")
 			// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
 			TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
