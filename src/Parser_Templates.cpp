@@ -19209,6 +19209,41 @@ ASTNode Parser::substituteTemplateParameters(
 						if (is_known_template_param) break;
 					}
 				}
+				// Also check if the pack name is a template parameter of an enclosing class template
+				// (e.g., sizeof...(_Elements) inside a member function template of tuple<_Elements...>)
+				if (!is_known_template_param && !struct_parsing_context_stack_.empty()) {
+					for (auto sit = struct_parsing_context_stack_.rbegin(); sit != struct_parsing_context_stack_.rend() && !is_known_template_param; ++sit) {
+						std::string_view struct_name = sit->struct_name;
+						// Try multiple name variations: direct, with namespace prefix
+						std::array<std::string_view, 3> names_to_try = {struct_name, {}, {}};
+						size_t num_names = 1;
+						NamespaceHandle ns = gSymbolTable.get_current_namespace_handle();
+						if (!ns.isGlobal()) {
+							StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns, StringTable::getOrInternStringHandle(struct_name));
+							names_to_try[num_names++] = StringTable::getStringView(qualified);
+						}
+						// Also try "std::" + name as a common case
+						StringBuilder ns_builder;
+						ns_builder.append("std::").append(struct_name);
+						names_to_try[num_names++] = ns_builder.preview();
+						
+						for (size_t ni = 0; ni < num_names && !is_known_template_param; ++ni) {
+							auto tmpl_opt = gTemplateRegistry.lookupTemplate(names_to_try[ni]);
+							if (tmpl_opt.has_value() && tmpl_opt->is<TemplateClassDeclarationNode>()) {
+								const auto& tmpl_class = tmpl_opt->as<TemplateClassDeclarationNode>();
+								for (const auto& param : tmpl_class.template_parameters()) {
+									if (param.is<TemplateParameterNode>()) {
+										const auto& tparam = param.as<TemplateParameterNode>();
+										if (tparam.is_variadic() && tparam.name() == pack_name) {
+											is_known_template_param = true;
+											break;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
 				if (is_known_template_param) {
 					FLASH_LOG(Templates, Debug, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
 					return node;
