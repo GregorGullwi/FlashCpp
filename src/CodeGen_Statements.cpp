@@ -872,6 +872,8 @@
 			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
 				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()
 			);
+			// Copy existing pointer depth (e.g., for `int*& p : arr`, loop_type is int* with depth=1)
+			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_levels(static_cast<int>(loop_type.pointer_depth()));
 			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_level();
 			auto cast_expr = ASTNode::emplace_node<ExpressionNode>(
 				ReinterpretCastNode(loop_ptr_type, deref_begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast"sv, 0, 0, 0))
