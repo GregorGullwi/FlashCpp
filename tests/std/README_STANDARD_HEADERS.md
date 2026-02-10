@@ -14,10 +14,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Template lookup failure for `__ratio_add_impl` (non-type bool default params); memory corruption fixed |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` typedef; now fails at `stl_vector.h:133` (base class `_Tp_alloc_type` not resolved as struct) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Progressed past base class resolution; now fails at `stl_vector.h:608` (ambiguous overloaded function `_M_get_Tp_allocator`) |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Progressed past `_Elements` pack error; now fails at `tuple:2877` (out-of-line pair ctor with `sizeof...` in dependent `typename` member init) |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed past `_Destroy` call; now fails at `variant:694` (type specifier in partial specialization) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed past body parsing; now fails at `variant:831` (member variable template with concept constraint) |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~300ms (previously blocked by out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
@@ -28,8 +28,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Progressed past `_Elements` pack; now fails at `tuple:2877` (same as tuple) |
 | `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Progressed past `_Elements` pack; now fails at `tuple:2877` (same as tuple) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Now fails at `uniform_int_dist.h:289` (nested template `operator()` out-of-line definition) |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` and `~Type<Args>()`; now fails at `stl_tree.h:1534` (brace-init return type not resolved) |
-| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` and `~Type<Args>()`; now fails at `stl_tree.h:1534` (brace-init return type not resolved) |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Progressed past brace-init return; now blocked by later parse errors in `stl_tree.h` |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Progressed past brace-init return; now blocked by later parse errors in `stl_tree.h` |
 | `<span>` | `test_std_span.cpp` | ❌ Codegen Error | Parsing completes; crash during IR conversion (`assert` in `setupAndLoadArithmeticOperation`) |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
@@ -114,12 +114,27 @@ The following parser issues were fixed to unblock standard header compilation:
 |---------|-----------------|---------|
 | IR conversion `bad_any_cast` during template member body | `<string_view>`, `<string>`, `<iostream>`, `<ranges>` | Parsing succeeds but codegen crashes on instantiated template member functions |
 | Out-of-line pair ctor with `sizeof...` in dependent `typename` member init | `<tuple>`, `<functional>`, `<memory>` | `pair<_T1,_T2>::pair(...)` at `tuple:2877` uses `typename _Build_index_tuple<sizeof...(_Args1)>::__type()` in delegating ctor init |
-| Base class `_Tp_alloc_type` not resolved as struct | `<vector>` | Dependent typedef used as base class not properly resolved |
-| Brace-init return type not resolved in template body | `<map>`, `<set>` | `return { expr1, expr2 };` where return type is dependent |
+| Ambiguous overloaded function in template body | `<vector>` | `_M_get_Tp_allocator()` call ambiguous between const and non-const overloads |
+| Member variable template with concept constraint | `<variant>` | `__exactly_once` variable template using `__detail::__variant::__accepted_index` concept |
 | IR conversion `assert` failure in arithmetic ops | `<span>` | Parsing succeeds but codegen crashes on non-integer/float arithmetic |
 | `compare_exchange_weak` template | `<atomic>`, `<barrier>` | Template instantiation failure for member function with `__cmpexch_failure_order()` call |
-| Lambda in partial specialization | `<variant>` | Complex lambda with `if constexpr`, `auto&&` params in `_Copy_assign_base` operator= body |
 | `<ratio>` heap corruption | `<ratio>` | Crash with malloc assertion failure during template instantiation |
+
+### Recent Fixes (2026-02-10)
+
+The following parser issues were fixed to unblock standard header compilation:
+
+1. **Brace-init return for dependent types in template bodies**: When parsing `return { expr1, expr2 };` in a template body where the return type is a dependent `UserDefined` type (not yet resolved to a struct), the parser now treats it as a struct-like initializer instead of rejecting it as "too many initializers for scalar type". Unblocks `<map>`, `<set>` past `stl_tree.h:1534`.
+
+2. **Dependent type alias base classes**: Type aliases used as base classes in template bodies (e.g., `_Tp_alloc_type`) are now allowed even when they can't be resolved to a struct type at parse time. The resolution is deferred to template instantiation. Unblocks `<vector>` past `stl_vector.h:133`.
+
+3. **`if (Type var = expr)` declaration-as-condition**: The `if` statement parser now handles variable declarations as conditions (e.g., `if (size_type __n = this->finish - pos)`), where the declaration is implicitly converted to bool. Unblocks `<vector>` past `stl_vector.h:1945`.
+
+4. **Error recovery in template struct bodies**: When parsing member declarations in template class bodies (both primary templates and partial specializations), parse errors in individual members now skip to the next semicolon/closing brace instead of aborting the entire struct. This allows parsing to continue past unsupported member patterns. Unblocks `<variant>` past `variant:694`.
+
+5. **Pack expansion using-declarations (`using Base<Args>::member...;`)**: Using-declarations with C++17 pack expansion are now correctly parsed. The parser handles template arguments before `::` and the trailing `...` before `;` in both regular struct bodies and member struct template partial specialization bodies. Unblocks `<variant>` past `variant:815`.
+
+**Headers with changed status:** `<vector>` progressed from base class error to ambiguous overload error. `<variant>` progressed from line 694 to line 831. `<map>` and `<set>` progressed past brace-init return error.
 
 ### Recent Fixes (2026-02-09, PR #3)
 

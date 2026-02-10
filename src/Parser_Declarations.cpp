@@ -3274,6 +3274,12 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				}
 			}
 			
+			// Consume pack expansion '...' if present (C++17 using-declaration with pack expansion)
+			// e.g., using Base<Args>::member...;
+			if (peek() == "..."_tok) {
+				advance(); // consume '...'
+			}
+			
 			// Consume trailing semicolon
 			if (peek() == ";"_tok) {
 				advance(); // consume ';'
@@ -5835,12 +5841,46 @@ ParseResult Parser::parse_struct_declaration()
 			// Regular member (data or function)
 			member_result = parse_type_and_name();
 			if (member_result.is_error()) {
+				// In template body, recover from member parse errors by skipping to next ';' or '}'
+				if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+					FLASH_LOG(Parser, Warning, "Template struct body: skipping unparseable member declaration at ", peek_info().value());
+					while (!peek().is_eof() && peek() != "}"_tok) {
+						if (peek() == ";"_tok) {
+							advance(); // consume ';'
+							break;
+						}
+						if (peek() == "{"_tok) {
+							skip_balanced_braces();
+							if (peek() == ";"_tok) advance();
+							break;
+						}
+						advance();
+					}
+					continue;
+				}
 				return member_result;
 			}
 		}
 
 		// Get the member node - we need to check this exists before proceeding
 		if (!member_result.node().has_value()) {
+			// In template body, recover from missing member declaration
+			if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+				FLASH_LOG(Parser, Warning, "Template struct body: skipping unparseable member declaration at ", peek_info().value());
+				while (!peek().is_eof() && peek() != "}"_tok) {
+					if (peek() == ";"_tok) {
+						advance();
+						break;
+					}
+					if (peek() == "{"_tok) {
+						skip_balanced_braces();
+						if (peek() == ";"_tok) advance();
+						break;
+					}
+					advance();
+				}
+				continue;
+			}
 			return ParseResult::error("Expected member declaration", peek_info());
 		}
 
