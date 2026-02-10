@@ -13,24 +13,24 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Template lookup failure for `__ratio_add_impl` (non-type bool default params); memory corruption fixed |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Progressed past base class resolution; now fails at `stl_vector.h:608` (ambiguous overloaded function `_M_get_Tp_allocator`) |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Progressed past `_Elements` pack error; now fails at `tuple:2877` (out-of-line pair ctor with `sizeof...` in dependent `typename` member init) |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Crash | Heap corruption (malloc assertion failure) during template instantiation |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Deduction guide default params fixed; now fails at `stl_bvector.h:812` (comma-separated declaration `const_iterator a = x.begin(), b = x.end();` in deferred template body) |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Timeout | Hangs during template instantiation |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed past body parsing; now fails at `variant:831` (member variable template with concept constraint) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed from line 499→1137; 5 separate fixes: func template call disambiguation, member variable template partial spec, nested templates in member struct bodies, func pointer pack expansion in type aliases. Now fails at `variant:1137` (struct body boundary tracking issue) |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~300ms (previously blocked by out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body - deferred body token restoration issue) |
 | `<string>` | `test_std_string.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~738ms (2026-02-08: Fixed with deduction guide and namespace-qualified call fixes) |
-| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Progressed past `_Elements` pack; now fails at `tuple:2877` (same as tuple) |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Progressed past `_Elements` pack; now fails at `tuple:2877` (same as tuple) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Now fails at `uniform_int_dist.h:289` (nested template `operator()` out-of-line definition) |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Progressed past brace-init return; now blocked by later parse errors in `stl_tree.h` |
-| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Progressed past brace-init return; now blocked by later parse errors in `stl_tree.h` |
-| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | Parsing completes; crash during IR conversion (`assert` in `setupAndLoadArithmeticOperation`) |
+| `<memory>` | `test_std_memory.cpp` | ❌ Timeout | Hangs during template instantiation (depends on `<tuple>`) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Timeout | Hangs during template instantiation (depends on `<tuple>`) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Timeout | Hangs during template instantiation |
+| `<map>` | `test_std_map.cpp` | ❌ Codegen Error | Progressed from parse errors to `bad_any_cast` during IR conversion (function template call fix helped) |
+| `<set>` | `test_std_set.cpp` | ❌ Codegen Error | Progressed from parse errors to `bad_any_cast` during IR conversion (function template call fix helped) |
+| `<span>` | `test_std_span.cpp` | ❌ Timeout | Hangs during parsing/template instantiation |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<chrono>` | `test_std_chrono.cpp` | ✅ Compiled | ~287ms (2026-02-08: Fixed with ref-qualifier and attribute fixes) |
@@ -112,11 +112,10 @@ The following parser issues were fixed to unblock standard header compilation:
 
 | Blocker | Affected Headers | Details |
 |---------|-----------------|---------|
-| IR conversion `bad_any_cast` during template member body | `<string_view>`, `<string>`, `<iostream>`, `<ranges>` | Parsing succeeds but codegen crashes on instantiated template member functions |
-| Out-of-line pair ctor with `sizeof...` in dependent `typename` member init | `<tuple>`, `<functional>`, `<memory>` | `pair<_T1,_T2>::pair(...)` at `tuple:2877` uses `typename _Build_index_tuple<sizeof...(_Args1)>::__type()` in delegating ctor init |
-| Ambiguous overloaded function in template body | `<vector>` | `_M_get_Tp_allocator()` call ambiguous between const and non-const overloads |
-| Member variable template with concept constraint | `<variant>` | `__exactly_once` variable template using `__detail::__variant::__accepted_index` concept |
-| IR conversion `assert` failure in arithmetic ops | `<span>` | Parsing succeeds but codegen crashes on non-integer/float arithmetic |
+| IR conversion `bad_any_cast` during template member body | `<string_view>`, `<string>`, `<iostream>`, `<ranges>`, `<map>`, `<set>` | Parsing succeeds but codegen crashes on instantiated template member functions; root cause appears to be deferred body token position restoration |
+| Template instantiation timeout/infinite loop | `<tuple>`, `<functional>`, `<memory>`, `<algorithm>`, `<span>` | Template instantiation hangs, likely due to deeply nested or recursive instantiation chains |
+| Struct body boundary tracking | `<variant>` | Parser's struct body parsing consumes tokens past the `}` boundary during error recovery, causing namespace-level declarations to be misattributed as struct members |
+| Deferred template body type resolution | `<vector>` | `const_iterator` typedef not found during deferred body parsing in `vector<bool>` partial specialization; comma-separated declarations fail |
 | `compare_exchange_weak` template | `<atomic>`, `<barrier>` | Template instantiation failure for member function with `__cmpexch_failure_order()` call |
 | `<ratio>` heap corruption | `<ratio>` | Crash with malloc assertion failure during template instantiation |
 
@@ -135,6 +134,24 @@ The following parser issues were fixed to unblock standard header compilation:
 5. **Pack expansion using-declarations (`using Base<Args>::member...;`)**: Using-declarations with C++17 pack expansion are now correctly parsed. The parser handles template arguments before `::` and the trailing `...` before `;` in both regular struct bodies and member struct template partial specialization bodies. Unblocks `<variant>` past `variant:815`.
 
 **Headers with changed status:** `<vector>` progressed from base class error to ambiguous overload error. `<variant>` progressed from line 694 to line 831. `<map>` and `<set>` progressed past brace-init return error.
+
+### Recent Fixes (2026-02-10, PR #2)
+
+The following parser issues were fixed to unblock standard header compilation:
+
+1. **Deduction guide default parameter parsing**: Deduction guide parameters now support default argument expressions (e.g., `_Allocator = _Allocator()`). The parser skips balanced parentheses and angle brackets in default argument expressions. Unblocks `<vector>` past `stl_vector.h:2033` deduction guide.
+
+2. **Function template call disambiguation in statement parser**: When the statement parser encounters `template_name<args>(...)` where the template is a function template (not a class template), it now correctly parses it as a function call expression instead of a variable declaration. Uses `is_function_or_template_function()` to distinguish. Unblocks `<variant>` past `variant:499` (lambda in `std::__do_visit<void>([...])` call).
+
+3. **Member variable template partial specialization**: Member variable template declarations now handle partial specialization syntax `name<pattern> = expr;` by consuming the template arguments between the variable name and the `=` initializer. Unblocks `<variant>` past `variant:831` (`__accepted_index<_Tp, _Variant, void_t<...>> = expr`).
+
+4. **Nested template declarations in member struct template bodies**: Added `template` keyword handling in member struct template body parsing. Nested template structs, template functions, and template aliases inside member struct templates are now dispatched to `parse_member_template_or_function()`. Unblocks `<variant>` past `variant:857` (`template<typename> struct __untag_result` inside `_Multi_array<_Tp>`).
+
+5. **Robust using-declaration parsing in member struct template bodies**: Replaced inline using-declaration parsing in member struct template body with the more comprehensive `parse_member_type_alias()` function, which correctly handles function pointer types, pointer-to-member types, array types, and other complex type patterns.
+
+6. **Function pointer parameter pack expansion in type aliases**: Function pointer/reference parameter list parsing in type aliases now handles pack expansion (`...`), pointer (`*`), and reference (`&`, `&&`) modifiers after parameter types. Unblocks `<variant>` past `variant:867` (`using element_type = void(*)(_Args...);`).
+
+**Headers with changed status:** `<variant>` progressed from line 499 to line 1137 (through 5 separate fixes). `<vector>` progressed past deduction guide to `stl_bvector.h:812`. `<map>` and `<set>` progressed from parse errors to codegen `bad_any_cast` errors.
 
 ### Recent Fixes (2026-02-09, PR #3)
 
