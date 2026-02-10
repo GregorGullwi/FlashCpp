@@ -9818,90 +9818,71 @@ ParseResult Parser::parse_if_statement() {
         return ParseResult::error("Expected '(' after 'if'", current_token_);
     }
 
-    // Check for C++20 if-with-initializer: if (init; condition)
+    // Unified declaration handling for if-statements:
+    // 1. C++17 if-with-initializer: if (Type var = expr; condition)
+    // 2. C++ declaration-as-condition: if (Type var = expr)
+    // Both start with a type followed by a variable declaration.
+    // We try parse_variable_declaration() once and check the delimiter:
+    //   ';' → init-statement, then parse the condition expression separately
+    //   ')' → declaration-as-condition
+    //   otherwise → not a declaration, fall back to expression parsing
     std::optional<ASTNode> init_statement;
     std::optional<FlashCpp::SymbolTableScope> if_scope;
+    ParseResult condition;
+    bool condition_parsed = false;
 
-    // Look ahead to see if there's a semicolon (indicating init statement)
-    // Only try to parse as initializer if we see a type keyword or CV-qualifier
-    if (peek().is_keyword()) {
-        // Only proceed if this is actually a type keyword or CV-qualifier
-        if (type_keywords.find(peek_info().value()) != type_keywords.end()) {
-            // Could be a declaration like: if (int x = 5; x > 0)
-            auto checkpoint = save_token_position();
-            
-            // Create a scope before parsing the initializer (C++ standard: if-with-initializer creates a scope)
-            // We'll dismiss it if this turns out not to be an initializer
-            if_scope.emplace(ScopeType::Block);
-            
-            ParseResult potential_init = parse_variable_declaration();
-
-            if (!potential_init.is_error() && peek() == ";"_tok) {
-                // We have an initializer - keep the scope
-                discard_saved_token(checkpoint);
-                init_statement = potential_init.node();
-                if (!consume(";"_tok)) {
-                    return ParseResult::error("Expected ';' after if initializer", current_token_);
-                }
-            } else {
-                // Not an initializer, dismiss the scope and restore position
-                if_scope->dismiss();
-                if_scope.reset();
-                restore_token_position(checkpoint);
+    // Determine if the next tokens could be a declaration (keyword type or identifier type)
+    bool try_declaration = false;
+    if (peek().is_keyword() && type_keywords.find(peek_info().value()) != type_keywords.end()) {
+        try_declaration = true;
+    } else if (peek().is_identifier()) {
+        // Lookahead: only try declaration for "identifier identifier =" pattern
+        // This avoids misinterpreting simple "if (x)" as a declaration
+        auto lookahead = save_token_position();
+        advance(); // skip potential type name
+        if (peek() == "<"_tok) {
+            skip_template_arguments();
+        }
+        while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
+            advance();
+        }
+        if (peek().is_identifier()) {
+            advance(); // skip potential variable name
+            if (peek() == "="_tok || peek() == "{"_tok) {
+                try_declaration = true;
             }
+        }
+        restore_token_position(lookahead);
+    }
+
+    if (try_declaration) {
+        auto checkpoint = save_token_position();
+        if_scope.emplace(ScopeType::Block);
+
+        ParseResult potential_decl = parse_variable_declaration();
+
+        if (!potential_decl.is_error() && peek() == ";"_tok) {
+            // Init-statement: if (Type var = expr; condition)
+            discard_saved_token(checkpoint);
+            init_statement = potential_decl.node();
+            if (!consume(";"_tok)) {
+                return ParseResult::error("Expected ';' after if initializer", current_token_);
+            }
+        } else if (!potential_decl.is_error() && peek() == ")"_tok) {
+            // Declaration-as-condition: if (Type var = expr)
+            discard_saved_token(checkpoint);
+            condition = potential_decl;
+            condition_parsed = true;
+        } else {
+            // Not a declaration - undo scope (reset calls exit_scope) and restore tokens
+            if_scope.reset();
+            restore_token_position(checkpoint);
         }
     }
 
-    // C++ declaration-as-condition: if (Type var = expr)
-    // The condition can be a declaration with brace-or-equal initializer.
-    // Only try when we see "identifier identifier =" pattern (Type name = ...).
-    // This handles patterns like: if (size_type __n = this->_M_impl._M_finish - __pos)
-    // Note: keyword types (int, bool) are NOT handled here since codegen doesn't support
-    // declaration-as-condition yet. This primarily helps standard header parsing where
-    // such patterns appear in deferred template bodies.
-    ParseResult condition;
-    {
-        bool try_decl_condition = false;
-        if (!init_statement.has_value() && peek().is_identifier()) {
-            // Lookahead: check for "Type name =" pattern without consuming tokens
-            auto lookahead = save_token_position();
-            advance(); // skip potential type name
-            // Also skip template arguments: Type<Args> name = ...
-            if (peek() == "<"_tok) {
-                skip_template_arguments();
-            }
-            // Also skip pointer/ref modifiers: Type* name = ... or Type& name = ...
-            while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
-                advance();
-            }
-            if (peek().is_identifier()) {
-                advance(); // skip potential variable name
-                if (peek() == "="_tok || peek() == "{"_tok) {
-                    try_decl_condition = true;
-                }
-            }
-            restore_token_position(lookahead);
-        }
-        if (try_decl_condition) {
-            auto decl_check = save_token_position();
-            if (!if_scope.has_value()) {
-                if_scope.emplace(ScopeType::Block);
-            }
-            ParseResult potential_decl = parse_variable_declaration();
-            if (!potential_decl.is_error() && peek() == ")"_tok) {
-                discard_saved_token(decl_check);
-                condition = potential_decl;
-            } else {
-                if (if_scope.has_value() && !init_statement.has_value()) {
-                    if_scope->dismiss();
-                    if_scope.reset();
-                }
-                restore_token_position(decl_check);
-                condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-            }
-        } else {
-            condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-        }
+    // Parse condition as expression if not already set by declaration-as-condition
+    if (!condition_parsed) {
+        condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
     }
     if (condition.is_error()) {
         return condition;
