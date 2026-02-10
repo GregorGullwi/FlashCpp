@@ -69,8 +69,12 @@ TEST_SOURCES :=
 # Main sources (unity build - only main.cpp is compiled)
 MAIN_SOURCES := $(SRCDIR)/main.cpp
 
+# ASAN flags for sanitized debug builds
+ASAN_FLAGS := -fsanitize=address -fno-omit-frame-pointer
+
 # Target executables with proper extensions (matching MSVC structure)
 MAIN_TARGET := $(DEBUG_DIR)/FlashCpp$(EXE_EXT)
+ASAN_TARGET := $(DEBUG_DIR)/FlashCpp_asan$(EXE_EXT)
 RELEASE_TARGET := $(RELEASE_DIR)/FlashCpp$(EXE_EXT)
 TEST_TARGET := $(TEST_DIR)/test$(EXE_EXT)
 
@@ -82,6 +86,13 @@ $(MAIN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
+	@echo "Built: $@"
+
+# Build main executable with AddressSanitizer (Debug + ASAN)
+$(ASAN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
+	@echo "Building main executable (Debug+ASAN) for $(PLATFORM) with $(CXX)..."
+	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
+	$(CXX) $(CXXFLAGS) $(ASAN_FLAGS) $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
 	@echo "Built: $@"
 
 # Build release executable
@@ -99,13 +110,16 @@ $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.c
 	@echo "Built: $@"
 
 # Phony targets
-.PHONY: all clean test main release help test-all
+.PHONY: all clean test main release asan help test-all
 
 # Build all targets
 all: main release test
 
 # Main target (Debug configuration)
 main: $(MAIN_TARGET)
+
+# ASAN target (Debug + AddressSanitizer)
+asan: $(ASAN_TARGET)
 
 # Release target
 release: $(RELEASE_TARGET)
@@ -137,12 +151,14 @@ help:
 	@echo ""
 	@echo "Output structure (matching MSVC):"
 	@echo "  x64/Debug/FlashCpp$(EXE_EXT)      - Debug build"
+	@echo "  x64/Debug/FlashCpp_asan$(EXE_EXT)  - Debug build with AddressSanitizer"
 	@echo "  x64/Release/FlashCpp$(EXE_EXT)    - Release build"
 	@echo "  x64/Test/test$(EXE_EXT)           - Test build"
 	@echo ""
 	@echo "Available targets:"
 	@echo "  make              - Build main executable in Debug mode (default)"
 	@echo "  make main         - Build main executable in Debug mode"
+	@echo "  make asan         - Build main executable with AddressSanitizer"
 	@echo "  make release      - Build main executable in Release mode"
 	@echo "  make test         - Build test executable"
 	@echo "  make test-all     - Build compiler and run all .cpp tests (pass and _fail)"
