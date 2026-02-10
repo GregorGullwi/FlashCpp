@@ -704,35 +704,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Discard the saved position since we've consumed the type
 		discard_saved_token(target_type_start_pos);
 		
-		// Handle pointer depth (*, **, etc.)
-		while (peek() == "*"_tok) {
-			advance(); // consume '*'
-			
-			// Parse CV-qualifiers after the * (const, volatile)
-			CVQualifier ptr_cv = parse_cv_qualifiers();
-			
-			type_spec.add_pointer_level(ptr_cv);
-		}
-		
-		// Handle reference modifiers (&, &&)
-		// The lexer may produce either:
-		// - A single '&&' token for rvalue reference
-		// - Two separate '&' tokens for rvalue reference  
-		// - A single '&' token for lvalue reference
-		if (peek() == "&&"_tok) {
-			advance(); // consume '&&'
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (peek() == "&"_tok) {
-			advance(); // consume first '&'
-			
-			// Check for rvalue reference (&&) as two tokens
-			if (peek() == "&"_tok) {
-				advance(); // consume second '&'
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else {
-				type_spec.set_lvalue_reference(true);  // lvalue reference
-			}
-		}
+		consume_pointer_ref_modifiers(type_spec);
 		
 		// Expect semicolon
 		if (!consume(";"_tok)) {
@@ -1574,6 +1546,11 @@ ParseResult Parser::parse_template_declaration() {
 						// Parse exception specifier (noexcept or throw()) before initializer list
 						if (parse_constructor_exception_specifier()) {
 							ctor_ref.set_noexcept(true);
+						}
+						
+						// Parse trailing requires clause if present and store on constructor
+						if (auto req = parse_trailing_requires_clause()) {
+							ctor_ref.set_requires_clause(*req);
 						}
 						
 						// Parse member initializer list if present
@@ -2804,6 +2781,11 @@ ParseResult Parser::parse_template_declaration() {
 							ctor_ref.set_noexcept(true);
 						}
 						
+						// Parse trailing requires clause if present and store on constructor
+						if (auto req = parse_trailing_requires_clause()) {
+							ctor_ref.set_requires_clause(*req);
+						}
+						
 						// Parse member initializer list if present
 						if (peek() == ":"_tok) {
 							advance();  // consume ':'
@@ -3624,22 +3606,47 @@ if (struct_type_info.getStructInfo()) {
 					if (!guide_params.empty() && guide_params.back().is<TypeSpecifierNode>()) {
 						TypeSpecifierNode& param_type = guide_params.back().as<TypeSpecifierNode>();
 
+						// Handle array reference pattern: _Type(&)[_ArrayExtent] or _Type(&&)[_ArrayExtent]
+						if (peek() == "("_tok) {
+							SaveHandle paren_pos = save_token_position();
+							advance(); // consume '('
+							
+							auto pre_ref_qualifiers = param_type.reference_qualifier();
+							auto pre_pointer_depth = param_type.pointer_depth();
+							consume_pointer_ref_modifiers(param_type);
+							
+							// Optional identifier inside parens
+							if (param_type.is_reference() && peek().is_identifier()) {
+								advance(); // skip name
+							}
+							
+							if (param_type.is_reference() && peek() == ")"_tok) {
+								advance(); // consume ')'
+								if (peek() == "["_tok) {
+									advance(); // consume '['
+									// Skip array extent expression
+									while (!peek().is_eof() && peek() != "]"_tok) {
+										advance();
+									}
+									if (peek() == "]"_tok) {
+										advance(); // consume ']'
+									}
+									param_type.set_array(true);
+									discard_saved_token(paren_pos);
+								} else {
+									param_type.limit_pointer_depth(pre_pointer_depth); // restore
+									param_type.set_reference_qualifier(pre_ref_qualifiers); // restore
+									restore_token_position(paren_pos);
+								}
+							} else {
+								param_type.limit_pointer_depth(pre_pointer_depth); // restore
+								param_type.set_reference_qualifier(pre_ref_qualifiers); // restore
+								restore_token_position(paren_pos);
+							}
+						}
+
 						// Parse pointer levels with optional CV-qualifiers
-						while (peek() == "*"_tok) {
-							advance(); // consume '*'
-
-							CVQualifier ptr_cv = parse_cv_qualifiers();
-
-							param_type.add_pointer_level(ptr_cv);
-						}
-
-						// Parse references (& or &&)
-						ReferenceQualifier ref_qual = parse_reference_qualifier();
-						if (ref_qual == ReferenceQualifier::RValueReference) {
-							param_type.set_reference(true);
-						} else if (ref_qual == ReferenceQualifier::LValueReference) {
-							param_type.set_lvalue_reference(true);
-						}
+						consume_pointer_ref_modifiers(param_type);
 					}
 					
 					// Handle pack expansion '...' (e.g., _Up...)
@@ -5306,6 +5313,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					ctor_ref.set_noexcept(true);
 				}
 				
+				// Parse trailing requires clause if present and store on constructor
+				if (auto req = parse_trailing_requires_clause()) {
+					ctor_ref.set_requires_clause(*req);
+				}
+				
 				// Parse member initializer list if present
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
@@ -5456,7 +5468,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				auto type_result = parse_type_specifier();
 				if (!type_result.is_error() && type_result.node().has_value()) {
 					// Skip pointer/reference qualifiers on conversion target type
-					while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
+					while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {	// Should we call consume_pointer_ref_modifiers() here?
 						advance();
 					}
 					if (peek() == "("_tok) {
@@ -5701,33 +5713,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Get the TypeSpecifierNode and check for pointer/reference modifiers
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-
-	// Handle pointer depth (*, **, etc.)
-	while (peek() == "*"_tok) {
-		advance(); // consume '*'
-
-		// Parse CV-qualifiers after the * (const, volatile)
-		CVQualifier ptr_cv = parse_cv_qualifiers();
-
-		type_spec.add_pointer_level(ptr_cv);
-	}
-
-	// Handle reference modifiers (&, &&)
-	if (peek() == "&"_tok) {
-		advance(); // consume first '&'
-
-		// Check for rvalue reference (&&)
-		if (peek() == "&"_tok) {
-			advance(); // consume second '&'
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else {
-			type_spec.set_lvalue_reference(true);  // lvalue reference
-		}
-	} else if (peek() == "&&"_tok) {
-		// Handle && as a single token (rvalue reference)
-		advance(); // consume '&&'
-		type_spec.set_reference(true);  // true = rvalue reference
-	}
+	consume_pointer_ref_modifiers(type_spec);
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
@@ -7999,12 +7985,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				} else if (peek() == "&"_tok) {
 					is_lvalue_ref = true;
 					advance(); // consume '&'
-					// Check for second & (in case lexer didn't combine them)
-					if (peek() == "&"_tok) {
-						is_rvalue_ref = true;
-						is_lvalue_ref = false;
-						advance(); // consume second '&'
-					}
 				} else if (peek().is_identifier()) {
 					// Check for member pointer syntax: _Class::*
 					SaveHandle member_check_pos = save_token_position();
@@ -8670,6 +8650,41 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			
 			// Don't create instantiation - constraint failed
 			return std::nullopt;
+		}
+	}
+
+	// CHECK CONCEPT CONSTRAINTS ON TEMPLATE PARAMETERS (C++20 abbreviated templates)
+	// For parameters like `template<IsInt _T0>` (from `IsInt auto x`), evaluate the concept
+	{
+		size_t arg_idx = 0;
+		for (const auto& tparam_node : template_params) {
+			if (!tparam_node.is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = tparam_node.as<TemplateParameterNode>();
+			if (param.has_concept_constraint() && arg_idx < explicit_types.size()) {
+				std::string_view concept_name = param.concept_constraint();
+				auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
+				if (concept_opt.has_value()) {
+					const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+					const auto& concept_params = concept_node.template_params();
+					// Strip lvalue reference that deduction adds for lvalue arguments.
+					TemplateTypeArg concept_arg = explicit_types[arg_idx];
+					concept_arg.is_reference = false;
+					concept_arg.is_rvalue_reference = false;
+					std::vector<TemplateTypeArg> concept_args = { concept_arg };
+					std::vector<std::string_view> concept_param_names;
+					if (!concept_params.empty()) {
+						concept_param_names.push_back(concept_params[0].name());
+					}
+					auto constraint_result = evaluateConstraint(
+						concept_node.constraint_expr(), concept_args, concept_param_names);
+					if (!constraint_result.satisfied) {
+						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
+						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+						return std::nullopt;
+					}
+				}
+			}
+			if (!param.is_variadic()) ++arg_idx;
 		}
 	}
 
@@ -9356,6 +9371,42 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// Don't create instantiation - constraint failed
 
 			return std::nullopt;
+		}
+	}
+
+	// CHECK CONCEPT CONSTRAINTS ON TEMPLATE PARAMETERS (C++20 abbreviated templates)
+	{
+		size_t arg_idx = 0;
+		for (const auto& tparam_node : template_params) {
+			if (!tparam_node.is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = tparam_node.as<TemplateParameterNode>();
+			if (param.has_concept_constraint() && arg_idx < template_args_as_type_args.size()) {
+				std::string_view concept_name = param.concept_constraint();
+				auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
+				if (concept_opt.has_value()) {
+					const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+					const auto& concept_params = concept_node.template_params();
+					// Strip the lvalue reference that deduction adds for lvalue arguments.
+					// For abbreviated function templates (ConceptName auto x), the deduced
+					// type T is the parameter type without reference qualification.
+					TemplateTypeArg concept_arg = template_args_as_type_args[arg_idx];
+					concept_arg.is_reference = false;
+					concept_arg.is_rvalue_reference = false;
+					std::vector<TemplateTypeArg> concept_args = { concept_arg };
+					std::vector<std::string_view> concept_param_names;
+					if (!concept_params.empty()) {
+						concept_param_names.push_back(concept_params[0].name());
+					}
+					auto constraint_result = evaluateConstraint(
+						concept_node.constraint_expr(), concept_args, concept_param_names);
+					if (!constraint_result.satisfied) {
+						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
+						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+						return std::nullopt;
+					}
+				}
+			}
+			if (!param.is_variadic()) ++arg_idx;
 		}
 	}
 

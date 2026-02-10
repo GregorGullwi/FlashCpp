@@ -398,6 +398,20 @@ ParseResult Parser::parse_type_and_name() {
         }
     }
 
+    // C++20 constrained auto parameters: ConceptName auto param or Concept<T> auto param
+    // The concept constraint was parsed as a UserDefined type by parse_type_specifier().
+    // If followed by 'auto', this is an abbreviated function template parameter.
+    // Store the concept name on the TypeSpecifierNode for requires clause generation.
+    if (type_spec.type() == Type::UserDefined && peek() == "auto"_tok) {
+        // Capture the concept name before converting the type to Auto
+        std::string_view concept_name = type_spec.token().value();
+        FLASH_LOG(Parser, Debug, "parse_type_and_name: Constrained auto parameter detected (concept='", concept_name, "'), consuming 'auto'");
+        advance(); // consume 'auto'
+        type_spec.set_type(Type::Auto);
+        // Store the concept constraint so abbreviated template generation can build a requires clause
+        type_spec.set_concept_constraint(concept_name);
+    }
+
     // Extract calling convention specifiers that can appear after the type
     // Example: void __cdecl func(); or int __stdcall* func();
     // We consume them here and save to last_calling_convention_ for the caller to retrieve
@@ -1110,6 +1124,9 @@ ParseResult Parser::parse_type_and_name() {
             }
         }
     }
+
+    // Skip C++ attributes after identifier (e.g., func_name [[nodiscard]] (params))
+    skip_cpp_attributes();
 
     // Check for array declaration: identifier[size] or identifier[size1][size2]...
     std::vector<ASTNode> array_dimensions;
@@ -2445,15 +2462,21 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (auto func_node_ptr = function_definition_result.node()) {
 			FunctionDeclarationNode& func_decl = func_node_ptr->as<FunctionDeclarationNode>();
 			
-			// Count auto parameters and collect their info
-			std::vector<std::pair<size_t, Token>> auto_params;  // (param_index, param_token)
+			// Count auto parameters and collect their info including concept constraints
+			struct AutoParamInfo {
+				size_t index;
+				Token token;
+				std::string_view concept_name;  // Empty if unconstrained
+			};
+			std::vector<AutoParamInfo> auto_params;
 			const auto& params = func_decl.parameter_nodes();
 			for (size_t i = 0; i < params.size(); ++i) {
 				if (params[i].is<DeclarationNode>()) {
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					if (param_type.type() == Type::Auto) {
-						auto_params.emplace_back(i, param_decl.identifier_token());
+						std::string_view concept_constraint = param_type.has_concept_constraint() ? param_type.concept_constraint() : std::string_view{};
+						auto_params.push_back({i, param_decl.identifier_token(), concept_constraint});
 					}
 				}
 			}
@@ -2472,10 +2495,16 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					StringHandle param_name = StringTable::getOrInternStringHandle(StringBuilder().append("_T"sv).append(static_cast<int64_t>(i)));
 					
 					// Use the auto parameter's token for position/error reporting
-					Token param_token = auto_params[i].second;
+					Token param_token = auto_params[i].token;
 					
 					// Create a type template parameter node
 					auto param_node = emplace_node<TemplateParameterNode>(param_name, param_token);
+					
+					// Set concept constraint if the auto parameter was constrained (e.g., IsInt auto x)
+					if (!auto_params[i].concept_name.empty()) {
+						param_node.as<TemplateParameterNode>().set_concept_constraint(auto_params[i].concept_name);
+					}
+					
 					template_params.push_back(param_node);
 					template_param_names.push_back(param_name);
 				}
@@ -3587,15 +3616,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// Handle pointer declarators with CV-qualifiers (e.g., "unsigned short const* _locale_pctype")
 				// Parse pointer declarators: * [const] [volatile] *...
 				TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
-				while (peek() == "*"_tok) {
-					advance(); // consume '*'
-
-					// Check for CV-qualifiers after the *
-					CVQualifier ptr_cv = parse_cv_qualifiers();
-
-					// Add pointer level to the type specifier
-					member_type_spec.add_pointer_level(ptr_cv);
-				}
+				consume_pointer_ref_modifiers(member_type_spec);
 
 				// Parse member name
 				auto member_name_token = peek_info();
@@ -3896,39 +3917,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	
 	ASTNode type_node = *type_result.node();
 	TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
-	
-	// Handle pointer declarators (e.g., typedef T* pointer;)
-	while (peek() == "*"_tok) {
-		advance(); // consume '*'
-		type_spec.add_pointer_level();
-		
-		// Skip const/volatile after *
-		while (peek().is_keyword()) {
-			std::string_view kw = peek_info().value();
-			if (kw == "const" || kw == "volatile") {
-				advance();
-			} else {
-				break;
-			}
-		}
-	}
-	
-	// Handle reference declarators (e.g., typedef T& reference; or typedef T&& rvalue_ref;)
-	if (peek() == "&"_tok) {
-		advance(); // consume first '&'
-		// Check for && (rvalue reference) as two separate '&' tokens
-		if (peek() == "&"_tok) {
-			advance(); // consume second '&'
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else {
-			type_spec.set_lvalue_reference(true);  // lvalue reference
-		}
-	} else if (peek() == "&&"_tok) {
-		// Handle && as a single token (rvalue reference)
-		advance(); // consume '&&'
-		type_spec.set_reference(true);  // true = rvalue reference
-	}
-	
+	consume_pointer_ref_modifiers(type_spec);
+
 	// Check for pointer-to-member type syntax: typedef Type Class::* alias;
 	// This is used in <type_traits> for result_of patterns
 	// Pattern: typedef _Res _Class::* _MemPtr;
@@ -9598,12 +9588,6 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 							} else if (peek() == "&"_tok) {
 								is_function_ref = true;
 								advance(); // consume '&'
-								// Check for second & (in case lexer didn't combine them)
-								if (peek() == "&"_tok) {
-									is_rvalue_function_ref = true;
-									is_function_ref = false;
-									advance(); // consume second '&'
-								}
 							} else if (peek() == "*"_tok) {
 								is_function_ptr = true;
 								advance(); // consume '*'

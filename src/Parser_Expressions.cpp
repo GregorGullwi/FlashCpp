@@ -1892,15 +1892,26 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 // where the constraint was already recorded during the in-class declaration).
 // For call sites that need parameter scope (e.g., parse_static_member_function),
 // handle the requires clause directly instead of using this helper.
-void Parser::skip_trailing_requires_clause()
+std::optional<ASTNode> Parser::parse_trailing_requires_clause()
 {
 	if (peek() == "requires"_tok) {
+		Token requires_token = peek_info();
 		advance(); // consume 'requires'
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			FLASH_LOG(Parser, Warning, "Failed to parse trailing requires clause: ", constraint_result.error_message());
+			return std::nullopt;
+		}
+		if (auto node = constraint_result.node()) {
+			return emplace_node<RequiresClauseNode>(*node, requires_token);
 		}
 	}
+	return std::nullopt;
+}
+
+void Parser::skip_trailing_requires_clause()
+{
+	(void)parse_trailing_requires_clause();
 }
 
 // Apply reference qualifiers (& or &&) to a type specifier if present
@@ -1922,8 +1933,9 @@ void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
 // Handles: T*, T**, T&, T&&, T*&, etc.
 void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	while (peek() == "*"_tok) {
-		advance();
-		type_spec.add_pointer_level(CVQualifier::None);
+		advance(); // consume '*'
+		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
+		type_spec.add_pointer_level(ptr_cv);
 	}
 	if (peek() == "&&"_tok) {
 		advance();
@@ -3259,6 +3271,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				qualified_type_name += "::";
 				qualified_type_name += peek_info().value();
 				advance(); // consume identifier
+			}
+			
+			// Skip template arguments if present (e.g., ~_Rb_tree_node<_Val>())
+			if (peek() == "<"_tok) {
+				skip_template_arguments();
 			}
 			
 			// Expect '(' for the destructor call
@@ -6842,6 +6859,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Look up the instantiated type
 								auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
 								auto type_it = gTypesByName.find(type_handle);
+								
+								// If not found, the type may have been registered with filled-in default template args
+								// (e.g., basic_string_view<char> → basic_string_view<char, char_traits<char>>)
+								// Check the V2 cache for the instantiated struct node to get the correct name
+								if (type_it == gTypesByName.end()) {
+									auto cached = gTemplateRegistry.getInstantiationV2(
+										StringTable::getOrInternStringHandle(idenfifier_token.value()),
+										*explicit_template_args);
+									if (cached.has_value() && cached->is<StructDeclarationNode>()) {
+										StringHandle cached_name = cached->as<StructDeclarationNode>().name();
+										auto cached_it = gTypesByName.find(cached_name);
+										if (cached_it != gTypesByName.end()) {
+											type_handle = cached_name;
+											type_it = cached_it;
+										}
+									}
+								}
+								
 								if (type_it != gTypesByName.end()) {
 									// Found the instantiated type - now parse the brace initializer
 									advance(); // consume '{'

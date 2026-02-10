@@ -14,25 +14,25 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Template lookup failure for `__ratio_add_impl` (non-type bool default params); memory corruption fixed |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now fails at `stl_vector.h:87` (`typename ...::template rebind<T>::other` typedef) |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `bad_any_cast` fixed; SFINAE in requires fixed; now fails at `ranges_util.h:298` (constrained `auto` parameters) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` typedef; now fails at `stl_vector.h:133` (base class `_Tp_alloc_type` not resolved as struct) |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Progressed past `ranges_util.h` constrained auto/requires; now fails at `tuple` (`_Elements` parameter pack not found) |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed past `_Destroy` call; now fails at `variant:694` (type specifier in partial specialization) |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~300ms (previously blocked by out-of-line template member) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ✅ Compiled | ~80ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | `min()` resolution fixed; `operator""sv` parsing fixed; now fails at `string_view:863` (`return basic_string_view<char>{...}` template brace-init) |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `string_view:863` (same as `<string_view>`) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
+| `<string>` | `test_std_string.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~738ms (2026-02-08: Fixed with deduction guide and namespace-qualified call fixes) |
-| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `ranges_util.h:298` (constrained `auto` parameters) |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `ranges_util.h:298` (constrained `auto` parameters) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now fails at `uniform_int_dist.h:289` (type specifier in expression) |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now fails at `stl_tree.h:426` (`typename ...::template rebind<T>::other` typedef) |
-| `<set>` | `test_std_set.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now fails at `stl_tree.h:426` (`typename ...::template rebind<T>::other` typedef) |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | `min()` resolution fixed; now fails at `span:452` (deduction guide with array reference syntax) |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `string_view:863` (template brace-init) |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | `bad_any_cast` fixed; now blocked by `string_view:863` (template brace-init) |
+| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Progressed past `ranges_util.h`; now fails at `tuple` (`_Elements` parameter pack not found) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Progressed past `ranges_util.h`; now fails at `tuple` (`_Elements` parameter pack not found) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Now fails at `uniform_int_dist.h:289` (nested template `operator()` out-of-line definition) |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` and `~Type<Args>()`; now fails at `stl_tree.h:1534` (brace-init return type not resolved) |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Progressed past `rebind<T>::other` and `~Type<Args>()`; now fails at `stl_tree.h:1534` (brace-init return type not resolved) |
+| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | Parsing completes; crash during IR conversion (`assert` in `setupAndLoadArithmeticOperation`) |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<chrono>` | `test_std_chrono.cpp` | ✅ Compiled | ~287ms (2026-02-08: Fixed with ref-qualifier and attribute fixes) |
 | `<atomic>` | N/A | ❌ Parse Error | Conversion operator in partial specialization fixed; now fails at `atomic_base.h:1562` (`compare_exchange_weak` template instantiation) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
@@ -112,12 +112,34 @@ The following parser issues were fixed to unblock standard header compilation:
 
 | Blocker | Affected Headers | Details |
 |---------|-----------------|---------|
-| `return Type<T>{args}` template brace-init | `<string_view>`, `<string>`, `<iostream>`, `<ranges>` | `operator""sv` body: `return basic_string_view<char>{__str, __len};` — template type with brace initialization in return |
-| Constrained `auto` parameters | `<tuple>`, `<functional>`, `<memory>` | `subrange(ConceptName auto __i, _Sent __s)` — C++20 `Concept auto` syntax not yet parsed |
-| `typename ...::template rebind<T>::other` typedef | `<vector>`, `<map>`, `<set>` | Dependent template member type access in typedef not parsed |
+| IR conversion `bad_any_cast` during template member body | `<string_view>`, `<string>`, `<iostream>`, `<ranges>` | Parsing succeeds but codegen crashes on instantiated template member functions |
+| `_Elements` parameter pack not found | `<tuple>`, `<functional>`, `<memory>` | Template parameter pack handling during tuple body parsing |
+| Base class `_Tp_alloc_type` not resolved as struct | `<vector>` | Dependent typedef used as base class not properly resolved |
+| Brace-init return type not resolved in template body | `<map>`, `<set>` | `return { expr1, expr2 };` where return type is dependent |
+| IR conversion `assert` failure in arithmetic ops | `<span>` | Parsing succeeds but codegen crashes on non-integer/float arithmetic |
 | `compare_exchange_weak` template | `<atomic>`, `<barrier>` | Template instantiation failure for member function with `__cmpexch_failure_order()` call |
 | Lambda in partial specialization | `<variant>` | Complex lambda with `if constexpr`, `auto&&` params in `_Copy_assign_base` operator= body |
 | `<ratio>` heap corruption | `<ratio>` | Crash with malloc assertion failure during template instantiation |
+
+### Recent Fixes (2026-02-09, PR #3)
+
+The following parser issues were fixed to unblock standard header compilation:
+
+1. **C++20 constrained `auto` parameters**: `parse_type_and_name()` now detects when a UserDefined type is followed by `auto` keyword and converts the type to Auto, treating `ConceptName auto param` as an abbreviated function template. Unblocks `ranges_util.h:298` for `<tuple>`, `<functional>`, `<memory>`.
+
+2. **Trailing `requires` clause on constructors**: Added `skip_trailing_requires_clause()` after `parse_constructor_exception_specifier()` in all 3 template constructor parsing paths (full specialization, partial specialization, member function template). The trailing requires clause like `requires Constraint` can appear between `noexcept(...)` and the member initializer list `:`. Unblocks `ranges_util.h:321`.
+
+3. **Array reference parameters in deduction guides**: Deduction guide parameter parsing now handles the `Type(&)[Extent]` and `Type(&&)[Extent]` array reference pattern. This is used in `span(_Type(&)[_ArrayExtent]) -> span<_Type, _ArrayExtent>`. Unblocks `<span>` past deduction guide parsing.
+
+4. **`::template rebind<T>::other` nested type access**: After parsing template member arguments in dependent qualified types (e.g., `__alloc_traits<_Alloc>::template rebind<_Tp>`), the parser now continues scanning for further `::member` access (e.g., `::other`). Unblocks `<vector>`, `<map>`, `<set>` past `stl_vector.h:87`.
+
+5. **Template destructor calls `ptr->~Type<Args>()`**: Pseudo-destructor call parsing now skips template arguments between the type name and `()`, e.g., `__p->~_Rb_tree_node<_Val>()`. Unblocks `<map>`, `<set>` past `stl_tree.h:622`.
+
+6. **C++ attributes after function name**: `parse_type_and_name()` now calls `skip_cpp_attributes()` after parsing the identifier, handling patterns like `as_writable_bytes [[nodiscard]] (span<_Type, _Extent> __sp)`. Unblocks `<span>` past `span:488`.
+
+7. **Template brace-init type lookup with default args**: When looking up the instantiated type for `return Type<Args>{...}`, the code now falls back to the V2 instantiation cache to find the correct struct name when the type was registered with filled-in default template arguments. Unblocks `<string_view>`, `<string>`, `<iostream>`, `<ranges>` past `string_view:863`.
+
+**Headers with changed status:** 5 headers (`<string_view>`, `<string>`, `<iostream>`, `<ranges>`, `<span>`) progressed from parse errors to codegen errors (parsing fully succeeds). 4 headers (`<tuple>`, `<functional>`, `<memory>`, `<vector>`) progressed to later parse errors. 2 headers (`<map>`, `<set>`) progressed to later parse errors.
 
 ### Recent Fixes (2026-02-09, PR #2)
 
