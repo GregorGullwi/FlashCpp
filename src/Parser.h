@@ -852,7 +852,6 @@ public:  // Public methods for template instantiation
         void skip_trailing_requires_clause();         // Parse and discard trailing requires clause (if present)
         std::optional<ASTNode> parse_trailing_requires_clause();  // Parse trailing requires clause, return RequiresClauseNode
         bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
-        void apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec);  // Apply & or && reference qualifiers to a type
         void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
         void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
         

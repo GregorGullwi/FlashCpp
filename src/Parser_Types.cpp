@@ -3002,15 +3002,7 @@ ParseResult Parser::parse_function_header(
 		if (trailing_result.node().has_value() && trailing_result.node()->is<TypeSpecifierNode>()) {
 			TypeSpecifierNode& type_spec = trailing_result.node()->as<TypeSpecifierNode>();
 			
-			// Apply pointer qualifiers if present (e.g., T*, T**)
-			while (peek() == "*"_tok) {
-				advance(); // consume '*'
-				CVQualifier ptr_cv = parse_cv_qualifiers();
-				type_spec.add_pointer_level(ptr_cv);
-			}
-			
-			// Apply reference qualifiers if present (e.g., T& or T&&)
-			apply_trailing_reference_qualifiers(type_spec);
+			consume_pointer_ref_modifiers(type_spec);
 		}
 		
 		out_header.trailing_return_type = trailing_result.node();

@@ -1828,21 +1828,6 @@ void Parser::skip_trailing_requires_clause()
 	(void)parse_trailing_requires_clause();
 }
 
-// Apply reference qualifiers (& or &&) to a type specifier if present
-// This is used when parsing template parameter default types like: typename U = T&&
-void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
-	if (peek().is_operator()) {
-		std::string_view op_value = peek_info().value();
-		if (op_value == "&&") {
-			advance();
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (op_value == "&") {
-			advance();
-			type_spec.set_reference(false);  // false = lvalue reference
-		}
-	}
-}
-
 // Consume pointer (*) and reference (& / &&) modifiers, applying them to the type specifier.
 // Handles: T*, T**, T&, T&&, T*&, T* const*, etc.
 // Per C++20 grammar [dcl.decl], ptr-operator (* cv-qualifier-seq? | & | &&) is part of
