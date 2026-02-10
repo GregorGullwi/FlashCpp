@@ -3749,6 +3749,8 @@ if (struct_type_info.getStructInfo()) {
 							else if (peek() == ")"_tok && paren_depth > 0) { advance(); paren_depth--; }
 							else if (peek() == "<"_tok) { advance(); angle_depth++; }
 							else if (peek() == ">"_tok && angle_depth > 0) { advance(); angle_depth--; }
+							else if (peek() == ">>"_tok && angle_depth >= 2) { advance(); angle_depth -= 2; }
+							else if (peek() == ">>"_tok && angle_depth == 1) { split_right_shift_token(); advance(); angle_depth--; break; }
 							else if (paren_depth == 0 && angle_depth == 0 &&
 									 (peek() == ","_tok || peek() == ")"_tok)) {
 								break;
