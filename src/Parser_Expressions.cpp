@@ -9852,8 +9852,35 @@ ParseResult Parser::parse_if_statement() {
         }
     }
 
-    // Parse condition
-    auto condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+    // C++ declaration-as-condition: if (Type var = expr)
+    // The condition can be a declaration with brace-or-equal initializer.
+    // Try to parse as a variable declaration if the next token looks like a type name.
+    // This handles patterns like: if (size_type __n = this->_M_impl._M_finish - __pos)
+    ParseResult condition;
+    if (!init_statement.has_value() && peek().is_identifier()) {
+        auto decl_check = save_token_position();
+        // Create a scope for the declaration variable
+        if (!if_scope.has_value()) {
+            if_scope.emplace(ScopeType::Block);
+        }
+        ParseResult potential_decl = parse_variable_declaration();
+        if (!potential_decl.is_error() && peek() == ")"_tok) {
+            // Valid declaration-as-condition
+            discard_saved_token(decl_check);
+            condition = potential_decl;
+        } else {
+            // Not a declaration, dismiss scope if we just created it and restore
+            if (if_scope.has_value() && !init_statement.has_value()) {
+                if_scope->dismiss();
+                if_scope.reset();
+            }
+            restore_token_position(decl_check);
+            condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+        }
+    } else {
+        // Parse condition as expression
+        condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+    }
     if (condition.is_error()) {
         return condition;
     }

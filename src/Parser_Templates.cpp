@@ -3163,12 +3163,23 @@ ParseResult Parser::parse_template_declaration() {
 						member_result = parse_type_and_name();
 					}
 				}
-				if (member_result.is_error()) {
-					return member_result;
-				}
-				
-				if (!member_result.node().has_value()) {
-					return ParseResult::error("Expected member declaration", peek_info());
+				if (member_result.is_error() || !member_result.node().has_value()) {
+					// Error recovery for partial specialization body: skip to next ';' or '}'
+					// This allows parsing to continue past unsupported member patterns
+					FLASH_LOG(Templates, Debug, "Partial specialization body: recovering from member parse error");
+					while (!peek().is_eof() && peek() != "}"_tok) {
+						if (peek() == ";"_tok) {
+							advance(); // consume ';'
+							break;
+						}
+						if (peek() == "{"_tok) {
+							skip_balanced_braces();
+							if (peek() == ";"_tok) advance();
+							break;
+						}
+						advance();
+					}
+					continue;
 				}
 				
 				// Check if this is a member function (has '(') or data member
@@ -6057,6 +6068,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					
 					// Check if this is an inheriting constructor: using Base::Base;
 					// or a using-declaration: using Base::member;
+					// Also handle: using Base<Args>::member; (template args before ::)
+					// Skip template arguments first
+					if (peek() == "<"_tok) {
+						skip_template_arguments();
+					}
 					if (peek() == "::"_tok) {
 						// Parse the full qualified name
 						std::string_view base_class_name = alias_name;
@@ -6082,6 +6098,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							FLASH_LOG(Parser, Debug, "Inheriting constructors from '", base_class_name, "' in member struct template");
 						} else {
 							FLASH_LOG(Parser, Debug, "Using-declaration imports member '", alias_name, "' in member struct template");
+						}
+						
+						// Consume pack expansion '...' if present (C++17 using-declaration with pack expansion)
+						if (peek() == "..."_tok) {
+							advance(); // consume '...'
 						}
 						
 						// Consume trailing semicolon
