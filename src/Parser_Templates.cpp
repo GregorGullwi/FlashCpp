@@ -3594,9 +3594,21 @@ if (struct_type_info.getStructInfo()) {
 		current_template_param_names_ = std::move(template_param_names_for_body);
 
 		// Parse class template
+		// Save scope/stack state before try block so we can restore on exception
+		const size_t saved_struct_stack_size = struct_parsing_context_stack_.size();
+		const size_t saved_member_func_stack_size = member_function_context_stack_.size();
+		const size_t saved_scope_depth = gSymbolTable.get_current_scope_handle().scope_level;
 		try {
 			decl_result = parse_struct_declaration();
 		} catch (const std::bad_any_cast& e) {
+			// Restore parser state that may have been partially modified
+			while (struct_parsing_context_stack_.size() > saved_struct_stack_size)
+				struct_parsing_context_stack_.pop_back();
+			while (member_function_context_stack_.size() > saved_member_func_stack_size)
+				member_function_context_stack_.pop_back();
+			while (gSymbolTable.get_current_scope_handle().scope_level > saved_scope_depth)
+				gSymbolTable.exit_scope();
+
 			FLASH_LOG(Templates, Error, "bad_any_cast during template struct parsing: ", e.what());
 			// Skip to end of struct body
 			while (!peek().is_eof() && peek() != ";"_tok) {

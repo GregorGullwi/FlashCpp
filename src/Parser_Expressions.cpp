@@ -8047,6 +8047,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
 										}
 										if (instantiated_func.has_value()) {
+											// Check if the function is deleted
+											const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
+											if (func_check && func_check->is_deleted()) {
+												return ParseResult::error("Call to deleted function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+											}
 											// Successfully instantiated template
 											const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
 											if (!decl_ptr) {
@@ -8087,6 +8092,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
 											}
 											if (instantiated_func.has_value()) {
+												// Check if the function is deleted
+												const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
+												if (func_check && func_check->is_deleted()) {
+													return ParseResult::error("Call to deleted function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+												}
 												// Successfully instantiated template
 												const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
 												if (!decl_ptr) {
