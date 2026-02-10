@@ -9649,12 +9649,15 @@ private:
 				variable_scopes.back().variables[param_name_handle].size_in_bits = param_size;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
-				// Also track pointer parameters (T*) since they also contain addresses that need dereferencing
 				// Also track large struct parameters (> 64 bits) which are passed by pointer
-				bool is_passed_by_pointer = is_reference || param_pointer_depth > 0 ||
-				                            (param_type == Type::Struct && param_size > 64);
-				if (is_passed_by_pointer) {
-					setReferenceInfo(offset, param_type, param_size, 
+				// NOTE: Pointer parameters (T*) are NOT tracked here. They hold pointer VALUES directly
+				// on the stack, not references. Accessing a pointer param should yield the pointer value;
+				// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
+				// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
+				bool is_passed_by_reference = is_reference ||
+				                              (param_type == Type::Struct && param_size > 64);
+				if (is_passed_by_reference) {
+					setReferenceInfo(offset, param_type, param_size,
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
 				}
 
@@ -9765,12 +9768,13 @@ private:
 				variable_scopes.back().variables[param.getName()].offset = offset;
 				variable_scopes.back().variables[param.getName()].size_in_bits = param.size_in_bits;
 
-				// Track reference parameters and pointer parameters
-				// Both need pointer dereferencing when accessing their members
+				// Track reference parameters by their stack offset (they need pointer dereferencing)
 				// Also track large struct parameters (> 64 bits) which are passed by pointer
-				bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
-				                            (param.type == Type::Struct && param.size_in_bits > 64);
-				if (is_passed_by_pointer) {
+				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
+				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
+				bool is_passed_by_reference = param.is_reference ||
+				                              (param.type == Type::Struct && param.size_in_bits > 64);
+				if (is_passed_by_reference) {
 					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference);
 				}
 
