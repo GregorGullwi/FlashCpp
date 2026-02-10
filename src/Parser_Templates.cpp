@@ -2140,7 +2140,10 @@ ParseResult Parser::parse_template_declaration() {
 					member_decl.default_initializer,
 					is_ref_member,
 					is_rvalue_ref_member,
-					referenced_size_bits
+					referenced_size_bits,
+					false,
+					{},
+					static_cast<int>(type_spec.pointer_depth())
 				);
 			}
 
@@ -3355,7 +3358,10 @@ ParseResult Parser::parse_template_declaration() {
 					member_decl.default_initializer,
 					is_ref_member,
 					is_rvalue_ref_member,
-					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0
+					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0,
+					false,
+					{},
+					static_cast<int>(type_spec.pointer_depth())
 				);
 			}
 			
@@ -11070,7 +11076,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			member_decl.default_initializer,
 			type_spec.is_reference(),
 			type_spec.is_rvalue_reference(),
-			(type_spec.is_reference() || type_spec.is_rvalue_reference()) ? get_type_size_bits(member_type) : 0
+			(type_spec.is_reference() || type_spec.is_rvalue_reference()) ? get_type_size_bits(member_type) : 0,
+			false,
+			{},
+			static_cast<int>(type_spec.pointer_depth())
 		);
 	}
 	
@@ -11989,7 +11998,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_default_initializer,
 				is_ref_member,
 				is_rvalue_ref_member,
-				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0
+				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0,
+				false,
+				{},
+				static_cast<int>(ptr_depth)
 			);
 		}
 		
@@ -14179,7 +14191,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_default_initializer,
 			is_ref_member,
 			is_rvalue_ref_member,
-			referenced_size_bits
+			referenced_size_bits,
+			false,
+			{},
+			static_cast<int>(type_spec.pointer_depth())
 		);
 	}
 
@@ -14720,7 +14735,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.default_initializer,
 					is_ref_member,
 					is_rvalue_ref_member,
-					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0
+					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0,
+					false,
+					{},
+					static_cast<int>(substituted_type_spec.pointer_depth())
 				);
 			}
 			
@@ -18004,7 +18022,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			is_rvalue_reference,
 			referenced_size_bits,
 			false,  // is_array
-			{}      // array_dimensions
+			{},     // array_dimensions
+			static_cast<int>(type_spec.pointer_depth())
 		);
 	}
 	

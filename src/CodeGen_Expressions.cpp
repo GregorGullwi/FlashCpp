@@ -1674,14 +1674,8 @@
 			// Update type to member type
 			base_components->final_type = result.member->type;
 			base_components->final_size_bits = static_cast<int>(result.member->size * 8);
-			// Infer pointer depth: if the member's stored size (8 bytes on 64-bit) exceeds the
-			// base type's native size, the member is a pointer type (e.g., int* has type=Int,size=8)
-			if (result.member->size == 8 && !result.member->is_reference) {
-				int native_bits = get_type_size_bits(result.member->type);
-				if (native_bits > 0 && native_bits < 64) {
-					base_components->pointer_depth = 1;
-				}
-			}
+			// Use explicit pointer depth from struct member layout
+			base_components->pointer_depth = result.member->pointer_depth;
 			
 			return base_components;
 		}

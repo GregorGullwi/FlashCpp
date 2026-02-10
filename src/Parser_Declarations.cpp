@@ -3687,7 +3687,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					std::nullopt,
 					member_type_spec.is_reference(),
 					member_type_spec.is_rvalue_reference(),
-					member_type_spec.size_in_bits()
+					member_type_spec.size_in_bits(),
+					false,
+					{},
+					static_cast<int>(member_type_spec.pointer_depth())
 				);
 			}
 			
@@ -6466,7 +6469,8 @@ ParseResult Parser::parse_struct_declaration()
 			is_rvalue_ref_member,
 			referenced_size_bits,
 			is_array,
-			array_dimensions
+			array_dimensions,
+			static_cast<int>(type_spec.pointer_depth())
 		);
 		
 		member_index++;
@@ -8600,7 +8604,10 @@ ParseResult Parser::parse_typedef_declaration()
 				member_decl.default_initializer,
 				is_ref_member,
 				is_rvalue_ref_member,
-				referenced_size_bits
+				referenced_size_bits,
+				false,
+				{},
+				static_cast<int>(member_type_spec.pointer_depth())
 			);
 		}
 

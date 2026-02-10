@@ -5406,6 +5406,16 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to emit MOVSS/MOVSD for XMM register-to-register moves
+	void emitFloatMovRegToReg(X64Register xmm_dest, X64Register xmm_src, bool is_double) {
+		textSectionData.push_back(is_double ? 0xF2 : 0xF3);
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x10);
+		uint8_t src_xmm_num = static_cast<uint8_t>(xmm_src) - static_cast<uint8_t>(X64Register::XMM0);
+		uint8_t dst_xmm_num = static_cast<uint8_t>(xmm_dest) - static_cast<uint8_t>(X64Register::XMM0);
+		textSectionData.push_back(static_cast<uint8_t>(0xC0 | (dst_xmm_num << 3) | src_xmm_num));
+	}
+
 	// Helper to emit MOVDQU (unaligned 128-bit move) from XMM register to frame
 	// Used for saving full XMM registers in variadic function register save areas
 	void emitMovdquToFrame(X64Register xmm_src, int32_t offset) {
@@ -13404,18 +13414,8 @@ private:
 						// Value is already in a register
 						// If it's an XMM register and not XMM0, move it
 						if (value_reg.value() != X64Register::XMM0) {
-							// MOVSS XMM0, source_xmm
 							bool is_double = (op.value.size_in_bits == 64);
-							if (is_double) {
-								textSectionData.push_back(0xF2);  // MOVSD prefix
-							} else {
-								textSectionData.push_back(0xF3);  // MOVSS prefix
-							}
-							textSectionData.push_back(0x0F);
-							textSectionData.push_back(0x10);
-							// ModR/M for XMM0 <- source_xmm
-							uint8_t src_xmm_num = static_cast<uint8_t>(value_reg.value()) - static_cast<uint8_t>(X64Register::XMM0);
-							textSectionData.push_back(0xC0 | src_xmm_num);
+							emitFloatMovRegToReg(X64Register::XMM0, value_reg.value(), is_double);
 						}
 					} else {
 						// Load float from stack into XMM0
@@ -13432,8 +13432,7 @@ private:
 					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
 						// Value is already in a register - move it to RDX if not already there
 						if (value_reg.value() != X64Register::RDX) {
-							auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), actual_size_bits / 8);
-							textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+							emitMovRegToReg(value_reg.value(), X64Register::RDX, actual_size_bits);
 						}
 						// If already in RDX, no move needed
 					} else {
@@ -13456,11 +13455,7 @@ private:
 						if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
 							if (value_reg.value() != X64Register::XMM0) {
 								bool is_double = (op.value.size_in_bits == 64);
-								textSectionData.push_back(is_double ? 0xF2 : 0xF3);
-								textSectionData.push_back(0x0F);
-								textSectionData.push_back(0x10);
-								uint8_t src_xmm_num = static_cast<uint8_t>(value_reg.value()) - static_cast<uint8_t>(X64Register::XMM0);
-								textSectionData.push_back(0xC0 | src_xmm_num);
+								emitFloatMovRegToReg(X64Register::XMM0, value_reg.value(), is_double);
 							}
 						} else {
 							bool is_double = (op.value.size_in_bits == 64);
@@ -13469,8 +13464,7 @@ private:
 					} else {
 						if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
 							if (value_reg.value() != X64Register::RDX) {
-								auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), element_size_bits / 8);
-								textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+								emitMovRegToReg(value_reg.value(), X64Register::RDX, element_size_bits);
 							}
 						} else {
 							emitMovFromFrameSized(
