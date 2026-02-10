@@ -303,9 +303,20 @@ ParseResult Parser::parse_statement_or_declaration()
 				// This is a qualified member function call expression, not a variable declaration
 				// But template<args>::type is a type alias - only treat as expression if followed by '('
 				if (peek() == "<"_tok) {
-					// Lookahead: skip template args to check if ::member( follows
+					// Lookahead: skip template args to check what follows
 					SaveHandle template_check = save_token_position();
 					skip_template_arguments();
+					if (peek() == "("_tok) {
+						// template<args>(...) - could be function call or functional cast
+						// Check if the template is a function template
+						auto tmpl_opt = gTemplateRegistry.lookupTemplate(type_name_handle);
+						if (tmpl_opt && is_function_or_template_function(*tmpl_opt)) {
+							// This is a function template call: func<Args>(...)
+							restore_token_position(template_check);
+							restore_token_position(saved_pos);
+							return parse_expression_statement();
+						}
+					}
 					if (peek() == "::"_tok) {
 						advance(); // consume '::'
 						if (peek().is_identifier()) {
