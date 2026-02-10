@@ -5408,12 +5408,19 @@ private:
 
 	// Helper to emit MOVSS/MOVSD for XMM register-to-register moves
 	void emitFloatMovRegToReg(X64Register xmm_dest, X64Register xmm_src, bool is_double) {
-		textSectionData.push_back(is_double ? 0xF2 : 0xF3);
-		textSectionData.push_back(0x0F);
-		textSectionData.push_back(0x10);
 		uint8_t src_xmm_num = static_cast<uint8_t>(xmm_src) - static_cast<uint8_t>(X64Register::XMM0);
 		uint8_t dst_xmm_num = static_cast<uint8_t>(xmm_dest) - static_cast<uint8_t>(X64Register::XMM0);
-		textSectionData.push_back(static_cast<uint8_t>(0xC0 | (dst_xmm_num << 3) | src_xmm_num));
+		textSectionData.push_back(is_double ? 0xF2 : 0xF3);
+		// REX prefix needed when either register is XMM8-XMM15
+		if (dst_xmm_num >= 8 || src_xmm_num >= 8) {
+			uint8_t rex = 0x40;
+			if (dst_xmm_num >= 8) rex |= 0x04;  // REX.R
+			if (src_xmm_num >= 8) rex |= 0x01;  // REX.B
+			textSectionData.push_back(rex);
+		}
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x10);
+		textSectionData.push_back(static_cast<uint8_t>(0xC0 | ((dst_xmm_num & 0x07) << 3) | (src_xmm_num & 0x07)));
 	}
 
 	// Helper to emit MOVDQU (unaligned 128-bit move) from XMM register to frame
