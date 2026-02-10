@@ -9836,10 +9836,17 @@ ParseResult Parser::parse_if_statement() {
     if (peek().is_keyword() && type_keywords.find(peek_info().value()) != type_keywords.end()) {
         try_declaration = true;
     } else if (peek().is_identifier()) {
-        // Lookahead: only try declaration for "identifier identifier =" pattern
+        // Lookahead: check for "Type name =" pattern where Type can be qualified (ns::Type)
         // This avoids misinterpreting simple "if (x)" as a declaration
         auto lookahead = save_token_position();
         advance(); // skip potential type name
+        // Skip qualified name components: ns::inner::Type
+        while (peek() == "::"_tok) {
+            advance(); // skip '::'
+            if (peek().is_identifier()) {
+                advance(); // skip next component
+            }
+        }
         if (peek() == "<"_tok) {
             skip_template_arguments();
         }

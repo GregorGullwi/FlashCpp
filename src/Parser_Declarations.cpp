@@ -5843,7 +5843,7 @@ ParseResult Parser::parse_struct_declaration()
 			if (member_result.is_error()) {
 				// In template body, recover from member parse errors by skipping to next ';' or '}'
 				if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
-					FLASH_LOG(Parser, Debug, "Template struct body: recovering from member parse error");
+					FLASH_LOG(Parser, Warning, "Template struct body: skipping unparseable member declaration at ", peek_info().value());
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						if (peek() == ";"_tok) {
 							advance(); // consume ';'
@@ -5866,7 +5866,7 @@ ParseResult Parser::parse_struct_declaration()
 		if (!member_result.node().has_value()) {
 			// In template body, recover from missing member declaration
 			if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
-				FLASH_LOG(Parser, Debug, "Template struct body: recovering from missing member declaration");
+				FLASH_LOG(Parser, Warning, "Template struct body: skipping unparseable member declaration at ", peek_info().value());
 				while (!peek().is_eof() && peek() != "}"_tok) {
 					if (peek() == ";"_tok) {
 						advance();

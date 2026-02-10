@@ -287,22 +287,42 @@ ParseResult Parser::parse_template_declaration() {
 								} else if (peek_info().value() == "operator") {
 									// Handle operator overloads: Class<T>::operator()(...)
 									nested_class_name = class_token.value();
-									nested_func_name_token = peek_info();
+									Token operator_keyword = peek_info();
 									advance(); // consume 'operator'
-									// Consume the operator symbol(s): (), [], +, -, etc.
+									// Consume the operator symbol(s) and build the full name
+									std::string_view full_op_name;
 									if (peek() == "("_tok) {
 										advance(); // consume '('
 										if (peek() == ")"_tok) {
 											advance(); // consume ')' -> operator()
 										}
+										static const std::string op_call = "operator()";
+										full_op_name = op_call;
 									} else if (peek() == "["_tok) {
 										advance(); // consume '['
 										if (peek() == "]"_tok) {
 											advance(); // consume ']' -> operator[]
 										}
+										static const std::string op_subscript = "operator[]";
+										full_op_name = op_subscript;
 									} else if (peek().is_operator() || peek().is_punctuator()) {
+										// Build "operator+" etc.
+										static std::unordered_map<std::string_view, std::string> op_names;
+										auto sym = peek_info().value();
+										auto it = op_names.find(sym);
+										if (it == op_names.end()) {
+											it = op_names.emplace(sym, "operator" + std::string(sym)).first;
+										}
+										full_op_name = it->second;
 										advance(); // consume single-char operator
+									} else {
+										static const std::string op_default = "operator";
+										full_op_name = op_default;
 									}
+									// Create a token with the full operator name
+									nested_func_name_token = Token(Token::Type::Identifier, full_op_name,
+										operator_keyword.line(), operator_keyword.column(),
+										operator_keyword.file_index());
 									found_nested_def = true;
 									if (peek() == "("_tok) {
 										break;
@@ -3166,7 +3186,7 @@ ParseResult Parser::parse_template_declaration() {
 				if (member_result.is_error() || !member_result.node().has_value()) {
 					// Error recovery for partial specialization body: skip to next ';' or '}'
 					// This allows parsing to continue past unsupported member patterns
-					FLASH_LOG(Templates, Debug, "Partial specialization body: recovering from member parse error");
+					FLASH_LOG(Templates, Warning, "Partial specialization body: skipping unparseable member declaration at ", peek_info().value());
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						if (peek() == ";"_tok) {
 							advance(); // consume ';'
@@ -6069,11 +6089,21 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					// Check if this is an inheriting constructor: using Base::Base;
 					// or a using-declaration: using Base::member;
 					// Also handle: using Base<Args>::member; (template args before ::)
-					// Skip template arguments first
+					// Use save/restore to safely disambiguate '<' as template args vs comparison
+					bool found_qualified = false;
 					if (peek() == "<"_tok) {
+						auto tmpl_check = save_token_position();
 						skip_template_arguments();
+						if (peek() == "::"_tok) {
+							// Confirmed: '<' was template arguments before '::'
+							discard_saved_token(tmpl_check);
+							found_qualified = true;
+						} else {
+							// Not followed by '::', so '<' was not template args here
+							restore_token_position(tmpl_check);
+						}
 					}
-					if (peek() == "::"_tok) {
+					if (found_qualified || peek() == "::"_tok) {
 						// Parse the full qualified name
 						std::string_view base_class_name = alias_name;
 						
