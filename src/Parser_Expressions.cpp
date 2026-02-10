@@ -9854,32 +9854,54 @@ ParseResult Parser::parse_if_statement() {
 
     // C++ declaration-as-condition: if (Type var = expr)
     // The condition can be a declaration with brace-or-equal initializer.
-    // Try to parse as a variable declaration if the next token looks like a type name.
+    // Only try when we see "identifier identifier =" pattern (Type name = ...).
     // This handles patterns like: if (size_type __n = this->_M_impl._M_finish - __pos)
+    // Note: keyword types (int, bool) are NOT handled here since codegen doesn't support
+    // declaration-as-condition yet. This primarily helps standard header parsing where
+    // such patterns appear in deferred template bodies.
     ParseResult condition;
-    if (!init_statement.has_value() && peek().is_identifier()) {
-        auto decl_check = save_token_position();
-        // Create a scope for the declaration variable
-        if (!if_scope.has_value()) {
-            if_scope.emplace(ScopeType::Block);
-        }
-        ParseResult potential_decl = parse_variable_declaration();
-        if (!potential_decl.is_error() && peek() == ")"_tok) {
-            // Valid declaration-as-condition
-            discard_saved_token(decl_check);
-            condition = potential_decl;
-        } else {
-            // Not a declaration, dismiss scope if we just created it and restore
-            if (if_scope.has_value() && !init_statement.has_value()) {
-                if_scope->dismiss();
-                if_scope.reset();
+    {
+        bool try_decl_condition = false;
+        if (!init_statement.has_value() && peek().is_identifier()) {
+            // Lookahead: check for "Type name =" pattern without consuming tokens
+            auto lookahead = save_token_position();
+            advance(); // skip potential type name
+            // Also skip template arguments: Type<Args> name = ...
+            if (peek() == "<"_tok) {
+                skip_template_arguments();
             }
-            restore_token_position(decl_check);
+            // Also skip pointer/ref modifiers: Type* name = ... or Type& name = ...
+            while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
+                advance();
+            }
+            if (peek().is_identifier()) {
+                advance(); // skip potential variable name
+                if (peek() == "="_tok || peek() == "{"_tok) {
+                    try_decl_condition = true;
+                }
+            }
+            restore_token_position(lookahead);
+        }
+        if (try_decl_condition) {
+            auto decl_check = save_token_position();
+            if (!if_scope.has_value()) {
+                if_scope.emplace(ScopeType::Block);
+            }
+            ParseResult potential_decl = parse_variable_declaration();
+            if (!potential_decl.is_error() && peek() == ")"_tok) {
+                discard_saved_token(decl_check);
+                condition = potential_decl;
+            } else {
+                if (if_scope.has_value() && !init_statement.has_value()) {
+                    if_scope->dismiss();
+                    if_scope.reset();
+                }
+                restore_token_position(decl_check);
+                condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+            }
+        } else {
             condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
         }
-    } else {
-        // Parse condition as expression
-        condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
     }
     if (condition.is_error()) {
         return condition;
