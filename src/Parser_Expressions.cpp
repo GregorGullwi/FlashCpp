@@ -61,24 +61,9 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 		return ParseResult::error(std::string(StringBuilder().append("Expected type in ").append(cast_name).commit()), current_token_);
 	}
 
-	// Parse pointer declarators: * [const] [volatile] *...
+	// Parse pointer/reference declarators: *, **, &, && (ptr-operator in C++20 grammar)
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-	while (peek() == "*"_tok) {
-		advance(); // consume '*'
-
-		// Check for CV-qualifiers after the *
-		CVQualifier ptr_cv = parse_cv_qualifiers();
-
-		type_spec.add_pointer_level(ptr_cv);
-	}
-
-	// Parse reference declarators: & or &&
-	ReferenceQualifier ref_qual = parse_reference_qualifier();
-	if (ref_qual == ReferenceQualifier::RValueReference) {
-		type_spec.set_reference(true);  // true = rvalue reference
-	} else if (ref_qual == ReferenceQualifier::LValueReference) {
-		type_spec.set_reference(false);  // false = lvalue reference
-	}
+	consume_pointer_ref_modifiers(type_spec);
 
 	// Expect '>'
 	if (peek() != ">"_tok) {
@@ -198,23 +183,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		if (!type_result.is_error() && type_result.node().has_value()) {
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 			
-			// Parse pointer declarators: * (potentially with const/volatile)
-			while (peek() == "*"_tok) {
-				advance(); // consume '*'
-				
-				// Check for cv-qualifiers after the pointer
-				CVQualifier ptr_cv = parse_cv_qualifiers();
-				
-				type_spec.add_pointer_level(ptr_cv);
-			}
-			
-			// Parse reference declarators: & or &&
-			ReferenceQualifier ref_qual = parse_reference_qualifier();
-			if (ref_qual == ReferenceQualifier::RValueReference) {
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else if (ref_qual == ReferenceQualifier::LValueReference) {
-				type_spec.set_reference(false);  // false = lvalue reference
-			}
+			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
+			consume_pointer_ref_modifiers(type_spec);
 
 			// Check if followed by ')'
 			if (consume(")"_tok)) {
@@ -606,37 +576,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// This handles sizeof(void *), sizeof(int **), sizeof(Foo &), etc.
 			bool is_complete_type = false;
 			if (!type_result.is_error() && type_result.node().has_value()) {
-				// Parse any pointer (* const * volatile) or reference (& &&) declarators
+				// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				
-				while (!peek().is_eof()) {
-					auto next_token = peek_info();
-					if (next_token.value() == "*") {
-						// Parse pointer with optional cv-qualifiers
-						advance(); // consume '*'
-						
-						// Check for const/volatile after *
-						CVQualifier ptr_cv = parse_cv_qualifiers();
-						
-						type_spec.add_pointer_level(ptr_cv);
-					} else if (next_token.value() == "&") {
-						// Lvalue reference
-						advance();
-						
-						// Check if it's rvalue reference (&&)
-						if (peek() == "&"_tok) {
-							advance();
-							type_spec.set_reference(true); // rvalue reference
-						} else {
-							type_spec.set_lvalue_reference(true);
-						}
-						// References can't have further declarators
-						break;
-					} else {
-						// Not a pointer or reference declarator
-						break;
-					}
-				}
+				consume_pointer_ref_modifiers(type_spec);
 				
 				// Now check if ')' follows
 				if (peek() == ")"_tok) {
@@ -704,37 +646,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		// This handles alignof(void *), alignof(int **), alignof(Foo &), etc.
 		bool is_complete_type = false;
 		if (!type_result.is_error() && type_result.node().has_value()) {
-			// Parse any pointer (* const * volatile) or reference (& &&) declarators
+			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-			
-			while (!peek().is_eof()) {
-				auto next_token = peek_info();
-				if (next_token.value() == "*") {
-					// Parse pointer with optional cv-qualifiers
-					advance(); // consume '*'
-					
-					// Check for const/volatile after *
-					CVQualifier ptr_cv = parse_cv_qualifiers();
-					
-					type_spec.add_pointer_level(ptr_cv);
-				} else if (next_token.value() == "&") {
-					// Lvalue reference
-					advance();
-					
-					// Check if it's rvalue reference (&&)
-					if (peek() == "&"_tok) {
-						advance();
-						type_spec.set_reference(true); // rvalue reference
-					} else {
-						type_spec.set_lvalue_reference(true);
-					}
-					// References can't have further declarators
-					break;
-				} else {
-					// Not a pointer or reference declarator
-					break;
-				}
-			}
+			consume_pointer_ref_modifiers(type_spec);
 			
 			// Now check if ')' follows
 			if (peek() == ")"_tok) {
@@ -1914,27 +1828,26 @@ void Parser::skip_trailing_requires_clause()
 	(void)parse_trailing_requires_clause();
 }
 
-// Apply reference qualifiers (& or &&) to a type specifier if present
-// This is used when parsing template parameter default types like: typename U = T&&
-void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
-	if (peek().is_operator()) {
-		std::string_view op_value = peek_info().value();
-		if (op_value == "&&") {
-			advance();
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (op_value == "&") {
-			advance();
-			type_spec.set_reference(false);  // false = lvalue reference
-		}
-	}
-}
-
 // Consume pointer (*) and reference (& / &&) modifiers, applying them to the type specifier.
-// Handles: T*, T**, T&, T&&, T*&, etc.
+// Handles: T*, T**, T&, T&&, T*&, T* const*, etc.
+// Per C++20 grammar [dcl.decl], ptr-operator (* cv-qualifier-seq? | & | &&) is part of
+// the declarator, not the type-specifier-seq. This helper is called by declarator-parsing
+// sites after parse_type_specifier() to consume the ptr-operator portion.
+// Also consumes and ignores MSVC-specific pointer modifiers (__ptr32, __ptr64, __w64,
+// __unaligned, __uptr, __sptr) that may appear after cv-qualifiers on pointer declarators.
 void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
+	// Microsoft-specific pointer modifier check — same list used in parse_type_specifier()
+	auto is_msvc_pointer_modifier = [](std::string_view kw) {
+		return kw == "__ptr32" || kw == "__ptr64" || kw == "__w64" ||
+		       kw == "__unaligned" || kw == "__uptr" || kw == "__sptr";
+	};
 	while (peek() == "*"_tok) {
 		advance(); // consume '*'
 		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
+		// Consume and ignore Microsoft-specific pointer modifiers
+		while (peek().is_keyword() && is_msvc_pointer_modifier(peek_info().value())) {
+			advance();
+		}
 		type_spec.add_pointer_level(ptr_cv);
 	}
 	if (peek() == "&&"_tok) {
@@ -4063,24 +3976,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::error("Expected type in type trait intrinsic", current_token_);
 				}
 
-				// Parse pointer/reference modifiers after the base type
+				// Parse pointer/reference modifiers after the base type (ptr-operator in C++20 grammar)
 				// e.g., int* or int&& in type trait arguments
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				
-				// Parse pointer depth (*)
-				while (peek() == "*"_tok) {
-					advance();
-					type_spec.add_pointer_level();
-				}
-				
-				// Parse reference (&) or rvalue reference (&&)
-				// Note: The lexer tokenizes && as a single token, not two separate & tokens
-				ReferenceQualifier ref_qual = parse_reference_qualifier();
-				if (ref_qual == ReferenceQualifier::RValueReference) {
-					type_spec.set_reference(true);  // true for rvalue reference
-				} else if (ref_qual == ReferenceQualifier::LValueReference) {
-					type_spec.set_reference(false);  // false for lvalue reference
-				}
+				consume_pointer_ref_modifiers(type_spec);
 
 				// Parse array specifications ([N] or [])
 				if (peek() == "["_tok) {
@@ -4128,20 +4027,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							return ParseResult::error("Expected type argument in variadic type trait", current_token_);
 						}
 						
-						// Parse pointer/reference modifiers for additional type arguments
+						// Parse pointer/reference modifiers for additional type arguments (ptr-operator in C++20 grammar)
 						TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
-						while (peek() == "*"_tok) {
-							advance();
-							arg_type_spec.add_pointer_level();
-						}
-						
-						// Parse reference qualifiers (&, &&)
-						ReferenceQualifier arg_ref_qual = parse_reference_qualifier();
-						if (arg_ref_qual == ReferenceQualifier::RValueReference) {
-							arg_type_spec.set_reference(true);  // rvalue reference
-						} else if (arg_ref_qual == ReferenceQualifier::LValueReference) {
-							arg_type_spec.set_reference(false);  // lvalue reference
-						}
+						consume_pointer_ref_modifiers(arg_type_spec);
 						
 						// Parse array specifications ([N] or []) for variadic trait additional args
 						std::optional<size_t> array_size_val;
@@ -4195,22 +4083,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return ParseResult::error("Expected second type in binary type trait", current_token_);
 					}
 
-					// Parse pointer/reference modifiers for second type
+					// Parse pointer/reference modifiers for second type (ptr-operator in C++20 grammar)
 					TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
-					while (peek() == "*"_tok) {
-						advance();
-						second_type_spec.add_pointer_level();
-					}
-					if (!peek().is_eof()) {
-						std::string_view next_token = peek_info().value();
-						if (next_token == "&&") {
-							advance();
-							second_type_spec.set_reference(true);  // rvalue reference
-						} else if (next_token == "&") {
-							advance();
-							second_type_spec.set_reference(false);  // lvalue reference
-						}
-					}
+					consume_pointer_ref_modifiers(second_type_spec);
 
 					// Parse array specifications ([N] or []) for binary trait second type
 					std::optional<size_t> array_size_val;

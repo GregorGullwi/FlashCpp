@@ -2140,7 +2140,10 @@ ParseResult Parser::parse_template_declaration() {
 					member_decl.default_initializer,
 					is_ref_member,
 					is_rvalue_ref_member,
-					referenced_size_bits
+					referenced_size_bits,
+					false,
+					{},
+					static_cast<int>(type_spec.pointer_depth())
 				);
 			}
 
@@ -3355,7 +3358,10 @@ ParseResult Parser::parse_template_declaration() {
 					member_decl.default_initializer,
 					is_ref_member,
 					is_rvalue_ref_member,
-					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0
+					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0,
+					false,
+					{},
+					static_cast<int>(type_spec.pointer_depth())
 				);
 			}
 			
@@ -4179,20 +4185,8 @@ ParseResult Parser::parse_requires_expression() {
 			CVQualifier cv = parse_cv_qualifiers();
 			type_spec.add_cv_qualifier(cv);
 			
-			// Parse pointer declarators
-			while (peek() == "*"_tok) {
-				advance(); // consume '*'
-				CVQualifier ptr_cv = parse_cv_qualifiers();
-				type_spec.add_pointer_level(ptr_cv);
-			}
-			
-			// Parse reference qualifiers (& or &&)
-			ReferenceQualifier ref = parse_reference_qualifier();
-			if (ref == ReferenceQualifier::LValueReference) {
-				type_spec.set_reference(false);  // false = lvalue reference
-			} else if (ref == ReferenceQualifier::RValueReference) {
-				type_spec.set_reference(true);   // true = rvalue reference
-			}
+			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
+			consume_pointer_ref_modifiers(type_spec);
 			
 			// Parse parameter name
 			if (!peek().is_identifier()) {
@@ -4658,15 +4652,8 @@ ParseResult Parser::parse_template_parameter() {
 				if (default_type_result.node().has_value()) {
 					TypeSpecifierNode& type_spec = default_type_result.node()->as<TypeSpecifierNode>();
 					
-					// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
-					while (peek() == "*"_tok) {
-						advance(); // consume '*'
-						CVQualifier ptr_cv = parse_cv_qualifiers();
-						type_spec.add_pointer_level(ptr_cv);
-					}
-					
-					// Apply reference qualifiers if present (e.g., T& or T&&)
-					apply_trailing_reference_qualifiers(type_spec);
+					// Apply pointer/reference qualifiers (ptr-operator in C++20 grammar)
+					consume_pointer_ref_modifiers(type_spec);
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
@@ -4743,15 +4730,8 @@ ParseResult Parser::parse_template_parameter() {
 				if (default_type_result.node().has_value()) {
 					TypeSpecifierNode& type_spec = default_type_result.node()->as<TypeSpecifierNode>();
 					
-					// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
-					while (peek() == "*"_tok) {
-						advance(); // consume '*'
-						CVQualifier ptr_cv = parse_cv_qualifiers();
-						type_spec.add_pointer_level(ptr_cv);
-					}
-					
-					// Apply reference qualifiers if present (e.g., T& or T&&)
-					apply_trailing_reference_qualifiers(type_spec);
+					// Apply pointer/reference qualifiers (ptr-operator in C++20 grammar)
+					consume_pointer_ref_modifiers(type_spec);
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
@@ -5467,10 +5447,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 			    peek() != "["_tok && peek() != "new"_tok && peek() != "delete"_tok) {
 				auto type_result = parse_type_specifier();
 				if (!type_result.is_error() && type_result.node().has_value()) {
-					// Skip pointer/reference qualifiers on conversion target type
-					while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {	// Should we call consume_pointer_ref_modifiers() here?
-						advance();
-					}
+					// Apply pointer/reference qualifiers on conversion target type (ptr-operator in C++20 grammar)
+					TypeSpecifierNode& conv_target_type = type_result.node()->as<TypeSpecifierNode>();
+					consume_pointer_ref_modifiers(conv_target_type);
 					if (peek() == "("_tok) {
 						found_conversion_op = true;
 
@@ -6102,24 +6081,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						return type_result;
 					}
 					
-					// Parse reference modifiers after the type (e.g., T&, T&&)
+					// Parse pointer/reference modifiers after the type (ptr-operator in C++20 grammar)
 					// This allows patterns like: using type = remove_reference_t<T>&&;
 					if (type_result.node().has_value()) {
 						TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-						
-						// Handle && (rvalue reference) - either as single token or two & tokens
-						if (peek() == "&&"_tok) {
-							advance(); // consume '&&'
-							type_spec.set_reference(true);  // true = rvalue reference
-						} else if (peek() == "&"_tok) {
-							advance(); // consume first '&'
-							if (peek() == "&"_tok) {
-								advance(); // consume second '&'
-								type_spec.set_reference(true);  // rvalue reference
-							} else {
-								type_spec.set_lvalue_reference(true);  // lvalue reference
-							}
-						}
+						consume_pointer_ref_modifiers(type_spec);
 					}
 					
 					// Expect ';'
@@ -11110,7 +11076,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			member_decl.default_initializer,
 			type_spec.is_reference(),
 			type_spec.is_rvalue_reference(),
-			(type_spec.is_reference() || type_spec.is_rvalue_reference()) ? get_type_size_bits(member_type) : 0
+			(type_spec.is_reference() || type_spec.is_rvalue_reference()) ? get_type_size_bits(member_type) : 0,
+			false,
+			{},
+			static_cast<int>(type_spec.pointer_depth())
 		);
 	}
 	
@@ -12059,7 +12028,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_default_initializer,
 				is_ref_member,
 				is_rvalue_ref_member,
-				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0
+				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0,
+				false,
+				{},
+				static_cast<int>(ptr_depth)
 			);
 		}
 		
@@ -14284,7 +14256,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_default_initializer,
 			is_ref_member,
 			is_rvalue_ref_member,
-			referenced_size_bits
+			referenced_size_bits,
+			false,
+			{},
+			static_cast<int>(type_spec.pointer_depth())
 		);
 	}
 
@@ -14825,7 +14800,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.default_initializer,
 					is_ref_member,
 					is_rvalue_ref_member,
-					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0
+					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0,
+					false,
+					{},
+					static_cast<int>(substituted_type_spec.pointer_depth())
 				);
 			}
 			
@@ -18114,7 +18092,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			is_rvalue_reference,
 			referenced_size_bits,
 			false,  // is_array
-			{}      // array_dimensions
+			{},     // array_dimensions
+			static_cast<int>(type_spec.pointer_depth())
 		);
 	}
 	

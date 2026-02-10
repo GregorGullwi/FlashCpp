@@ -5406,6 +5406,23 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to emit MOVSS/MOVSD for XMM register-to-register moves
+	void emitFloatMovRegToReg(X64Register xmm_dest, X64Register xmm_src, bool is_double) {
+		uint8_t src_xmm_num = static_cast<uint8_t>(xmm_src) - static_cast<uint8_t>(X64Register::XMM0);
+		uint8_t dst_xmm_num = static_cast<uint8_t>(xmm_dest) - static_cast<uint8_t>(X64Register::XMM0);
+		textSectionData.push_back(is_double ? 0xF2 : 0xF3);
+		// REX prefix needed when either register is XMM8-XMM15
+		if (dst_xmm_num >= 8 || src_xmm_num >= 8) {
+			uint8_t rex = 0x40;
+			if (dst_xmm_num >= 8) rex |= 0x04;  // REX.R
+			if (src_xmm_num >= 8) rex |= 0x01;  // REX.B
+			textSectionData.push_back(rex);
+		}
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x10);
+		textSectionData.push_back(static_cast<uint8_t>(0xC0 | ((dst_xmm_num & 0x07) << 3) | (src_xmm_num & 0x07)));
+	}
+
 	// Helper to emit MOVDQU (unaligned 128-bit move) from XMM register to frame
 	// Used for saving full XMM registers in variadic function register save areas
 	void emitMovdquToFrame(X64Register xmm_src, int32_t offset) {
@@ -8395,19 +8412,69 @@ private:
 							// Source is a reference - copy the pointer value
 							FLASH_LOG(Codegen, Debug, "Using MOV (source is reference)");
 							emitMovFromFrame(pointer_reg, src_it->second.offset);
-						} else if (init.size_in_bits == 64 && 
-						           (init.type == Type::Long || init.type == Type::Int || 
-						            init.type == Type::UnsignedLong || init.type == Type::LongLong)) {
-							// 64-bit value, likely a pointer
-							FLASH_LOG(Codegen, Debug, "Using MOV (64-bit type)");
-							emitMovFromFrame(pointer_reg, src_it->second.offset);
 						} else {
-							// Regular value - take its address
-							FLASH_LOG(Codegen, Debug, "Using LEA (regular value)");
+							// Named variable: take its address via LEA.
+							// This is correct for all types including pointer variables
+							// (int*& pr = p; needs the address OF p, not p's value).
+							FLASH_LOG(Codegen, Debug, "Using LEA (named variable)");
 							emitLeaFromFrame(pointer_reg, src_it->second.offset);
 						}
 						pointer_initialized = true;
 					}
+				} else if (std::holds_alternative<unsigned long long>(init.value) ||
+				           std::holds_alternative<double>(init.value)) {
+					// Literal initializer for reference: materialize a temporary.
+					// C++ allows binding rvalue references and const lvalue references
+					// to literals (e.g., int&& rr = 42; const int& cr = 42;) by
+					// extending the lifetime of a temporary.
+					int lit_size = op.size_in_bits;
+					if (lit_size == 64) {
+						// For references, size_in_bits is 64 (pointer size);
+						// use the actual value size from get_type_size_bits
+						int actual = get_type_size_bits(var_type);
+						if (actual > 0 && actual != 64) lit_size = actual;
+					}
+					int lit_bytes = (lit_size + 7) / 8;
+					lit_bytes = (lit_bytes + 7) & ~7;  // 8-byte aligned
+
+					// Allocate hidden stack space for the temporary
+					next_temp_var_offset_ += lit_bytes;
+					int32_t temp_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+					if (temp_offset < variable_scopes.back().scope_stack_space)
+						variable_scopes.back().scope_stack_space = temp_offset;
+
+
+					// Store the literal value into the temporary
+					X64Register lit_reg = allocateRegisterWithSpilling();
+					if (std::holds_alternative<double>(init.value)) {
+						double value = std::get<double>(init.value);
+						uint64_t bits;
+						if (var_type == Type::Float) {
+							float fv = static_cast<float>(value);
+							uint32_t fb; std::memcpy(&fb, &fv, sizeof(fb));
+							emitMovDwordPtrImmToRegOffset(X64Register::RBP, temp_offset, fb);
+						} else {
+							std::memcpy(&bits, &value, sizeof(bits));
+							emitMovImm64(lit_reg, bits);
+							emitMovToFrameSized(
+								SizedRegister{lit_reg, 64, false},
+								SizedStackSlot{temp_offset, lit_size, false}
+							);
+						}
+					} else {
+						uint64_t value = std::get<unsigned long long>(init.value);
+						emitMovImm64(lit_reg, value);
+						emitMovToFrameSized(
+							SizedRegister{lit_reg, 64, false},
+							SizedStackSlot{temp_offset, lit_size, isSignedType(var_type)}
+						);
+					}
+					regAlloc.release(lit_reg);
+
+					// Take address of the temporary
+					FLASH_LOG(Codegen, Debug, "Materializing temporary for reference literal at offset=", temp_offset);
+					emitLeaFromFrame(pointer_reg, temp_offset);
+					pointer_initialized = true;
 				}
 				if (!pointer_initialized) {
 					FLASH_LOG(Codegen, Error, "Reference initializer is not an addressable lvalue");
@@ -13354,18 +13421,8 @@ private:
 						// Value is already in a register
 						// If it's an XMM register and not XMM0, move it
 						if (value_reg.value() != X64Register::XMM0) {
-							// MOVSS XMM0, source_xmm
 							bool is_double = (op.value.size_in_bits == 64);
-							if (is_double) {
-								textSectionData.push_back(0xF2);  // MOVSD prefix
-							} else {
-								textSectionData.push_back(0xF3);  // MOVSS prefix
-							}
-							textSectionData.push_back(0x0F);
-							textSectionData.push_back(0x10);
-							// ModR/M for XMM0 <- source_xmm
-							uint8_t src_xmm_num = static_cast<uint8_t>(value_reg.value()) - static_cast<uint8_t>(X64Register::XMM0);
-							textSectionData.push_back(0xC0 | src_xmm_num);
+							emitFloatMovRegToReg(X64Register::XMM0, value_reg.value(), is_double);
 						}
 					} else {
 						// Load float from stack into XMM0
@@ -13382,8 +13439,7 @@ private:
 					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
 						// Value is already in a register - move it to RDX if not already there
 						if (value_reg.value() != X64Register::RDX) {
-							auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), actual_size_bits / 8);
-							textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+							emitMovRegToReg(value_reg.value(), X64Register::RDX, actual_size_bits);
 						}
 						// If already in RDX, no move needed
 					} else {
@@ -13393,6 +13449,36 @@ private:
 							SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
 							SizedStackSlot{static_cast<int32_t>(value_offset), actual_size_bits, false}  // source: Never sign-extend pointers!
 						);
+					}
+				}
+			} else if (std::holds_alternative<StringHandle>(op.value.value)) {
+				// Value from named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
+				StringHandle value_name = std::get<StringHandle>(op.value.value);
+				const StackVariableScope& current_scope = variable_scopes.back();
+				auto it = current_scope.variables.find(value_name);
+				if (it != current_scope.variables.end()) {
+					int32_t value_offset = it->second.offset;
+					if (is_float_store) {
+						if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+							if (value_reg.value() != X64Register::XMM0) {
+								bool is_double = (op.value.size_in_bits == 64);
+								emitFloatMovRegToReg(X64Register::XMM0, value_reg.value(), is_double);
+							}
+						} else {
+							bool is_double = (op.value.size_in_bits == 64);
+							emitFloatMovFromFrame(X64Register::XMM0, value_offset, !is_double);
+						}
+					} else {
+						if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+							if (value_reg.value() != X64Register::RDX) {
+								emitMovRegToReg(value_reg.value(), X64Register::RDX, element_size_bits);
+							}
+						} else {
+							emitMovFromFrameSized(
+								SizedRegister{X64Register::RDX, 64, false},
+								SizedStackSlot{value_offset, element_size_bits, false}
+							);
+						}
 					}
 				}
 			}

@@ -1674,6 +1674,8 @@
 			// Update type to member type
 			base_components->final_type = result.member->type;
 			base_components->final_size_bits = static_cast<int>(result.member->size * 8);
+			// Use explicit pointer depth from struct member layout
+			base_components->pointer_depth = result.member->pointer_depth;
 			
 			return base_components;
 		}
@@ -2903,6 +2905,28 @@
 					return operandIrOperands;
 				}
 				
+				// Emit assignment to copy the pointer value into lvalue_temp.
+				// This is needed for reference initialization from *ptr (e.g., int& x = *__begin;).
+				// The reference init code reads the TempVar's stack value; without this
+				// assignment the slot would be uninitialized.
+				IrValue rhs_value;
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					rhs_value = std::get<StringHandle>(operandIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
+					rhs_value = std::get<TempVar>(operandIrOperands[2]);
+				} else if (std::holds_alternative<unsigned long long>(operandIrOperands[2])) {
+					rhs_value = std::get<unsigned long long>(operandIrOperands[2]);
+				} else {
+					rhs_value = 0ULL;
+				}
+				AssignmentOp copy_op;
+				copy_op.result = lvalue_temp;
+				copy_op.lhs = TypedValue{operandType, 64, lvalue_temp};
+				copy_op.rhs = TypedValue{operandType, 64, rhs_value};
+				copy_op.is_pointer_store = false;
+				copy_op.dereference_rhs_references = false;
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_op), Token()));
+
 				// Set lvalue metadata with Indirect kind (dereference)
 				LValueInfo lvalue_info(
 					LValueInfo::Kind::Indirect,
@@ -2911,9 +2935,10 @@
 				);
 				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
 				
-				// Return with TempVar that has the lvalue metadata
+				// Return with TempVar that has the lvalue metadata.
+				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
 				unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
-				return { operandType, element_size, lvalue_temp, result_ptr_depth };
+				return { operandType, 64, lvalue_temp, result_ptr_depth };
 			}
 			
 			int element_size = 64; // Default to pointer size
@@ -3899,6 +3924,12 @@
 				}
 			}
 		}
+		
+		// Fallback: extract pointer depth from the LHS operands (4th element)
+		// This handles expressions like &member, function calls returning pointers, etc.
+		if (lhs_pointer_depth == 0 && lhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+			lhs_pointer_depth = static_cast<int>(std::get<unsigned long long>(lhsIrOperands[3]));
+		}
 
 		// Try to get pointer depth for RHS as well (for ptr - ptr case)
 		int rhs_pointer_depth = 0;
@@ -3961,19 +3992,24 @@
 		// Special handling for pointer arithmetic (ptr + int or ptr - int)
 		// Only apply if LHS is actually a pointer (has pointer_depth > 0)
 		// NOT for regular 64-bit integers like long, even though they are also 64 bits
-		if ((op == "+" || op == "-") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType) && lhs_type_node) {
+		if ((op == "+" || op == "-") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType)) {
 			// Left side is a pointer (64-bit with pointer_depth > 0), right side is integer
 			// Result should be a pointer (64-bit)
 			// Need to scale the offset by sizeof(pointed-to-type)
 		
-			// Determine element size using existing getSizeInBytes function
+			// Determine element size
 			size_t element_size;
 			if (lhs_pointer_depth > 1) {
 				// Multi-level pointer: element is a pointer, so 8 bytes
 				element_size = 8;
-			} else {
+			} else if (lhs_type_node) {
 				// Single-level pointer: element size is sizeof(base_type)
 				element_size = getSizeInBytes(lhs_type_node->type(), lhs_type_node->type_index(), lhs_type_node->size_in_bits());
+			} else {
+				// Fallback: derive element size from operand's base type
+				int base_size_bits = get_type_size_bits(lhsType);
+				element_size = base_size_bits / 8;
+				if (element_size == 0) element_size = 1;  // Safety: avoid zero-size elements
 			}
 		
 			// Scale the offset: offset_scaled = offset * element_size

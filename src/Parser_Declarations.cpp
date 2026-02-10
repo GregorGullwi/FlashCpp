@@ -2434,20 +2434,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				if (trailing_type_specifier.is_error())
 					return trailing_type_specifier;
 
-				// Apply pointer and reference qualifiers (e.g., T*, T&, T&&)
+				// Apply pointer and reference qualifiers (ptr-operator in C++20 grammar)
 				if (trailing_type_specifier.node().has_value() && 
 				    trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
 					TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
-					
-					// Apply pointer qualifiers if present (e.g., T*, T**)
-					while (peek() == "*"_tok) {
-						advance(); // consume '*'
-						CVQualifier ptr_cv = parse_cv_qualifiers();
-						trailing_ts.add_pointer_level(ptr_cv);
-					}
-					
-					// Apply reference qualifiers if present (e.g., T& or T&&)
-					apply_trailing_reference_qualifiers(trailing_ts);
+					consume_pointer_ref_modifiers(trailing_ts);
 				}
 
 				type_specifier = as<TypeSpecifierNode>(trailing_type_specifier);
@@ -3696,7 +3687,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					std::nullopt,
 					member_type_spec.is_reference(),
 					member_type_spec.is_rvalue_reference(),
-					member_type_spec.size_in_bits()
+					member_type_spec.size_in_bits(),
+					false,
+					{},
+					static_cast<int>(member_type_spec.pointer_depth())
 				);
 			}
 			
@@ -6475,7 +6469,8 @@ ParseResult Parser::parse_struct_declaration()
 			is_rvalue_ref_member,
 			referenced_size_bits,
 			is_array,
-			array_dimensions
+			array_dimensions,
+			static_cast<int>(type_spec.pointer_depth())
 		);
 		
 		member_index++;
@@ -8609,7 +8604,10 @@ ParseResult Parser::parse_typedef_declaration()
 				member_decl.default_initializer,
 				is_ref_member,
 				is_rvalue_ref_member,
-				referenced_size_bits
+				referenced_size_bits,
+				false,
+				{},
+				static_cast<int>(member_type_spec.pointer_depth())
 			);
 		}
 
@@ -8648,41 +8646,9 @@ ParseResult Parser::parse_typedef_declaration()
 		type_node = *type_result.node();
 		type_spec = type_node.as<TypeSpecifierNode>();
 
-		// Handle pointer declarators (e.g., typedef int* IntPtr;)
-		while (peek() == "*"_tok) {
-			advance(); // consume '*'
-			type_spec.add_pointer_level();
-
-			// Skip const/volatile and Microsoft-specific modifiers after *
-			// const/volatile: CV-qualifiers on the pointer itself (e.g., int * const p)
-			// Microsoft modifiers: See explanation in parse_type_specifier()
-			while (peek().is_keyword()) {
-				std::string_view kw = peek_info().value();
-				if (kw == "const" || kw == "volatile" ||
-				    kw == "__ptr32" || kw == "__ptr64" || kw == "__w64" ||
-				    kw == "__unaligned" || kw == "__uptr" || kw == "__sptr") {
-					advance();
-				} else {
-					break;
-				}
-			}
-		}
-		
-		// Handle reference declarators (e.g., typedef T& reference; or typedef T&& rvalue_ref;)
-		if (peek() == "&"_tok) {
-			advance(); // consume first '&'
-			// Check for && (rvalue reference) as two separate '&' tokens
-			if (peek() == "&"_tok) {
-				advance(); // consume second '&'
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else {
-				type_spec.set_lvalue_reference(true);  // lvalue reference
-			}
-		} else if (peek() == "&&"_tok) {
-			// Handle && as a single token (rvalue reference)
-			advance(); // consume '&&'
-			type_spec.set_reference(true);  // true = rvalue reference
-		}
+		// Handle pointer/reference declarators (ptr-operator in C++20 grammar)
+		// consume_pointer_ref_modifiers handles *, cv-qualifiers, MSVC modifiers, &, &&
+		consume_pointer_ref_modifiers(type_spec);
 		
 		// Check for pointer-to-member type syntax: typedef Type Class::* alias;
 		// This is used in <type_traits> for result_of patterns
@@ -8890,6 +8856,7 @@ ParseResult Parser::parse_typedef_declaration()
 	// We create a TypeInfo entry that mirrors the underlying type
 	auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
+	alias_type_info.is_reference_ = type_spec.is_reference();
 	alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
 	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
