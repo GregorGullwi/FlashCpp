@@ -686,27 +686,15 @@
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 		ASTNode loop_decl_node = original_var_decl.declaration_node();
-		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
-		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
 		
-		ASTNode init_expr;
-		// For range-based for loops, __range_begin is a pointer to the element
-		// For reference loop variables (T& x), use the pointer value directly (don't dereference)
-		// For value loop variables (T x), dereference to get the value
-		bool loop_var_is_reference = loop_type.is_reference() || loop_type.is_rvalue_reference();
-		
-		if (loop_var_is_reference) {
-			// Reference: use the iterator pointer value directly (bind to what it points to)
-			// Since __range_begin is a pointer, and we want to bind the reference to what it points to,
-			// we need to load the pointer value and use it as the reference's pointer
-			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
-		} else {
-			// Value: dereference the iterator to get the element value
-			auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
-			init_expr = ASTNode::emplace_node<ExpressionNode>(
-				UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), begin_deref_expr, true)
-			);
-		}
+		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
+		// value and reference loop variables. The iterator is always dereferenced.
+		// For `int& c : arr`, this becomes `int& c = *__begin;`
+		// For `int c : arr`,  this becomes `int c = *__begin;`
+		auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		ASTNode init_expr = ASTNode::emplace_node<ExpressionNode>(
+			UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), begin_deref_expr, true)
+		);
 		
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
@@ -875,13 +863,11 @@
 		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
 		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
 		
+		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
+		// value and reference loop variables. The iterator is always dereferenced.
+		// For struct iterators, reinterpret as pointer to element type, then dereference.
 		ASTNode init_expr;
-		if (loop_type.is_reference() || loop_type.is_rvalue_reference()) {
-			// For reference variables, use the iterator directly (no dereference)
-			// The reference will bind to the object pointed to by __begin
-			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
-		} else {
-			// For non-reference variables, reinterpret iterator as pointer to element type, then dereference
+		{
 			auto deref_begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
 				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()

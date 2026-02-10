@@ -8395,19 +8395,69 @@ private:
 							// Source is a reference - copy the pointer value
 							FLASH_LOG(Codegen, Debug, "Using MOV (source is reference)");
 							emitMovFromFrame(pointer_reg, src_it->second.offset);
-						} else if (init.size_in_bits == 64 && 
-						           (init.type == Type::Long || init.type == Type::Int || 
-						            init.type == Type::UnsignedLong || init.type == Type::LongLong)) {
-							// 64-bit value, likely a pointer
-							FLASH_LOG(Codegen, Debug, "Using MOV (64-bit type)");
-							emitMovFromFrame(pointer_reg, src_it->second.offset);
 						} else {
-							// Regular value - take its address
-							FLASH_LOG(Codegen, Debug, "Using LEA (regular value)");
+							// Named variable: take its address via LEA.
+							// This is correct for all types including pointer variables
+							// (int*& pr = p; needs the address OF p, not p's value).
+							FLASH_LOG(Codegen, Debug, "Using LEA (named variable)");
 							emitLeaFromFrame(pointer_reg, src_it->second.offset);
 						}
 						pointer_initialized = true;
 					}
+				} else if (std::holds_alternative<unsigned long long>(init.value) ||
+				           std::holds_alternative<double>(init.value)) {
+					// Literal initializer for reference: materialize a temporary.
+					// C++ allows binding rvalue references and const lvalue references
+					// to literals (e.g., int&& rr = 42; const int& cr = 42;) by
+					// extending the lifetime of a temporary.
+					int lit_size = op.size_in_bits;
+					if (lit_size == 64) {
+						// For references, size_in_bits is 64 (pointer size);
+						// use the actual value size from get_type_size_bits
+						int actual = get_type_size_bits(var_type);
+						if (actual > 0 && actual != 64) lit_size = actual;
+					}
+					int lit_bytes = (lit_size + 7) / 8;
+					lit_bytes = (lit_bytes + 7) & ~7;  // 8-byte aligned
+
+					// Allocate hidden stack space for the temporary
+					next_temp_var_offset_ += lit_bytes;
+					int32_t temp_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+					int32_t end_off = temp_offset - lit_bytes;
+					if (end_off < variable_scopes.back().scope_stack_space)
+						variable_scopes.back().scope_stack_space = end_off;
+
+					// Store the literal value into the temporary
+					X64Register lit_reg = allocateRegisterWithSpilling();
+					if (std::holds_alternative<double>(init.value)) {
+						double value = std::get<double>(init.value);
+						uint64_t bits;
+						if (var_type == Type::Float) {
+							float fv = static_cast<float>(value);
+							uint32_t fb; std::memcpy(&fb, &fv, sizeof(fb));
+							emitMovDwordPtrImmToRegOffset(X64Register::RBP, temp_offset, fb);
+						} else {
+							std::memcpy(&bits, &value, sizeof(bits));
+							emitMovImm64(lit_reg, bits);
+							emitMovToFrameSized(
+								SizedRegister{lit_reg, 64, false},
+								SizedStackSlot{temp_offset, lit_size, false}
+							);
+						}
+					} else {
+						uint64_t value = std::get<unsigned long long>(init.value);
+						emitMovImm64(lit_reg, value);
+						emitMovToFrameSized(
+							SizedRegister{lit_reg, 64, false},
+							SizedStackSlot{temp_offset, lit_size, isSignedType(var_type)}
+						);
+					}
+					regAlloc.release(lit_reg);
+
+					// Take address of the temporary
+					FLASH_LOG(Codegen, Debug, "Materializing temporary for reference literal at offset=", temp_offset);
+					emitLeaFromFrame(pointer_reg, temp_offset);
+					pointer_initialized = true;
 				}
 				if (!pointer_initialized) {
 					FLASH_LOG(Codegen, Error, "Reference initializer is not an addressable lvalue");

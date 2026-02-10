@@ -6,6 +6,7 @@ typedef int* IntPtr;
 typedef int** IntPtrPtr;
 typedef int& IntRef;
 typedef int&& IntRRef;
+typedef int*& IntPtrRef;
 
 // West const (traditional C++ style)
 typedef const int* ConstIntPtr;              // pointer to const int
@@ -39,9 +40,8 @@ int main() {
 	IntRef r = val;
 	if (r != 42) return 3;
 
-	// Rvalue reference (bind via static_cast from lvalue, since literal rref binding
-	// is a pre-existing codegen limitation: int&& rr = 42; is not yet supported)
-	IntRRef rr = static_cast<int&&>(val);
+	// Rvalue reference bound to literal (temporary materialization)
+	IntRRef rr = 42;
 	if (rr != 42) return 4;
 
 	// West const: pointer to const int
@@ -82,6 +82,10 @@ int main() {
 
 	// Typedef'd lvalue reference function parameter
 	if (take_lref(val) != 42) return 14;
+
+	// Pointer-reference typedef binding
+	IntPtrRef pr = p;
+	if (*pr != 42) return 15;
 
 	return 0;
 }

@@ -2903,6 +2903,28 @@
 					return operandIrOperands;
 				}
 				
+				// Emit assignment to copy the pointer value into lvalue_temp.
+				// This is needed for reference initialization from *ptr (e.g., int& x = *__begin;).
+				// The reference init code reads the TempVar's stack value; without this
+				// assignment the slot would be uninitialized.
+				IrValue rhs_value;
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					rhs_value = std::get<StringHandle>(operandIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
+					rhs_value = std::get<TempVar>(operandIrOperands[2]);
+				} else if (std::holds_alternative<unsigned long long>(operandIrOperands[2])) {
+					rhs_value = std::get<unsigned long long>(operandIrOperands[2]);
+				} else {
+					rhs_value = 0ULL;
+				}
+				AssignmentOp copy_op;
+				copy_op.result = lvalue_temp;
+				copy_op.lhs = TypedValue{operandType, 64, lvalue_temp};
+				copy_op.rhs = TypedValue{operandType, 64, rhs_value};
+				copy_op.is_pointer_store = false;
+				copy_op.dereference_rhs_references = false;
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_op), Token()));
+
 				// Set lvalue metadata with Indirect kind (dereference)
 				LValueInfo lvalue_info(
 					LValueInfo::Kind::Indirect,
@@ -2911,9 +2933,10 @@
 				);
 				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
 				
-				// Return with TempVar that has the lvalue metadata
+				// Return with TempVar that has the lvalue metadata.
+				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
 				unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
-				return { operandType, element_size, lvalue_temp, result_ptr_depth };
+				return { operandType, 64, lvalue_temp, result_ptr_depth };
 			}
 			
 			int element_size = 64; // Default to pointer size
