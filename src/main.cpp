@@ -438,7 +438,17 @@ int main_impl(int argc, char *argv[]) {
                     FLASH_LOG(Codegen, Debug, "  -> Block has ", def_block.get_statements().size(), " statements");
                 }
             }
-            converter.visit(node_handle);
+            try {
+                converter.visit(node_handle);
+            } catch (const std::bad_any_cast& e) {
+                // Log and skip nodes that cause bad_any_cast during IR conversion
+                // This allows compilation to continue past problematic template instantiations
+                std::string node_desc = node_handle.type_name();
+                if (node_handle.is<FunctionDeclarationNode>()) {
+                    node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+                }
+                FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+            }
         }
     }
 

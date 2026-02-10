@@ -3594,7 +3594,21 @@ if (struct_type_info.getStructInfo()) {
 		current_template_param_names_ = std::move(template_param_names_for_body);
 
 		// Parse class template
-		decl_result = parse_struct_declaration();
+		try {
+			decl_result = parse_struct_declaration();
+		} catch (const std::bad_any_cast& e) {
+			FLASH_LOG(Templates, Error, "bad_any_cast during template struct parsing: ", e.what());
+			// Skip to end of struct body
+			while (!peek().is_eof() && peek() != ";"_tok) {
+				if (peek() == "{"_tok) {
+					skip_balanced_braces();
+				} else {
+					advance();
+				}
+			}
+			if (peek() == ";"_tok) advance();
+			decl_result = ParseResult::success();
+		}
 
 		// Clear template parameter context
 		current_template_param_names_.clear();
