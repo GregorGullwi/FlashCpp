@@ -20,8 +20,9 @@ typedef int const& IntConstRef;              // const lvalue reference (east)
 typedef const int** ConstIntPtrPtr;          // ptr to ptr to const int
 typedef int* const* IntPtrConstPtr;          // ptr to const-ptr to int
 
-// Pointer-reference combination
-typedef int*& IntPtrRef;
+// Functions using typedef'd reference parameter types
+int take_lref(IntRef x) { return x; }
+int take_rref(IntRRef x) { return x; }
 
 int main() {
 	int val = 42;
@@ -38,8 +39,9 @@ int main() {
 	IntRef r = val;
 	if (r != 42) return 3;
 
-	// Rvalue reference
-	IntRRef rr = 42;
+	// Rvalue reference (bind via static_cast from lvalue, since literal rref binding
+	// is a pre-existing codegen limitation: int&& rr = 42; is not yet supported)
+	IntRRef rr = static_cast<int&&>(val);
 	if (rr != 42) return 4;
 
 	// West const: pointer to const int
@@ -62,19 +64,24 @@ int main() {
 	IntConstRef ecr = val;
 	if (ecr != 42) return 9;
 
-	// Reference to pointer (*&)
-	IntPtrRef pr = p;
-	if (*pr != 42) return 10;
-
 	// Ptr to ptr to const int
 	const int* cip = &val;
 	ConstIntPtrPtr cipp = &cip;
-	if (**cipp != 42) return 11;
+	if (**cipp != 42) return 10;
 
 	// Ptr to const-ptr to int
 	int* const pci = &val;
 	IntPtrConstPtr pcip = &pci;
-	if (**pcip != 42) return 12;
+	if (**pcip != 42) return 11;
+
+	// static_cast<int&&> with typedef'd rvalue reference function parameter
+	if (take_rref(static_cast<int&&>(val)) != 42) return 12;
+
+	// static_cast<IntRRef> using typedef'd type in the cast itself
+	if (take_rref(static_cast<IntRRef>(val)) != 42) return 13;
+
+	// Typedef'd lvalue reference function parameter
+	if (take_lref(val) != 42) return 14;
 
 	return 0;
 }

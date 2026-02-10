@@ -8849,6 +8849,7 @@ ParseResult Parser::parse_typedef_declaration()
 	// We create a TypeInfo entry that mirrors the underlying type
 	auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
+	alias_type_info.is_reference_ = type_spec.is_reference();
 	alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
 	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
