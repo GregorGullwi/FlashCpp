@@ -462,6 +462,68 @@ private:
         };
         std::vector<PackParamInfo> pack_param_info_;
 
+        // Track class template parameter pack sizes for sizeof...() in member function templates
+        // When a class template like tuple<int, float, double> is instantiated, the pack _Elements
+        // has size 3. Member function templates need access to this info when they reference sizeof...(_Elements).
+        struct ClassTemplatePackInfo {
+            std::string_view pack_name;  // e.g., "_Elements"
+            size_t pack_size;            // e.g., 3 for tuple<int, float, double>
+        };
+        std::vector<std::vector<ClassTemplatePackInfo>> class_template_pack_stack_;
+        
+        // Persistent map: instantiated class name → class template pack sizes
+        // This allows member function templates to look up their enclosing class's pack sizes
+        std::unordered_map<StringHandle, std::vector<ClassTemplatePackInfo>, TransparentStringHash, std::equal_to<>> class_template_pack_registry_;
+
+        // Get pack size from class template pack context (stack-based, for within instantiation)
+        std::optional<size_t> get_class_template_pack_size(std::string_view pack_name) const {
+            // First check the stack (active instantiation)
+            for (auto it = class_template_pack_stack_.rbegin(); it != class_template_pack_stack_.rend(); ++it) {
+                for (const auto& info : *it) {
+                    if (info.pack_name == pack_name) {
+                        return info.pack_size;
+                    }
+                }
+            }
+            // Then check the persistent registry via member function context
+            for (auto it = member_function_context_stack_.rbegin(); it != member_function_context_stack_.rend(); ++it) {
+                auto reg_it = class_template_pack_registry_.find(it->struct_name);
+                if (reg_it != class_template_pack_registry_.end()) {
+                    for (const auto& info : reg_it->second) {
+                        if (info.pack_name == pack_name) {
+                            return info.pack_size;
+                        }
+                    }
+                }
+            }
+            // Also check struct_parsing_context_stack_ (for bodies parsed during class instantiation)
+            for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
+                auto reg_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(it->struct_name));
+                if (reg_it != class_template_pack_registry_.end()) {
+                    for (const auto& info : reg_it->second) {
+                        if (info.pack_name == pack_name) {
+                            return info.pack_size;
+                        }
+                    }
+                }
+            }
+            return std::nullopt;
+        }
+
+        // RAII guard to push/pop class template pack info
+        struct ClassTemplatePackGuard {
+            std::vector<std::vector<ClassTemplatePackInfo>>& stack_;
+            bool active_ = false;
+            ClassTemplatePackGuard(std::vector<std::vector<ClassTemplatePackInfo>>& stack) : stack_(stack) {}
+            void push(std::vector<ClassTemplatePackInfo> info) {
+                stack_.push_back(std::move(info));
+                active_ = true;
+            }
+            ~ClassTemplatePackGuard() {
+                if (active_ && !stack_.empty()) stack_.pop_back();
+            }
+        };
+
         // Track last failed template argument parse handle to prevent infinite loops
         SaveHandle last_failed_template_arg_parse_handle_ = SIZE_MAX;
 

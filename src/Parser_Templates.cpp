@@ -11816,6 +11816,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		const std::vector<ASTNode>& template_params = pattern_template_params;
 		
+		// Push class template pack info for specialization path
+		ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
+		{
+			std::vector<ClassTemplatePackInfo> pack_infos;
+			size_t non_variadic_count = 0;
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (template_params[i].is<TemplateParameterNode>()) {
+					const auto& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.is_variadic()) {
+						size_t pack_size = template_args.size() >= non_variadic_count 
+							? template_args.size() - non_variadic_count : 0;
+						pack_infos.push_back({tparam.name(), pack_size});
+					} else {
+						non_variadic_count++;
+					}
+				}
+			}
+			if (!pack_infos.empty()) {
+				spec_pack_guard.push(std::move(pack_infos));
+			}
+		}
+		
 		// Create a new struct with the instantiated name
 		// Copy members from the pattern, substituting template parameters
 		// For now, if members use template parameters, we substitute them
@@ -11828,6 +11850,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringTable::getOrInternStringHandle(template_name),
 			convertToTemplateArgInfo(template_args)
 		);
+		
+		// Register class template pack sizes in persistent registry for specializations
+		if (!class_template_pack_stack_.empty() && !class_template_pack_stack_.back().empty()) {
+			class_template_pack_registry_[instantiated_name] = class_template_pack_stack_.back();
+		}
 		
 		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
 		struct_info->is_union = pattern_struct.is_union();
@@ -12889,6 +12916,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 	
+	// Push class template pack info for sizeof...() resolution in member function templates
+	// This RAII guard ensures the pack info is available during the entire instantiation scope
+	ClassTemplatePackGuard class_pack_guard(class_template_pack_stack_);
+	if (has_parameter_pack) {
+		std::vector<ClassTemplatePackInfo> pack_infos;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			if (param.is_variadic()) {
+				size_t pack_size = template_args.size() >= non_variadic_param_count 
+					? template_args.size() - non_variadic_param_count : 0;
+				pack_infos.push_back({param.name(), pack_size});
+				FLASH_LOG(Templates, Debug, "Registered class template pack '", param.name(), "' with size ", pack_size);
+			}
+		}
+		if (!pack_infos.empty()) {
+			class_pack_guard.push(std::move(pack_infos));
+		}
+	}
+
 	// Verify we have the right number of template arguments
 	// For variadic templates: args.size() >= non_variadic_param_count
 	// For non-variadic templates: args.size() <= template_params.size()
@@ -13349,6 +13395,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		StringTable::getOrInternStringHandle(unqualified_template_name),
 		convertToTemplateArgInfo(template_args_to_use)
 	);
+	
+	// Register class template pack sizes in persistent registry for member function template lookup
+	if (has_parameter_pack) {
+		std::vector<ClassTemplatePackInfo> pack_infos;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			if (param.is_variadic()) {
+				size_t pack_size = template_args_to_use.size() >= non_variadic_param_count 
+					? template_args_to_use.size() - non_variadic_param_count : 0;
+				pack_infos.push_back({param.name(), pack_size});
+			}
+		}
+		if (!pack_infos.empty()) {
+			class_template_pack_registry_[instantiated_name] = std::move(pack_infos);
+		}
+	}
 	
 	// Create StructTypeInfo
 	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
@@ -19109,8 +19171,48 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 			
-			// Error if pack name doesn't refer to a known parameter pack
+			// If still not found, check class template pack context
+			// This handles sizeof...(_Elements) in member function templates of class templates
+			// where _Elements is the class template's parameter pack
 			if (!found_variadic) {
+				auto class_pack_size = get_class_template_pack_size(pack_name);
+				if (class_pack_size.has_value()) {
+					found_variadic = true;
+					num_pack_elements = *class_pack_size;
+				}
+			}
+			
+			// If pack name not found, check if it's a known template parameter from an enclosing
+			// class template context (e.g., sizeof...(_Elements) in a member function of tuple<_Elements...>).
+			// If so, treat as template-dependent and return unchanged.
+			// If truly unknown, throw an error.
+			if (!found_variadic) {
+				// Check if we're inside a template body and the pack name is a known template parameter
+				bool is_known_template_param = false;
+				if (parsing_template_body_) {
+					for (const auto& param_name : current_template_param_names_) {
+						if (StringTable::getStringView(param_name) == pack_name) {
+							is_known_template_param = true;
+							break;
+						}
+					}
+				}
+				// Also check if any class template in the registry has this pack name
+				if (!is_known_template_param) {
+					for (const auto& [key, infos] : class_template_pack_registry_) {
+						for (const auto& info : infos) {
+							if (info.pack_name == pack_name) {
+								is_known_template_param = true;
+								break;
+							}
+						}
+						if (is_known_template_param) break;
+					}
+				}
+				if (is_known_template_param) {
+					FLASH_LOG(Templates, Debug, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
+					return node;
+				}
 				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack");
 				throw std::runtime_error("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
 			}

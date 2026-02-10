@@ -58,6 +58,11 @@ public:
 				if (pack_size.has_value()) {
 					return EvalResult::from_int(static_cast<long long>(*pack_size));
 				}
+				// Also check class template pack context
+				auto class_pack_size = context.parser->get_class_template_pack_size(pack_name);
+				if (class_pack_size.has_value()) {
+					return EvalResult::from_int(static_cast<long long>(*class_pack_size));
+				}
 				return EvalResult::error("sizeof... requires template instantiation context for pack: " + std::string(pack_name), EvalErrorType::TemplateDependentExpression);
 			}
 			
