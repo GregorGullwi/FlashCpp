@@ -1019,6 +1019,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			is_struct_like_type = true;
 		}
 	}
+	// In template bodies, dependent UserDefined types (e.g., node_type, value_type) may not have
+	// struct_info_ yet but could resolve to structs at instantiation time. Treat them as struct-like
+	// to allow multi-element brace-init lists like: return { expr1, expr2 };
+	if (!is_struct_like_type && type_specifier.type() == Type::UserDefined &&
+		(parsing_template_body_ || !struct_parsing_context_stack_.empty())) {
+		is_struct_like_type = true;
+	}
 	if (!is_struct_like_type) {
 		// Check if this is an empty brace initializer: int x{};
 		if (peek() == "}"_tok) {
@@ -1067,15 +1074,39 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	}
 
 	TypeIndex type_index = type_specifier.type_index();
-	if (type_index >= gTypeInfo.size()) {
-		return ParseResult::error("Invalid struct type index", current_token_);
-	}
-
-	const TypeInfo& type_info = gTypeInfo[type_index];
-	if (!type_info.struct_info_) {
+	if (type_index >= gTypeInfo.size() ||
+		(type_index < gTypeInfo.size() && !gTypeInfo[type_index].struct_info_)) {
+		// In template bodies, dependent types may not have struct_info_ yet.
+		// Parse as a generic initializer list (comma-separated expressions).
+		if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+			while (true) {
+				if (peek() == "}"_tok) break;
+				ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+				if (init_expr_result.is_error()) return init_expr_result;
+				if (init_expr_result.node().has_value()) {
+					init_list_ref.add_initializer(*init_expr_result.node());
+				} else {
+					return ParseResult::error("Expected initializer expression", current_token_);
+				}
+				if (peek() == ","_tok) {
+					advance();
+					if (peek() == "}"_tok) break;
+				} else {
+					break;
+				}
+			}
+			if (!consume("}"_tok)) {
+				return ParseResult::error("Expected '}' to close brace initializer", current_token_);
+			}
+			return ParseResult::success(init_list_node);
+		}
+		if (type_index >= gTypeInfo.size()) {
+			return ParseResult::error("Invalid struct type index", current_token_);
+		}
 		return ParseResult::error("Type is not a struct", current_token_);
 	}
 
+	const TypeInfo& type_info = gTypeInfo[type_index];
 	const StructTypeInfo& struct_info = *type_info.struct_info_;
 
 	// Check if this struct has an initializer_list constructor

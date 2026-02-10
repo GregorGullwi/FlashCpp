@@ -284,6 +284,29 @@ ParseResult Parser::parse_template_declaration() {
 										break;
 									}
 									// Otherwise, this was a qualified return type - keep scanning
+								} else if (peek_info().value() == "operator") {
+									// Handle operator overloads: Class<T>::operator()(...)
+									nested_class_name = class_token.value();
+									nested_func_name_token = peek_info();
+									advance(); // consume 'operator'
+									// Consume the operator symbol(s): (), [], +, -, etc.
+									if (peek() == "("_tok) {
+										advance(); // consume '('
+										if (peek() == ")"_tok) {
+											advance(); // consume ')' -> operator()
+										}
+									} else if (peek() == "["_tok) {
+										advance(); // consume '['
+										if (peek() == "]"_tok) {
+											advance(); // consume ']' -> operator[]
+										}
+									} else if (peek().is_operator() || peek().is_punctuator()) {
+										advance(); // consume single-char operator
+									}
+									found_nested_def = true;
+									if (peek() == "("_tok) {
+										break;
+									}
 								}
 							}
 						}

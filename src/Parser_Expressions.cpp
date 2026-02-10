@@ -10794,13 +10794,21 @@ ParseResult Parser::validate_and_add_base_class(
 	// Check if base class is a dependent template placeholder (e.g., integral_constant$hash)
 	auto [is_dependent_placeholder, template_base] = isDependentTemplatePlaceholder(base_class_name);
 	
-	// Allow Type::Struct for concrete types OR template parameters OR dependent placeholders
-	if (!is_template_param && !is_dependent_placeholder && base_type_info->type_ != Type::Struct) {
+	// In template bodies, a UserDefined type alias (e.g., _Tp_alloc_type) may resolve to a struct
+	// at instantiation time. Treat it as a deferred base class.
+	bool is_dependent_type_alias = false;
+	if (!is_template_param && !is_dependent_placeholder && base_type_info->type_ == Type::UserDefined &&
+		(parsing_template_body_ || !struct_parsing_context_stack_.empty())) {
+		is_dependent_type_alias = true;
+	}
+	
+	// Allow Type::Struct for concrete types OR template parameters OR dependent placeholders OR dependent type aliases
+	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias && base_type_info->type_ != Type::Struct) {
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", error_token);
 	}
 
-	// For template parameters or dependent placeholders, skip 'final' check and other concrete type validations
-	if (!is_template_param && !is_dependent_placeholder) {
+	// For template parameters, dependent placeholders, or dependent type aliases, skip 'final' check
+	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias) {
 		// Check if base class is final
 		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
 			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", error_token);
@@ -10808,8 +10816,9 @@ ParseResult Parser::validate_and_add_base_class(
 	}
 
 	// Add base class to struct node and type info
-	struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
-	struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
+	bool is_deferred = is_template_param || is_dependent_type_alias;
+	struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_deferred);
+	struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_deferred);
 	
 	return ParseResult::success();
 }
