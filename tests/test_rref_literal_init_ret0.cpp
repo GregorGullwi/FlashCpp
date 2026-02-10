@@ -19,10 +19,5 @@ int main() {
 	int&& rr_neg = -7;
 	if (rr_neg != -7) return 4;
 
-	// Const lvalue reference bound to expression result
-	// (not a literal, but similar pattern — the result is an rvalue)
-	int a = 10;
-	int b = 20;
-
 	return 0;
 }
