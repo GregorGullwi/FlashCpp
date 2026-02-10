@@ -11818,6 +11818,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Push class template pack info for specialization path
 		ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
+		bool has_spec_pack_info = false;
 		{
 			std::vector<ClassTemplatePackInfo> pack_infos;
 			size_t non_variadic_count = 0;
@@ -11835,6 +11836,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			if (!pack_infos.empty()) {
 				spec_pack_guard.push(std::move(pack_infos));
+				has_spec_pack_info = true;
 			}
 		}
 		
@@ -11852,7 +11854,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		);
 		
 		// Register class template pack sizes in persistent registry for specializations
-		if (!class_template_pack_stack_.empty() && !class_template_pack_stack_.back().empty()) {
+		// Only register if this specialization actually has variadic parameters
+		if (has_spec_pack_info) {
 			class_template_pack_registry_[instantiated_name] = class_template_pack_stack_.back();
 		}
 		
@@ -17630,6 +17633,11 @@ if (param_decl.has_default_value()) {
 	new_func_ref.set_linkage(func_decl.linkage());
 	new_func_ref.set_calling_convention(func_decl.calling_convention());
 
+	// Compute and set the proper mangled name for code generation
+	// This is essential so that FunctionCallNode can carry the correct mangled name
+	// and codegen can resolve the correct function for each template instantiation
+	compute_and_set_mangled_name(new_func_ref);
+
 	// Add the instantiated function to the AST so it gets visited during codegen
 	// This is safe now that the StringBuilder bug is fixed
 	ast_nodes_.push_back(new_func_node);
@@ -19261,6 +19269,27 @@ ASTNode Parser::substituteTemplateParameters(
 			return emplace_node<ExpressionNode>(
 				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements), 
 				                  Type::Int, TypeQualifier::None, 32));
+		} else if (std::holds_alternative<StaticCastNode>(expr)) {
+			// static_cast<Type>(expr) - recursively substitute in both target type and expression
+			const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(StaticCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+		} else if (std::holds_alternative<DynamicCastNode>(expr)) {
+			const DynamicCastNode& cast_node = std::get<DynamicCastNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(DynamicCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+		} else if (std::holds_alternative<ConstCastNode>(expr)) {
+			const ConstCastNode& cast_node = std::get<ConstCastNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(ConstCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+		} else if (std::holds_alternative<ReinterpretCastNode>(expr)) {
+			const ReinterpretCastNode& cast_node = std::get<ReinterpretCastNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(ReinterpretCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
 		} else if (std::holds_alternative<SizeofExprNode>(expr)) {
 			// sizeof operator - substitute template parameters in the operand and try to evaluate
 			const SizeofExprNode& sizeof_expr = std::get<SizeofExprNode>(expr);
