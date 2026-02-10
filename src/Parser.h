@@ -274,29 +274,12 @@ public:
 #endif
                 // The main parse loop: process top-level nodes until EOF or error
                 while (!peek().is_eof() && !parseResult.is_error()) {
-                        // Save parser state before try block so we can restore on exception
-                        const size_t saved_struct_stack_size = struct_parsing_context_stack_.size();
-                        const size_t saved_member_func_stack_size = member_function_context_stack_.size();
-                        const size_t saved_scope_depth = gSymbolTable.get_current_scope_handle().scope_level;
-                        const bool saved_parsing_template_class = parsing_template_class_;
-                        const bool saved_parsing_template_body = parsing_template_body_;
                         try {
                             parseResult = parse_top_level_node();
                         } catch (const std::bad_any_cast& e) {
-                            // Restore parser state that may have been partially modified
-                            while (struct_parsing_context_stack_.size() > saved_struct_stack_size)
-                                struct_parsing_context_stack_.pop_back();
-                            while (member_function_context_stack_.size() > saved_member_func_stack_size)
-                                member_function_context_stack_.pop_back();
-                            while (gSymbolTable.get_current_scope_handle().scope_level > saved_scope_depth)
-                                gSymbolTable.exit_scope();
-                            parsing_template_class_ = saved_parsing_template_class;
-                            parsing_template_body_ = saved_parsing_template_body;
-
                             FLASH_LOG(General, Error, "bad_any_cast during parsing at ", peek_info().value(), ": ", e.what());
-                            // Try to recover by advancing past the current token
-                            if (!peek().is_eof()) advance();
-                            continue;
+                            parseResult = ParseResult::error("Internal compiler error: bad_any_cast during parsing", peek_info());
+                            break;
                         }
 #if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
                         ++top_level_count;

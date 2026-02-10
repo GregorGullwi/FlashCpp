@@ -3418,8 +3418,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 							param_types.push_back(param_type.type());
 						}
 						
-						// Handle pointer/reference modifiers after type
-						while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
+						// Handle pointer/reference/cv-qualifier modifiers after type
+						while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
+							   peek() == "const"_tok || peek() == "volatile"_tok) {
 							advance();
 						}
 						
