@@ -1674,6 +1674,14 @@
 			// Update type to member type
 			base_components->final_type = result.member->type;
 			base_components->final_size_bits = static_cast<int>(result.member->size * 8);
+			// Infer pointer depth: if the member's stored size (8 bytes on 64-bit) exceeds the
+			// base type's native size, the member is a pointer type (e.g., int* has type=Int,size=8)
+			if (result.member->size == 8 && !result.member->is_reference) {
+				int native_bits = get_type_size_bits(result.member->type);
+				if (native_bits > 0 && native_bits < 64) {
+					base_components->pointer_depth = 1;
+				}
+			}
 			
 			return base_components;
 		}
@@ -3922,6 +3930,12 @@
 				}
 			}
 		}
+		
+		// Fallback: extract pointer depth from the LHS operands (4th element)
+		// This handles expressions like &member, function calls returning pointers, etc.
+		if (lhs_pointer_depth == 0 && lhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+			lhs_pointer_depth = static_cast<int>(std::get<unsigned long long>(lhsIrOperands[3]));
+		}
 
 		// Try to get pointer depth for RHS as well (for ptr - ptr case)
 		int rhs_pointer_depth = 0;
@@ -3984,19 +3998,24 @@
 		// Special handling for pointer arithmetic (ptr + int or ptr - int)
 		// Only apply if LHS is actually a pointer (has pointer_depth > 0)
 		// NOT for regular 64-bit integers like long, even though they are also 64 bits
-		if ((op == "+" || op == "-") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType) && lhs_type_node) {
+		if ((op == "+" || op == "-") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType)) {
 			// Left side is a pointer (64-bit with pointer_depth > 0), right side is integer
 			// Result should be a pointer (64-bit)
 			// Need to scale the offset by sizeof(pointed-to-type)
 		
-			// Determine element size using existing getSizeInBytes function
+			// Determine element size
 			size_t element_size;
 			if (lhs_pointer_depth > 1) {
 				// Multi-level pointer: element is a pointer, so 8 bytes
 				element_size = 8;
-			} else {
+			} else if (lhs_type_node) {
 				// Single-level pointer: element size is sizeof(base_type)
 				element_size = getSizeInBytes(lhs_type_node->type(), lhs_type_node->type_index(), lhs_type_node->size_in_bits());
+			} else {
+				// Fallback: derive element size from operand's base type
+				int base_size_bits = get_type_size_bits(lhsType);
+				element_size = base_size_bits / 8;
+				if (element_size == 0) element_size = 1;  // Safety: avoid zero-size elements
 			}
 		
 			// Scale the offset: offset_scaled = offset * element_size

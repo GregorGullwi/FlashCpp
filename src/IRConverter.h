@@ -13445,6 +13445,41 @@ private:
 						);
 					}
 				}
+			} else if (std::holds_alternative<StringHandle>(op.value.value)) {
+				// Value from named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
+				StringHandle value_name = std::get<StringHandle>(op.value.value);
+				const StackVariableScope& current_scope = variable_scopes.back();
+				auto it = current_scope.variables.find(value_name);
+				if (it != current_scope.variables.end()) {
+					int32_t value_offset = it->second.offset;
+					if (is_float_store) {
+						if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+							if (value_reg.value() != X64Register::XMM0) {
+								bool is_double = (op.value.size_in_bits == 64);
+								textSectionData.push_back(is_double ? 0xF2 : 0xF3);
+								textSectionData.push_back(0x0F);
+								textSectionData.push_back(0x10);
+								uint8_t src_xmm_num = static_cast<uint8_t>(value_reg.value()) - static_cast<uint8_t>(X64Register::XMM0);
+								textSectionData.push_back(0xC0 | src_xmm_num);
+							}
+						} else {
+							bool is_double = (op.value.size_in_bits == 64);
+							emitFloatMovFromFrame(X64Register::XMM0, value_offset, !is_double);
+						}
+					} else {
+						if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+							if (value_reg.value() != X64Register::RDX) {
+								auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), element_size_bits / 8);
+								textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+							}
+						} else {
+							emitMovFromFrameSized(
+								SizedRegister{X64Register::RDX, 64, false},
+								SizedStackSlot{value_offset, element_size_bits, false}
+							);
+						}
+					}
+				}
 			}
 			
 			// Get array base offset (only needed if array is StringHandle, not TempVar)
