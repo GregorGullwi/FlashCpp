@@ -13054,10 +13054,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const ASTNode& default_node = param.default_value();
 			FLASH_LOG(Templates, Debug, "Processing non-type param default, is_expression=", default_node.is<ExpressionNode>());
 			
+			// Track size before evaluation to detect if a value was pushed
+			size_t size_before = filled_template_args.size();
+			
 			// Build parameter substitution map for already-filled template arguments
 			// This allows the default expression to reference earlier template parameters
 			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-			for (size_t j = 0; j < i && j < template_params.size(); ++j) {
+			for (size_t j = 0; j < i && j < template_params.size() && j < filled_template_args.size(); ++j) {
 				if (template_params[j].is<TemplateParameterNode>()) {
 					const TemplateParameterNode& earlier_param = template_params[j].as<TemplateParameterNode>();
 					param_map[earlier_param.name()] = filled_template_args[j];
@@ -13363,6 +13366,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 					}
+				}
+			}
+			
+			// Fallback: if no handler above pushed a value, try ConstExprEvaluator on the substituted expression
+			if (filled_template_args.size() == size_before) {
+				if (substituted_default_node.is<ExpressionNode>()) {
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
+					if (eval_result.success()) {
+						filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
+						FLASH_LOG(Templates, Debug, "Evaluated non-type default via ConstExprEvaluator: ", eval_result.as_int());
+					} else {
+						// Last resort: push default value of 0 to maintain invariant that
+						// filled_template_args grows by 1 per parameter
+						filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
+						FLASH_LOG(Templates, Warning, "Could not evaluate non-type default for param ", i,
+						          " of '", template_name, "', using 0: ", eval_result.error_message);
+					}
+				} else {
+					filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
+					FLASH_LOG(Templates, Warning, "Non-type default for param ", i,
+					          " of '", template_name, "' is not an expression, using 0");
 				}
 			}
 		}
