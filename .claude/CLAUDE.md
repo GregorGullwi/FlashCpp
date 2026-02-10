@@ -3,7 +3,7 @@
 ## Project Structure, Module Organization and Development Commands
 - FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/*.cpp`.
 - Generated binaries belong in `x64/` or `Debug/` and stay untracked.
-- Use `make main CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, same as .\build_flashcpp.bat on a regular Windows terminal.
+- Use `make main CXX=clang++` — builds the compiler.
 - Use `tests/run_all_tests.sh` to verify that your changes didn't break any existing functionality
 
 ## Coding Style & Naming Conventions
@@ -18,6 +18,7 @@ Delete binaries, dumps, and logs before you summarize your work. Feel free to le
 
 ## Debugging & Reference Tips
 Run `FlashCpp with -v` to emit dependency and IR traces without editing source. Output file will end up in the working folder.
+Link the .o file using clang.
 
 ## Logging Configuration
 - Use FLASH_LOG_FORMAT(cat, level, fmt, ...) - uses std::format for cleaner syntax when all arguments are formattable
