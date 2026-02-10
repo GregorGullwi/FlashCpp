@@ -8423,9 +8423,9 @@ private:
 					// Allocate hidden stack space for the temporary
 					next_temp_var_offset_ += lit_bytes;
 					int32_t temp_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
-					int32_t end_off = temp_offset - lit_bytes;
-					if (end_off < variable_scopes.back().scope_stack_space)
-						variable_scopes.back().scope_stack_space = end_off;
+					if (temp_offset < variable_scopes.back().scope_stack_space)
+						variable_scopes.back().scope_stack_space = temp_offset;
+
 
 					// Store the literal value into the temporary
 					X64Register lit_reg = allocateRegisterWithSpilling();
