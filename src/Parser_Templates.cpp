@@ -13015,6 +13015,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		PROFILE_TEMPLATE_LOOKUP();
 		auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		if (!template_opt.has_value()) {
+			// If we're inside a template body, the template might be referencing itself
+			// (self-referential templates like __ratio_add_impl). In this case, the template
+			// hasn't been registered yet because we're still parsing its body.
+			// Check if the name matches the struct currently being defined.
+			if (parsing_template_body_ || !current_template_param_names_.empty()) {
+				// Check struct_parsing_context_stack_ for self-reference
+				for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
+					std::string_view struct_name = it->struct_name;
+					// Compare with both unqualified and potentially qualified names
+					if (struct_name == template_name) {
+						FLASH_LOG_FORMAT(Templates, Debug, "Self-referential template '{}' in body - deferring", template_name);
+						return std::nullopt;
+					}
+					// Also try stripping namespace prefix from struct_name
+					size_t colon_pos = struct_name.rfind("::");
+					if (colon_pos != std::string_view::npos) {
+						std::string_view unqualified = struct_name.substr(colon_pos + 2);
+						if (unqualified == template_name) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Self-referential template '{}' in body - deferring", template_name);
+							return std::nullopt;
+						}
+					}
+				}
+			}
 			FLASH_LOG(Templates, Error, "No primary template found for '", template_name, "', returning nullopt");
 			return std::nullopt;  // No template with this name
 		}

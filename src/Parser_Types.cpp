@@ -1504,6 +1504,14 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 				}
+				// If we're in a template body and the template wasn't found/instantiated,
+				// treat the type as dependent (e.g., self-referential templates)
+				if (!has_dependent_args && (parsing_template_body_ || !current_template_param_names_.empty())) {
+					if (!instantiated_class.has_value() && !gTemplateRegistry.lookupTemplate(type_name).has_value()) {
+						has_dependent_args = true;
+						FLASH_LOG_FORMAT(Templates, Debug, "Template '{}' not found in template body - treating as dependent", type_name);
+					}
+				}
 				
 				// Check for qualified name after template arguments: Template<T>::nested or Template<T>::type
 				if (peek() == "::"_tok) {
