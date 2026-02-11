@@ -1826,6 +1826,10 @@ public:
 	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
 
+	// Deleted function support (= delete)
+	void set_is_deleted(bool deleted) { is_deleted_ = deleted; }
+	bool is_deleted() const { return is_deleted_; }
+
 	// Inline always support (for template instantiations that are pure expressions)
 	// When true, this function should always be inlined and never generate a call
 	void set_inline_always(bool inline_always) { inline_always_ = inline_always; }
@@ -1861,6 +1865,7 @@ private:
 	bool is_constinit_;
 	bool is_consteval_;
 	bool is_noexcept_ = false;  // True if function is declared noexcept
+	bool is_deleted_ = false;  // True if function is declared = delete
 	bool inline_always_ = false;  // True if function should always be inlined (e.g., template pure expressions)
 	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)

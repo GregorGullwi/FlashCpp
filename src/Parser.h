@@ -274,7 +274,13 @@ public:
 #endif
                 // The main parse loop: process top-level nodes until EOF or error
                 while (!peek().is_eof() && !parseResult.is_error()) {
-                        parseResult = parse_top_level_node();
+                        try {
+                            parseResult = parse_top_level_node();
+                        } catch (const std::bad_any_cast& e) {
+                            FLASH_LOG(General, Error, "bad_any_cast during parsing at ", peek_info().value(), ": ", e.what());
+                            parseResult = ParseResult::error("Internal compiler error: bad_any_cast during parsing", peek_info());
+                            break;
+                        }
 #if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
                         ++top_level_count;
                         // Log progress every 500 top-level nodes

@@ -3418,6 +3418,17 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 							param_types.push_back(param_type.type());
 						}
 						
+						// Handle pointer/reference/cv-qualifier modifiers after type
+						while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
+							   peek() == "const"_tok || peek() == "volatile"_tok) {
+							advance();
+						}
+						
+						// Handle pack expansion '...' (e.g., _Args...)
+						if (peek() == "..."_tok) {
+							advance(); // consume '...'
+						}
+						
 						// Check for comma
 						if (peek() == ","_tok) {
 							advance(); // consume ','

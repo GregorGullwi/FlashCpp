@@ -3594,7 +3594,33 @@ if (struct_type_info.getStructInfo()) {
 		current_template_param_names_ = std::move(template_param_names_for_body);
 
 		// Parse class template
-		decl_result = parse_struct_declaration();
+		// Save scope/stack state before try block so we can restore on exception
+		const size_t saved_struct_stack_size = struct_parsing_context_stack_.size();
+		const size_t saved_member_func_stack_size = member_function_context_stack_.size();
+		const size_t saved_scope_depth = gSymbolTable.get_current_scope_handle().scope_level;
+		try {
+			decl_result = parse_struct_declaration();
+		} catch (const std::bad_any_cast& e) {
+			// Restore parser state that may have been partially modified
+			while (struct_parsing_context_stack_.size() > saved_struct_stack_size)
+				struct_parsing_context_stack_.pop_back();
+			while (member_function_context_stack_.size() > saved_member_func_stack_size)
+				member_function_context_stack_.pop_back();
+			while (gSymbolTable.get_current_scope_handle().scope_level > saved_scope_depth)
+				gSymbolTable.exit_scope();
+
+			FLASH_LOG(Templates, Error, "bad_any_cast during template struct parsing: ", e.what());
+			// Skip to end of struct body
+			while (!peek().is_eof() && peek() != ";"_tok) {
+				if (peek() == "{"_tok) {
+					skip_balanced_braces();
+				} else {
+					advance();
+				}
+			}
+			if (peek() == ";"_tok) advance();
+			decl_result = ParseResult::success();
+		}
 
 		// Clear template parameter context
 		current_template_param_names_.clear();
@@ -3723,7 +3749,28 @@ if (struct_type_info.getStructInfo()) {
 					if (peek() == "..."_tok) {
 						advance(); // consume '...'
 					}
-					
+
+					// Handle default argument (e.g., _Allocator = _Allocator())
+					if (peek() == "="_tok) {
+						advance(); // consume '='
+						// Skip the default argument expression (balanced parens/angles)
+						int paren_depth = 0;
+						int angle_depth = 0;
+						while (!peek().is_eof()) {
+							if (peek() == "("_tok) { advance(); paren_depth++; }
+							else if (peek() == ")"_tok && paren_depth > 0) { advance(); paren_depth--; }
+							else if (peek() == "<"_tok) { advance(); angle_depth++; }
+							else if (peek() == ">"_tok && angle_depth > 0) { advance(); angle_depth--; }
+							else if (peek() == ">>"_tok && angle_depth >= 2) { advance(); angle_depth -= 2; }
+							else if (peek() == ">>"_tok && angle_depth == 1) { split_right_shift_token(); advance(); angle_depth--; }
+							else if (paren_depth == 0 && angle_depth == 0 &&
+									 (peek() == ","_tok || peek() == ")"_tok)) {
+								break;
+							}
+							else { advance(); }
+						}
+					}
+
 					if (peek() == ","_tok) {
 						advance();
 						continue;
@@ -5119,8 +5166,8 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (!peek().is_eof()) {
 			if (peek() == "delete"_tok) {
 				advance(); // consume 'delete'
-				// For deleted template functions, we just record the pattern
-				// The function is still registered as a template but will be rejected if called
+				// Mark the function as deleted so calling it produces an error
+				func_decl.set_is_deleted(true);
 			} else if (peek() == "default"_tok) {
 				advance(); // consume 'default'
 				// For defaulted template functions, the compiler generates the implementation
@@ -6077,100 +6124,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				// Handle member type alias (using) declarations
 				if (keyword == "using") {
-					advance(); // consume 'using'
-					
-					// Parse the alias name
-					if (!peek().is_identifier()) {
-						return ParseResult::error("Expected alias name after 'using'", current_token_);
-					}
-					std::string_view alias_name = peek_info().value();
-					advance(); // consume alias name
-					
-					// Check if this is an inheriting constructor: using Base::Base;
-					// or a using-declaration: using Base::member;
-					// Also handle: using Base<Args>::member; (template args before ::)
-					// Use save/restore to safely disambiguate '<' as template args vs comparison
-					bool found_qualified = false;
-					if (peek() == "<"_tok) {
-						auto tmpl_check = save_token_position();
-						skip_template_arguments();
-						if (peek() == "::"_tok) {
-							// Confirmed: '<' was template arguments before '::'
-							discard_saved_token(tmpl_check);
-							found_qualified = true;
-						} else {
-							// Not followed by '::', so '<' was not template args here
-							restore_token_position(tmpl_check);
-						}
-					}
-					if (found_qualified || peek() == "::"_tok) {
-						// Parse the full qualified name
-						std::string_view base_class_name = alias_name;
-						
-						while (peek() == "::"_tok) {
-							advance(); // consume '::'
-							
-							if (peek().is_identifier()) {
-								alias_name = peek_info().value();  // Track last identifier
-								advance(); // consume identifier
-								
-								// Skip template arguments if present
-								if (peek() == "<"_tok) {
-									skip_template_arguments();
-								}
-							}
-						}
-						
-						// Check if this is an inheriting constructor
-						bool is_inheriting_constructor = (alias_name == base_class_name);
-						
-						if (is_inheriting_constructor) {
-							FLASH_LOG(Parser, Debug, "Inheriting constructors from '", base_class_name, "' in member struct template");
-						} else {
-							FLASH_LOG(Parser, Debug, "Using-declaration imports member '", alias_name, "' in member struct template");
-						}
-						
-						// Consume pack expansion '...' if present (C++17 using-declaration with pack expansion)
-						if (peek() == "..."_tok) {
-							advance(); // consume '...'
-						}
-						
-						// Consume trailing semicolon
-						if (peek() == ";"_tok) {
-							advance();
-						}
-						
-						continue;  // Move to next member
-					}
-					
-					// Expect '=' for type alias
-					if (peek() != "="_tok) {
-						return ParseResult::error("Expected '=' after alias name", current_token_);
-					}
-					advance(); // consume '='
-					
-					// Parse the aliased type
-					auto type_result = parse_type_specifier();
-					if (type_result.is_error()) {
-						return type_result;
-					}
-					
-					// Parse pointer/reference modifiers after the type (ptr-operator in C++20 grammar)
-					// This allows patterns like: using type = remove_reference_t<T>&&;
-					if (type_result.node().has_value()) {
-						TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-						consume_pointer_ref_modifiers(type_spec);
-					}
-					
-					// Expect ';'
-					if (!consume(";"_tok)) {
-						return ParseResult::error("Expected ';' after using declaration", current_token_);
-					}
-					
-					// Store the type alias in the struct
-					if (type_result.node().has_value()) {
-						StringHandle alias_name_handle = StringTable::getOrInternStringHandle(alias_name);
-						member_struct_ref.add_type_alias(alias_name_handle, *type_result.node(), current_access);
+					auto alias_result = parse_member_type_alias("using", &member_struct_ref, current_access);
+					if (alias_result.is_error()) {
+						return alias_result;
 					}
 					continue;
 				}
@@ -6255,9 +6211,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					}
 					continue;
 				}
+				// Handle nested template declarations (member function templates, member struct templates, etc.)
+				if (keyword == "template") {
+					auto template_result = parse_member_template_or_function(member_struct_ref, current_access);
+					if (template_result.is_error()) {
+						return template_result;
+					}
+					continue;
+				}
 			}
-			
-			// Save position BEFORE parsing specifiers so we can restore if needed
 			// This ensures specifiers like constexpr, inline, static aren't lost for non-constructor members
 			SaveHandle member_saved_pos = save_token_position();
 			
@@ -6782,6 +6744,14 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	Token var_name_token = peek_info();
 	std::string_view var_name = var_name_token.value();
 	advance();
+	
+	// Handle variable template partial specialization: name<args> = expr;
+	[[maybe_unused]] bool is_partial_specialization = false;
+	if (peek() == "<"_tok) {
+		is_partial_specialization = true;
+		// Skip the template specialization arguments
+		skip_template_arguments();
+	}
 	
 	// Create DeclarationNode
 	auto decl_node = emplace_node<DeclarationNode>(
@@ -8958,6 +8928,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	new_func_ref.set_is_constinit(func_decl.is_constinit());
 	new_func_ref.set_noexcept(func_decl.is_noexcept());
 	new_func_ref.set_is_variadic(func_decl.is_variadic());
+	new_func_ref.set_is_deleted(func_decl.is_deleted());
 	new_func_ref.set_linkage(func_decl.linkage());
 	new_func_ref.set_calling_convention(func_decl.calling_convention());
 

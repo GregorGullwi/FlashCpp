@@ -425,6 +425,7 @@ int main_impl(int argc, char *argv[]) {
     }
 
     // IR conversion (visiting AST nodes)
+    bool ir_conversion_had_errors = false;
     {
         PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
         for (auto& node_handle : ast) {
@@ -438,7 +439,18 @@ int main_impl(int argc, char *argv[]) {
                     FLASH_LOG(Codegen, Debug, "  -> Block has ", def_block.get_statements().size(), " statements");
                 }
             }
-            converter.visit(node_handle);
+            try {
+                converter.visit(node_handle);
+            } catch (const std::bad_any_cast& e) {
+                // Log and skip nodes that cause bad_any_cast during IR conversion
+                // This allows compilation to continue past problematic template instantiations
+                std::string node_desc = node_handle.type_name();
+                if (node_handle.is<FunctionDeclarationNode>()) {
+                    node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+                }
+                FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+                ir_conversion_had_errors = true;
+            }
         }
     }
 
@@ -465,6 +477,12 @@ int main_impl(int argc, char *argv[]) {
            FLASH_LOG(Codegen, Debug, instruction.getReadableString());
         }
         FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
+    }
+
+    if (ir_conversion_had_errors) {
+        FLASH_LOG(General, Error, "Compilation failed due to IR conversion errors");
+        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+        return 1;
     }
 
     // Platform detection: Use ELF on Linux/Unix, COFF on Windows
