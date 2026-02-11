@@ -2224,7 +2224,8 @@ ParseResult Parser::parse_decltype_specifier()
 		// unresolved function calls with dependent arguments), create a dependent type
 		// placeholder instead of propagating the error. The actual function lookup
 		// will happen during template instantiation when the dependent types are known.
-		if (parsing_template_body_ || !current_template_param_names_.empty()) {
+		// EXCEPTION: In SFINAE context, propagate the error so the overload is rejected.
+		if ((parsing_template_body_ || !current_template_param_names_.empty()) && !in_sfinae_context_) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for failed decltype expression in template context");
 			// Restore position to start of expression for reliable paren counting
 			restore_token_position(expr_start_pos);
@@ -2257,13 +2258,14 @@ ParseResult Parser::parse_decltype_specifier()
 	// The result type of decltype is the type of the last expression.
 	while (peek() == ","_tok) {
 		advance(); // consume ','
+		SaveHandle comma_expr_pos = save_token_position();
 		auto next_expr = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 		if (next_expr.is_error()) {
 			// In template context, create dependent type and skip to closing paren.
-			// paren_depth starts at 1 for the outer decltype( that was consumed at the top
-			// of this function. parse_expression() balances any inner parens it opens,
-			// so on failure we only need to find the matching ')' for decltype(.
-			if (parsing_template_body_ || !current_template_param_names_.empty()) {
+			// Restore to position before the failed parse_expression to ensure
+			// reliable paren depth counting (matches the recovery at lines 2228-2230).
+			if ((parsing_template_body_ || !current_template_param_names_.empty()) && !in_sfinae_context_) {
+				restore_token_position(comma_expr_pos);
 				int paren_depth = 1;
 				while (!peek().is_eof() && paren_depth > 0) {
 					if (peek() == "("_tok) paren_depth++;
@@ -2278,8 +2280,10 @@ ParseResult Parser::parse_decltype_specifier()
 					return saved_position.success(emplace_node<TypeSpecifierNode>(dependent_type));
 				}
 			}
+			discard_saved_token(comma_expr_pos);
 			return next_expr;
 		}
+		discard_saved_token(comma_expr_pos);
 		// Update the expression result to the last expression in the comma chain
 		expr_result = std::move(next_expr);
 	}

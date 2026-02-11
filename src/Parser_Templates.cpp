@@ -5095,6 +5095,9 @@ ParseResult Parser::parse_template_function_declaration_body(
 		FLASH_LOG(Templates, Debug, "Template instantiation: no token after params");
 	}
 	if (return_type.type() == Type::Auto && peek() == "->"_tok) {
+		// Save position of '->' for SFINAE re-parsing of trailing return type
+		SaveHandle trailing_pos = save_token_position();
+		func_decl.set_trailing_return_type_position(trailing_pos);
 		advance();  // consume '->'
 		
 		// Enter a temporary scope for trailing return type parsing
@@ -8517,15 +8520,16 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		return *specialization_opt;
 	}
 
-	// Look up the template in the registry
-	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-	if (!template_opt.has_value()) {
+	// Look up ALL templates with this name (for SFINAE overload resolution)
+	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(template_name);
+	if (!all_templates || all_templates->empty()) {
 		return std::nullopt;  // No template with this name
 	}
 
-	const ASTNode& template_node = *template_opt;
+	// Loop over all overloads for SFINAE support
+	for (const auto& template_node : *all_templates) {
 	if (!template_node.is<TemplateFunctionDeclarationNode>()) {
-		return std::nullopt;  // Not a function template
+		continue;  // Not a function template, try next overload
 	}
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
@@ -8547,7 +8551,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Verify we have the right number of template arguments
 	// For variadic templates, we allow any number of arguments >= number of non-pack parameters
 	if (!has_variadic_pack && explicit_types.size() != template_params.size()) {
-		return std::nullopt;  // Wrong number of template arguments for non-variadic template
+		continue;  // Wrong number of template arguments for non-variadic template, try next overload
 	}
 	
 	// For variadic templates, count non-pack parameters and verify we have at least that many
@@ -8562,13 +8566,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 		if (explicit_types.size() < non_pack_params) {
-			return std::nullopt;  // Not enough template arguments
+			continue;  // Not enough template arguments, try next overload
 		}
 	}
 
 	// Build template argument list
 	std::vector<TemplateArgument> template_args;
 	size_t explicit_idx = 0;  // Track position in explicit_types
+	bool overload_mismatch = false;
 	for (size_t i = 0; i < template_params.size(); ++i) {
 		if (!template_params[i].is<TemplateParameterNode>()) {
 			FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode (type: {})", i, template_params[i].type_name());
@@ -8604,13 +8609,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				// Not enough explicit types - this overload doesn't match
 				FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need argument at position {} but only {} types provided", 
 				                 explicit_idx, explicit_types.size());
-				return std::nullopt;
+				overload_mismatch = true;
+				break;
 			}
 			// Use toTemplateArgument() to preserve full type info including references
 			template_args.push_back(toTemplateArgument(explicit_types[explicit_idx]));
 			++explicit_idx;
 		}
 	}
+	if (overload_mismatch) continue;  // SFINAE: try next overload
 
 	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
 	FLASH_LOG(Templates, Debug, "try_instantiate_template_explicit: Checking requires clause for '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
@@ -8682,8 +8689,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 			FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
 			
-			// Don't create instantiation - constraint failed
-			return std::nullopt;
+			// Don't create instantiation - constraint failed, try next overload
+			continue;
 		}
 	}
 
@@ -8714,11 +8721,62 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					if (!constraint_result.satisfied) {
 						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
 						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
-						return std::nullopt;
+						overload_mismatch = true;
+						break;
 					}
 				}
 			}
 			if (!param.is_variadic()) ++arg_idx;
+		}
+	}
+	if (overload_mismatch) continue;  // SFINAE: concept constraint failed, try next overload
+
+	// SFINAE for trailing return type: if the function has a declaration position for re-parsing,
+	// always re-parse the return type with substituted template parameters.
+	// During template parsing, trailing return types like decltype(u->foo(), void(), true)
+	// may resolve to concrete types (e.g., bool) even when they contain dependent expressions.
+	// The re-parse with concrete template arguments will fail if substitution is invalid.
+	if (func_decl.has_trailing_return_type_position()) {
+		{
+			bool prev_sfinae_context = in_sfinae_context_;
+			bool prev_parsing_template_body = parsing_template_body_;
+			auto prev_template_param_names = std::move(current_template_param_names_);
+			in_sfinae_context_ = true;
+			parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
+			current_template_param_names_.clear();  // No dependent names during SFINAE
+
+			SaveHandle sfinae_pos = save_token_position();
+			restore_lexer_position_only(func_decl.trailing_return_type_position());
+			advance();  // consume '->'
+
+			// Register function parameters so they're visible in decltype expressions
+			gSymbolTable.enter_scope(ScopeType::Function);
+			register_parameters_in_scope(func_decl.parameter_nodes());
+
+			FlashCpp::TemplateParameterScope sfinae_scope;
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) continue;
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				Type concrete_type = template_args[i].type_value;
+				auto& type_info = gTypeInfo.emplace_back(
+					StringTable::getOrInternStringHandle(tparam.name()),
+					concrete_type, gTypeInfo.size(),
+					getTypeSizeFromTemplateArgument(template_args[i]));
+				gTypesByName.emplace(type_info.name(), &type_info);
+				sfinae_scope.addParameter(&type_info);
+			}
+
+			auto return_type_result = parse_type_specifier();
+			gSymbolTable.exit_scope();
+			restore_lexer_position_only(sfinae_pos);
+			in_sfinae_context_ = prev_sfinae_context;
+			parsing_template_body_ = prev_parsing_template_body;
+			current_template_param_names_ = std::move(prev_template_param_names);
+
+			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
+				FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
+				continue;  // SFINAE: this overload's return type failed, try next
+			}
 		}
 	}
 
@@ -8972,6 +9030,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	ast_nodes_.push_back(new_func_node);
 
 	return new_func_node;
+	} // end of overload loop
+
+	return std::nullopt;  // No overload matched
 }
 
 // Try to instantiate a function template with the given argument types
@@ -17053,18 +17114,25 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			return *existing_inst;  // Return existing instantiation
 		}
 
-		// SFINAE for trailing return type: if the return type is 'auto' and has a declaration position,
-		// re-parse the return type with substituted template parameters to check validity
-		const DeclarationNode& orig_decl = func_decl.decl_node();
-		const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
-		if (orig_return_type.type() == Type::Auto && func_decl.has_template_declaration_position()) {
+		// SFINAE for trailing return type: always re-parse when trailing position is available
+		if (func_decl.has_trailing_return_type_position()) {
 			bool prev_sfinae_context = in_sfinae_context_;
+			bool prev_parsing_template_body = parsing_template_body_;
+			auto prev_template_param_names = std::move(current_template_param_names_);
 			in_sfinae_context_ = true;
+			parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
+			current_template_param_names_.clear();  // No dependent names during SFINAE
 
 			SaveHandle sfinae_pos = save_token_position();
-			restore_lexer_position_only(func_decl.template_declaration_position());
+			restore_lexer_position_only(func_decl.trailing_return_type_position());
+			advance();  // consume '->'
+
+			// Register function parameters so they're visible in decltype expressions
+			gSymbolTable.enter_scope(ScopeType::Function);
+			register_parameters_in_scope(func_decl.parameter_nodes());
 
 			FlashCpp::TemplateParameterScope sfinae_scope;
+			// Add inner template params (the member function template's own params, e.g. U)
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				Type concrete_type = template_args[i].type_value;
@@ -17075,10 +17143,28 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				gTypesByName.emplace(type_info.name(), &type_info);
 				sfinae_scope.addParameter(&type_info);
 			}
+			// Add outer template params (from enclosing class template, e.g. T→int)
+			const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
+			if (outer_binding) {
+				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+					std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
+					Type outer_concrete_type = outer_binding->param_args[i].base_type;
+					uint32_t outer_size = (outer_binding->param_args[i].type_index != 0 && outer_binding->param_args[i].type_index < gTypeInfo.size())
+						? gTypeInfo[outer_binding->param_args[i].type_index].type_size_
+						: get_type_size_bits(outer_concrete_type);
+					auto& outer_type_info = gTypeInfo.emplace_back(
+						StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
+					gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
+					sfinae_scope.addParameter(&outer_type_info);
+				}
+			}
 
 			auto return_type_result = parse_type_specifier();
+			gSymbolTable.exit_scope();
 			restore_lexer_position_only(sfinae_pos);
 			in_sfinae_context_ = prev_sfinae_context;
+			parsing_template_body_ = prev_parsing_template_body;
+			current_template_param_names_ = std::move(prev_template_param_names);
 
 			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 				continue;  // SFINAE: this overload's return type failed, try next
