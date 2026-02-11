@@ -2252,6 +2252,32 @@ ParseResult Parser::parse_decltype_specifier()
 	}
 	discard_saved_token(expr_start_pos);
 
+	// Handle comma operator inside decltype: decltype(expr1, expr2, expr3)
+	// The comma here is the C++ comma operator, not an argument separator.
+	// The result type of decltype is the type of the last expression.
+	while (peek() == ","_tok) {
+		advance(); // consume ','
+		auto next_expr = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
+		if (next_expr.is_error()) {
+			// In template context, create dependent type and skip to closing paren
+			if (parsing_template_body_ || !current_template_param_names_.empty()) {
+				int paren_depth = 1;
+				while (!peek().is_eof() && paren_depth > 0) {
+					if (peek() == "("_tok) paren_depth++;
+					else if (peek() == ")"_tok) paren_depth--;
+					if (paren_depth > 0) advance();
+				}
+				if (consume(")"_tok)) {
+					TypeSpecifierNode dependent_type(Type::Auto, TypeQualifier::None, 0);
+					return saved_position.success(emplace_node<TypeSpecifierNode>(dependent_type));
+				}
+			}
+			return next_expr;
+		}
+		// Update the expression result to the last expression in the comma chain
+		expr_result = std::move(next_expr);
+	}
+
 	// Expect ')'
 	if (!consume(")"_tok)) {
 		return ParseResult::error("Expected ')' after decltype expression", current_token_);

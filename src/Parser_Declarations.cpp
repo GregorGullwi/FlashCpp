@@ -9174,11 +9174,21 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		return saved_position.success(friend_node);
 	}
 
-	// Parse the class/struct name
+	// Parse the class/struct name (may be namespace-qualified: std::ClassName)
 	if (!peek().is_identifier()) {
 		return ParseResult::error("Expected class/struct name after 'friend struct/class'", peek_info());
 	}
 	auto class_name = advance().value();
+
+	// Handle namespace-qualified names: std::_Rb_tree_merge_helper
+	while (peek() == "::"_tok) {
+		advance(); // consume '::'
+		if (peek().is_identifier()) {
+			class_name = advance().value();
+		} else {
+			break;
+		}
+	}
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
