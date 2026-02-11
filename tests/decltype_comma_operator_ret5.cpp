@@ -1,5 +1,6 @@
 // Test: decltype with comma operator (SFINAE pattern)
 // Pattern: decltype(expr1, expr2, value) to test availability of expr1
+// Validates that the parser correctly handles comma operator inside decltype
 
 template<typename T>
 struct has_foo {
@@ -11,10 +12,8 @@ struct has_foo {
 };
 
 struct WithFoo { void foo() {} };
-struct WithoutFoo {};
 
 int main() {
 	bool a = has_foo<WithFoo>::check<WithFoo>(nullptr);
-	// Only check that parsing succeeds - result depends on template instantiation
-	return a ? 5 : 5;  // always returns 5
+	return a ? 5 : 0;
 }

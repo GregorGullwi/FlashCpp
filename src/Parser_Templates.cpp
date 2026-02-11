@@ -3900,8 +3900,15 @@ if (struct_type_info.getStructInfo()) {
 			//   template<> void foo<int>(int);
 			if (peek() == ";"_tok) {
 				advance(); // consume ';'
-				// Forward declaration of a full specialization - return as-is without body
-				return ParseResult::success(emplace_node<ASTNode>(*func_result.node()));
+				// Forward declaration of a full specialization.
+				// Register it with the template registry so the signature is known when used later.
+				NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+				StringHandle func_handle = StringTable::getOrInternStringHandle(func_base_name);
+				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, func_handle);
+				std::string_view qualified_specialization_name = StringTable::getStringView(qualified_handle);
+				gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args, *func_result.node());
+				
+				return saved_position.success(*func_result.node());
 			}
 			if (peek() != "{"_tok) {
 				std::string error_msg = "Template specializations must have a definition (body)";

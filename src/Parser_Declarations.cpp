@@ -722,23 +722,10 @@ ParseResult Parser::parse_type_and_name() {
     CVQualifier postfix_cv = parse_cv_qualifiers();
     type_spec.add_cv_qualifier(postfix_cv);
 
-    // After postfix cv-qualifiers, check for pointer declarators again.
+    // After postfix cv-qualifiers, parse pointer and reference declarators.
     // This handles patterns like: typename _Str::value_type const* __lhs
     // where const appears between the dependent type and the pointer.
-    while (peek() == "*"_tok) {
-        advance(); // consume '*'
-        CVQualifier ptr_cv = parse_cv_qualifiers();
-        type_spec.add_pointer_level(ptr_cv);
-    }
-
-    // Parse reference declarators: & or &&
-    // Example: int& ref or int&& rvalue_ref
-    ReferenceQualifier ref_qual = parse_reference_qualifier();
-    if (ref_qual == ReferenceQualifier::RValueReference) {
-        type_spec.set_reference(true);  // true = rvalue reference
-    } else if (ref_qual == ReferenceQualifier::LValueReference) {
-        type_spec.set_reference(false);  // false = lvalue reference
-    }
+    consume_pointer_ref_modifiers(type_spec);
 
     // Check for calling convention AFTER pointer/reference declarators
     // Example: void* __cdecl func(); or int& __stdcall func();
@@ -9178,25 +9165,30 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	if (!peek().is_identifier()) {
 		return ParseResult::error("Expected class/struct name after 'friend struct/class'", peek_info());
 	}
-	auto class_name = advance().value();
+
+	// Build the full qualified name: ns1::ns2::ClassName
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(advance().value());
 
 	// Handle namespace-qualified names: std::_Rb_tree_merge_helper
 	while (peek() == "::"_tok) {
 		advance(); // consume '::'
 		if (peek().is_identifier()) {
-			class_name = advance().value();
+			qualified_name_builder.append("::");
+			qualified_name_builder.append(advance().value());
 		} else {
 			break;
 		}
 	}
+	std::string_view qualified_name = qualified_name_builder.commit();
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after template friend class declaration", peek_info());
 	}
 
-	// Create friend declaration node with TemplateClass kind
-	auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::TemplateClass, StringTable::getOrInternStringHandle(class_name));
+	// Create friend declaration node with TemplateClass kind, storing the full qualified name
+	auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::TemplateClass, StringTable::getOrInternStringHandle(qualified_name));
 	struct_node.add_friend(friend_node);
 
 	return saved_position.success(friend_node);

@@ -2259,13 +2259,19 @@ ParseResult Parser::parse_decltype_specifier()
 		advance(); // consume ','
 		auto next_expr = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 		if (next_expr.is_error()) {
-			// In template context, create dependent type and skip to closing paren
+			// In template context, create dependent type and skip to closing paren.
+			// paren_depth starts at 1 for the outer decltype( that was consumed at the top
+			// of this function. parse_expression() balances any inner parens it opens,
+			// so on failure we only need to find the matching ')' for decltype(.
 			if (parsing_template_body_ || !current_template_param_names_.empty()) {
 				int paren_depth = 1;
 				while (!peek().is_eof() && paren_depth > 0) {
 					if (peek() == "("_tok) paren_depth++;
-					else if (peek() == ")"_tok) paren_depth--;
-					if (paren_depth > 0) advance();
+					else if (peek() == ")"_tok) {
+						paren_depth--;
+						if (paren_depth == 0) break;
+					}
+					advance();
 				}
 				if (consume(")"_tok)) {
 					TypeSpecifierNode dependent_type(Type::Auto, TypeQualifier::None, 0);
