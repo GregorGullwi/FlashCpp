@@ -3815,7 +3815,7 @@
 							int return_size = static_cast<int>(return_type_node.size_in_bits());
 							
 							// Defaulted operator<=> with auto return type actually returns int
-							if (return_type == Type::Auto || return_size == 0) {
+							if (return_type == Type::Auto) {
 								return_type = Type::Int;
 								return_size = 32;
 							}
