@@ -183,8 +183,8 @@ The compiler includes 600+ test cases covering:
 - Modern syntax (spaceship, range-for init)
 
 **Partially Implemented Features (B)**
-- Spaceship operator: defaulted `<=>` with memberwise comparison (including nested struct delegation and template struct support), all 6 synthesized operators, inline expression use `(a <=> b) < 0`, mixed member types, signed/unsigned correctness; remaining edge case: `std::strong_ordering` return type (requires `<compare>` header)
-- Designated initializers: basic and nested patterns work, default member values applied for omitted fields, explicit type as function arg `func(Point{.x=1})`; remaining gap: implicit designated init as function arg `func({.x=1})`
+- Spaceship operator: defaulted `<=>` with memberwise comparison (including nested struct delegation and template struct support), all 6 synthesized operators, inline expression use `(a <=> b) < 0`, mixed member types, signed/unsigned correctness, `std::strong_ordering` return type with constexpr static member initialization
+- Designated initializers: basic and nested patterns work, default member values applied for omitted fields, explicit type as function arg `func(Point{.x=1})`, implicit designated init as function arg `func({.x=1})`
 
 **Missing Features (N/A)**
 - Coroutines (keywords recognized, parsing incomplete)
@@ -327,9 +327,9 @@ test. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.m
 
 Current development priorities:
 
-1. **Complete code generation** for remaining edge cases (`std::strong_ordering` via `<compare>` header, implicit designated init in function args `func({.x=1})`)
+1. **Continue code generation** improvements for remaining C++20 features
 2. **Fix remaining template codegen issues** (some complex instantiations)
-3. **Enhance standard library header support** (add `<compare>`, expand beyond type_traits)
+3. **Enhance standard library header support** (expand `<compare>`, expand beyond type_traits)
 4. **Add missing features**: Coroutines (incomplete), Modules (not started)
 5. **Implement remaining C++20 features**: ranges adaptors
 
