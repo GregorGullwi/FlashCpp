@@ -1339,7 +1339,7 @@
 					if (!ctor_evaluated) {
 						// Fallback: zero-initialize for default constructor or failed eval
 						op.is_initialized = true;
-						op.init_data.resize(element_size, 0);
+						op.init_data.resize(si ? si->total_size : element_size, 0);
 					}
 				} else if (init_node.is<ExpressionNode>()) {
 					// Single value initialization
