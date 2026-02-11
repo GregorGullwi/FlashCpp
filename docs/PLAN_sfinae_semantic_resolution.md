@@ -1,70 +1,33 @@
 # SFINAE Semantic Member Resolution Plan
 
 **Date:** 2026-02-11  
-**Status:** Not started  
+**Status:** Phase 1 Complete  
 **Priority:** Medium — blocks full SFINAE support for type trait patterns
 
-## Problem
+## Completed ✓
 
-SFINAE with trailing return types like `decltype(u->foo(), void(), true)` requires the
-expression parser to **semantically resolve** member accesses when checking if a return
-type is valid. Currently, the parser accepts `u->foo()` syntactically without verifying
-that `foo()` exists as a member of the concrete type substituted for `U`.
+### Phase 1: Member Access Resolution in SFINAE Context (2026-02-11)
+- [x] Added `sfinae_type_map_` to Parser — maps template parameter names (e.g., "U")
+  to concrete type indices during SFINAE trailing return type re-parse
+- [x] Expression parser resolves template parameter types to concrete struct names
+  using the map, then verifies member existence on the resolved struct
+- [x] Returns `ParseResult::error()` when member not found → propagates through
+  `parse_expression()` → `parse_decltype_specifier()` → SFINAE `parse_type_specifier()`
+  fails → overload loop continues to next candidate
+- [x] Both positive and negative SFINAE paths work for `decltype(u->foo(), void(), true)`
+- [x] Both free function and member function SFINAE paths populate the map
+  (including outer template parameter bindings for member functions)
 
-This means negative SFINAE cases (where substitution should fail) are not detected:
-```cpp
-struct WithFoo { void foo() {} };
-struct WithoutFoo {};
-
-template<typename U>
-auto check(U* u) -> decltype(u->foo(), true) { return true; }
-
-template<typename U>
-auto check(...) -> bool { return false; }
-
-// check<WithFoo>(nullptr)    → correctly returns true (first overload)
-// check<WithoutFoo>(nullptr) → INCORRECTLY returns true (should fall back to second overload)
-```
-
-## Root Cause
-
-The expression parser in `parse_expression()` creates `MemberAccessNode` and
-`FunctionCallNode` AST nodes without resolving whether the member actually exists.
-Member resolution happens later during template body instantiation or codegen.
-
-During SFINAE re-parse in `try_instantiate_template_explicit`, the infrastructure is in
-place:
-- `in_sfinae_context_ = true`
-- `parsing_template_body_ = false`
-- `current_template_param_names_` cleared
-- Template parameters bound to concrete types
-- Function parameters registered in scope
-
-But the expression parser doesn't use `in_sfinae_context_` to trigger member lookup.
-
-## Infrastructure Already Built (2026-02-11)
-
-1. **Overload loop in `try_instantiate_template_explicit`** — iterates all overloads
-   via `lookupAllTemplates()`, with `continue` for SFINAE rejection
-2. **`trailing_return_type_position`** on `FunctionDeclarationNode` — saved during
-   template parsing at the `->` token for re-parsing
-3. **SFINAE context management** — `in_sfinae_context_`, `parsing_template_body_`,
-   and `current_template_param_names_` are correctly saved/restored
-4. **Parameter scope** — `register_parameters_in_scope()` makes function parameters
-   visible during re-parse
-5. **Same infrastructure in `try_instantiate_member_function_template_explicit`** —
-   with outer template binding support for nested templates
+### Infrastructure (2026-02-11)
+- [x] Overload loop in `try_instantiate_template_explicit` via `lookupAllTemplates()`
+- [x] `trailing_return_type_position` (std::optional<SaveHandle>) on `FunctionDeclarationNode`
+- [x] SFINAE context management (save/restore `in_sfinae_context_`, `parsing_template_body_`,
+  `current_template_param_names_`, `sfinae_type_map_`)
+- [x] Parameter scope via `register_parameters_in_scope()`
+- [x] Same infrastructure in `try_instantiate_member_function_template_explicit`
+  with outer template binding support
 
 ## TODO Items
-
-### Phase 1: Member Access Resolution in SFINAE Context
-- [ ] In `parse_member_access` (or wherever `u->foo()` is parsed), when
-  `in_sfinae_context_` is true, resolve the struct type of the object and check if
-  the member exists
-- [ ] If member doesn't exist, return `ParseResult::error()` instead of creating a
-  `MemberAccessNode` — this will propagate up through `parse_expression()` →
-  `parse_decltype_specifier()` → cause the SFINAE `parse_type_specifier()` to fail
-- [ ] Handle both `->` and `.` member access patterns
 
 ### Phase 2: Overload Resolution in SFINAE Context
 - [ ] When `u->foo()` is a valid member but has incompatible arguments, SFINAE should
