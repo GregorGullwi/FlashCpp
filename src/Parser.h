@@ -745,6 +745,15 @@ private:
             const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map = {});  // NEW: Substitute template parameters in expressions
         std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
         std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
+        // Core logic shared by both try_instantiate_member_function_template and _explicit.
+        // Given a resolved template node and template arguments, performs type substitution,
+        // body parsing, scope management, and AST registration.
+        std::optional<ASTNode> instantiate_member_function_template_core(
+            std::string_view struct_name, std::string_view member_name,
+            StringHandle qualified_name,
+            const ASTNode& template_node,
+            const std::vector<TemplateArgument>& template_args,
+            const TemplateInstantiationKey& key);
         std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
     public:
         bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand

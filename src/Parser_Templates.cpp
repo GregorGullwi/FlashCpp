@@ -16851,10 +16851,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
-	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
-	// Look up outer template parameter bindings (for nested templates)
-	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
 	if (arg_types.empty()) {
 		return std::nullopt;  // Can't deduce without arguments
 	}
@@ -16903,251 +16900,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		return *existing_inst;  // Return existing instantiation
 	}
 
-	// Generate mangled name for the instantiation
-	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(member_name, template_args);
-
-	// Get the original function's declaration
-	const DeclarationNode& orig_decl = func_decl.decl_node();
-
-	// Helper lambda to resolve a UserDefined type against both inner and outer template params
-	auto resolve_template_type = [&](Type type, TypeIndex type_index) -> std::pair<Type, TypeIndex> {
-		if (type == Type::UserDefined && type_index < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[type_index];
-			std::string_view tn = StringTable::getStringView(ti.name());
-
-			// Check inner template params first
-			for (size_t i = 0; i < template_params.size(); ++i) {
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.name() == tn && i < template_args.size()) {
-					return { template_args[i].type_value, 0 };
-				}
-			}
-			// Check outer template params (e.g., T→int from class template)
-			if (outer_binding) {
-				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-					if (StringTable::getStringView(outer_binding->param_names[i]) == tn) {
-						const auto& arg = outer_binding->param_args[i];
-						return { arg.base_type, arg.type_index };
-					}
-				}
-			}
-		}
-		return { type, type_index };
-	};
-
-	// Substitute the return type if it's a template parameter
-	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
-	auto [return_type, return_type_index] = resolve_template_type(return_type_spec.type(), return_type_spec.type_index());
-
-	// Create mangled token
-	Token mangled_token(Token::Type::Identifier, mangled_name,
-	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
-	                    orig_decl.identifier_token().file_index());
-
-	// Create return type node
-	ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
-		return_type,
-		TypeQualifier::None,
-		get_type_size_bits(return_type),
-		Token()
-	);
-	
-	// Copy pointer levels and set type_index from the resolved type
-	auto& substituted_return_type_spec = substituted_return_type.as<TypeSpecifierNode>();
-	substituted_return_type_spec.set_type_index(return_type_index);
-	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-	}
-
-	// Create the new function declaration
-	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
-	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, struct_name);
-
-	// Copy and substitute parameters
-	for (const auto& param : func_decl.parameter_nodes()) {
-		if (param.is<DeclarationNode>()) {
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
-
-			auto [param_type, param_type_index] = resolve_template_type(param_type_spec.type(), param_type_spec.type_index());
-
-			// Create the substituted parameter type specifier
-			auto substituted_param_type = emplace_node<TypeSpecifierNode>(
-				param_type,
-				TypeQualifier::None,
-				get_type_size_bits(param_type),
-				Token()
-			);
-			
-			// Copy pointer levels and set type_index from the resolved type
-			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
-			substituted_param_type_spec.set_type_index(param_type_index);
-			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
-				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-			}
-
-			// Create the new parameter declaration
-			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
-			new_func_ref.add_parameter_node(new_param_decl);
-		}
-	}
-
-	// Check if the template has a body position stored
-	if (!func_decl.has_template_body_position()) {
-		// No body to parse - compute mangled name for proper linking and symbol resolution
-		// Even without a body, the mangled name is needed for code generation and linking
-		compute_and_set_mangled_name(new_func_ref);
-		ast_nodes_.push_back(new_func_node);
-		gTemplateRegistry.registerInstantiation(key, new_func_node);
-		return new_func_node;
-	}
-	
-	// Temporarily add the concrete types to the type system with template parameter names
-	// Using RAII scope guard (Phase 6) for automatic cleanup
-	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<std::string_view> param_names;
-	for (const auto& tparam_node : template_params) {
-		if (tparam_node.is<TemplateParameterNode>()) {
-			param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
-		}
-	}
-	
-	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-		std::string_view param_name = param_names[i];
-		Type concrete_type = template_args[i].type_value;
-
-		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
-		gTypesByName.emplace(type_info.name(), &type_info);
-		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
-	}
-
-	// Also add outer template parameter bindings (e.g., T→int from class template)
-	if (outer_binding) {
-		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-			std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
-			Type outer_concrete_type = outer_binding->param_args[i].base_type;
-			uint32_t outer_size = (outer_binding->param_args[i].type_index != 0 && outer_binding->param_args[i].type_index < gTypeInfo.size())
-				? gTypeInfo[outer_binding->param_args[i].type_index].type_size_
-				: get_type_size_bits(outer_concrete_type);
-			auto& outer_type_info = gTypeInfo.emplace_back(
-				StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
-			gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
-			template_scope.addParameter(&outer_type_info);
-		}
-	}
-
-	// Save current position
-	SaveHandle current_pos = save_token_position();
-
-	// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
-	restore_lexer_position_only(func_decl.template_body_position());
-
-	// Look up the struct type info
-	auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
-	if (struct_type_it == gTypesByName.end()) {
-		// Clean up and return error - template_scope RAII handles type cleanup
-		restore_token_position(current_pos);
-		return std::nullopt;
-	}
-
-	const TypeInfo* struct_type_info = struct_type_it->second;
-	TypeIndex struct_type_index = struct_type_info->type_index_;
-
-	// Set up parsing context for the member function
-	gSymbolTable.enter_scope(ScopeType::Function);
-	current_function_ = &new_func_ref;
-		
-	// Find the struct node
-	StructDeclarationNode* struct_node_ptr = nullptr;
-	for (auto& node : ast_nodes_) {
-		if (node.is<StructDeclarationNode>()) {
-			auto& sn = node.as<StructDeclarationNode>();
-			if (sn.name() == struct_name) {
-				struct_node_ptr = &sn;
-				break;
-			}
-		}
-	}
-		
-	// If not found and this is a member function template of a template class,
-	// look for the base template class struct to get member info
-	if (!struct_node_ptr || struct_node_ptr->members().empty()) {
-		// Check if struct_name looks like an instantiated template class (contains '_' as type separator)
-		size_t underscore_pos = struct_name.rfind('_');
-		if (underscore_pos != std::string_view::npos) {
-			std::string_view base_name = struct_name.substr(0, underscore_pos);
-			for (auto& node : ast_nodes_) {
-				if (node.is<StructDeclarationNode>()) {
-					auto& sn = node.as<StructDeclarationNode>();
-					if (sn.name() == base_name) {
-						// Use the base template struct for member info
-						// The members are the same, just with template parameter types
-						struct_node_ptr = &sn;
-						break;
-					}
-				}
-			}
-		}
-	}
-		
-	member_function_context_stack_.push_back({
-		StringTable::getOrInternStringHandle(struct_name),
-		struct_type_index,
-		struct_node_ptr,
-		nullptr  // local_struct_info - not needed for out-of-class member function definitions
-	});
-
-	// Add 'this' pointer to symbol table
-	ASTNode this_type = emplace_node<TypeSpecifierNode>(
-		Type::UserDefined,
-		struct_type_index,
-		64,  // Pointer size
-		Token()
-	);
-
-	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
-	auto this_decl = emplace_node<DeclarationNode>(this_type, this_token);
-	gSymbolTable.insert("this"sv, this_decl);
-
-	// Add parameters to symbol table
-	for (const auto& param : new_func_ref.parameter_nodes()) {
-		if (param.is<DeclarationNode>()) {
-			const auto& param_decl = param.as<DeclarationNode>();
-			gSymbolTable.insert(param_decl.identifier_token().value(), param);
-		}
-	}
-
-	// Parse the function body
-	auto block_result = parse_block();
-	if (!block_result.is_error() && block_result.node().has_value()) {
-		new_func_ref.set_definition(*block_result.node());
-	}
-
-	// Clean up context
-	current_function_ = nullptr;
-	member_function_context_stack_.pop_back();
-	gSymbolTable.exit_scope();
-
-	// Restore original position (lexer only - keep AST nodes we created)
-	restore_lexer_position_only(current_pos);
-
-	// template_scope RAII guard automatically removes temporary type infos
-
-	// Add the instantiated function to the AST
-	ast_nodes_.push_back(new_func_node);
-
-	// Update the saved position to include this new node so it doesn't get erased
-	// when we restore position in the caller
-	// Update the saved position to include this new node (current_pos is already a SaveKey)
-	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
-
-	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
-	compute_and_set_mangled_name(new_func_ref);
-	
-	// Register the instantiation
-	gTemplateRegistry.registerInstantiation(key, new_func_node);
-
-	return new_func_node;
+	return instantiate_member_function_template_core(
+		struct_name, member_name, qualified_name, template_node, template_args, key);
 }
 
 // Instantiate member function template with explicit template arguments
@@ -17246,62 +17000,114 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 	}
 	
-	// Look up the template in the registry
-	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+	// Look up ALL template overloads in the registry for SFINAE support
+	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name.view());
 	
 	// If not found, try with the base template class name
 	// For instantiated classes like Helper_int, try Helper::member
-	if (!template_opt.has_value()) {
+	if (!all_templates || all_templates->empty()) {
 		size_t underscore_pos = struct_name.rfind('_');
 		if (underscore_pos != std::string_view::npos) {
 			std::string_view base_class_name = struct_name.substr(0, underscore_pos);
 			StringBuilder base_qualified_name_sb;
 			base_qualified_name_sb.append(base_class_name).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
-			template_opt = gTemplateRegistry.lookupTemplate(base_qualified_name);
+			all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name.view());
 			FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name.view());
 		}
 	}
 	
-	if (!template_opt.has_value()) {
+	if (!all_templates || all_templates->empty()) {
 		return std::nullopt;  // Not a template
 	}
 
-	const ASTNode& template_node = *template_opt;
-	if (!template_node.is<TemplateFunctionDeclarationNode>()) {
-		return std::nullopt;  // Not a function template
+	// Loop over all overloads for SFINAE support
+	for (const auto& template_node : *all_templates) {
+		if (!template_node.is<TemplateFunctionDeclarationNode>()) {
+			continue;  // Not a function template
+		}
+
+		const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
+		const std::vector<ASTNode>& template_params = template_func.template_parameters();
+		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+
+		// Convert TemplateTypeArg to TemplateArgument
+		std::vector<TemplateArgument> template_args;
+		for (const auto& type_arg : template_type_args) {
+			template_args.push_back(TemplateArgument::makeType(type_arg.base_type));
+		}
+
+		// Check if we already have this instantiation
+		TemplateInstantiationKey key;
+		key.template_name = qualified_name;
+		for (const auto& arg : template_args) {
+			if (arg.kind == TemplateArgument::Kind::Type) {
+				key.type_arguments.push_back(arg.type_value);
+			} else if (arg.kind == TemplateArgument::Kind::Template) {
+				key.template_arguments.push_back(arg.template_name);
+			} else {
+				key.value_arguments.push_back(arg.int_value);
+			}
+		}
+
+		auto existing_inst = gTemplateRegistry.getInstantiation(key);
+		if (existing_inst.has_value()) {
+			return *existing_inst;  // Return existing instantiation
+		}
+
+		// SFINAE for trailing return type: if the return type is 'auto' and has a declaration position,
+		// re-parse the return type with substituted template parameters to check validity
+		const DeclarationNode& orig_decl = func_decl.decl_node();
+		const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+		if (orig_return_type.type() == Type::Auto && func_decl.has_template_declaration_position()) {
+			bool prev_sfinae_context = in_sfinae_context_;
+			in_sfinae_context_ = true;
+
+			SaveHandle sfinae_pos = save_token_position();
+			restore_lexer_position_only(func_decl.template_declaration_position());
+
+			FlashCpp::TemplateParameterScope sfinae_scope;
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				Type concrete_type = template_args[i].type_value;
+				auto& type_info = gTypeInfo.emplace_back(
+					StringTable::getOrInternStringHandle(tparam.name()),
+					concrete_type, gTypeInfo.size(),
+					getTypeSizeFromTemplateArgument(template_args[i]));
+				gTypesByName.emplace(type_info.name(), &type_info);
+				sfinae_scope.addParameter(&type_info);
+			}
+
+			auto return_type_result = parse_type_specifier();
+			restore_lexer_position_only(sfinae_pos);
+			in_sfinae_context_ = prev_sfinae_context;
+
+			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
+				continue;  // SFINAE: this overload's return type failed, try next
+			}
+		}
+
+		auto result = instantiate_member_function_template_core(
+			struct_name, member_name, qualified_name, template_node, template_args, key);
+		if (result.has_value()) {
+			return result;
+		}
 	}
+
+	return std::nullopt;
+}
+
+std::optional<ASTNode> Parser::instantiate_member_function_template_core(
+	std::string_view struct_name, std::string_view member_name,
+	StringHandle qualified_name,
+	const ASTNode& template_node,
+	const std::vector<TemplateArgument>& template_args,
+	const TemplateInstantiationKey& key) {
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
-
-	// Look up outer template parameter bindings (for nested templates like Container<int>::convert<U>)
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
-
-	// Convert TemplateTypeArg to TemplateArgument
-	std::vector<TemplateArgument> template_args;
-	for (const auto& type_arg : template_type_args) {
-		template_args.push_back(TemplateArgument::makeType(type_arg.base_type));
-	}
-
-	// Check if we already have this instantiation
-	TemplateInstantiationKey key;
-	key.template_name = qualified_name;  // Already a StringHandle
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(arg.template_name);
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
-
-	auto existing_inst = gTemplateRegistry.getInstantiation(key);
-	if (existing_inst.has_value()) {
-		return *existing_inst;  // Return existing instantiation
-	}
 
 	// Generate mangled name for the instantiation
 	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(member_name, template_args);
@@ -17395,7 +17201,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// Check if the template has a body position stored
 	if (!func_decl.has_template_body_position()) {
 		// No body to parse - compute mangled name for proper linking and symbol resolution
-		// Even without a body, the mangled name is needed for code generation and linking
 		compute_and_set_mangled_name(new_func_ref);
 		ast_nodes_.push_back(new_func_node);
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
@@ -17403,7 +17208,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 
 	// Temporarily add the concrete types to the type system with template parameter names
-	// Using RAII scope guard (Phase 6) for automatic cleanup
 	FlashCpp::TemplateParameterScope template_scope;
 	std::vector<std::string_view> param_names;
 	for (const auto& tparam_node : template_params) {
@@ -17416,14 +17220,12 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		std::string_view param_name = param_names[i];
 		Type concrete_type = template_args[i].type_value;
 
-		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
 		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
 		gTypesByName.emplace(type_info.name(), &type_info);
-		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
+		template_scope.addParameter(&type_info);
 	}
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
-	// so that the body can resolve outer params when re-parsed
 	if (outer_binding) {
 		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
 			std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
@@ -17449,7 +17251,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 	if (struct_type_it == gTypesByName.end()) {
 		FLASH_LOG(Templates, Debug, "Struct type not found: ", struct_name);
-		// Clean up and return error - template_scope RAII handles type cleanup
 		restore_token_position(current_pos);
 		return std::nullopt;
 	}
@@ -17473,11 +17274,29 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 	}
 	
+	// If not found and this is a member function template of a template class,
+	// look for the base template class struct to get member info
+	if (!struct_node_ptr || struct_node_ptr->members().empty()) {
+		size_t underscore_pos = struct_name.rfind('_');
+		if (underscore_pos != std::string_view::npos) {
+			std::string_view base_name = struct_name.substr(0, underscore_pos);
+			for (auto& node : ast_nodes_) {
+				if (node.is<StructDeclarationNode>()) {
+					auto& sn = node.as<StructDeclarationNode>();
+					if (sn.name() == base_name) {
+						struct_node_ptr = &sn;
+						break;
+					}
+				}
+			}
+		}
+	}
+	
 	member_function_context_stack_.push_back({
 		StringTable::getOrInternStringHandle(struct_name),
 		struct_type_index,
 		struct_node_ptr,
-		nullptr  // local_struct_info - not needed for out-of-class member function definitions
+		nullptr
 	});
 
 	// Add 'this' pointer to symbol table
@@ -17520,8 +17339,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	ast_nodes_.push_back(new_func_node);
 
 	// Update the saved position to include this new node so it doesn't get erased
-	// when we restore position in the caller
-	// Update the saved position to include this new node (current_pos is already a SaveKey)
 	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
 
 	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
