@@ -3374,6 +3374,53 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				}
 			}
 
+			// SFINAE: resolve template parameter types to concrete struct names and validate member existence
+			if (in_sfinae_context_ && object_struct_name.has_value() && !sfinae_type_map_.empty()) {
+				// The object_struct_name may be a template parameter name (e.g., "U").
+				// Resolve it to the concrete struct name using sfinae_type_map_.
+				StringHandle obj_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
+				auto subst_it = sfinae_type_map_.find(obj_name_handle);
+				if (subst_it != sfinae_type_map_.end()) {
+					TypeIndex concrete_idx = subst_it->second;
+					if (concrete_idx < gTypeInfo.size()) {
+						object_struct_name = StringTable::getStringView(gTypeInfo[concrete_idx].name());
+					}
+				}
+				// Verify the member exists on the resolved struct
+				bool member_found = false;
+				for (auto& node : ast_nodes_) {
+					if (node.is<StructDeclarationNode>()) {
+						auto& sn = node.as<StructDeclarationNode>();
+						if (sn.name() == *object_struct_name) {
+							for (const auto& member : sn.members()) {
+								if (member.declaration.is<DeclarationNode>()) {
+									if (member.declaration.as<DeclarationNode>().identifier_token().value() == member_name_token.value()) {
+										member_found = true;
+										break;
+									}
+								}
+							}
+							if (!member_found) {
+								for (const auto& mf : sn.member_functions()) {
+									if (mf.is_constructor || mf.is_destructor) continue;
+									if (mf.function_declaration.is<FunctionDeclarationNode>()) {
+										const auto& func = mf.function_declaration.as<FunctionDeclarationNode>();
+										if (func.decl_node().identifier_token().value() == member_name_token.value()) {
+											member_found = true;
+											break;
+										}
+									}
+								}
+							}
+							break;
+						}
+					}
+				}
+				if (!member_found) {
+					return ParseResult::error("SFINAE: member not found on concrete type", member_name_token);
+				}
+			}
+
 			// Try to instantiate member function template if applicable
 			std::optional<ASTNode> instantiated_func;
 			
