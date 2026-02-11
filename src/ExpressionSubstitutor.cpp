@@ -679,6 +679,55 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// Get the namespace name (e.g., "R1_T")
 	std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
 	
+	// Check if the entire namespace name is a template parameter (e.g., _R1::num where _R1 is typename _R1)
+	// This handles patterns like _R1::num where _R1 is substituted with a concrete struct type
+	{
+		auto param_it = param_map_.find(ns_name);
+		if (param_it != param_map_.end()) {
+			const TemplateTypeArg& concrete_type = param_it->second;
+			FLASH_LOG(Templates, Debug, "  Namespace '", ns_name, "' is a template parameter, substituting with concrete type");
+			
+			// The concrete type should be a struct type - get its instantiated name
+			if ((concrete_type.base_type == Type::UserDefined || concrete_type.base_type == Type::Struct) &&
+			    concrete_type.type_index > 0 && concrete_type.type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[concrete_type.type_index];
+				StringHandle type_name_handle = type_info.name();
+				
+				// If this is a template instantiation, ensure it's been instantiated
+				if (type_info.isTemplateInstantiation()) {
+					std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
+					FLASH_LOG(Templates, Debug, "  Concrete type is template instantiation: base='", base_name, "'");
+				}
+				
+				// Create a new QualifiedIdentifierNode with the concrete struct as namespace
+				NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+					NamespaceRegistry::GLOBAL_NAMESPACE,
+					type_name_handle
+				);
+				
+				QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+					new_ns_handle,
+					qual_id.identifier_token()
+				);
+				FLASH_LOG(Templates, Debug, "  Substituted: ", ns_name, "::", qual_id.name(), " -> ", 
+				          StringTable::getStringView(type_name_handle), "::", qual_id.name());
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+				return ASTNode(&new_expr);
+			}
+			
+			// Template parameter was found but the concrete type is not a struct/class
+			// (e.g., type_index == 0 due to incomplete resolution, or base_type is Template).
+			// Return as-is rather than falling through to $/_-based separator logic which
+			// would incorrectly parse the namespace name as a mangled template instantiation.
+			FLASH_LOG(Templates, Debug, "  Template parameter '", ns_name, 
+			          "' found but concrete type is not a resolvable struct (base_type=",
+			          static_cast<int>(concrete_type.base_type), ", type_index=", concrete_type.type_index,
+			          "), returning as-is");
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+			return ASTNode(&new_expr);
+		}
+	}
+	
 	// Check if the namespace name contains template parameters
 	// Old format: has underscore (e.g., "R1_T")
 	// New format: has dollar sign + hash (e.g., "R1$3b360731384e1358")
