@@ -16851,7 +16851,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
-
 	if (arg_types.empty()) {
 		return std::nullopt;  // Can't deduce without arguments
 	}
@@ -17296,7 +17295,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		StringTable::getOrInternStringHandle(struct_name),
 		struct_type_index,
 		struct_node_ptr,
-		nullptr
+		nullptr  // local_struct_info - not needed for out-of-class member function definitions
 	});
 
 	// Add 'this' pointer to symbol table
