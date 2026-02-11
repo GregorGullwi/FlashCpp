@@ -17093,10 +17093,10 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		const std::vector<ASTNode>& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
-		// Convert TemplateTypeArg to TemplateArgument
+		// Convert TemplateTypeArg to TemplateArgument (preserving type_index for struct types)
 		std::vector<TemplateArgument> template_args;
 		for (const auto& type_arg : template_type_args) {
-			template_args.push_back(TemplateArgument::makeType(type_arg.base_type));
+			template_args.push_back(toTemplateArgument(type_arg));
 		}
 
 		// Check if we already have this instantiation
