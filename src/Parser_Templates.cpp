@@ -350,6 +350,16 @@ ParseResult Parser::parse_template_declaration() {
 				FlashCpp::MemberQualifiers quals;
 				skip_function_trailing_specifiers(quals);
 
+				// Handle trailing return type: auto Class<T>::method(params) -> RetType
+				if (peek() == "->"_tok) {
+					advance(); // consume '->'
+					auto trailing_type = parse_type_specifier();
+					if (trailing_type.node().has_value() && trailing_type.node()->is<TypeSpecifierNode>()) {
+						TypeSpecifierNode& trailing_ts = trailing_type.node()->as<TypeSpecifierNode>();
+						consume_pointer_ref_modifiers(trailing_ts);
+					}
+				}
+
 				// Save body position and skip body
 				SaveHandle body_start = save_token_position();
 				if (peek() == "{"_tok) {
@@ -18488,6 +18498,15 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			}
 			FlashCpp::MemberQualifiers op_quals;
 			skip_function_trailing_specifiers(op_quals);
+			// Handle trailing return type: auto Class<T>::operator()(params) -> RetType
+			if (peek() == "->"_tok) {
+				advance(); // consume '->'
+				auto trailing_type = parse_type_specifier();
+				if (trailing_type.node().has_value() && trailing_type.node()->is<TypeSpecifierNode>()) {
+					TypeSpecifierNode& trailing_ts = trailing_type.node()->as<TypeSpecifierNode>();
+					consume_pointer_ref_modifiers(trailing_ts);
+				}
+			}
 			if (peek() == "{"_tok) {
 				skip_balanced_braces();
 			} else if (peek() == ";"_tok) {
