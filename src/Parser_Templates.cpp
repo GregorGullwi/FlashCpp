@@ -11395,6 +11395,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 	
+	// Early check: skip concepts - they are not class templates and should not be instantiated here
+	// Concepts like same_as, convertible_to are stored in the concept registry, not the template registry
+	{
+		// Try both unqualified and with std:: prefix
+		if (gConceptRegistry.hasConcept(template_name)) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for concept '{}'", template_name);
+			return std::nullopt;
+		}
+		// Also check without namespace prefix (e.g., "std::same_as" -> "same_as")
+		size_t last_colon_pos = template_name.rfind("::");
+		if (last_colon_pos != std::string_view::npos) {
+			std::string_view simple_name = template_name.substr(last_colon_pos + 2);
+			if (gConceptRegistry.hasConcept(simple_name)) {
+				FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for concept '{}'", template_name);
+				return std::nullopt;
+			}
+		}
+	}
+	
 	// Check if any template arguments are dependent (contain template parameters)
 	// If so, we cannot instantiate the template yet - it's a dependent type
 	for (const auto& arg : template_args) {
