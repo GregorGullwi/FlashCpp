@@ -77,20 +77,43 @@ TEST_TARGET := $(TEST_DIR)/test$(EXE_EXT)
 # Default target
 .DEFAULT_GOAL := main
 
+# Marker file to track ASAN builds
+ASAN_MARKER := $(DEBUG_DIR)/.asan_build
+
 # Build main executable (Debug configuration)
-$(MAIN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
+# The marker file dependency forces a rebuild when switching from ASAN to non-ASAN
+$(MAIN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES) | check-asan-marker
 	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
+	@rm -f $(ASAN_MARKER)
 	@echo "Built: $@"
 
+# Check if ASAN marker exists and force rebuild by removing target if it does
+.PHONY: check-asan-marker
+check-asan-marker:
+	@if [ -f $(ASAN_MARKER) ]; then \
+		echo "ASAN marker detected, removing target to force non-ASAN rebuild..."; \
+		rm -f $(MAIN_TARGET); \
+	fi
+
 # ASAN target - builds to same binary as main target but with AddressSanitizer
+# Creates marker file to track that this build includes ASAN
 .PHONY: asan
-asan: $(MAIN_SOURCES) $(UNITY_SOURCES)
+asan: check-non-asan-marker
 	@echo "Building main executable (Debug+ASAN) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
 	$(CXX) $(CXXFLAGS) -fsanitize=address -fno-omit-frame-pointer $(INCLUDES) -g -o $(MAIN_TARGET) $(MAIN_SOURCES)
+	@touch $(ASAN_MARKER)
 	@echo "Built: $(MAIN_TARGET)"
+
+# Check if ASAN marker is missing and force rebuild by removing target if it is
+.PHONY: check-non-asan-marker
+check-non-asan-marker:
+	@if [ ! -f $(ASAN_MARKER) ]; then \
+		echo "ASAN marker not found, removing target to force ASAN rebuild..."; \
+		rm -f $(MAIN_TARGET); \
+	fi
 
 # Build release executable
 $(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
