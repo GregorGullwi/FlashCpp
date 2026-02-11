@@ -714,6 +714,17 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 				return ASTNode(&new_expr);
 			}
+			
+			// Template parameter was found but the concrete type is not a struct/class
+			// (e.g., type_index == 0 due to incomplete resolution, or base_type is Template).
+			// Return as-is rather than falling through to $/_-based separator logic which
+			// would incorrectly parse the namespace name as a mangled template instantiation.
+			FLASH_LOG(Templates, Debug, "  Template parameter '", ns_name, 
+			          "' found but concrete type is not a resolvable struct (base_type=",
+			          static_cast<int>(concrete_type.base_type), ", type_index=", concrete_type.type_index,
+			          "), returning as-is");
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+			return ASTNode(&new_expr);
 		}
 	}
 	
