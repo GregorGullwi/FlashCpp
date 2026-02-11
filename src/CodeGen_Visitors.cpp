@@ -3196,7 +3196,16 @@ private:
 				call_op.args.push_back(std::move(this_arg));
 
 				// Pass 'other' as second arg (reference = pointer)
-				StringHandle other_handle = StringTable::getOrInternStringHandle("other");
+				StringHandle other_handle;
+				if (!node.parameter_nodes().empty()) {
+					std::string_view param_name = node.parameter_nodes()[0].as<DeclarationNode>().identifier_token().value();
+					if (!param_name.empty()) {
+						other_handle = StringTable::getOrInternStringHandle(param_name);
+					}
+				}
+				if (!other_handle.isValid()) {
+					other_handle = StringTable::getOrInternStringHandle("other");
+				}
 				TypedValue other_arg;
 				other_arg.type = Type::Struct;
 				other_arg.size_in_bits = 64;
