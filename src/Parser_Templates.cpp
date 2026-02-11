@@ -8737,46 +8737,44 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// may resolve to concrete types (e.g., bool) even when they contain dependent expressions.
 	// The re-parse with concrete template arguments will fail if substitution is invalid.
 	if (func_decl.has_trailing_return_type_position()) {
-		{
-			bool prev_sfinae_context = in_sfinae_context_;
-			bool prev_parsing_template_body = parsing_template_body_;
-			auto prev_template_param_names = std::move(current_template_param_names_);
-			in_sfinae_context_ = true;
-			parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
-			current_template_param_names_.clear();  // No dependent names during SFINAE
+		bool prev_sfinae_context = in_sfinae_context_;
+		bool prev_parsing_template_body = parsing_template_body_;
+		auto prev_template_param_names = std::move(current_template_param_names_);
+		in_sfinae_context_ = true;
+		parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
+		current_template_param_names_.clear();  // No dependent names during SFINAE
 
-			SaveHandle sfinae_pos = save_token_position();
-			restore_lexer_position_only(func_decl.trailing_return_type_position());
-			advance();  // consume '->'
+		SaveHandle sfinae_pos = save_token_position();
+		restore_lexer_position_only(func_decl.trailing_return_type_position());
+		advance();  // consume '->'
 
-			// Register function parameters so they're visible in decltype expressions
-			gSymbolTable.enter_scope(ScopeType::Function);
-			register_parameters_in_scope(func_decl.parameter_nodes());
+		// Register function parameters so they're visible in decltype expressions
+		gSymbolTable.enter_scope(ScopeType::Function);
+		register_parameters_in_scope(func_decl.parameter_nodes());
 
-			FlashCpp::TemplateParameterScope sfinae_scope;
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				if (!template_params[i].is<TemplateParameterNode>()) continue;
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				Type concrete_type = template_args[i].type_value;
-				auto& type_info = gTypeInfo.emplace_back(
-					StringTable::getOrInternStringHandle(tparam.name()),
-					concrete_type, gTypeInfo.size(),
-					getTypeSizeFromTemplateArgument(template_args[i]));
-				gTypesByName.emplace(type_info.name(), &type_info);
-				sfinae_scope.addParameter(&type_info);
-			}
+		FlashCpp::TemplateParameterScope sfinae_scope;
+		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+			Type concrete_type = template_args[i].type_value;
+			auto& type_info = gTypeInfo.emplace_back(
+				StringTable::getOrInternStringHandle(tparam.name()),
+				concrete_type, gTypeInfo.size(),
+				getTypeSizeFromTemplateArgument(template_args[i]));
+			gTypesByName.emplace(type_info.name(), &type_info);
+			sfinae_scope.addParameter(&type_info);
+		}
 
-			auto return_type_result = parse_type_specifier();
-			gSymbolTable.exit_scope();
-			restore_lexer_position_only(sfinae_pos);
-			in_sfinae_context_ = prev_sfinae_context;
-			parsing_template_body_ = prev_parsing_template_body;
-			current_template_param_names_ = std::move(prev_template_param_names);
+		auto return_type_result = parse_type_specifier();
+		gSymbolTable.exit_scope();
+		restore_lexer_position_only(sfinae_pos);
+		in_sfinae_context_ = prev_sfinae_context;
+		parsing_template_body_ = prev_parsing_template_body;
+		current_template_param_names_ = std::move(prev_template_param_names);
 
-			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
-				FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
-				continue;  // SFINAE: this overload's return type failed, try next
-			}
+		if (return_type_result.is_error() || !return_type_result.node().has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
+			continue;  // SFINAE: this overload's return type failed, try next
 		}
 	}
 

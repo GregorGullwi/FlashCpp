@@ -1808,11 +1808,10 @@ public:
 	// Needed for SFINAE: save position of trailing return type (the '->' token)
 	// so we can re-parse the trailing return type with concrete template parameters
 	void set_trailing_return_type_position(SaveHandle handle) {
-		has_trailing_return_type_position_ = true;
 		trailing_return_type_position_handle_ = handle;
 	}
-	bool has_trailing_return_type_position() const { return has_trailing_return_type_position_; }
-	SaveHandle trailing_return_type_position() const { return trailing_return_type_position_handle_; }
+	bool has_trailing_return_type_position() const { return trailing_return_type_position_handle_.has_value(); }
+	SaveHandle trailing_return_type_position() const { return *trailing_return_type_position_handle_; }
 
 	// Variadic function support (functions with ... ellipsis parameter)
 	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
@@ -1865,13 +1864,13 @@ private:
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	bool has_template_body_ = false;
 	bool has_template_declaration_ = false;  // True if template declaration position is saved (for SFINAE re-parsing)
-	bool has_trailing_return_type_position_ = false;  // True if trailing return type position is saved
+
 	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
 	CallingConvention calling_convention_ = CallingConvention::Default;  // Calling convention (__cdecl, __stdcall, etc.)
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body (from Parser::save_token_position())
 	SaveHandle template_declaration_position_handle_;  // Handle to saved position for template declaration (for SFINAE)
-	SaveHandle trailing_return_type_position_handle_;  // Handle to saved position for trailing return type '->'
+	std::optional<SaveHandle> trailing_return_type_position_handle_;  // Handle to saved position for trailing return type '->'
 	bool is_constexpr_;
 	bool is_constinit_;
 	bool is_consteval_;
