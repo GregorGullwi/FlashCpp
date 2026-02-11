@@ -3628,7 +3628,7 @@
 					// that is deduced to int (returning -1/0/1)
 					Type resolved_return_type = return_type.type();
 					int actual_return_size = static_cast<int>(return_type.size_in_bits());
-					if (resolved_return_type == Type::Auto) {
+					if (resolved_return_type == Type::Auto && op == "<=>") {
 						resolved_return_type = Type::Int;
 						actual_return_size = 32;
 					}
