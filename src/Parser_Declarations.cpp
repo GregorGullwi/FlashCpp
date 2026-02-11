@@ -717,10 +717,19 @@ ParseResult Parser::parse_type_and_name() {
         restore_token_position(saved_pos);
     }
 
-    // Parse postfix cv-qualifiers before references: Type const& or Type volatile&
-    // This handles C++ postfix const/volatile syntax like: __nonesuch const&
+    // Parse postfix cv-qualifiers before pointers/references: Type const* or Type const&
+    // This handles C++ postfix const/volatile syntax like: typename _Str::value_type const*
     CVQualifier postfix_cv = parse_cv_qualifiers();
     type_spec.add_cv_qualifier(postfix_cv);
+
+    // After postfix cv-qualifiers, check for pointer declarators again.
+    // This handles patterns like: typename _Str::value_type const* __lhs
+    // where const appears between the dependent type and the pointer.
+    while (peek() == "*"_tok) {
+        advance(); // consume '*'
+        CVQualifier ptr_cv = parse_cv_qualifiers();
+        type_spec.add_pointer_level(ptr_cv);
+    }
 
     // Parse reference declarators: & or &&
     // Example: int& ref or int&& rvalue_ref

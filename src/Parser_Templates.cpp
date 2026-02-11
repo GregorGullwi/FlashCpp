@@ -3885,7 +3885,14 @@ if (struct_type_info.getStructInfo()) {
 				func_node.set_non_type_template_args(std::move(non_type_args));
 			}
 			
-			// Parse the function body (specializations must be defined, not just declared)
+			// Parse the function body, or accept forward declaration (;)
+			// C++ allows full specialization declarations without a body:
+			//   template<> void foo<int>(int);
+			if (peek() == ";"_tok) {
+				advance(); // consume ';'
+				// Forward declaration of a full specialization - return as-is without body
+				return ParseResult::success(emplace_node<ASTNode>(*func_result.node()));
+			}
 			if (peek() != "{"_tok) {
 				std::string error_msg = "Template specializations must have a definition (body)";
 				if (!peek().is_eof()) {
@@ -18760,6 +18767,17 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Skip function trailing specifiers (const, volatile, noexcept, etc.)
 	FlashCpp::MemberQualifiers member_quals;
 	skip_function_trailing_specifiers(member_quals);
+
+	// Handle trailing return type: auto Class<T>::method(params) -> RetType { ... }
+	if (peek() == "->"_tok) {
+		advance(); // consume '->'
+		// Parse and discard the trailing return type
+		auto trailing_type = parse_type_specifier();
+		if (trailing_type.node().has_value() && trailing_type.node()->is<TypeSpecifierNode>()) {
+			TypeSpecifierNode& trailing_ts = trailing_type.node()->as<TypeSpecifierNode>();
+			consume_pointer_ref_modifiers(trailing_ts);
+		}
+	}
 
 	// Skip requires clause if present
 	if (peek() == "requires"_tok) {
