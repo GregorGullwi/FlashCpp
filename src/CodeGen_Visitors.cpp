@@ -465,9 +465,7 @@ public:
 												// Evaluate each member's value from constructor initializer list
 												size_t total_bytes = op.size_in_bits / 8;
 												op.init_data.resize(total_bytes, 0);
-												size_t byte_offset = 0;
 												for (const auto& member : ctor_struct_info->members) {
-													size_t member_bytes = member.size;
 													long long member_val = 0;
 													for (const auto& mem_init : matching_ctor->member_initializers()) {
 														if (mem_init.member_name == StringTable::getStringView(member.getName())) {
@@ -485,10 +483,9 @@ public:
 															break;
 														}
 													}
-													for (size_t bi = 0; bi < member_bytes && byte_offset + bi < total_bytes; ++bi) {
-														op.init_data[byte_offset + bi] = static_cast<char>((static_cast<unsigned long long>(member_val) >> (bi * 8)) & 0xFF);
+													for (size_t bi = 0; bi < member.size && (member.offset + bi) < total_bytes; ++bi) {
+														op.init_data[member.offset + bi] = static_cast<char>((static_cast<unsigned long long>(member_val) >> (bi * 8)) & 0xFF);
 													}
-													byte_offset += member_bytes;
 												}
 												evaluated_ctor = true;
 												FLASH_LOG(Codegen, Debug, "Evaluated constexpr ConstructorCallNode initializer for static member '",

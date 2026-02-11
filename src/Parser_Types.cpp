@@ -2558,8 +2558,14 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 				
 				// Handle simple pack expansion if enabled
 				bool expanded = false;
-				if (ctx.expand_simple_packs && arg->is<IdentifierNode>()) {
-					std::string_view pack_name = arg->as<IdentifierNode>().name();
+				if (ctx.expand_simple_packs) {
+					std::string_view pack_name;
+					if (arg->is<IdentifierNode>()) {
+						pack_name = arg->as<IdentifierNode>().name();
+					} else if (arg->is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg->as<ExpressionNode>())) {
+						pack_name = std::get<IdentifierNode>(arg->as<ExpressionNode>()).name();
+					}
+					if (!pack_name.empty()) {
 					
 					// Try to find expanded pack elements in the symbol table
 					// Pattern: pack_name_0, pack_name_1, etc.
@@ -2608,6 +2614,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						}
 						expanded = true;
 					}
+					} // !pack_name.empty()
 				}
 				
 				if (!expanded) {

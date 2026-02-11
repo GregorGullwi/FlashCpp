@@ -182,9 +182,9 @@ The compiler includes 600+ test cases covering:
 - Constexpr and conditional compilation
 - Modern syntax (spaceship, range-for init)
 
-**Partially Implemented Features (B)**
+**Implemented Features (continued)**
 - Spaceship operator: defaulted `<=>` with memberwise comparison (including nested struct delegation and template struct support), all 6 synthesized operators, inline expression use `(a <=> b) < 0`, mixed member types, signed/unsigned correctness, `std::strong_ordering` return type with constexpr static member initialization
-- Designated initializers: basic and nested patterns work, default member values applied for omitted fields, explicit type as function arg `func(Point{.x=1})`, implicit designated init as function arg `func({.x=1})`
+- Designated initializers: basic and nested patterns work, default member values applied for omitted fields, explicit type as function arg `func(Point{.x=1})`, implicit designated init as function arg `func({.x=1})`, braced initializer in return statements `return {.x=1}`
 
 **Missing Features (N/A)**
 - Coroutines (keywords recognized, parsing incomplete)
