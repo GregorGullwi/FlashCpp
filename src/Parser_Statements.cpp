@@ -350,6 +350,39 @@ ParseResult Parser::parse_statement_or_declaration()
 			}
 		}
 
+		// Check if this identifier is a member type alias in the current struct context
+		// e.g., "using const_iterator = const T*;" defined in a template struct body
+		// When parsing member function bodies, these type aliases need to be recognized
+		{
+			auto check_struct_type_alias = [&](auto* struct_node) -> bool {
+				if (!struct_node) return false;
+				for (const auto& alias : struct_node->type_aliases()) {
+					if (alias.alias_name == type_name_handle) {
+						return true;
+					}
+				}
+				return false;
+			};
+			bool found_as_member_type_alias = false;
+			for (auto it = member_function_context_stack_.rbegin(); it != member_function_context_stack_.rend(); ++it) {
+				if (check_struct_type_alias(it->struct_node)) {
+					found_as_member_type_alias = true;
+					break;
+				}
+			}
+			if (!found_as_member_type_alias) {
+				for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
+					if (check_struct_type_alias(it->struct_node)) {
+						found_as_member_type_alias = true;
+						break;
+					}
+				}
+			}
+			if (found_as_member_type_alias) {
+				return parse_variable_declaration();
+			}
+		}
+
 		// If it starts with an identifier, it could be an assignment, expression,
 		// or function call statement
 		return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
