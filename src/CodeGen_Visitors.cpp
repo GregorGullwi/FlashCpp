@@ -2975,12 +2975,11 @@ private:
 						lt_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 8, .value = IrValue{lt_result}};
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(lt_branch), func_decl.identifier_token()));
 
-						// Label: lt - return -1
+						// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = lt_label}, func_decl.identifier_token()));
 						{
 							ReturnOp ret_neg;
-							// Use unsigned representation of -1 (which is 0xFFFFFFFF for 32-bit)
-							ret_neg.return_value = IrValue{static_cast<unsigned long long>(static_cast<unsigned int>(-1))};
+							ret_neg.return_value = IrValue{0xFFFFFFFFULL};
 							ret_neg.return_type = Type::Int;
 							ret_neg.return_size = 32;
 							ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_neg), func_decl.identifier_token()));

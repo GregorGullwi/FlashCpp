@@ -165,8 +165,8 @@ The compiler includes 600+ test cases covering:
 | Requires clauses | ✅ 100% | ✅ 100% | ✅ 80% | ✅ Good | Fully Implemented |
 | Constexpr if | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Range-for with init | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
-| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 80% | ⚠️ Partial | Partial |
-| Designated initializers | ✅ 80% | ✅ 80% | ❓ ? | ⚠️ Partial | Partial |
+| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 95% | ✅ Good | Mostly Implemented |
+| Designated initializers | ✅ 80% | ✅ 80% | ✅ 90% | ✅ Good | Mostly Implemented |
 | NTTP with auto | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Template packs | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Fold expressions | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
@@ -183,8 +183,8 @@ The compiler includes 600+ test cases covering:
 - Modern syntax (spaceship, range-for init)
 
 **Partially Implemented Features (B)**
-- Code generation for some edge cases (e.g., spaceship operator in all contexts)
-- Designated initializers (C-style) - partial support
+- Spaceship operator: defaulted `<=>` with memberwise comparison and all 6 synthesized operators work; remaining edge cases include non-integral member types and `std::strong_ordering` return type
+- Designated initializers: basic and nested patterns work, default member values applied for omitted fields; remaining gaps include designated init as function arguments
 
 **Missing Features (N/A)**
 - Coroutines (keywords recognized, parsing incomplete)
@@ -217,9 +217,9 @@ For a complete list of missing features and detailed C++20 conformance analysis,
 
 ### Partially Implemented:
 - **Code generation edge cases**:
-  - Spaceship operator `<=>` in all contexts (80% complete)
+  - Spaceship operator `<=>`: defaulted memberwise comparison and synthesized operators (==, !=, <, >, <=, >=) work (95% complete)
   - Complex template instantiations (90% complete)
-  - Designated initializers: Basic patterns work, edge cases may fail
+  - Designated initializers: basic, nested, and default member values work; function argument passing not yet supported (90% complete)
 - **Standard library**:
   - `<type_traits>`: 37+ intrinsics, good coverage
   - `<utility>`: `std::forward`, `std::move` work
@@ -327,11 +327,11 @@ test. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.m
 
 Current development priorities:
 
-1. **Complete code generation** for edge cases (e.g., spaceship operator in all contexts)
+1. **Complete code generation** for remaining edge cases (spaceship with non-integral members, designated init as function args)
 2. **Fix remaining template codegen issues** (some complex instantiations)
 3. **Enhance standard library header support** (expand beyond type_traits)
 4. **Add missing features**: Coroutines (incomplete), Modules (not started)
-5. **Implement remaining C++20 features**: Designated initializers (partial), ranges adaptors
+5. **Implement remaining C++20 features**: ranges adaptors
 
 See [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md) for detailed status and priorities.
 
