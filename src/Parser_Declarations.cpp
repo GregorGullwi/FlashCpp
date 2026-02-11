@@ -9345,6 +9345,16 @@ ParseResult Parser::parse_namespace() {
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		ParseResult decl_result;
 
+		// Save parser state for bad_any_cast recovery
+		// If a bad_any_cast occurs during parsing of a declaration inside a namespace,
+		// we want to skip the failing construct and continue with the next declaration.
+		auto saved_struct_stack_size = struct_parsing_context_stack_.size();
+		auto saved_member_func_stack_size = member_function_context_stack_.size();
+		auto saved_scope_depth = gSymbolTable.get_scope_depth();
+		bool saved_parsing_template_body = parsing_template_body_;
+
+		try {
+
 		// Check if it's a using directive, using declaration, or namespace alias
 		if (peek() == "using"_tok) {
 			decl_result = parse_using_directive_or_declaration();
@@ -9449,6 +9459,44 @@ ParseResult Parser::parse_namespace() {
 
 		if (auto node = decl_result.node()) {
 			namespace_ref.add_declaration(*node);
+		}
+
+		} catch (const std::bad_any_cast& e) {
+			// Recovery from bad_any_cast: restore parser state and skip the failing construct
+			FLASH_LOG(General, Warning, "bad_any_cast recovery in namespace body at ", peek_info().value(), ": ", e.what());
+
+			// Restore parser state to prevent corruption
+			while (struct_parsing_context_stack_.size() > saved_struct_stack_size) {
+				struct_parsing_context_stack_.pop_back();
+			}
+			while (member_function_context_stack_.size() > saved_member_func_stack_size) {
+				member_function_context_stack_.pop_back();
+			}
+			while (gSymbolTable.get_scope_depth() > saved_scope_depth) {
+				gSymbolTable.exit_scope();
+			}
+			parsing_template_body_ = saved_parsing_template_body;
+			current_template_param_names_.clear();
+
+			// Skip to the next top-level construct in the namespace
+			// by finding the next ';' or balanced '{...}' at top level
+			int brace_depth = 0;
+			while (!peek().is_eof() && peek() != "}"_tok) {
+				if (peek() == "{"_tok) {
+					brace_depth++;
+					advance();
+				} else if (brace_depth > 0) {
+					if (peek_info().value() == "}") {
+						brace_depth--;
+					}
+					advance();
+				} else if (peek() == ";"_tok) {
+					advance(); // consume ';'
+					break;
+				} else {
+					advance();
+				}
+			}
 		}
 	}
 

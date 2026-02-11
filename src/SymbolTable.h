@@ -531,6 +531,11 @@ public:
 		symbol_table_stack_.pop_back();
 	}
 
+	// Get current scope stack depth (for error recovery state save/restore)
+	size_t get_scope_depth() const {
+		return symbol_table_stack_.size();
+	}
+
 	// Add a using directive to the current scope
 	void add_using_directive(const std::vector<StringType<>>& namespace_path) {
 		if (symbol_table_stack_.empty()) return;
