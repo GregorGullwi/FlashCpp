@@ -77,12 +77,20 @@ TEST_TARGET := $(TEST_DIR)/test$(EXE_EXT)
 # Default target
 .DEFAULT_GOAL := main
 
-# Build main executable (Debug configuration with AddressSanitizer)
+# Build main executable (Debug configuration)
 $(MAIN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
+	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
+	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
+	@echo "Built: $@"
+
+# ASAN target - builds to same binary as main target but with AddressSanitizer
+.PHONY: asan
+asan: $(MAIN_SOURCES) $(UNITY_SOURCES)
 	@echo "Building main executable (Debug+ASAN) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
-	$(CXX) $(CXXFLAGS) -fsanitize=address -fno-omit-frame-pointer $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
-	@echo "Built: $@"
+	$(CXX) $(CXXFLAGS) -fsanitize=address -fno-omit-frame-pointer $(INCLUDES) -g -o $(MAIN_TARGET) $(MAIN_SOURCES)
+	@echo "Built: $(MAIN_TARGET)"
 
 # Build release executable
 $(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
@@ -99,7 +107,7 @@ $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.c
 	@echo "Built: $@"
 
 # Phony targets
-.PHONY: all clean test main release help test-all
+.PHONY: all clean test main release help test-all asan
 
 # Build all targets
 all: main release test
@@ -143,6 +151,7 @@ help:
 	@echo "Available targets:"
 	@echo "  make              - Build main executable in Debug mode (default)"
 	@echo "  make main         - Build main executable in Debug mode"
+	@echo "  make asan         - Build main executable in Debug mode with AddressSanitizer"
 	@echo "  make release      - Build main executable in Release mode"
 	@echo "  make test         - Build test executable"
 	@echo "  make test-all     - Build compiler and run all .cpp tests (pass and _fail)"
