@@ -18738,6 +18738,11 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		
 		// Find the member function with matching name
 		for (const auto& member : struct_decl.member_functions()) {
+			// Skip constructors, destructors, and non-FunctionDeclarationNode entries
+			// (they use ConstructorDeclarationNode/DestructorDeclarationNode types)
+			if (member.is_constructor || member.is_destructor || !member.function_declaration.is<FunctionDeclarationNode>()) {
+				continue;
+			}
 			const FunctionDeclarationNode& member_func = member.function_declaration.as<FunctionDeclarationNode>();
 			if (member_func.decl_node().identifier_token().value() == function_name_token.value()) {
 				// Use validate_signature_match for validation
