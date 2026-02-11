@@ -2756,10 +2756,42 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 			specs |= MLS_Inline;
 			advance();
 		} else if (k == "explicit"_tok) {
-			specs |= MLS_Explicit;
 			advance();
 			if (peek() == "("_tok) {
-				skip_balanced_parens(); // explicit(condition)
+				// explicit(condition) - parse and evaluate the condition
+				advance(); // consume '('
+				
+				// Try to parse a simple boolean literal
+				bool explicit_value = true;  // Default to true
+				if (peek() == "true"_tok) {
+					explicit_value = true;
+					advance();
+				} else if (peek() == "false"_tok) {
+					explicit_value = false;
+					advance();
+				} else {
+					// Complex expression - for now, assume true and skip to closing paren
+					// TODO: Implement full constant expression evaluation for explicit(expr)
+					int paren_depth = 1;
+					while (!peek().is_eof() && paren_depth > 0) {
+						if (peek() == "("_tok) paren_depth++;
+						else if (peek() == ")"_tok) paren_depth--;
+						if (paren_depth > 0) advance();
+					}
+					explicit_value = true;  // Assume true for complex expressions
+				}
+				
+				if (!consume(")"_tok)) {
+					// Error: expected closing paren
+				}
+				
+				// Only set MLS_Explicit if the condition is true
+				if (explicit_value) {
+					specs |= MLS_Explicit;
+				}
+			} else {
+				// Plain explicit (no condition) - always true
+				specs |= MLS_Explicit;
 			}
 		} else if (k == "virtual"_tok) {
 			specs |= MLS_Virtual;
