@@ -1905,7 +1905,7 @@
 												} else if (std::holds_alternative<bool>(eval_result.value)) {
 													member_value = std::get<bool>(eval_result.value) ? 1ULL : 0ULL;
 												} else if (std::holds_alternative<double>(eval_result.value)) {
-													member_value = static_cast<unsigned long long>(eval_result.as_int());
+													member_value = std::get<double>(eval_result.value);
 												} else {
 													member_value = 0ULL;
 												}
