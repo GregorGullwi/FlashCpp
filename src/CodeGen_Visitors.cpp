@@ -2559,7 +2559,7 @@ private:
 	}
 
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
-		if (!node.get_definition().has_value()) {
+		if (!node.get_definition().has_value() && !node.is_implicit()) {
 			return;
 		}
 
