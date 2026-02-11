@@ -2900,44 +2900,7 @@ private:
 
 					for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
 						const auto& member = struct_info->members[mi];
-
-						// Load this->member
-						TempVar lhs_val = var_counter.next();
-						MemberLoadOp lhs_load;
-						lhs_load.result.value = lhs_val;
-						lhs_load.result.type = member.type;
-						lhs_load.result.size_in_bits = static_cast<int>(member.size * 8);
-						lhs_load.object = this_handle;
-						lhs_load.member_name = member.getName();
-						lhs_load.offset = static_cast<int>(member.offset);
-						lhs_load.is_reference = member.is_reference;
-						lhs_load.is_rvalue_reference = member.is_rvalue_reference;
-						lhs_load.struct_type_info = nullptr;
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
-
-						// Load other.member
-						TempVar rhs_val = var_counter.next();
-						MemberLoadOp rhs_load;
-						rhs_load.result.value = rhs_val;
-						rhs_load.result.type = member.type;
-						rhs_load.result.size_in_bits = static_cast<int>(member.size * 8);
-						rhs_load.object = other_handle;
-						rhs_load.member_name = member.getName();
-						rhs_load.offset = static_cast<int>(member.offset);
-						rhs_load.is_reference = member.is_reference;
-						rhs_load.is_rvalue_reference = member.is_rvalue_reference;
-						rhs_load.struct_type_info = nullptr;
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
-
-						// Compare: lhs != rhs
-						TempVar ne_result = var_counter.next();
 						int member_bits = static_cast<int>(member.size * 8);
-						BinaryOp ne_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}},
-							.result = IrValue{ne_result}
-						};
-						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
 
 						// Labels for this member's comparison
 						auto diff_label = StringTable::createStringHandle(
@@ -2948,6 +2911,147 @@ private:
 							StringBuilder().append("spaceship_gt_").append(current_spaceship).append("_").append(mi));
 						auto next_label = StringTable::createStringHandle(
 							StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
+
+						// For struct members, delegate to the member's operator<=>
+						if (member.type == Type::Struct && member.type_index > 0 && member.type_index < gTypeInfo.size()) {
+							const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
+
+							// Find operator<=> in the member struct
+							StringHandle member_spaceship_mangled;
+							if (member_struct_info) {
+								for (const auto& mf : member_struct_info->member_functions) {
+									if (mf.is_operator_overload && mf.operator_symbol == "<=>") {
+										if (mf.function_decl.is<FunctionDeclarationNode>()) {
+											member_spaceship_mangled = StringTable::getOrInternStringHandle(
+												mf.function_decl.as<FunctionDeclarationNode>().mangled_name());
+										}
+										break;
+									}
+								}
+							}
+
+							if (member_spaceship_mangled.isValid()) {
+								// Load addresses of this->member and other.member for the call
+								TempVar lhs_val = var_counter.next();
+								MemberLoadOp lhs_load;
+								lhs_load.result.value = lhs_val;
+								lhs_load.result.type = member.type;
+								lhs_load.result.size_in_bits = member_bits;
+								lhs_load.object = this_handle;
+								lhs_load.member_name = member.getName();
+								lhs_load.offset = static_cast<int>(member.offset);
+								lhs_load.is_reference = member.is_reference;
+								lhs_load.is_rvalue_reference = member.is_rvalue_reference;
+								lhs_load.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
+
+								TempVar rhs_val = var_counter.next();
+								MemberLoadOp rhs_load;
+								rhs_load.result.value = rhs_val;
+								rhs_load.result.type = member.type;
+								rhs_load.result.size_in_bits = member_bits;
+								rhs_load.object = other_handle;
+								rhs_load.member_name = member.getName();
+								rhs_load.offset = static_cast<int>(member.offset);
+								rhs_load.is_reference = member.is_reference;
+								rhs_load.is_rvalue_reference = member.is_rvalue_reference;
+								rhs_load.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
+
+								// Call member's operator<=>(this->member, other.member)
+								TempVar call_result = var_counter.next();
+								CallOp call_op;
+								call_op.function_name = member_spaceship_mangled;
+								call_op.is_member_function = true;
+								call_op.return_type = Type::Int;
+								call_op.return_size_in_bits = 32;
+								call_op.result = call_result;
+
+								TypedValue lhs_arg;
+								lhs_arg.type = Type::Struct;
+								lhs_arg.size_in_bits = 64;
+								lhs_arg.value = lhs_val;
+								lhs_arg.pointer_depth = 1;
+								call_op.args.push_back(std::move(lhs_arg));
+
+								TypedValue rhs_arg;
+								rhs_arg.type = Type::Struct;
+								rhs_arg.size_in_bits = 64;
+								rhs_arg.value = rhs_val;
+								rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+								call_op.args.push_back(std::move(rhs_arg));
+
+								ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
+
+								// Check if result != 0 (members not equal)
+								TempVar ne_result = var_counter.next();
+								BinaryOp ne_op{
+									.lhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{call_result}, .is_signed = true},
+									.rhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{0ULL}, .is_signed = true},
+									.result = IrValue{ne_result}
+								};
+								ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
+
+								// Branch: if not equal, return the result directly
+								CondBranchOp ne_branch;
+								ne_branch.label_true = diff_label;
+								ne_branch.label_false = next_label;
+								ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 8, .value = IrValue{ne_result}};
+								ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
+
+								// Label: diff - return the inner <=> result
+								ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = diff_label}, func_decl.identifier_token()));
+								{
+									ReturnOp ret_inner;
+									ret_inner.return_value = IrValue{call_result};
+									ret_inner.return_type = Type::Int;
+									ret_inner.return_size = 32;
+									ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_inner), func_decl.identifier_token()));
+								}
+
+								// Label: next - continue to next member
+								ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = next_label}, func_decl.identifier_token()));
+								continue;
+							}
+							// Fall through to primitive comparison if no operator<=> found
+						}
+
+						// Primitive member comparison
+						TempVar lhs_val = var_counter.next();
+						MemberLoadOp lhs_load;
+						lhs_load.result.value = lhs_val;
+						lhs_load.result.type = member.type;
+						lhs_load.result.size_in_bits = member_bits;
+						lhs_load.object = this_handle;
+						lhs_load.member_name = member.getName();
+						lhs_load.offset = static_cast<int>(member.offset);
+						lhs_load.is_reference = member.is_reference;
+						lhs_load.is_rvalue_reference = member.is_rvalue_reference;
+						lhs_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
+
+						TempVar rhs_val = var_counter.next();
+						MemberLoadOp rhs_load;
+						rhs_load.result.value = rhs_val;
+						rhs_load.result.type = member.type;
+						rhs_load.result.size_in_bits = member_bits;
+						rhs_load.object = other_handle;
+						rhs_load.member_name = member.getName();
+						rhs_load.offset = static_cast<int>(member.offset);
+						rhs_load.is_reference = member.is_reference;
+						rhs_load.is_rvalue_reference = member.is_rvalue_reference;
+						rhs_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
+
+						// Compare: lhs != rhs
+						TempVar ne_result = var_counter.next();
+						BinaryOp ne_op{
+							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}},
+							.result = IrValue{ne_result}
+						};
+						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
 
 						// Branch: if not equal, go to diff handling
 						CondBranchOp ne_branch;
