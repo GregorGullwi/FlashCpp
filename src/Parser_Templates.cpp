@@ -16932,11 +16932,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		} else if (param.kind() == TemplateParameterKind::Type) {
 			if (arg_index < arg_types.size()) {
-				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type(), arg_types[arg_index].type_index()));
 				arg_index++;
 			} else {
 				// Not enough arguments - use first argument type
-				template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+				template_args.push_back(TemplateArgument::makeType(arg_types[0].type(), arg_types[0].type_index()));
 			}
 		} else {
 			// Non-type parameter - not yet supported

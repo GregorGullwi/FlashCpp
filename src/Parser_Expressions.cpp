@@ -1360,6 +1360,87 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 		if (auto leftNode = result.node()) {
 			if (auto rightNode = rhs_result.node()) {
+				// SFINAE: validate binary operator for struct types
+				// When in SFINAE context (e.g., decltype(a + b)), check that the
+				// operator is actually defined for the operand types. For struct types,
+				// this means checking member operator overloads and free operator functions.
+				if (in_sfinae_context_ && !sfinae_type_map_.empty()) {
+					auto resolve_operand_type_index = [&](const ASTNode& operand) -> TypeIndex {
+						if (!operand.is<ExpressionNode>()) return 0;
+						const ExpressionNode& expr = operand.as<ExpressionNode>();
+						if (!std::holds_alternative<IdentifierNode>(expr)) return 0;
+						const auto& ident = std::get<IdentifierNode>(expr);
+						auto symbol = lookup_symbol(ident.nameHandle());
+						if (!symbol.has_value()) return 0;
+						const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+						if (!decl) return 0;
+						if (!decl->type_node().is<TypeSpecifierNode>()) return 0;
+						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+						if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return 0;
+						TypeIndex type_idx = type_spec.type_index();
+						// Resolve template parameter types via sfinae_type_map_
+						if (type_idx < gTypeInfo.size()) {
+							StringHandle type_name_handle = gTypeInfo[type_idx].name();
+							auto subst_it = sfinae_type_map_.find(type_name_handle);
+							if (subst_it != sfinae_type_map_.end()) {
+								type_idx = subst_it->second;
+							} else {
+								// Unresolved template parameter — skip validation
+								return 0;
+							}
+						}
+						return type_idx;
+					};
+
+					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
+					TypeIndex right_type_idx = resolve_operand_type_index(*rightNode);
+
+					// If at least one operand is a struct type, validate the operator exists
+					if (left_type_idx > 0 || right_type_idx > 0) {
+						bool operator_found = false;
+						std::string_view op_symbol = operator_token.value();
+
+						// Check member operator overload on the left operand
+						if (left_type_idx > 0) {
+							auto member_result = findBinaryOperatorOverload(left_type_idx, right_type_idx, op_symbol);
+							if (member_result.has_overload) {
+								operator_found = true;
+							}
+						}
+
+						// Check free function operator overload (e.g., operator+(A, B))
+						if (!operator_found) {
+							StringBuilder op_name_builder;
+							op_name_builder.append("operator").append(op_symbol);
+							std::string_view op_func_name = op_name_builder.commit();
+							auto op_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(op_func_name));
+							if (op_symbol_opt.has_value()) {
+								// Verify the free operator accepts the operand types
+								if (op_symbol_opt->is<FunctionDeclarationNode>()) {
+									const auto& op_func = op_symbol_opt->as<FunctionDeclarationNode>();
+									const auto& op_params = op_func.parameter_nodes();
+									// Check first parameter type matches one of the operand types
+									if (op_params.size() >= 2 && op_params[0].is<DeclarationNode>()) {
+										const auto& p0 = op_params[0].as<DeclarationNode>();
+										if (p0.type_node().is<TypeSpecifierNode>()) {
+											TypeIndex p0_idx = p0.type_node().as<TypeSpecifierNode>().type_index();
+											if (p0_idx == left_type_idx || p0_idx == right_type_idx) {
+												operator_found = true;
+											}
+										}
+									}
+								}
+								// If not a FunctionDeclarationNode, don't conservatively accept —
+								// require explicit match for SFINAE correctness
+							}
+						}
+
+						if (!operator_found) {
+							return ParseResult::error("SFINAE: operator not defined for type", operator_token);
+						}
+					}
+				}
+
 				// Create the binary operation and update the result
 				auto binary_op = emplace_node<ExpressionNode>(
 					BinaryOperatorNode(operator_token, *leftNode, *rightNode));
