@@ -3050,8 +3050,8 @@ private:
 						// Compare: lhs != rhs
 						TempVar ne_result = var_counter.next();
 						BinaryOp ne_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}},
+							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
 							.result = IrValue{ne_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -3069,8 +3069,8 @@ private:
 						// Compare: lhs < rhs
 						TempVar lt_result = var_counter.next();
 						BinaryOp lt_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}},
+							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
 							.result = IrValue{lt_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
@@ -3120,17 +3120,16 @@ private:
 
 		// Synthesized comparison operators from operator<=> - generate memberwise comparison directly
 		// Determine comparison opcode once from the operator name
-		IrOpcode synthesized_cmp_opcode = IrOpcode::Equal;
-		bool is_synthesized_comparison = false;
+		std::optional<IrOpcode> synthesized_cmp_opcode;
 		if (node.is_implicit()) {
-			if (func_name_view == "operator==") { synthesized_cmp_opcode = IrOpcode::Equal; is_synthesized_comparison = true; }
-			else if (func_name_view == "operator!=") { synthesized_cmp_opcode = IrOpcode::NotEqual; is_synthesized_comparison = true; }
-			else if (func_name_view == "operator<") { synthesized_cmp_opcode = IrOpcode::LessThan; is_synthesized_comparison = true; }
-			else if (func_name_view == "operator>") { synthesized_cmp_opcode = IrOpcode::GreaterThan; is_synthesized_comparison = true; }
-			else if (func_name_view == "operator<=") { synthesized_cmp_opcode = IrOpcode::LessEqual; is_synthesized_comparison = true; }
-			else if (func_name_view == "operator>=") { synthesized_cmp_opcode = IrOpcode::GreaterEqual; is_synthesized_comparison = true; }
+			if (func_name_view == "operator==") { synthesized_cmp_opcode = IrOpcode::Equal; }
+			else if (func_name_view == "operator!=") { synthesized_cmp_opcode = IrOpcode::NotEqual; }
+			else if (func_name_view == "operator<") { synthesized_cmp_opcode = IrOpcode::LessThan; }
+			else if (func_name_view == "operator>") { synthesized_cmp_opcode = IrOpcode::GreaterThan; }
+			else if (func_name_view == "operator<=") { synthesized_cmp_opcode = IrOpcode::LessEqual; }
+			else if (func_name_view == "operator>=") { synthesized_cmp_opcode = IrOpcode::GreaterEqual; }
 		}
-		if (is_synthesized_comparison) {
+		if (synthesized_cmp_opcode) {
 			// Instead of processing the parser-generated body (which has auto return type issues),
 			// generate direct memberwise comparison. This calls operator<=> and compares result with 0.
 			symbol_table.enter_scope(ScopeType::Function);
@@ -3214,7 +3213,7 @@ private:
 					.rhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{0ULL}, .is_signed = true},
 					.result = IrValue{cmp_result}
 				};
-				ir_.addInstruction(IrInstruction(synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
+				ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
 
 				// Return the boolean result
 				ReturnOp ret_op;
