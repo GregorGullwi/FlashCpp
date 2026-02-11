@@ -1453,7 +1453,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		bool is_long_double = (suffix.find('l') != std::string_view::npos) && !is_float;
 
 		// Branchless type selection
-		// If is_float: Type::Float (12), else if is_long_double: Type::LongDouble (14), else Type::Double (13)
+		// If is_float: Type::Float, else if is_long_double: Type::LongDouble, else Type::Double
 		typeInfo.type = static_cast<Type>(
 			static_cast<int>(Type::Float) * is_float +
 			static_cast<int>(Type::LongDouble) * is_long_double * (!is_float) +

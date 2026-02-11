@@ -1535,7 +1535,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		
 		// Holds fully resolved type info including indirection and qualifiers
 		struct ResolvedTypeInfo {
-			Type base_type = Type::Void;
+			Type base_type = Type::Invalid;
 			TypeIndex type_index = 0;
 			uint8_t pointer_depth = 0;
 			bool is_reference = false;
