@@ -3216,6 +3216,13 @@ private:
 				ret_op.return_type = Type::Bool;
 				ret_op.return_size = 8;
 				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+			} else {
+				// Fallback: operator<=> not found, return false for all synthesized operators
+				ReturnOp ret_op;
+				ret_op.return_value = IrValue{0ULL};
+				ret_op.return_type = Type::Bool;
+				ret_op.return_size = 8;
+				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
 			}
 
 			symbol_table.exit_scope();
