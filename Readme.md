@@ -165,8 +165,8 @@ The compiler includes 600+ test cases covering:
 | Requires clauses | ✅ 100% | ✅ 100% | ✅ 80% | ✅ Good | Fully Implemented |
 | Constexpr if | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Range-for with init | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
-| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 98% | ✅ Good | Fully Implemented |
-| Designated initializers | ✅ 80% | ✅ 80% | ✅ 92% | ✅ Good | Mostly Implemented |
+| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 98% | ✅ Good | Mostly Implemented |
+| Designated initializers | ✅ 80% | ✅ 80% | ✅ 90% | ✅ Good | Mostly Implemented |
 | NTTP with auto | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Template packs | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Fold expressions | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
