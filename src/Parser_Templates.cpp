@@ -3907,7 +3907,7 @@ if (struct_type_info.getStructInfo()) {
 				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, func_handle);
 				std::string_view qualified_specialization_name = StringTable::getStringView(qualified_handle);
 				gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args, *func_result.node());
-				
+
 				return saved_position.success(*func_result.node());
 			}
 			if (peek() != "{"_tok) {
