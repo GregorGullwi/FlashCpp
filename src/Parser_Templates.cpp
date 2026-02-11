@@ -8740,9 +8740,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		bool prev_sfinae_context = in_sfinae_context_;
 		bool prev_parsing_template_body = parsing_template_body_;
 		auto prev_template_param_names = std::move(current_template_param_names_);
+		auto prev_sfinae_type_map = std::move(sfinae_type_map_);
 		in_sfinae_context_ = true;
 		parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
 		current_template_param_names_.clear();  // No dependent names during SFINAE
+		sfinae_type_map_.clear();
 
 		SaveHandle sfinae_pos = save_token_position();
 		restore_lexer_position_only(func_decl.trailing_return_type_position());
@@ -8763,6 +8765,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				getTypeSizeFromTemplateArgument(template_args[i]));
 			gTypesByName.emplace(type_info.name(), &type_info);
 			sfinae_scope.addParameter(&type_info);
+			// Populate SFINAE type map so expression parser can resolve template params
+			sfinae_type_map_[type_info.name()] = template_args[i].type_index;
 		}
 
 		auto return_type_result = parse_type_specifier();
@@ -8771,6 +8775,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		in_sfinae_context_ = prev_sfinae_context;
 		parsing_template_body_ = prev_parsing_template_body;
 		current_template_param_names_ = std::move(prev_template_param_names);
+		sfinae_type_map_ = std::move(prev_sfinae_type_map);
 
 		if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
@@ -17117,9 +17122,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			bool prev_sfinae_context = in_sfinae_context_;
 			bool prev_parsing_template_body = parsing_template_body_;
 			auto prev_template_param_names = std::move(current_template_param_names_);
+			auto prev_sfinae_type_map = std::move(sfinae_type_map_);
 			in_sfinae_context_ = true;
 			parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
 			current_template_param_names_.clear();  // No dependent names during SFINAE
+			sfinae_type_map_.clear();
 
 			SaveHandle sfinae_pos = save_token_position();
 			restore_lexer_position_only(func_decl.trailing_return_type_position());
@@ -17140,6 +17147,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					getTypeSizeFromTemplateArgument(template_args[i]));
 				gTypesByName.emplace(type_info.name(), &type_info);
 				sfinae_scope.addParameter(&type_info);
+				sfinae_type_map_[type_info.name()] = template_args[i].type_index;
 			}
 			// Add outer template params (from enclosing class template, e.g. T→int)
 			const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
@@ -17154,6 +17162,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 						StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
 					gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
 					sfinae_scope.addParameter(&outer_type_info);
+					sfinae_type_map_[outer_type_info.name()] = outer_binding->param_args[i].type_index;
 				}
 			}
 
@@ -17163,6 +17172,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			in_sfinae_context_ = prev_sfinae_context;
 			parsing_template_body_ = prev_parsing_template_body;
 			current_template_param_names_ = std::move(prev_template_param_names);
+			sfinae_type_map_ = std::move(prev_sfinae_type_map);
 
 			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 				continue;  // SFINAE: this overload's return type failed, try next
