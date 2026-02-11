@@ -2498,6 +2498,58 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 	std::vector<TypeSpecifierNode> arg_types;
 	
 	while (true) {
+		// Handle brace-init-list argument: func({.x=1}) -> func(ParamType{.x=1})
+		// When a '{' is encountered as an argument, infer the parameter type from the function signature
+		if (peek() == "{"_tok && !ctx.callee_name.empty()) {
+			// Look up the function to get the parameter type at the current argument index
+			auto func_lookup = gSymbolTable.lookup(ctx.callee_name);
+			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
+				const auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
+				size_t arg_index = args.size();
+				const auto& params = func_decl.parameter_nodes();
+				if (arg_index < params.size() && params[arg_index].is<DeclarationNode>()) {
+					const auto& param_decl = params[arg_index].as<DeclarationNode>();
+					if (param_decl.type_node().is<TypeSpecifierNode>()) {
+						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+						// Only handle struct/user-defined types
+						if (param_type.type() == Type::Struct || param_type.type() == Type::UserDefined) {
+							// Save position before parse_brace_initializer since it consumes '{'
+							SaveHandle brace_pos = save_token_position();
+							auto init_result = parse_brace_initializer(param_type);
+							if (!init_result.is_error() && init_result.node()) {
+								discard_saved_token(brace_pos);
+								if (init_result.node()->is<InitializerListNode>()) {
+									// Convert InitializerListNode to ConstructorCallNode
+									auto type_node = emplace_node<TypeSpecifierNode>(param_type);
+									const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
+									ChunkedVector<ASTNode> ctor_args;
+									for (const auto& init : init_list.initializers()) {
+										ctor_args.push_back(init);
+									}
+									args.push_back(emplace_node<ExpressionNode>(
+										ConstructorCallNode(type_node, std::move(ctor_args), peek_info())));
+								} else {
+									args.push_back(*init_result.node());
+								}
+								if (ctx.collect_types) {
+									arg_types.push_back(param_type);
+								}
+								// Check for comma or end
+								if (peek() == ","_tok) {
+									advance(); // consume ','
+									continue;
+								}
+								break;
+							} else {
+								// parse_brace_initializer failed - restore token stream
+								restore_token_position(brace_pos);
+							}
+						}
+					}
+				}
+			}
+		}
+		
 		auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (arg_result.is_error()) {
 			return ParsedFunctionArguments::make_error(arg_result.error_message(), 
@@ -2512,8 +2564,14 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 				
 				// Handle simple pack expansion if enabled
 				bool expanded = false;
-				if (ctx.expand_simple_packs && arg->is<IdentifierNode>()) {
-					std::string_view pack_name = arg->as<IdentifierNode>().name();
+				if (ctx.expand_simple_packs) {
+					std::string_view pack_name;
+					if (arg->is<IdentifierNode>()) {
+						pack_name = arg->as<IdentifierNode>().name();
+					} else if (arg->is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg->as<ExpressionNode>())) {
+						pack_name = std::get<IdentifierNode>(arg->as<ExpressionNode>()).name();
+					}
+					if (!pack_name.empty()) {
 					
 					// Try to find expanded pack elements in the symbol table
 					// Pattern: pack_name_0, pack_name_1, etc.
@@ -2562,6 +2620,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						}
 						expanded = true;
 					}
+					} // !pack_name.empty()
 				}
 				
 				if (!expanded) {

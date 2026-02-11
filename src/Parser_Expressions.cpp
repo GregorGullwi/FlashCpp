@@ -7788,113 +7788,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (peek().is_eof())
 					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
-				ChunkedVector<ASTNode> args;
-				// Check if function call has arguments (not empty parentheses)
-				if (!peek().is_eof() && peek() != ")"_tok) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Parsing function arguments, peek='{}', current='{}'", 
-						peek_info().value(), !current_token_.kind().is_eof() ? current_token_.value() : "N/A");
-					while (true) {
-						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (argResult.is_error()) {
-							return argResult;
-						}
-						
-						FLASH_LOG_FORMAT(Parser, Debug, "Parsed one argument, peek='{}', has_node={}", 
-							!peek().is_eof() ? peek_info().value() : "N/A", argResult.node().has_value());
-
-						// Check for pack expansion: expr...
-						if (peek() == "..."_tok) {
-							advance(); // consume '...'
-							
-							// Pack expansion: need to expand the expression for each pack element
-							if (auto arg_node = argResult.node()) {
-								// Check if this is an ExpressionNode containing an IdentifierNode
-								if (arg_node->is<ExpressionNode>()) {
-									const auto& expr = arg_node->as<ExpressionNode>();
-									if (std::holds_alternative<IdentifierNode>(expr)) {
-										const auto& ident_node = std::get<IdentifierNode>(expr);
-										std::string_view pack_name = ident_node.name();
-										// Try to find pack_name_0, pack_name_1, etc. in the symbol table
-										size_t pack_size = 0;
-										
-										StringBuilder sb;
-										for (size_t i = 0; i < 100; ++i) {  // reasonable limit
-											// Use StringBuilder to create a persistent string
-											std::string_view element_name = sb
-												.append(pack_name)
-												.append("_")
-												.append(i)
-												.preview();
-										
-											if (gSymbolTable.lookup(element_name).has_value()) {
-												++pack_size;
-											} else {
-												break;
-											}
-
-											sb.reset();
-										}
-										sb.reset();
-										
-										if (pack_size > 0) {
-											// Add each pack element as a separate argument
-											for (size_t i = 0; i < pack_size; ++i) {
-												// Use StringBuilder to create a persistent string for the token
-												std::string_view element_name = sb
-													.append(pack_name)
-													.append("_")
-													.append(i)
-													.commit();
-												
-												Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-												auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
-												args.push_back(elem_node);
-											}
-										} else {
-											if (auto node = argResult.node()) {
-												args.push_back(*node);
-											}
-										}
-									} else {
-										// Complex expression: need full rewriting (not implemented yet)
-										if (auto node = argResult.node()) {
-											args.push_back(*node);
-										}
-									}
-								} else {
-									// Not an ExpressionNode
-									if (auto node = argResult.node()) {
-										args.push_back(*node);
-									}
-								}
-							}
-						} else {
-							// Regular argument
-							FLASH_LOG_FORMAT(Parser, Debug, "Adding regular argument to args, has_node={}", argResult.node().has_value());
-							if (auto node = argResult.node()) {
-								args.push_back(*node);
-								FLASH_LOG_FORMAT(Parser, Debug, "Added argument to args, new size={}", args.size());
-							}
-						}
-
-						// Check what comes after the argument
-						if (peek().is_eof()) {
-							return ParseResult::error(ParserError::NotImplemented, Token());
-						}
-						
-						if (peek() == ")"_tok) {
-							// End of argument list
-							break;
-						}
-						else if (peek() == ","_tok) {
-							// More arguments follow
-							advance(); // Consume comma
-						}
-						else {
-							return ParseResult::error("Expected ',' or ')' after function argument", peek_info());
-						}
-					}
+				// Use parse_function_arguments to handle all argument parsing including brace-init-list
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = false,
+					.expand_simple_packs = true,
+					.callee_name = idenfifier_token.value()
+				});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
+				ChunkedVector<ASTNode> args = std::move(args_result.args);
 
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);

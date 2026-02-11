@@ -394,6 +394,13 @@ public:
 					GlobalVariableDeclOp op;
 					op.type = static_member.type;
 					op.size_in_bits = static_cast<int>(static_member.size * 8);
+					// If size is 0 for struct types, look up from type info
+					if (op.size_in_bits == 0 && static_member.type_index > 0 && static_member.type_index < gTypeInfo.size()) {
+						const StructTypeInfo* member_si = gTypeInfo[static_member.type_index].getStructInfo();
+						if (member_si) {
+							op.size_in_bits = static_cast<int>(member_si->total_size * 8);
+						}
+					}
 					op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
 					// Check if static member has an initializer
@@ -416,13 +423,86 @@ public:
 					
 					// Check for ConstructorCallNode (e.g., T() which becomes int() after substitution)
 					if (std::holds_alternative<ConstructorCallNode>(init_expr)) {
-						FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '", 
-						          qualified_name, "' - initializing to zero");
-						// For now, initialize constructor calls to zero (default value)
-						// This handles cases like int(), float(), etc. which should zero-initialize
-						size_t byte_count = op.size_in_bits / 8;
-						for (size_t i = 0; i < byte_count; ++i) {
-							op.init_data.push_back(0);
+						const auto& ctor_call = std::get<ConstructorCallNode>(init_expr);
+						bool evaluated_ctor = false;
+						// Try constexpr evaluation for constructor calls with arguments
+						if (!ctor_call.arguments().empty()) {
+							const ASTNode& ctor_type_node = ctor_call.type_node();
+							if (ctor_type_node.is<TypeSpecifierNode>()) {
+								const TypeSpecifierNode& ctor_type_spec = ctor_type_node.as<TypeSpecifierNode>();
+								TypeIndex ctor_type_index = ctor_type_spec.type_index();
+								if (ctor_type_index < gTypeInfo.size()) {
+									const StructTypeInfo* ctor_struct_info = gTypeInfo[ctor_type_index].getStructInfo();
+									if (ctor_struct_info) {
+										// Find matching constructor
+										const ConstructorDeclarationNode* matching_ctor = nullptr;
+										for (const auto& mf : ctor_struct_info->member_functions) {
+											if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
+											const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+											if (ctor.parameter_nodes().size() == ctor_call.arguments().size()) {
+												matching_ctor = &ctor;
+												break;
+											}
+										}
+										if (matching_ctor) {
+											// Evaluate arguments
+											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
+											std::unordered_map<std::string_view, long long> param_values;
+											bool args_ok = true;
+											const auto& params = matching_ctor->parameter_nodes();
+											for (size_t ai = 0; ai < params.size() && ai < ctor_call.arguments().size(); ++ai) {
+												if (params[ai].is<DeclarationNode>()) {
+													auto arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
+													if (arg_result.success()) {
+														param_values[params[ai].as<DeclarationNode>().identifier_token().value()] = arg_result.as_int();
+													} else {
+														args_ok = false;
+														break;
+													}
+												}
+											}
+											if (args_ok) {
+												// Evaluate each member's value from constructor initializer list
+												size_t total_bytes = op.size_in_bits / 8;
+												op.init_data.resize(total_bytes, 0);
+												for (const auto& member : ctor_struct_info->members) {
+													long long member_val = 0;
+													for (const auto& mem_init : matching_ctor->member_initializers()) {
+														if (mem_init.member_name == StringTable::getStringView(member.getName())) {
+															// Try identifier lookup in param_values first
+															if (mem_init.initializer_expr.is<ExpressionNode>()) {
+																const auto& init_e = mem_init.initializer_expr.as<ExpressionNode>();
+																if (std::holds_alternative<IdentifierNode>(init_e)) {
+																	auto it = param_values.find(std::get<IdentifierNode>(init_e).name());
+																	if (it != param_values.end()) member_val = it->second;
+																}
+															}
+															// Also try full constexpr eval as fallback
+															auto eval_r = ConstExpr::Evaluator::evaluate(mem_init.initializer_expr, eval_ctx);
+															if (eval_r.success()) member_val = eval_r.as_int();
+															break;
+														}
+													}
+													for (size_t bi = 0; bi < member.size && (member.offset + bi) < total_bytes; ++bi) {
+														op.init_data[member.offset + bi] = static_cast<char>((static_cast<unsigned long long>(member_val) >> (bi * 8)) & 0xFF);
+													}
+												}
+												evaluated_ctor = true;
+												FLASH_LOG(Codegen, Debug, "Evaluated constexpr ConstructorCallNode initializer for static member '",
+												          qualified_name, "'");
+											}
+										}
+									}
+								}
+							}
+						}
+						if (!evaluated_ctor) {
+							FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '", 
+							          qualified_name, "' - initializing to zero");
+							size_t byte_count = op.size_in_bits / 8;
+							for (size_t i = 0; i < byte_count; ++i) {
+								op.init_data.push_back(0);
+							}
 						}
 					} else if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 						const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);

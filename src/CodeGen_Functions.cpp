@@ -3774,16 +3774,25 @@
 			// Create a temporary variable for the result
 			TempVar result_var = var_counter.next();
 			
+			int sm_size_bits = static_cast<int>(static_member->size * 8);
+			// If size is 0 for struct types, look up from type info
+			if (sm_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
+				const StructTypeInfo* sm_si = gTypeInfo[static_member->type_index].getStructInfo();
+				if (sm_si) {
+					sm_size_bits = static_cast<int>(sm_si->total_size * 8);
+				}
+			}
+			
 			// Build GlobalLoadOp for the static member
 			GlobalLoadOp global_load;
 			global_load.result.value = result_var;
 			global_load.result.type = static_member->type;
-			global_load.result.size_in_bits = static_cast<int>(static_member->size * 8);
+			global_load.result.size_in_bits = sm_size_bits;
 			global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 			
-			return makeMemberResult(static_member->type, static_cast<int>(static_member->size * 8), result_var, static_member->type_index);
+			return makeMemberResult(static_member->type, sm_size_bits, result_var, static_member->type_index);
 		}
 		
 		// Use recursive lookup to find instance members in base classes as well
