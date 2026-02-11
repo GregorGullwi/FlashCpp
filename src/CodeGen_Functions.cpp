@@ -1846,6 +1846,7 @@
 					for (const auto& arg : template_args) {
 						if (arg.kind == TemplateArgument::Kind::Type) {
 							inst_key.type_arguments.push_back(arg.type_value);
+							inst_key.type_index_arguments.push_back(arg.type_index);
 						}
 					}
 					
