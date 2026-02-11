@@ -1360,6 +1360,87 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 		if (auto leftNode = result.node()) {
 			if (auto rightNode = rhs_result.node()) {
+				// SFINAE: validate binary operator for struct types
+				// When in SFINAE context (e.g., decltype(a + b)), check that the
+				// operator is actually defined for the operand types. For struct types,
+				// this means checking member operator overloads and free operator functions.
+				if (in_sfinae_context_ && !sfinae_type_map_.empty()) {
+					auto resolve_operand_type_index = [&](const ASTNode& operand) -> TypeIndex {
+						if (!operand.is<ExpressionNode>()) return 0;
+						const ExpressionNode& expr = operand.as<ExpressionNode>();
+						if (!std::holds_alternative<IdentifierNode>(expr)) return 0;
+						const auto& ident = std::get<IdentifierNode>(expr);
+						auto symbol = lookup_symbol(ident.nameHandle());
+						if (!symbol.has_value()) return 0;
+						const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+						if (!decl) return 0;
+						if (!decl->type_node().is<TypeSpecifierNode>()) return 0;
+						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+						if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return 0;
+						TypeIndex type_idx = type_spec.type_index();
+						// Resolve template parameter types via sfinae_type_map_
+						if (type_idx < gTypeInfo.size()) {
+							StringHandle type_name_handle = gTypeInfo[type_idx].name();
+							auto subst_it = sfinae_type_map_.find(type_name_handle);
+							if (subst_it != sfinae_type_map_.end()) {
+								type_idx = subst_it->second;
+							} else {
+								// Unresolved template parameter — skip validation
+								return 0;
+							}
+						}
+						return type_idx;
+					};
+
+					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
+					TypeIndex right_type_idx = resolve_operand_type_index(*rightNode);
+
+					// If at least one operand is a struct type, validate the operator exists
+					if (left_type_idx > 0 || right_type_idx > 0) {
+						bool operator_found = false;
+						std::string_view op_symbol = operator_token.value();
+
+						// Check member operator overload on the left operand
+						if (left_type_idx > 0) {
+							auto member_result = findBinaryOperatorOverload(left_type_idx, right_type_idx, op_symbol);
+							if (member_result.has_overload) {
+								operator_found = true;
+							}
+						}
+
+						// Check free function operator overload (e.g., operator+(A, B))
+						if (!operator_found) {
+							StringBuilder op_name_builder;
+							op_name_builder.append("operator").append(op_symbol);
+							std::string_view op_func_name = op_name_builder.commit();
+							auto op_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(op_func_name));
+							if (op_symbol_opt.has_value()) {
+								// Verify the free operator accepts the operand types
+								if (op_symbol_opt->is<FunctionDeclarationNode>()) {
+									const auto& op_func = op_symbol_opt->as<FunctionDeclarationNode>();
+									const auto& op_params = op_func.parameter_nodes();
+									// Check first parameter type matches one of the operand types
+									if (op_params.size() >= 2 && op_params[0].is<DeclarationNode>()) {
+										const auto& p0 = op_params[0].as<DeclarationNode>();
+										if (p0.type_node().is<TypeSpecifierNode>()) {
+											TypeIndex p0_idx = p0.type_node().as<TypeSpecifierNode>().type_index();
+											if (p0_idx == left_type_idx || p0_idx == right_type_idx) {
+												operator_found = true;
+											}
+										}
+									}
+								}
+								// If not a FunctionDeclarationNode, don't conservatively accept —
+								// require explicit match for SFINAE correctness
+							}
+						}
+
+						if (!operator_found) {
+							return ParseResult::error("SFINAE: operator not defined for type", operator_token);
+						}
+					}
+				}
+
 				// Create the binary operation and update the result
 				auto binary_op = emplace_node<ExpressionNode>(
 					BinaryOperatorNode(operator_token, *leftNode, *rightNode));
@@ -1453,7 +1534,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		bool is_long_double = (suffix.find('l') != std::string_view::npos) && !is_float;
 
 		// Branchless type selection
-		// If is_float: Type::Float (12), else if is_long_double: Type::LongDouble (14), else Type::Double (13)
+		// If is_float: Type::Float, else if is_long_double: Type::LongDouble, else Type::Double
 		typeInfo.type = static_cast<Type>(
 			static_cast<int>(Type::Float) * is_float +
 			static_cast<int>(Type::LongDouble) * is_long_double * (!is_float) +
@@ -3424,62 +3505,21 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			// Try to instantiate member function template if applicable
 			std::optional<ASTNode> instantiated_func;
 			
-			// Check for lazy member function template instantiation FIRST
-			bool lazy_template_found = false;
-			if (object_struct_name.has_value() && explicit_template_args.has_value() && context_.isLazyTemplateInstantiationEnabled()) {
-				// Build qualified name for lookup
-				std::string_view qualified_name = StringBuilder()
-					.append(*object_struct_name)
-					.append("::")
-					.append(member_name_token.value())
-					.commit();
-				StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
-				
-				// Check if this is a registered lazy member function template
-				if (LazyMemberFunctionTemplateRegistry::getInstance().needsInstantiation(qualified_handle, *explicit_template_args)) {
-					FLASH_LOG(Templates, Debug, "Lazy member function template instantiation triggered for: ", qualified_name);
-					
-					auto lazy_info_opt = LazyMemberFunctionTemplateRegistry::getInstance().getLazyMemberTemplateInfo(
-						qualified_handle, *explicit_template_args);
-					
-					if (lazy_info_opt.has_value()) {
-						// Perform the actual instantiation now
-						const LazyMemberFunctionTemplateInfo& lazy_info = *lazy_info_opt;
-						
-						// Call the regular instantiation function
-						instantiated_func = try_instantiate_member_function_template_explicit(
-							*object_struct_name,
-							member_name_token.value(),
-							lazy_info.pending_template_args
-						);
-						
-						// Mark as instantiated
-						LazyMemberFunctionTemplateRegistry::getInstance().markInstantiated(qualified_handle, *explicit_template_args);
-						
-						lazy_template_found = true;
-						FLASH_LOG(Templates, Debug, "Lazy member function template instantiation completed for: ", qualified_name);
-					}
-				}
+			// If we have explicit template arguments, use them for instantiation
+			if (object_struct_name.has_value() && explicit_template_args.has_value()) {
+				instantiated_func = try_instantiate_member_function_template_explicit(
+					*object_struct_name,
+					member_name_token.value(),
+					*explicit_template_args
+				);
 			}
-			
-			// If not found in lazy registry, try regular instantiation
-			if (!lazy_template_found) {
-				// If we have explicit template arguments, use them for instantiation
-				if (object_struct_name.has_value() && explicit_template_args.has_value()) {
-					instantiated_func = try_instantiate_member_function_template_explicit(
-						*object_struct_name,
-						member_name_token.value(),
-						*explicit_template_args
-					);
-				}
-				// Otherwise, try argument type deduction
-				else if (object_struct_name.has_value() && !arg_types.empty()) {
-					instantiated_func = try_instantiate_member_function_template(
-						*object_struct_name,
-						member_name_token.value(),
-						arg_types
-					);
-				}
+			// Otherwise, try argument type deduction
+			else if (object_struct_name.has_value() && !arg_types.empty()) {
+				instantiated_func = try_instantiate_member_function_template(
+					*object_struct_name,
+					member_name_token.value(),
+					arg_types
+				);
 			}
 
 			// Check for lazy template instantiation

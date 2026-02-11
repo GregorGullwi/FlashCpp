@@ -9341,6 +9341,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	for (const auto& arg : template_args) {
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			key.type_arguments.push_back(arg.type_value);
+			key.type_index_arguments.push_back(arg.type_index);
 		} else if (arg.kind == TemplateArgument::Kind::Template) {
 			key.template_arguments.push_back(arg.template_name);
 		} else {
@@ -9350,7 +9351,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
-		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found existing instantiation, returning it");
 		PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name) + "_func");
 		return *existing_inst;  // Return existing instantiation
 	}
@@ -16932,11 +16932,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		} else if (param.kind() == TemplateParameterKind::Type) {
 			if (arg_index < arg_types.size()) {
-				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type(), arg_types[arg_index].type_index()));
 				arg_index++;
 			} else {
 				// Not enough arguments - use first argument type
-				template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+				template_args.push_back(TemplateArgument::makeType(arg_types[0].type(), arg_types[0].type_index()));
 			}
 		} else {
 			// Non-type parameter - not yet supported
@@ -16950,6 +16950,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	for (const auto& arg : template_args) {
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			key.type_arguments.push_back(arg.type_value);
+			key.type_index_arguments.push_back(arg.type_index);
 		} else if (arg.kind == TemplateArgument::Kind::Template) {
 			key.template_arguments.push_back(arg.template_name);
 		} else {
@@ -17093,10 +17094,10 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		const std::vector<ASTNode>& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
-		// Convert TemplateTypeArg to TemplateArgument
+		// Convert TemplateTypeArg to TemplateArgument (preserving type_index for struct types)
 		std::vector<TemplateArgument> template_args;
 		for (const auto& type_arg : template_type_args) {
-			template_args.push_back(TemplateArgument::makeType(type_arg.base_type));
+			template_args.push_back(toTemplateArgument(type_arg));
 		}
 
 		// Check if we already have this instantiation
@@ -17105,6 +17106,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		for (const auto& arg : template_args) {
 			if (arg.kind == TemplateArgument::Kind::Type) {
 				key.type_arguments.push_back(arg.type_value);
+				key.type_index_arguments.push_back(arg.type_index);
 			} else if (arg.kind == TemplateArgument::Kind::Template) {
 				key.template_arguments.push_back(arg.template_name);
 			} else {

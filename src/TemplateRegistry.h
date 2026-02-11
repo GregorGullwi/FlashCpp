@@ -480,13 +480,15 @@ inline std::string_view generateInstantiatedNameFromArgs(
 // Template instantiation key - uniquely identifies a template instantiation
 struct TemplateInstantiationKey {
 	StringHandle template_name;
-	InlineVector<Type> type_arguments;  // For type parameters
+	InlineVector<Type> type_arguments;  // For type parameters (Type enum)
+	InlineVector<TypeIndex> type_index_arguments;  // TypeIndex per type arg (differentiates struct types)
 	InlineVector<int64_t> value_arguments;  // For non-type parameters
 	InlineVector<StringHandle> template_arguments;  // For template template parameters
 	
 	bool operator==(const TemplateInstantiationKey& other) const {
 		return template_name == other.template_name &&
 		       type_arguments == other.type_arguments &&
+		       type_index_arguments == other.type_index_arguments &&
 		       value_arguments == other.value_arguments &&
 		       template_arguments == other.template_arguments;
 	}
@@ -498,6 +500,9 @@ struct TemplateInstantiationKeyHash {
 		std::size_t hash = std::hash<StringHandle>{}(key.template_name);
 		for (const auto& type : key.type_arguments) {
 			hash ^= std::hash<int>{}(static_cast<int>(type)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		for (const auto& idx : key.type_index_arguments) {
+			hash ^= std::hash<TypeIndex>{}(idx) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		for (const auto& value : key.value_arguments) {
 			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);

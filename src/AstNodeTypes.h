@@ -119,6 +119,7 @@ enum class TargetDataModel {
 extern TargetDataModel g_target_data_model;
 
 enum class Type : int_fast16_t {
+	Invalid = 0,          // Must be 0 so zero-initialized memory is detected as uninitialized
 	Void,
 	Bool,
 	Char,
@@ -148,7 +149,6 @@ enum class Type : int_fast16_t {
 	Enum,
 	Nullptr,              // nullptr_t type
 	Template,             // Nested template param
-	Invalid,
 };
 
 using TypeIndex = size_t;

@@ -1176,7 +1176,7 @@ struct StringLiteralOp {
 // Stack allocation
 struct StackAllocOp {
 	std::variant<StringHandle, TempVar> result;  // Result variable
-	Type type = Type::Void;                           // Type being allocated
+	Type type = Type::Invalid;                        // Type being allocated
 	int size_in_bits = 0;                             // Size in bits
 };
 
@@ -1204,7 +1204,7 @@ struct LoopBeginOp {
 
 // Function parameter information
 struct FunctionParam {
-	Type type = Type::Void;
+	Type type = Type::Invalid;
 	int size_in_bits = 0;
 	int pointer_depth = 0;
 	StringHandle name;  // Pure StringHandle
@@ -1285,7 +1285,7 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 // Type conversion operations (SignExtend, ZeroExtend, Truncate)
 struct ConversionOp {
 	TypedValue from;     // 40 bytes (source type, size, and value)
-	Type to_type = Type::Void;  // 4 bytes
+	Type to_type = Type::Invalid;  // 4 bytes
 	int to_size = 0;     // 4 bytes
 	TempVar result;      // 4 bytes
 };
@@ -1320,7 +1320,7 @@ struct FunctionAddressOp {
 
 // Variable declaration (local)
 struct VariableDeclOp {
-	Type type = Type::Void;
+	Type type = Type::Invalid;
 	int size_in_bits = 0;
 	StringHandle var_name;  // Pure StringHandle
 	unsigned long long custom_alignment = 0;
@@ -1342,7 +1342,7 @@ struct VariableDeclOp {
 
 // Global variable declaration
 struct GlobalVariableDeclOp {
-	Type type = Type::Void;
+	Type type = Type::Invalid;
 	int size_in_bits = 0;          // Size of one element in bits
 	StringHandle var_name;  // Pure StringHandle
 	bool is_initialized = false;
@@ -1358,7 +1358,7 @@ struct GlobalVariableDeclOp {
 // Heap allocation (new operator)
 struct HeapAllocOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Void;
+	Type type = Type::Invalid;
 	int size_in_bytes = 0;
 	int pointer_depth = 0;
 };
@@ -1366,7 +1366,7 @@ struct HeapAllocOp {
 // Heap array allocation (new[] operator)
 struct HeapAllocArrayOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Void;
+	Type type = Type::Invalid;
 	int size_in_bytes = 0;
 	int pointer_depth = 0;
 	IrValue count;               // Array element count (TempVar or constant)
@@ -1385,7 +1385,7 @@ struct HeapFreeArrayOp {
 // Placement new operator
 struct PlacementNewOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Void;
+	Type type = Type::Invalid;
 	int size_in_bytes = 0;
 	int pointer_depth = 0;
 	IrValue address;             // Placement address (TempVar, string_view, or constant)
@@ -1395,7 +1395,7 @@ struct PlacementNewOp {
 struct TypeConversionOp {
 	TempVar result;              // Result variable
 	TypedValue from;             // Source value with type information
-	Type to_type = Type::Void;   // Target type
+	Type to_type = Type::Invalid;   // Target type
 	int to_size_in_bits = 0;     // Target size
 };
 
