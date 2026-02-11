@@ -3623,18 +3623,23 @@
 					CallOp call_op;
 					call_op.result = result_var;
 					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-					call_op.return_type = return_type.type();
-					call_op.return_type_index = return_type.type_index();
 					
-					// Get actual return size - for struct types, TypeSpecifierNode.size_in_bits() may be 0
-					// so we need to look it up from gTypeInfo using the type_index
+					// Resolve actual return type - defaulted operator<=> has 'auto' return type
+					// that is deduced to int (returning -1/0/1)
+					Type resolved_return_type = return_type.type();
 					int actual_return_size = static_cast<int>(return_type.size_in_bits());
-					if (actual_return_size == 0 && return_type.type() == Type::Struct && return_type.type_index() > 0) {
+					if (resolved_return_type == Type::Auto && op == "<=>") {
+						resolved_return_type = Type::Int;
+						actual_return_size = 32;
+					}
+					if (actual_return_size == 0 && resolved_return_type == Type::Struct && return_type.type_index() > 0) {
 						// Look up struct size from type info
 						if (return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
 							actual_return_size = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
 						}
 					}
+					call_op.return_type = resolved_return_type;
+					call_op.return_type_index = return_type.type_index();
 					call_op.return_size_in_bits = actual_return_size;
 					call_op.is_member_function = true;  // This is a member function call
 					
@@ -3707,8 +3712,8 @@
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 					
-					// Return the result
-					return {return_type.type(), static_cast<int>(return_type.size_in_bits()), result_var, 
+					// Return the result with resolved types
+					return {resolved_return_type, actual_return_size, result_var, 
 					        return_type.type_index()};
 				}
 			}
@@ -3808,6 +3813,12 @@
 							const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 							Type return_type = return_type_node.type();
 							int return_size = static_cast<int>(return_type_node.size_in_bits());
+							
+							// Defaulted operator<=> with auto return type actually returns int
+							if (return_type == Type::Auto) {
+								return_type = Type::Int;
+								return_size = 32;
+							}
 							
 							// Generate mangled name for the operator<=> call
 							std::vector<TypeSpecifierNode> param_types;

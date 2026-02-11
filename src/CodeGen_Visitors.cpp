@@ -2559,7 +2559,7 @@ private:
 	}
 
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
-		if (!node.get_definition().has_value()) {
+		if (!node.get_definition().has_value() && !node.is_implicit()) {
 			return;
 		}
 
@@ -2808,12 +2808,19 @@ private:
 			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
 			std::string_view param_name = param_decl.identifier_token().value();
 			if (param_name.empty()) {
-				// For operator= functions (both explicit and implicit), use "other" as the conventional name
-				// for the first parameter. This handles both:
-				// 1. Implicitly generated operator= (created by parser for classes without user-defined one)
-				// 2. Explicitly defaulted operator= (`operator=(const T&) = default;` without param name)
-				// Otherwise use a generated name
-				if (func_decl.identifier_token().value() == "operator=" && unnamed_param_counter == 0) {
+				// For defaulted operators (operator=, operator<=>, and synthesized comparison operators),
+				// use "other" as the conventional name for the first parameter.
+				std::string_view func_name_for_param = func_decl.identifier_token().value();
+				bool is_defaulted_operator = unnamed_param_counter == 0 && (
+					func_name_for_param == "operator=" ||
+					func_name_for_param == "operator<=>" ||
+					func_name_for_param == "operator==" ||
+					func_name_for_param == "operator!=" ||
+					func_name_for_param == "operator<" ||
+					func_name_for_param == "operator>" ||
+					func_name_for_param == "operator<=" ||
+					func_name_for_param == "operator>=");
+				if (is_defaulted_operator) {
 					param_info.name = StringTable::getOrInternStringHandle("other");
 				} else {
 					// Generate unique name for unnamed parameter
@@ -2847,38 +2854,384 @@ private:
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), func_decl.identifier_token()));
 
-		// Short-circuit implicit/defaulted spaceship operators to a safe return value
+		// Generate memberwise three-way comparison for defaulted operator<=>
 		if (func_name_view == "operator<=>" && node.is_implicit()) {
-			ReturnOp ret_op;
-			ret_op.return_value = IrValue{0ULL};
-			ret_op.return_type = Type::Int;
-			ret_op.return_size = 32;
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+			// Set up function scope and 'this' pointer
+			symbol_table.enter_scope(ScopeType::Function);
+			if (node.is_member_function()) {
+				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+				if (type_it != gTypesByName.end()) {
+					const TypeInfo* struct_type_info = type_it->second;
+					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+					if (struct_info) {
+						Token this_token = func_decl.identifier_token();
+						auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+							Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+						this_type.as<TypeSpecifierNode>().add_pointer_level();
+						auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
+						symbol_table.insert("this"sv, this_decl);
+					}
+				}
+			}
+			for (const auto& param : node.parameter_nodes()) {
+				symbol_table.insert(param.as<DeclarationNode>().identifier_token().value(), param);
+			}
+
+			// Look up struct info
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+			if (type_it != gTypesByName.end()) {
+				const TypeInfo* struct_type_info = type_it->second;
+				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+				if (struct_info && !struct_info->members.empty()) {
+					StringHandle this_handle = StringTable::getOrInternStringHandle("this");
+					StringHandle other_handle;
+					if (!node.parameter_nodes().empty()) {
+						std::string_view param_name = node.parameter_nodes()[0].as<DeclarationNode>().identifier_token().value();
+						if (!param_name.empty()) {
+							other_handle = StringTable::getOrInternStringHandle(param_name);
+						}
+					}
+					if (!other_handle.isValid()) {
+						other_handle = StringTable::getOrInternStringHandle("other");
+					}
+
+					static size_t spaceship_counter = 0;
+					size_t current_spaceship = spaceship_counter++;
+
+					for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
+						const auto& member = struct_info->members[mi];
+						int member_bits = static_cast<int>(member.size * 8);
+
+						// Labels for this member's comparison
+						auto diff_label = StringTable::createStringHandle(
+							StringBuilder().append("spaceship_diff_").append(current_spaceship).append("_").append(mi));
+						auto lt_label = StringTable::createStringHandle(
+							StringBuilder().append("spaceship_lt_").append(current_spaceship).append("_").append(mi));
+						auto gt_label = StringTable::createStringHandle(
+							StringBuilder().append("spaceship_gt_").append(current_spaceship).append("_").append(mi));
+						auto next_label = StringTable::createStringHandle(
+							StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
+
+						// For struct members, delegate to the member's operator<=>
+						if (member.type == Type::Struct && member.type_index > 0 && member.type_index < gTypeInfo.size()) {
+							const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
+
+							// Find operator<=> in the member struct and generate its mangled name
+							StringHandle member_spaceship_mangled;
+							if (member_struct_info) {
+								for (const auto& mf : member_struct_info->member_functions) {
+									if (mf.is_operator_overload && mf.operator_symbol == "<=>") {
+										if (mf.function_decl.is<FunctionDeclarationNode>()) {
+											const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
+											// Use generateMangledNameForCall for consistent mangling across platforms
+											std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
+											member_spaceship_mangled = StringTable::getOrInternStringHandle(
+												generateMangledNameForCall(spaceship_func, member_struct_name));
+										}
+										break;
+									}
+								}
+							}
+
+							if (member_spaceship_mangled.isValid()) {
+								// Load addresses of this->member and other.member for the call
+								TempVar lhs_val = var_counter.next();
+								MemberLoadOp lhs_load;
+								lhs_load.result.value = lhs_val;
+								lhs_load.result.type = member.type;
+								lhs_load.result.size_in_bits = member_bits;
+								lhs_load.object = this_handle;
+								lhs_load.member_name = member.getName();
+								lhs_load.offset = static_cast<int>(member.offset);
+								lhs_load.is_reference = member.is_reference;
+								lhs_load.is_rvalue_reference = member.is_rvalue_reference;
+								lhs_load.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
+
+								TempVar rhs_val = var_counter.next();
+								MemberLoadOp rhs_load;
+								rhs_load.result.value = rhs_val;
+								rhs_load.result.type = member.type;
+								rhs_load.result.size_in_bits = member_bits;
+								rhs_load.object = other_handle;
+								rhs_load.member_name = member.getName();
+								rhs_load.offset = static_cast<int>(member.offset);
+								rhs_load.is_reference = member.is_reference;
+								rhs_load.is_rvalue_reference = member.is_rvalue_reference;
+								rhs_load.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
+
+								// Call member's operator<=>(this->member, other.member)
+								TempVar call_result = var_counter.next();
+								CallOp call_op;
+								call_op.function_name = member_spaceship_mangled;
+								call_op.is_member_function = true;
+								call_op.return_type = Type::Int;
+								call_op.return_size_in_bits = 32;
+								call_op.result = call_result;
+
+								TypedValue lhs_arg;
+								lhs_arg.type = Type::Struct;
+								lhs_arg.size_in_bits = 64;
+								lhs_arg.value = lhs_val;
+								lhs_arg.pointer_depth = 1;
+								call_op.args.push_back(std::move(lhs_arg));
+
+								TypedValue rhs_arg;
+								rhs_arg.type = Type::Struct;
+								rhs_arg.size_in_bits = 64;
+								rhs_arg.value = rhs_val;
+								rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+								call_op.args.push_back(std::move(rhs_arg));
+
+								ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
+
+								// Check if result != 0 (members not equal)
+								TempVar ne_result = var_counter.next();
+								BinaryOp ne_op{
+									.lhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{call_result}, .is_signed = true},
+									.rhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{0ULL}, .is_signed = true},
+									.result = IrValue{ne_result}
+								};
+								ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
+
+								// Branch: if not equal, return the result directly
+								CondBranchOp ne_branch;
+								ne_branch.label_true = diff_label;
+								ne_branch.label_false = next_label;
+								ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 8, .value = IrValue{ne_result}};
+								ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
+
+								// Label: diff - return the inner <=> result
+								ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = diff_label}, func_decl.identifier_token()));
+								{
+									ReturnOp ret_inner;
+									ret_inner.return_value = IrValue{call_result};
+									ret_inner.return_type = Type::Int;
+									ret_inner.return_size = 32;
+									ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_inner), func_decl.identifier_token()));
+								}
+
+								// Label: next - continue to next member
+								ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = next_label}, func_decl.identifier_token()));
+								continue;
+							}
+							// Fall through to primitive comparison if no operator<=> found
+						}
+
+						// Primitive member comparison
+						TempVar lhs_val = var_counter.next();
+						MemberLoadOp lhs_load;
+						lhs_load.result.value = lhs_val;
+						lhs_load.result.type = member.type;
+						lhs_load.result.size_in_bits = member_bits;
+						lhs_load.object = this_handle;
+						lhs_load.member_name = member.getName();
+						lhs_load.offset = static_cast<int>(member.offset);
+						lhs_load.is_reference = member.is_reference;
+						lhs_load.is_rvalue_reference = member.is_rvalue_reference;
+						lhs_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
+
+						TempVar rhs_val = var_counter.next();
+						MemberLoadOp rhs_load;
+						rhs_load.result.value = rhs_val;
+						rhs_load.result.type = member.type;
+						rhs_load.result.size_in_bits = member_bits;
+						rhs_load.object = other_handle;
+						rhs_load.member_name = member.getName();
+						rhs_load.offset = static_cast<int>(member.offset);
+						rhs_load.is_reference = member.is_reference;
+						rhs_load.is_rvalue_reference = member.is_rvalue_reference;
+						rhs_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
+
+						// Compare: lhs != rhs
+						TempVar ne_result = var_counter.next();
+						BinaryOp ne_op{
+							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
+							.result = IrValue{ne_result}
+						};
+						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
+
+						// Branch: if not equal, go to diff handling
+						CondBranchOp ne_branch;
+						ne_branch.label_true = diff_label;
+						ne_branch.label_false = next_label;
+						ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 8, .value = IrValue{ne_result}};
+						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
+
+						// Label: diff - members are not equal
+						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = diff_label}, func_decl.identifier_token()));
+
+						// Compare: lhs < rhs
+						TempVar lt_result = var_counter.next();
+						BinaryOp lt_op{
+							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
+							.result = IrValue{lt_result}
+						};
+						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
+
+						// Branch: if lhs < rhs, return -1, else return 1
+						CondBranchOp lt_branch;
+						lt_branch.label_true = lt_label;
+						lt_branch.label_false = gt_label;
+						lt_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 8, .value = IrValue{lt_result}};
+						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(lt_branch), func_decl.identifier_token()));
+
+						// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
+						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = lt_label}, func_decl.identifier_token()));
+						{
+							ReturnOp ret_neg;
+							ret_neg.return_value = IrValue{0xFFFFFFFFULL};
+							ret_neg.return_type = Type::Int;
+							ret_neg.return_size = 32;
+							ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_neg), func_decl.identifier_token()));
+						}
+
+						// Label: gt - return 1
+						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = gt_label}, func_decl.identifier_token()));
+						{
+							ReturnOp ret_pos;
+							ret_pos.return_value = IrValue{1ULL};
+							ret_pos.return_type = Type::Int;
+							ret_pos.return_size = 32;
+							ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_pos), func_decl.identifier_token()));
+						}
+
+						// Label: next - continue to next member
+						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = next_label}, func_decl.identifier_token()));
+					}
+				}
+			}
+
+			// All members equal - return 0
+			ReturnOp ret_zero;
+			ret_zero.return_value = IrValue{0ULL};
+			ret_zero.return_type = Type::Int;
+			ret_zero.return_size = 32;
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_zero), func_decl.identifier_token()));
+			symbol_table.exit_scope();
 			return;
 		}
 
-		// Provide safe defaults for synthesized comparison operators to avoid recursion
+		// Synthesized comparison operators from operator<=> - generate memberwise comparison directly
+		// Determine comparison opcode once from the operator name
+		std::optional<IrOpcode> synthesized_cmp_opcode;
 		if (node.is_implicit()) {
-			auto emit_bool_return = [&](bool value) {
+			if (func_name_view == "operator==") { synthesized_cmp_opcode = IrOpcode::Equal; }
+			else if (func_name_view == "operator!=") { synthesized_cmp_opcode = IrOpcode::NotEqual; }
+			else if (func_name_view == "operator<") { synthesized_cmp_opcode = IrOpcode::LessThan; }
+			else if (func_name_view == "operator>") { synthesized_cmp_opcode = IrOpcode::GreaterThan; }
+			else if (func_name_view == "operator<=") { synthesized_cmp_opcode = IrOpcode::LessEqual; }
+			else if (func_name_view == "operator>=") { synthesized_cmp_opcode = IrOpcode::GreaterEqual; }
+		}
+		if (synthesized_cmp_opcode) {
+			// Instead of processing the parser-generated body (which has auto return type issues),
+			// generate direct memberwise comparison. This calls operator<=> and compares result with 0.
+			symbol_table.enter_scope(ScopeType::Function);
+			if (node.is_member_function()) {
+				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+				if (type_it != gTypesByName.end()) {
+					const TypeInfo* struct_type_info = type_it->second;
+					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+					if (struct_info) {
+						Token this_token = func_decl.identifier_token();
+						auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+							Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+						this_type.as<TypeSpecifierNode>().add_pointer_level();
+						auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
+						symbol_table.insert("this"sv, this_decl);
+					}
+				}
+			}
+			for (const auto& param : node.parameter_nodes()) {
+				std::string_view pname = param.as<DeclarationNode>().identifier_token().value();
+				if (!pname.empty()) {
+					symbol_table.insert(pname, param);
+				}
+			}
+
+			// Find the operator<=> to call it - generate mangled name from the function signature
+			// (AST mangled name may not be set for user-defined operator<=>)
+			StringHandle spaceship_mangled;
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+			if (type_it != gTypesByName.end()) {
+				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+				if (struct_info) {
+					for (const auto& mf : struct_info->member_functions) {
+						if (mf.is_operator_overload && mf.operator_symbol == "<=>") {
+							if (mf.function_decl.is<FunctionDeclarationNode>()) {
+								const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
+								// Use generateMangledNameForCall for consistent mangling across platforms
+								spaceship_mangled = StringTable::getOrInternStringHandle(
+									generateMangledNameForCall(spaceship_func, node.parent_struct_name()));
+							}
+							break;
+						}
+					}
+				}
+			}
+
+			if (spaceship_mangled.isValid()) {
+				// Generate: call operator<=>(this, other) -> int result
+				TempVar call_result = var_counter.next();
+				CallOp call_op;
+				call_op.function_name = spaceship_mangled;
+				call_op.is_member_function = true;
+				call_op.return_type = Type::Int;
+				call_op.return_size_in_bits = 32;
+				call_op.result = call_result;
+
+				// Pass 'this' as first arg
+				StringHandle this_handle = StringTable::getOrInternStringHandle("this");
+				TypedValue this_arg;
+				this_arg.type = Type::Struct;
+				this_arg.size_in_bits = 64;
+				this_arg.value = this_handle;
+				this_arg.pointer_depth = 1;
+				call_op.args.push_back(std::move(this_arg));
+
+				// Pass 'other' as second arg (reference = pointer)
+				StringHandle other_handle = StringTable::getOrInternStringHandle("other");
+				TypedValue other_arg;
+				other_arg.type = Type::Struct;
+				other_arg.size_in_bits = 64;
+				other_arg.value = other_handle;
+				other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+				call_op.args.push_back(std::move(other_arg));
+
+				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
+
+				// Compare result with 0 using the pre-determined comparison opcode
+				TempVar cmp_result = var_counter.next();
+				BinaryOp cmp_op{
+					.lhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{call_result}, .is_signed = true},
+					.rhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{0ULL}, .is_signed = true},
+					.result = IrValue{cmp_result}
+				};
+				ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
+
+				// Return the boolean result
 				ReturnOp ret_op;
-				ret_op.return_value = IrValue{value ? 1ULL : 0ULL};
+				ret_op.return_value = IrValue{cmp_result};
 				ret_op.return_type = Type::Bool;
 				ret_op.return_size = 8;
 				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
-			};
+			} else {
+				// Fallback: operator<=> not found, return false for all synthesized operators
+				ReturnOp ret_op;
+				ret_op.return_value = IrValue{0ULL};
+				ret_op.return_type = Type::Bool;
+				ret_op.return_size = 8;
+				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+			}
 
-			if (func_name_view == "operator==") {
-				emit_bool_return(true);
-				return;
-			}
-			if (func_name_view == "operator!=" ||
-				func_name_view == "operator<" ||
-				func_name_view == "operator>" ||
-				func_name_view == "operator<=" ||
-				func_name_view == "operator>=") {
-				emit_bool_return(false);
-				return;
-			}
+			symbol_table.exit_scope();
+			return;
 		}
 
 		symbol_table.enter_scope(ScopeType::Function);

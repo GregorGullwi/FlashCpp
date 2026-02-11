@@ -1893,8 +1893,28 @@
 											assert(false && "Invalid initializer operands");
 										}
 									} else {
-										// Zero-initialize unspecified members
-										member_value = 0ULL;
+										// Use default member initializer if available, otherwise zero-initialize
+										if (member.default_initializer.has_value()) {
+											ConstExpr::EvaluationContext ctx(gSymbolTable);
+											auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
+											if (eval_result.success()) {
+												if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+													member_value = std::get<unsigned long long>(eval_result.value);
+												} else if (std::holds_alternative<long long>(eval_result.value)) {
+													member_value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+												} else if (std::holds_alternative<bool>(eval_result.value)) {
+													member_value = std::get<bool>(eval_result.value) ? 1ULL : 0ULL;
+												} else if (std::holds_alternative<double>(eval_result.value)) {
+													member_value = std::get<double>(eval_result.value);
+												} else {
+													member_value = 0ULL;
+												}
+											} else {
+												member_value = 0ULL;
+											}
+										} else {
+											member_value = 0ULL;
+										}
 									}
 
 									MemberStoreOp member_store;

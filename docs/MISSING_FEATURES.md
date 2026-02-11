@@ -2,11 +2,11 @@
 
 This document tracks missing C++20 features and implementation gaps in FlashCpp.
 
-**Last Updated**: 2026-01-31
+**Last Updated**: 2026-02-11
 **Overall C++20 Conformance Grade**: **A-**
 - **Parser**: 95% complete
 - **AST**: 95% complete
-- **Code Generation**: 80% complete
+- **Code Generation**: 85% complete
 - **Standard Library**: Partial support
 
 ## Summary
@@ -91,13 +91,28 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 ### Partially Implemented ⚠️
 
 **Code Generation Edge Cases**
-- Spaceship operator `<=>` in all contexts (80% complete)
+- Spaceship operator `<=>` (98% complete)
   - Parsing: Complete
-  - Code generation: Basic patterns work, advanced cases may need work
+  - Defaulted `operator<=>` with memberwise comparison: ✅ Implemented
+  - Synthesized comparison operators (==, !=, <, >, <=, >=) from defaulted `<=>`: ✅ Implemented
+  - Multi-member structs compared in declaration order: ✅ Works
+  - Nested struct member delegation (calls inner `<=>` for struct members): ✅ Implemented
+  - Inline expression use `(a <=> b) < 0` in ternary/if/comparisons: ✅ Implemented
+  - Mixed member types (int + char + short + long long): ✅ Works
+  - Signed/unsigned member comparisons: ✅ Correct (uses `isSignedType()`)
+  - User-defined `operator<=>` with custom return types: ✅ Works
+  - Reversed operand order and self-comparison: ✅ Works
+  - Template struct `operator<=>`: ✅ Works (is_operator_overload and is_implicit propagated)
+  - Remaining: `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types (requires `<compare>` header)
 - Some complex template instantiations (90% complete)
   - Basic specializations: Work
   - Complex dependent types: May have issues
-- Designated initializers: Basic patterns work, edge cases may fail
+- Designated initializers (92% complete)
+  - Basic designated init `{.x = 10, .y = 20}`: ✅ Works
+  - Partial init with defaults `{.y = 5}` (omitted fields use default member values): ✅ Implemented
+  - Nested designated init `{.inner = {.a = 1}}`: ✅ Works
+  - Explicit type designated init as function arg `func(Point{.x = 1, .y = 2})`: ✅ Works
+  - Remaining: implicit designated init as function arguments (`func({.x = 1})` without type name) — requires function parameter type inference during expression parsing
 - Advanced pack expansion patterns:
   - Simple pack expansion: Works
   - Nested pack expansion: May have issues
@@ -198,10 +213,12 @@ Most headers have limited support:
 ### High Priority (Blocking Real-World Code)
 
 1. **Code Generation Edge Cases**
-   - Fix remaining spaceship operator codegen issues
+   - ~~Fix remaining spaceship operator codegen issues~~ ✅ Defaulted `<=>` and synthesized operators implemented
+   - ~~Fix designated initializer edge cases~~ ✅ Default member values for omitted fields implemented
    - Improve complex template instantiation
    - Stabilize pack expansion in all contexts
-   - Fix designated initializer edge cases
+   - Add spaceship support for non-integral member types
+   - Add designated init as function argument support
 
 2. **Standard Library Support**
    - Expand `<type_traits>` to cover all standard traits

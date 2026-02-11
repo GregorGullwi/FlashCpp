@@ -15498,21 +15498,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_variadic(func_decl.is_variadic());
 				new_func_ref.set_linkage(func_decl.linkage());
 				new_func_ref.set_calling_convention(func_decl.calling_convention());
+				new_func_ref.set_is_implicit(func_decl.is_implicit());
 
 				// Add the signature-only function to the instantiated struct
-				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				if (mem_func.is_operator_overload) {
+					instantiated_struct_ref.add_operator_overload(mem_func.operator_symbol, new_func_node, mem_func.access);
+				} else {
+					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				}
 				
 				// Also add to struct_info so it can be found during codegen
-				StringHandle func_name_handle = decl.identifier_token().handle();
-				struct_info_ptr->addMemberFunction(
-					func_name_handle,
-					new_func_node,
-					mem_func.access,
-					mem_func.is_virtual,
-					mem_func.is_pure_virtual,
-					mem_func.is_override,
-					mem_func.is_final
-				);
+				if (mem_func.is_operator_overload) {
+					struct_info_ptr->addOperatorOverload(mem_func.operator_symbol, new_func_node, mem_func.access,
+						mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+				} else {
+					StringHandle func_name_handle = decl.identifier_token().handle();
+					struct_info_ptr->addMemberFunction(
+						func_name_handle,
+						new_func_node,
+						mem_func.access,
+						mem_func.is_virtual,
+						mem_func.is_pure_virtual,
+						mem_func.is_override,
+						mem_func.is_final
+					);
+				}
 				
 				// Skip to next function - body will be instantiated on-demand
 				continue;
@@ -15714,20 +15724,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				// Add the substituted function to the instantiated struct
-				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				if (mem_func.is_operator_overload) {
+					instantiated_struct_ref.add_operator_overload(mem_func.operator_symbol, new_func_node, mem_func.access);
+				} else {
+					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				}
 				
 				// Also add to struct_info so it can be found during codegen
 				// Phase 7B: Intern function name and use StringHandle overload
-				StringHandle func_name_handle = decl.identifier_token().handle();
-				struct_info_ptr->addMemberFunction(
-					func_name_handle,
-					new_func_node,
-					mem_func.access,
-					mem_func.is_virtual,
-					mem_func.is_pure_virtual,
-					mem_func.is_override,
-					mem_func.is_final
-				);
+				if (mem_func.is_operator_overload) {
+					struct_info_ptr->addOperatorOverload(mem_func.operator_symbol, new_func_node, mem_func.access,
+						mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+				} else {
+					StringHandle func_name_handle = decl.identifier_token().handle();
+					struct_info_ptr->addMemberFunction(
+						func_name_handle,
+						new_func_node,
+						mem_func.access,
+						mem_func.is_virtual,
+						mem_func.is_pure_virtual,
+						mem_func.is_override,
+						mem_func.is_final
+					);
+				}
 			} else {
 				// No definition, but still need to substitute parameter types and return type
 				
@@ -15851,22 +15870,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_variadic(func_decl.is_variadic());
 				new_func_ref.set_linkage(func_decl.linkage());
 				new_func_ref.set_calling_convention(func_decl.calling_convention());
+				new_func_ref.set_is_implicit(func_decl.is_implicit());
 
 				// Add the substituted function to the instantiated struct
-				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				if (mem_func.is_operator_overload) {
+					instantiated_struct_ref.add_operator_overload(mem_func.operator_symbol, new_func_node, mem_func.access);
+				} else {
+					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				}
 				
 				// Also add to struct_info so it can be found during codegen
 				// Phase 7B: Intern function name and use StringHandle overload
-				StringHandle func_name_handle = decl.identifier_token().handle();
-				struct_info_ptr->addMemberFunction(
-					func_name_handle,
-					new_func_node,
-					mem_func.access,
-					mem_func.is_virtual,
-					mem_func.is_pure_virtual,
-					mem_func.is_override,
-					mem_func.is_final
-				);
+				if (mem_func.is_operator_overload) {
+					struct_info_ptr->addOperatorOverload(mem_func.operator_symbol, new_func_node, mem_func.access,
+						mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+				} else {
+					StringHandle func_name_handle = decl.identifier_token().handle();
+					struct_info_ptr->addMemberFunction(
+						func_name_handle,
+						new_func_node,
+						mem_func.access,
+						mem_func.is_virtual,
+						mem_func.is_pure_virtual,
+						mem_func.is_override,
+						mem_func.is_final
+					);
+				}
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
