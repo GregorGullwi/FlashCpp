@@ -16826,13 +16826,12 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
 	
-	// If not found and struct_name looks like an instantiated template (e.g., Vector_int),
-	// try the base template class name (e.g., Vector::method)
+	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
+	// try the base template class name (e.g., has_foo::method)
 	if (!template_opt.has_value()) {
-		// Check if struct_name is an instantiated template class (contains '_' as type separator)
-		size_t underscore_pos = struct_name.rfind('_');
-		if (underscore_pos != std::string_view::npos) {
-			std::string_view base_name = struct_name.substr(0, underscore_pos);
+		size_t dollar_pos = struct_name.rfind('$');
+		if (dollar_pos != std::string_view::npos) {
+			std::string_view base_name = struct_name.substr(0, dollar_pos);
 			StringBuilder base_qualified_name_sb;
 			base_qualified_name_sb.append(base_name).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
@@ -17002,12 +17001,12 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// Look up ALL template overloads in the registry for SFINAE support
 	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name.view());
 	
-	// If not found, try with the base template class name
-	// For instantiated classes like Helper_int, try Helper::member
+	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
+	// try the base template class name (e.g., has_foo::method)
 	if (!all_templates || all_templates->empty()) {
-		size_t underscore_pos = struct_name.rfind('_');
-		if (underscore_pos != std::string_view::npos) {
-			std::string_view base_class_name = struct_name.substr(0, underscore_pos);
+		size_t dollar_pos = struct_name.rfind('$');
+		if (dollar_pos != std::string_view::npos) {
+			std::string_view base_class_name = struct_name.substr(0, dollar_pos);
 			StringBuilder base_qualified_name_sb;
 			base_qualified_name_sb.append(base_class_name).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
@@ -17269,24 +17268,6 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			if (sn.name() == struct_name) {
 				struct_node_ptr = &sn;
 				break;
-			}
-		}
-	}
-	
-	// If not found and this is a member function template of a template class,
-	// look for the base template class struct to get member info
-	if (!struct_node_ptr || struct_node_ptr->members().empty()) {
-		size_t underscore_pos = struct_name.rfind('_');
-		if (underscore_pos != std::string_view::npos) {
-			std::string_view base_name = struct_name.substr(0, underscore_pos);
-			for (auto& node : ast_nodes_) {
-				if (node.is<StructDeclarationNode>()) {
-					auto& sn = node.as<StructDeclarationNode>();
-					if (sn.name() == base_name) {
-						struct_node_ptr = &sn;
-						break;
-					}
-				}
 			}
 		}
 	}
