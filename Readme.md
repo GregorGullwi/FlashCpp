@@ -165,8 +165,8 @@ The compiler includes 600+ test cases covering:
 | Requires clauses | ✅ 100% | ✅ 100% | ✅ 80% | ✅ Good | Fully Implemented |
 | Constexpr if | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Range-for with init | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
-| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 98% | ✅ Good | Mostly Implemented |
-| Designated initializers | ✅ 80% | ✅ 80% | ✅ 90% | ✅ Good | Mostly Implemented |
+| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 98% | ✅ Good | Fully Implemented |
+| Designated initializers | ✅ 80% | ✅ 80% | ✅ 92% | ✅ Good | Mostly Implemented |
 | NTTP with auto | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Template packs | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Fold expressions | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
@@ -183,8 +183,8 @@ The compiler includes 600+ test cases covering:
 - Modern syntax (spaceship, range-for init)
 
 **Partially Implemented Features (B)**
-- Spaceship operator: defaulted `<=>` with memberwise comparison (including nested struct delegation), all 6 synthesized operators, inline expression use `(a <=> b) < 0`, and mixed member types; remaining edge case: `std::strong_ordering` return type
-- Designated initializers: basic and nested patterns work, default member values applied for omitted fields; remaining gaps include designated init as function arguments
+- Spaceship operator: defaulted `<=>` with memberwise comparison (including nested struct delegation and template struct support), all 6 synthesized operators, inline expression use `(a <=> b) < 0`, mixed member types, signed/unsigned correctness; remaining edge case: `std::strong_ordering` return type (requires `<compare>` header)
+- Designated initializers: basic and nested patterns work, default member values applied for omitted fields, explicit type as function arg `func(Point{.x=1})`; remaining gap: implicit designated init as function arg `func({.x=1})`
 
 **Missing Features (N/A)**
 - Coroutines (keywords recognized, parsing incomplete)
@@ -327,9 +327,9 @@ test. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.m
 
 Current development priorities:
 
-1. **Complete code generation** for remaining edge cases (`std::strong_ordering` return type, implicit designated init in function args)
+1. **Complete code generation** for remaining edge cases (`std::strong_ordering` via `<compare>` header, implicit designated init in function args `func({.x=1})`)
 2. **Fix remaining template codegen issues** (some complex instantiations)
-3. **Enhance standard library header support** (expand beyond type_traits)
+3. **Enhance standard library header support** (add `<compare>`, expand beyond type_traits)
 4. **Add missing features**: Coroutines (incomplete), Modules (not started)
 5. **Implement remaining C++20 features**: ranges adaptors
 

@@ -102,7 +102,8 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
   - Signed/unsigned member comparisons: ✅ Correct (uses `isSignedType()`)
   - User-defined `operator<=>` with custom return types: ✅ Works
   - Reversed operand order and self-comparison: ✅ Works
-  - Remaining: `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types
+  - Template struct `operator<=>`: ✅ Works (is_operator_overload and is_implicit propagated)
+  - Remaining: `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types (requires `<compare>` header)
 - Some complex template instantiations (90% complete)
   - Basic specializations: Work
   - Complex dependent types: May have issues
@@ -111,7 +112,7 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
   - Partial init with defaults `{.y = 5}` (omitted fields use default member values): ✅ Implemented
   - Nested designated init `{.inner = {.a = 1}}`: ✅ Works
   - Explicit type designated init as function arg `func(Point{.x = 1, .y = 2})`: ✅ Works
-  - Remaining: implicit designated init as function arguments (`func({.x = 1})` without type name)
+  - Remaining: implicit designated init as function arguments (`func({.x = 1})` without type name) — requires function parameter type inference during expression parsing
 - Advanced pack expansion patterns:
   - Simple pack expansion: Works
   - Nested pack expansion: May have issues
