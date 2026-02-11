@@ -7794,6 +7794,41 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG_FORMAT(Parser, Debug, "Parsing function arguments, peek='{}', current='{}'", 
 						peek_info().value(), !current_token_.kind().is_eof() ? current_token_.value() : "N/A");
 					while (true) {
+						// Handle brace-init-list argument: func({.x=1}) -> func(ParamType{.x=1})
+						if (peek() == "{"_tok && identifierType.has_value() && identifierType->is<FunctionDeclarationNode>()) {
+							const auto& func_decl = identifierType->as<FunctionDeclarationNode>();
+							size_t arg_index = args.size();
+							const auto& params = func_decl.parameter_nodes();
+							if (arg_index < params.size() && params[arg_index].is<DeclarationNode>()) {
+								const auto& param_decl = params[arg_index].as<DeclarationNode>();
+								if (param_decl.type_node().is<TypeSpecifierNode>()) {
+									const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+									if (param_type.type() == Type::Struct || param_type.type() == Type::UserDefined) {
+										auto init_result = parse_brace_initializer(param_type);
+										if (!init_result.is_error() && init_result.node()) {
+											if (init_result.node()->is<InitializerListNode>()) {
+												// Convert InitializerListNode to ConstructorCallNode
+												auto type_node = emplace_node<TypeSpecifierNode>(param_type);
+												const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
+												ChunkedVector<ASTNode> ctor_args;
+												for (const auto& init : init_list.initializers()) {
+													ctor_args.push_back(init);
+												}
+												args.push_back(emplace_node<ExpressionNode>(
+													ConstructorCallNode(type_node, std::move(ctor_args), peek_info())));
+											} else {
+												args.push_back(*init_result.node());
+											}
+											if (peek() == ","_tok) {
+												advance();
+												continue;
+											}
+											break;
+										}
+									}
+								}
+							}
+						}
 						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (argResult.is_error()) {
 							return argResult;

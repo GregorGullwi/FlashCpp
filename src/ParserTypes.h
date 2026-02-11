@@ -32,6 +32,7 @@ struct FunctionArgumentContext {
 	bool handle_pack_expansion = true;    // Whether to handle ... after arguments
 	bool collect_types = false;           // Whether to collect argument types for template deduction
 	bool expand_simple_packs = false;     // Whether to expand simple pack identifiers
+	std::string_view callee_name = {};    // Function name being called (for brace-init-list arg type inference)
 };
 
 // Result of parsing function call arguments
