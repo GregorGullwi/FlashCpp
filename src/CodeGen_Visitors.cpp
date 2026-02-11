@@ -2917,14 +2917,17 @@ private:
 							const TypeInfo& member_type_info = gTypeInfo[member.type_index];
 							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 
-							// Find operator<=> in the member struct
+							// Find operator<=> in the member struct and generate its mangled name
 							StringHandle member_spaceship_mangled;
 							if (member_struct_info) {
 								for (const auto& mf : member_struct_info->member_functions) {
 									if (mf.is_operator_overload && mf.operator_symbol == "<=>") {
 										if (mf.function_decl.is<FunctionDeclarationNode>()) {
+											const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
+											// Use generateMangledNameForCall for consistent mangling across platforms
+											std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 											member_spaceship_mangled = StringTable::getOrInternStringHandle(
-												mf.function_decl.as<FunctionDeclarationNode>().mangled_name());
+												generateMangledNameForCall(spaceship_func, member_struct_name));
 										}
 										break;
 									}
@@ -3116,10 +3119,18 @@ private:
 		}
 
 		// Synthesized comparison operators from operator<=> - generate memberwise comparison directly
-		if (node.is_implicit() &&
-			(func_name_view == "operator==" || func_name_view == "operator!=" ||
-			 func_name_view == "operator<" || func_name_view == "operator>" ||
-			 func_name_view == "operator<=" || func_name_view == "operator>=")) {
+		// Determine comparison opcode once from the operator name
+		IrOpcode synthesized_cmp_opcode = IrOpcode::Equal;
+		bool is_synthesized_comparison = false;
+		if (node.is_implicit()) {
+			if (func_name_view == "operator==") { synthesized_cmp_opcode = IrOpcode::Equal; is_synthesized_comparison = true; }
+			else if (func_name_view == "operator!=") { synthesized_cmp_opcode = IrOpcode::NotEqual; is_synthesized_comparison = true; }
+			else if (func_name_view == "operator<") { synthesized_cmp_opcode = IrOpcode::LessThan; is_synthesized_comparison = true; }
+			else if (func_name_view == "operator>") { synthesized_cmp_opcode = IrOpcode::GreaterThan; is_synthesized_comparison = true; }
+			else if (func_name_view == "operator<=") { synthesized_cmp_opcode = IrOpcode::LessEqual; is_synthesized_comparison = true; }
+			else if (func_name_view == "operator>=") { synthesized_cmp_opcode = IrOpcode::GreaterEqual; is_synthesized_comparison = true; }
+		}
+		if (is_synthesized_comparison) {
 			// Instead of processing the parser-generated body (which has auto return type issues),
 			// generate direct memberwise comparison. This calls operator<=> and compares result with 0.
 			symbol_table.enter_scope(ScopeType::Function);
@@ -3145,7 +3156,8 @@ private:
 				}
 			}
 
-			// Find the operator<=> mangled name to call it
+			// Find the operator<=> to call it - generate mangled name from the function signature
+			// (AST mangled name may not be set for user-defined operator<=>)
 			StringHandle spaceship_mangled;
 			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 			if (type_it != gTypesByName.end()) {
@@ -3154,8 +3166,10 @@ private:
 					for (const auto& mf : struct_info->member_functions) {
 						if (mf.is_operator_overload && mf.operator_symbol == "<=>") {
 							if (mf.function_decl.is<FunctionDeclarationNode>()) {
+								const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
+								// Use generateMangledNameForCall for consistent mangling across platforms
 								spaceship_mangled = StringTable::getOrInternStringHandle(
-									mf.function_decl.as<FunctionDeclarationNode>().mangled_name());
+									generateMangledNameForCall(spaceship_func, node.parent_struct_name()));
 							}
 							break;
 						}
@@ -3193,22 +3207,14 @@ private:
 
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 
-				// Compare result with 0 using the appropriate signed comparison
+				// Compare result with 0 using the pre-determined comparison opcode
 				TempVar cmp_result = var_counter.next();
-				IrOpcode cmp_opcode = IrOpcode::Equal;
-				if (func_name_view == "operator==") cmp_opcode = IrOpcode::Equal;
-				else if (func_name_view == "operator!=") cmp_opcode = IrOpcode::NotEqual;
-				else if (func_name_view == "operator<") cmp_opcode = IrOpcode::LessThan;
-				else if (func_name_view == "operator>") cmp_opcode = IrOpcode::GreaterThan;
-				else if (func_name_view == "operator<=") cmp_opcode = IrOpcode::LessEqual;
-				else if (func_name_view == "operator>=") cmp_opcode = IrOpcode::GreaterEqual;
-
 				BinaryOp cmp_op{
 					.lhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{call_result}, .is_signed = true},
 					.rhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{0ULL}, .is_signed = true},
 					.result = IrValue{cmp_result}
 				};
-				ir_.addInstruction(IrInstruction(cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
+				ir_.addInstruction(IrInstruction(synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
 
 				// Return the boolean result
 				ReturnOp ret_op;
