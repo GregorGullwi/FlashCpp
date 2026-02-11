@@ -12990,6 +12990,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt;  // Missing required template argument
 		}
 		
+		// Track size before processing to detect if a value was pushed.
+		// Every non-variadic iteration MUST push exactly one element so that
+		// filled_template_args[j] stays in sync with template_params[j].
+		size_t size_before = filled_template_args.size();
+		
 		// Use the default value
 		if (param.kind() == TemplateParameterKind::Type) {
 			// For type parameters with defaults, extract the type
@@ -13028,7 +13033,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Build parameter substitution map for already-filled template arguments
 			// This allows the default expression to reference earlier template parameters
 			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-			for (size_t j = 0; j < i && j < template_params.size(); ++j) {
+			for (size_t j = 0; j < i && j < template_params.size() && j < filled_template_args.size(); ++j) {
 				if (template_params[j].is<TemplateParameterNode>()) {
 					const TemplateParameterNode& earlier_param = template_params[j].as<TemplateParameterNode>();
 					param_map[earlier_param.name()] = filled_template_args[j];
@@ -13116,7 +13121,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 						
-						if (is_dependent) {
+						if (is_dependent && !filled_template_args.empty()) {
 							
 							// Build the instantiated template name using hash-based naming
 							std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
@@ -13335,6 +13340,37 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 				}
+			}
+			
+			// NonType fallback: if no handler above pushed a value, try ConstExprEvaluator
+			if (filled_template_args.size() == size_before) {
+				if (substituted_default_node.is<ExpressionNode>()) {
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
+					if (eval_result.success()) {
+						filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
+						FLASH_LOG(Templates, Debug, "Evaluated non-type default via ConstExprEvaluator: ", eval_result.as_int());
+					}
+				}
+			}
+		}
+		
+		// Catch-all: ensure filled_template_args grows by exactly 1 per non-variadic
+		// parameter so that filled_template_args[j] stays in sync with template_params[j].
+		// This covers: Type defaults whose node isn't TypeSpecifierNode, NonType defaults
+		// that no handler could evaluate, and any other unhandled parameter kind.
+		if (filled_template_args.size() == size_before) {
+			if (param.kind() == TemplateParameterKind::Type) {
+				// Push a void-like placeholder type
+				TemplateTypeArg placeholder;
+				placeholder.base_type = Type::Void;
+				filled_template_args.push_back(placeholder);
+				FLASH_LOG(Templates, Warning, "Could not resolve type default for param ", i,
+				          " of '", template_name, "', using placeholder");
+			} else {
+				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
+				FLASH_LOG(Templates, Warning, "Could not evaluate default for param ", i,
+				          " of '", template_name, "', using 0");
 			}
 		}
 	}
@@ -14664,6 +14700,41 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									FLASH_LOG(Templates, Debug, "Evaluated ternary to: ", num_val);
 								}
 							}
+						}
+					}
+				}
+			}
+			
+			// General fallback: use ExpressionSubstitutor to substitute any remaining template
+			// parameters in the initializer. This handles cases like V + W where V and W are
+			// non-type template parameters that the specific handlers above didn't cover.
+			if (substituted_initializer.has_value()) {
+				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+				for (size_t pi = 0; pi < template_params.size() && pi < template_args_to_use.size(); ++pi) {
+					if (template_params[pi].is<TemplateParameterNode>()) {
+						const TemplateParameterNode& param = template_params[pi].as<TemplateParameterNode>();
+						param_map[param.name()] = template_args_to_use[pi];
+					}
+				}
+				if (!param_map.empty()) {
+					ExpressionSubstitutor substitutor(param_map, *this);
+					substituted_initializer = substitutor.substitute(substituted_initializer.value());
+					FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
+					
+					// Try to evaluate the substituted expression to a constant value
+					// This turns expressions like "1 + 2" into a single NumericLiteralNode(3)
+					if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
+						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						eval_ctx.parser = this;
+						auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
+						if (eval_result.success()) {
+							int64_t val = eval_result.as_int();
+							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
+							Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+							substituted_initializer = emplace_node<ExpressionNode>(
+								NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 32)
+							);
+							FLASH_LOG(Templates, Debug, "Evaluated substituted static member initializer to: ", val);
 						}
 					}
 				}

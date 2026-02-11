@@ -77,11 +77,11 @@ TEST_TARGET := $(TEST_DIR)/test$(EXE_EXT)
 # Default target
 .DEFAULT_GOAL := main
 
-# Build main executable (Debug configuration)
+# Build main executable (Debug configuration with AddressSanitizer)
 $(MAIN_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
-	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
+	@echo "Building main executable (Debug+ASAN) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
+	$(CXX) $(CXXFLAGS) -fsanitize=address -fno-omit-frame-pointer $(INCLUDES) -g -o $@ $(MAIN_SOURCES)
 	@echo "Built: $@"
 
 # Build release executable
