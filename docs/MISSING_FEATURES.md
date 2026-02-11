@@ -91,12 +91,15 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 ### Partially Implemented ⚠️
 
 **Code Generation Edge Cases**
-- Spaceship operator `<=>` (95% complete)
+- Spaceship operator `<=>` (98% complete)
   - Parsing: Complete
   - Defaulted `operator<=>` with memberwise comparison: ✅ Implemented
   - Synthesized comparison operators (==, !=, <, >, <=, >=) from defaulted `<=>`: ✅ Implemented
   - Multi-member structs compared in declaration order: ✅ Works
-  - Remaining: non-integral member types, `std::strong_ordering` return type
+  - Nested struct member delegation (calls inner `<=>` for struct members): ✅ Implemented
+  - Inline expression use `(a <=> b) < 0` in ternary/if/comparisons: ✅ Implemented
+  - Mixed member types (int + char + short): ✅ Works
+  - Remaining: `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types
 - Some complex template instantiations (90% complete)
   - Basic specializations: Work
   - Complex dependent types: May have issues

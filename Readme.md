@@ -165,7 +165,7 @@ The compiler includes 600+ test cases covering:
 | Requires clauses | ✅ 100% | ✅ 100% | ✅ 80% | ✅ Good | Fully Implemented |
 | Constexpr if | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Range-for with init | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
-| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 95% | ✅ Good | Mostly Implemented |
+| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 98% | ✅ Good | Fully Implemented |
 | Designated initializers | ✅ 80% | ✅ 80% | ✅ 90% | ✅ Good | Mostly Implemented |
 | NTTP with auto | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Template packs | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
@@ -183,7 +183,7 @@ The compiler includes 600+ test cases covering:
 - Modern syntax (spaceship, range-for init)
 
 **Partially Implemented Features (B)**
-- Spaceship operator: defaulted `<=>` with memberwise comparison and all 6 synthesized operators work; remaining edge cases include non-integral member types and `std::strong_ordering` return type
+- Spaceship operator: defaulted `<=>` with memberwise comparison (including nested struct delegation), all 6 synthesized operators, inline expression use `(a <=> b) < 0`, and mixed member types; remaining edge case: `std::strong_ordering` return type
 - Designated initializers: basic and nested patterns work, default member values applied for omitted fields; remaining gaps include designated init as function arguments
 
 **Missing Features (N/A)**
@@ -217,7 +217,7 @@ For a complete list of missing features and detailed C++20 conformance analysis,
 
 ### Partially Implemented:
 - **Code generation edge cases**:
-  - Spaceship operator `<=>`: defaulted memberwise comparison and synthesized operators (==, !=, <, >, <=, >=) work (95% complete)
+  - Spaceship operator `<=>`: defaulted memberwise comparison with nested struct delegation, all 6 synthesized operators, inline expression use, mixed member types (98% complete — remaining: `std::strong_ordering` return type)
   - Complex template instantiations (90% complete)
   - Designated initializers: basic, nested, and default member values work; function argument passing not yet supported (90% complete)
 - **Standard library**:
