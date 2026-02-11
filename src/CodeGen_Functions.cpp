@@ -1791,7 +1791,7 @@
 				// This is a member function template - we need to instantiate it
 				
 				// Deduce template argument types from call arguments
-				std::vector<Type> arg_types;
+				std::vector<std::pair<Type, TypeIndex>> arg_types;
 				// DEBUG removed
 				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 					// DEBUG removed
@@ -1807,11 +1807,11 @@
 					
 					// Get type of argument - for literals, use the literal type
 					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back(Type::Bool);
+						arg_types.push_back({Type::Bool, 0});
 					} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
 						// DEBUG removed
-						arg_types.push_back(lit.type());
+						arg_types.push_back({lit.type(), 0});
 					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						// Look up variable type
 						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
@@ -1821,7 +1821,7 @@
 							const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 							const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
 							// DEBUG removed
-							arg_types.push_back(type.type());
+							arg_types.push_back({type.type(), type.type_index()});
 						}
 					} else {
 						// DEBUG removed
@@ -1836,8 +1836,8 @@
 					const TemplateFunctionDeclarationNode& template_func = template_opt->as<TemplateFunctionDeclarationNode>();
 					
 					std::vector<TemplateArgument> template_args;
-					for (const auto& arg_type : arg_types) {
-						template_args.push_back(TemplateArgument::makeType(arg_type));
+					for (const auto& [arg_type, arg_type_index] : arg_types) {
+						template_args.push_back(TemplateArgument::makeType(arg_type, arg_type_index));
 					}
 					
 					// Check if we already have this instantiation
@@ -1868,10 +1868,10 @@
 							
 							// Convert arg_types to TemplateTypeArg for evaluation
 							std::vector<TemplateTypeArg> type_args;
-							for (const auto& arg_type : arg_types) {
+							for (const auto& [arg_type, arg_type_index] : arg_types) {
 								TemplateTypeArg type_arg;
 								type_arg.base_type = arg_type;
-								type_arg.type_index = 0;
+								type_arg.type_index = arg_type_index;
 								type_args.push_back(type_arg);
 							}
 							
@@ -1885,7 +1885,7 @@
 								std::string args_str;
 								for (size_t i = 0; i < arg_types.size(); ++i) {
 									if (i > 0) args_str += ", ";
-									args_str += std::string(TemplateRegistry::typeToString(arg_types[i]));
+									args_str += std::string(TemplateRegistry::typeToString(arg_types[i].first));
 								}
 								
 								FLASH_LOG(Codegen, Error, "constraint not satisfied for template function '", func_name, "'");
