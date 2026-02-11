@@ -640,16 +640,25 @@
 						// Note: Namespaces are already included in current_struct_name_ via mangling
 						auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(current_struct_name_).append("::"sv).append(var_name_str));
 						
+						int member_size_bits = static_cast<int>(static_member->size * 8);
+						// If size is 0 for struct types, look up from type info
+						if (member_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
+							const StructTypeInfo* member_si = gTypeInfo[static_member->type_index].getStructInfo();
+							if (member_si) {
+								member_size_bits = static_cast<int>(member_si->total_size * 8);
+							}
+						}
+						
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
-						op.result.size_in_bits = static_cast<int>(static_member->size * 8);
+						op.result.size_in_bits = member_size_bits;
 						op.result.value = result_temp;
 						op.global_name = qualified_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 						
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-						return { static_member->type, static_cast<int>(static_member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+						return { static_member->type, member_size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 					}
 				}
 			}
@@ -1271,10 +1280,18 @@
 						
 						// This is a static member access - generate GlobalLoad
 						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
+						int qsm_size_bits = static_cast<int>(static_member->size * 8);
+						// If size is 0 for struct types, look up from type info
+						if (qsm_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
+							const StructTypeInfo* qsm_si = gTypeInfo[static_member->type_index].getStructInfo();
+							if (qsm_si) {
+								qsm_size_bits = static_cast<int>(qsm_si->total_size * 8);
+							}
+						}
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
-						op.result.size_in_bits = static_cast<int>(static_member->size * 8);
+						op.result.size_in_bits = qsm_size_bits;
 						op.result.value = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
 						op.global_name = StringTable::getOrInternStringHandle(StringBuilder().append(qualified_struct_name).append("::"sv).append(qualifiedIdNode.name()));
@@ -1282,7 +1299,7 @@
 
 						// Return the temp variable that will hold the loaded value
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-						return { static_member->type, static_cast<int>(static_member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+						return { static_member->type, qsm_size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 					}
 				}
 			}

@@ -1276,6 +1276,71 @@
 						unsigned long long value = evalToValue(elem_init, type_node.type());
 						appendValueAsBytes(op.init_data, value, element_size);
 					}
+				} else if (init_node.is<ExpressionNode>() && std::holds_alternative<ConstructorCallNode>(init_node.as<ExpressionNode>()) && type_node.type_index() != 0) {
+					// Struct-typed global variable initialized via constructor call (e.g., Ordering(-1))
+					const auto& ctor_call = std::get<ConstructorCallNode>(init_node.as<ExpressionNode>());
+					const TypeInfo& ti = gTypeInfo[type_node.type_index()];
+					const StructTypeInfo* si = ti.getStructInfo();
+					bool ctor_evaluated = false;
+					if (si && !ctor_call.arguments().empty()) {
+						// Find matching constructor
+						const ConstructorDeclarationNode* matching_ctor = nullptr;
+						for (const auto& mf : si->member_functions) {
+							if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
+							const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+							if (ctor.parameter_nodes().size() == ctor_call.arguments().size()) {
+								matching_ctor = &ctor;
+								break;
+							}
+						}
+						if (matching_ctor) {
+							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							std::unordered_map<std::string_view, long long> param_values;
+							bool args_ok = true;
+							const auto& params = matching_ctor->parameter_nodes();
+							for (size_t ai = 0; ai < params.size() && ai < ctor_call.arguments().size(); ++ai) {
+								if (params[ai].is<DeclarationNode>()) {
+									auto arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
+									if (arg_result.success()) {
+										param_values[params[ai].as<DeclarationNode>().identifier_token().value()] = arg_result.as_int();
+									} else {
+										args_ok = false;
+										break;
+									}
+								}
+							}
+							if (args_ok) {
+								op.is_initialized = true;
+								op.init_data.resize(si->total_size, 0);
+								for (const auto& member : si->members) {
+									long long member_val = 0;
+									for (const auto& mem_init : matching_ctor->member_initializers()) {
+										if (mem_init.member_name == StringTable::getStringView(member.getName())) {
+											if (mem_init.initializer_expr.is<ExpressionNode>()) {
+												const auto& init_e = mem_init.initializer_expr.as<ExpressionNode>();
+												if (std::holds_alternative<IdentifierNode>(init_e)) {
+													auto it = param_values.find(std::get<IdentifierNode>(init_e).name());
+													if (it != param_values.end()) member_val = it->second;
+												}
+											}
+											auto eval_r = ConstExpr::Evaluator::evaluate(mem_init.initializer_expr, eval_ctx);
+											if (eval_r.success()) member_val = eval_r.as_int();
+											break;
+										}
+									}
+									for (size_t bi = 0; bi < member.size && (member.offset + bi) < op.init_data.size(); ++bi) {
+										op.init_data[member.offset + bi] = static_cast<char>((static_cast<unsigned long long>(member_val) >> (bi * 8)) & 0xFF);
+									}
+								}
+								ctor_evaluated = true;
+							}
+						}
+					}
+					if (!ctor_evaluated) {
+						// Fallback: zero-initialize for default constructor or failed eval
+						op.is_initialized = true;
+						op.init_data.resize(element_size, 0);
+					}
 				} else if (init_node.is<ExpressionNode>()) {
 					// Single value initialization
 					unsigned long long value = evalToValue(init_node, type_node.type());
