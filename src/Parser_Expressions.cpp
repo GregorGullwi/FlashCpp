@@ -3424,62 +3424,21 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			// Try to instantiate member function template if applicable
 			std::optional<ASTNode> instantiated_func;
 			
-			// Check for lazy member function template instantiation FIRST
-			bool lazy_template_found = false;
-			if (object_struct_name.has_value() && explicit_template_args.has_value() && context_.isLazyTemplateInstantiationEnabled()) {
-				// Build qualified name for lookup
-				std::string_view qualified_name = StringBuilder()
-					.append(*object_struct_name)
-					.append("::")
-					.append(member_name_token.value())
-					.commit();
-				StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
-				
-				// Check if this is a registered lazy member function template
-				if (LazyMemberFunctionTemplateRegistry::getInstance().needsInstantiation(qualified_handle, *explicit_template_args)) {
-					FLASH_LOG(Templates, Debug, "Lazy member function template instantiation triggered for: ", qualified_name);
-					
-					auto lazy_info_opt = LazyMemberFunctionTemplateRegistry::getInstance().getLazyMemberTemplateInfo(
-						qualified_handle, *explicit_template_args);
-					
-					if (lazy_info_opt.has_value()) {
-						// Perform the actual instantiation now
-						const LazyMemberFunctionTemplateInfo& lazy_info = *lazy_info_opt;
-						
-						// Call the regular instantiation function
-						instantiated_func = try_instantiate_member_function_template_explicit(
-							*object_struct_name,
-							member_name_token.value(),
-							lazy_info.pending_template_args
-						);
-						
-						// Mark as instantiated
-						LazyMemberFunctionTemplateRegistry::getInstance().markInstantiated(qualified_handle, *explicit_template_args);
-						
-						lazy_template_found = true;
-						FLASH_LOG(Templates, Debug, "Lazy member function template instantiation completed for: ", qualified_name);
-					}
-				}
+			// If we have explicit template arguments, use them for instantiation
+			if (object_struct_name.has_value() && explicit_template_args.has_value()) {
+				instantiated_func = try_instantiate_member_function_template_explicit(
+					*object_struct_name,
+					member_name_token.value(),
+					*explicit_template_args
+				);
 			}
-			
-			// If not found in lazy registry, try regular instantiation
-			if (!lazy_template_found) {
-				// If we have explicit template arguments, use them for instantiation
-				if (object_struct_name.has_value() && explicit_template_args.has_value()) {
-					instantiated_func = try_instantiate_member_function_template_explicit(
-						*object_struct_name,
-						member_name_token.value(),
-						*explicit_template_args
-					);
-				}
-				// Otherwise, try argument type deduction
-				else if (object_struct_name.has_value() && !arg_types.empty()) {
-					instantiated_func = try_instantiate_member_function_template(
-						*object_struct_name,
-						member_name_token.value(),
-						arg_types
-					);
-				}
+			// Otherwise, try argument type deduction
+			else if (object_struct_name.has_value() && !arg_types.empty()) {
+				instantiated_func = try_instantiate_member_function_template(
+					*object_struct_name,
+					member_name_token.value(),
+					arg_types
+				);
 			}
 
 			// Check for lazy template instantiation
