@@ -165,8 +165,8 @@ The compiler includes 600+ test cases covering:
 | Requires clauses | ✅ 100% | ✅ 100% | ✅ 80% | ✅ Good | Fully Implemented |
 | Constexpr if | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Range-for with init | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
-| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 98% | ✅ Good | Mostly Implemented |
-| Designated initializers | ✅ 80% | ✅ 80% | ✅ 90% | ✅ Good | Mostly Implemented |
+| Spaceship operator | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
+| Designated initializers | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | NTTP with auto | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Template packs | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
 | Fold expressions | ✅ 100% | ✅ 100% | ✅ 100% | ✅ Good | Fully Implemented |
@@ -181,8 +181,6 @@ The compiler includes 600+ test cases covering:
 - Template system with C++20 enhancements
 - Constexpr and conditional compilation
 - Modern syntax (spaceship, range-for init)
-
-**Implemented Features (continued)**
 - Spaceship operator: defaulted `<=>` with memberwise comparison (including nested struct delegation and template struct support), all 6 synthesized operators, inline expression use `(a <=> b) < 0`, mixed member types, signed/unsigned correctness, `std::strong_ordering` return type with constexpr static member initialization
 - Designated initializers: basic and nested patterns work, default member values applied for omitted fields, explicit type as function arg `func(Point{.x=1})`, implicit designated init as function arg `func({.x=1})`, braced initializer in return statements `return {.x=1}`
 
@@ -217,9 +215,7 @@ For a complete list of missing features and detailed C++20 conformance analysis,
 
 ### Partially Implemented:
 - **Code generation edge cases**:
-  - Spaceship operator `<=>`: defaulted memberwise comparison with nested struct delegation, all 6 synthesized operators, inline expression use, mixed member types (98% complete — remaining: `std::strong_ordering` return type)
   - Complex template instantiations (90% complete)
-  - Designated initializers: basic, nested, and default member values work; function argument passing not yet supported (90% complete)
 - **Standard library**:
   - `<type_traits>`: 37+ intrinsics, good coverage
   - `<utility>`: `std::forward`, `std::move` work

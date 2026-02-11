@@ -2513,8 +2513,11 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						// Only handle struct/user-defined types
 						if (param_type.type() == Type::Struct || param_type.type() == Type::UserDefined) {
+							// Save position before parse_brace_initializer since it consumes '{'
+							SaveHandle brace_pos = save_token_position();
 							auto init_result = parse_brace_initializer(param_type);
 							if (!init_result.is_error() && init_result.node()) {
+								discard_saved_token(brace_pos);
 								if (init_result.node()->is<InitializerListNode>()) {
 									// Convert InitializerListNode to ConstructorCallNode
 									auto type_node = emplace_node<TypeSpecifierNode>(param_type);
@@ -2537,6 +2540,9 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 									continue;
 								}
 								break;
+							} else {
+								// parse_brace_initializer failed - restore token stream
+								restore_token_position(brace_pos);
 							}
 						}
 					}
