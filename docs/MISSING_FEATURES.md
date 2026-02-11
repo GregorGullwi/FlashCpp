@@ -98,16 +98,20 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
   - Multi-member structs compared in declaration order: ✅ Works
   - Nested struct member delegation (calls inner `<=>` for struct members): ✅ Implemented
   - Inline expression use `(a <=> b) < 0` in ternary/if/comparisons: ✅ Implemented
-  - Mixed member types (int + char + short): ✅ Works
+  - Mixed member types (int + char + short + long long): ✅ Works
+  - Signed/unsigned member comparisons: ✅ Correct (uses `isSignedType()`)
+  - User-defined `operator<=>` with custom return types: ✅ Works
+  - Reversed operand order and self-comparison: ✅ Works
   - Remaining: `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types
 - Some complex template instantiations (90% complete)
   - Basic specializations: Work
   - Complex dependent types: May have issues
-- Designated initializers (90% complete)
+- Designated initializers (92% complete)
   - Basic designated init `{.x = 10, .y = 20}`: ✅ Works
   - Partial init with defaults `{.y = 5}` (omitted fields use default member values): ✅ Implemented
   - Nested designated init `{.inner = {.a = 1}}`: ✅ Works
-  - Remaining: designated init as function arguments not yet supported
+  - Explicit type designated init as function arg `func(Point{.x = 1, .y = 2})`: ✅ Works
+  - Remaining: implicit designated init as function arguments (`func({.x = 1})` without type name)
 - Advanced pack expansion patterns:
   - Simple pack expansion: Works
   - Nested pack expansion: May have issues

@@ -327,7 +327,7 @@ test. See [`tests/cpp20_integration/README.md`](tests/cpp20_integration/README.m
 
 Current development priorities:
 
-1. **Complete code generation** for remaining edge cases (spaceship with non-integral members, designated init as function args)
+1. **Complete code generation** for remaining edge cases (`std::strong_ordering` return type, implicit designated init in function args)
 2. **Fix remaining template codegen issues** (some complex instantiations)
 3. **Enhance standard library header support** (expand beyond type_traits)
 4. **Add missing features**: Coroutines (incomplete), Modules (not started)
