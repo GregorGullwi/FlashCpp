@@ -5785,7 +5785,14 @@ private:
 
 	// Helper to emit TEST reg, reg
 	void emitTestRegReg(X64Register reg) {
-		textSectionData.push_back(0x48); // REX.W
+		uint8_t rex = 0x48; // REX.W
+		if (static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			// TEST r/m64, r64 uses both ModR/M reg and r/m fields. For TEST reg,reg
+			// with an extended register (R8-R15), set both REX.R and REX.B.
+			rex |= 0x04; // REX.R
+			rex |= 0x01; // REX.B
+		}
+		textSectionData.push_back(rex);
 		textSectionData.push_back(0x85); // TEST r64, r64
 		
 		// ModR/M: mod=11, reg=reg, r/m=reg
@@ -14977,28 +14984,52 @@ private:
 				load_size = size_it->second;
 			}
 			
-			// Check if temp var is already in a register
-			if (auto reg = regAlloc.tryGetStackVariableRegister(var_offset); reg.has_value()) {
-				condition_reg = reg.value();
-			} else {
-				// Load from memory with correct size
+			// For narrow conditions (bool8/16/32), always reload into RAX using size-aware MOV
+			// to canonicalize upper bits before TEST.
+			if (load_size < 64) {
 				emitMovFromFrameBySize(X64Register::RAX, var_offset, load_size);
 				condition_reg = X64Register::RAX;
+			} else {
+				// Check if temp var is already in a register
+				if (auto reg = regAlloc.tryGetStackVariableRegister(var_offset); reg.has_value()) {
+					condition_reg = reg.value();
+				} else {
+					// Load from memory with correct size
+					emitMovFromFrameBySize(X64Register::RAX, var_offset, load_size);
+					condition_reg = X64Register::RAX;
+				}
 			}
 		} else if (std::holds_alternative<StringHandle>(condition_value)) {
 			StringHandle var_name = std::get<StringHandle>(condition_value);
-			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(var_name);
-			if (it != current_scope.variables.end()) {
+
+			// Search from innermost to outermost scope so branch conditions can reference
+			// parameters/locals declared in parent scopes.
+			const VariableInfo* var_info = nullptr;
+			for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
+				auto it = scope_it->variables.find(var_name);
+				if (it != scope_it->variables.end()) {
+					var_info = &it->second;
+					break;
+				}
+			}
+
+			if (var_info) {
 				// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)
-				int load_size = it->second.size_in_bits > 0 ? it->second.size_in_bits : 32;
+				int load_size = var_info->size_in_bits > 0 ? var_info->size_in_bits : 32;
 				
-				// Check if variable is already in a register
-				if (auto reg = regAlloc.tryGetStackVariableRegister(it->second.offset); reg.has_value()) {
-					condition_reg = reg.value();
-				} else {
-					emitMovFromFrameBySize(X64Register::RAX, it->second.offset, load_size);
+				// For narrow conditions (bool8/16/32), always reload into RAX using size-aware MOV
+				// to canonicalize upper bits before TEST.
+				if (load_size < 64) {
+					emitMovFromFrameBySize(X64Register::RAX, var_info->offset, load_size);
 					condition_reg = X64Register::RAX;
+				} else {
+					// Check if variable is already in a register
+					if (auto reg = regAlloc.tryGetStackVariableRegister(var_info->offset); reg.has_value()) {
+						condition_reg = reg.value();
+					} else {
+						emitMovFromFrameBySize(X64Register::RAX, var_info->offset, load_size);
+						condition_reg = X64Register::RAX;
+					}
 				}
 			}
 		} else if (std::holds_alternative<unsigned long long>(condition_value)) {
@@ -15011,11 +15042,7 @@ private:
 		}
 
 		// Test if condition is non-zero: TEST reg, reg
-		// Use the actual register that holds the condition value
-		uint8_t reg_code = static_cast<uint8_t>(condition_reg);
-		uint8_t modrm = 0xC0 | ((reg_code & 0x7) << 3) | (reg_code & 0x7);  // TEST reg, reg
-		std::array<uint8_t, 3> testInst = { 0x48, 0x85, modrm }; // test condition_reg, condition_reg
-		textSectionData.insert(textSectionData.end(), testInst.begin(), testInst.end());
+		emitTestRegReg(condition_reg);
 
 		// Check if then_label is a backward reference (already defined)
 		// This happens in do-while loops where we jump back to the start when true
