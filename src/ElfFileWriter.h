@@ -678,13 +678,13 @@ public:
 	// CFI instruction tracking for a single function (defined here for use in add_function_exception_info)
 	struct CFIInstruction {
 		enum Type {
-			PUSH_RBP,         // push rbp
-			MOV_RSP_RBP,      // mov rbp, rsp
-			SUB_RSP,           // sub rsp, imm
-			ADD_RSP,           // add rsp, imm
-			POP_RBP,           // pop rbp
-			REMEMBER_STATE,    // DW_CFA_remember_state (save CFI state before early return epilogue)
-			RESTORE_STATE,     // DW_CFA_restore_state (restore CFI state after early return ret)
+			PUSH_RBP,        // push rbp
+			MOV_RSP_RBP,     // mov rbp, rsp
+			SUB_RSP,         // sub rsp, imm
+			ADD_RSP,         // add rsp, imm
+			POP_RBP,         // pop rbp
+			REMEMBER_STATE,  // DW_CFA_remember_state (save CFI state before early return epilogue)
+			RESTORE_STATE,   // DW_CFA_restore_state (restore CFI state after early return ret)
 		};
 		Type type;
 		uint32_t offset;  // Offset in function where this occurs
