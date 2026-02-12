@@ -2758,27 +2758,30 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 		} else if (k == "explicit"_tok) {
 			advance();
 			if (peek() == "("_tok) {
-				// explicit(condition) - parse and evaluate the condition
+				// explicit(condition) - parse and evaluate the condition using constexpr evaluator
 				advance(); // consume '('
 				
-				// Try to parse a simple boolean literal
-				bool explicit_value = true;  // Default to true
-				if (peek() == "true"_tok) {
-					explicit_value = true;
-					advance();
-				} else if (peek() == "false"_tok) {
-					explicit_value = false;
-					advance();
-				} else {
-					// Complex expression - for now, assume true and skip to closing paren
-					// TODO: Implement full constant expression evaluation for explicit(expr)
-					int paren_depth = 1;
-					while (!peek().is_eof() && paren_depth > 0) {
-						if (peek() == "("_tok) paren_depth++;
-						else if (peek() == ")"_tok) paren_depth--;
-						if (paren_depth > 0) advance();
+				// Parse the condition expression
+				ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				bool explicit_value = true;  // Default to true if evaluation fails
+				
+				if (!condition_result.is_error() && condition_result.node().has_value()) {
+					// Evaluate the constant expression using ConstExprEvaluator
+					ConstExpr::EvaluationContext ctx(gSymbolTable);
+					ctx.parser = this;  // Enable template function instantiation if needed
+					
+					auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
+					
+					if (eval_result.success()) {
+						// Convert result to bool - any non-zero value is true
+						explicit_value = eval_result.as_bool();
+					} else {
+						// If evaluation fails (e.g., template-dependent expression),
+						// default to true for safety (explicit is the safer default)
+						FLASH_LOG(Parser, Debug, "explicit(condition) evaluation failed: ", 
+							eval_result.error_message, " - defaulting to explicit=true");
+						explicit_value = true;
 					}
-					explicit_value = true;  // Assume true for complex expressions
 				}
 				
 				if (!consume(")"_tok)) {
