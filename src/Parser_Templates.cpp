@@ -18340,16 +18340,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		SaveHandle ctor_check = save_token_position();
 		Token potential_class = peek_info();
 		advance(); // consume class name
+		// Handle both ClassName<Args>::ClassName(...) and ClassName::ClassName(...)
 		if (peek() == "<"_tok) {
 			skip_template_arguments();
-			if (peek() == "::"_tok) {
-				advance(); // consume '::'
-				bool is_dtor = false;
-				if (peek_info().value() == "~") {
-					advance(); // consume '~'
-					is_dtor = true;
-				}
-				if (peek().is_identifier() && peek_info().value() == potential_class.value()) {
+		}
+		if (peek() == "::"_tok) {
+			advance(); // consume '::'
+			bool is_dtor = false;
+			if (peek_info().value() == "~") {
+				advance(); // consume '~'
+				is_dtor = true;
+			}
+			if (peek().is_identifier() && peek_info().value() == potential_class.value()) {
 					Token ctor_name_token = peek_info();
 					advance(); // consume constructor/destructor name
 					if (peek() == "("_tok) {
@@ -18434,7 +18436,6 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					}
 				}
 			}
-		}
 		restore_token_position(ctor_check);
 	}
 

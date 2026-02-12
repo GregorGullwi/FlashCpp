@@ -9434,8 +9434,8 @@ ParseResult Parser::parse_namespace() {
 				decl_result = parse_declaration_or_function_definition();
 			}
 		}
-		// Check if it's a struct/class declaration
-		else if ((peek() == "class"_tok || peek() == "struct"_tok)) {
+		// Check if it's a struct/class/union declaration
+		else if ((peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok)) {
 			decl_result = parse_struct_declaration();
 		}
 		// Check if it's an enum declaration
