@@ -90,6 +90,23 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 		return TypeConversionResult::conversion();
 	}
 	
+	// Unscoped enum to integer/floating-point promotion/conversion
+	// Per [conv.prom]/4: An unscoped enum whose underlying type is int is promoted to int.
+	// Per [conv.integral]: An enum can be converted to any integer type.
+	if (from == Type::Enum) {
+		if (to == Type::Int) {
+			return TypeConversionResult::promotion();
+		}
+		if (is_integral_type(to) || is_floating_point_type(to)) {
+			return TypeConversionResult::conversion();
+		}
+	}
+	
+	// Integer to unscoped enum (implicit in C++, standard conversion)
+	if (to == Type::Enum && is_integral_type(from)) {
+		return TypeConversionResult::conversion();
+	}
+	
 	// User-defined conversions: struct-to-primitive
 	// Optimistically assume conversion operator exists, CodeGen will verify
 	if (from == Type::Struct && to != Type::Struct) {
