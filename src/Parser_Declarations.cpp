@@ -3485,19 +3485,18 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					if (param_type_result.is_error() || !param_type_result.node().has_value()) {
 						break;
 					}
-					const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-					param_types.push_back(param_type.type());
+					TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
 					
 					// Handle pointer/reference/cv-qualifier modifiers after type
-					while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
-						   peek() == "const"_tok || peek() == "volatile"_tok) {
-						advance();
-					}
+					consume_pointer_ref_modifiers(param_type);
 					
 					// Handle pack expansion '...' (e.g., _Args...)
 					if (peek() == "..."_tok) {
 						advance(); // consume '...'
+						param_type.set_pack_expansion(true);
 					}
+					
+					param_types.push_back(param_type.type());
 					
 					if (peek() == ","_tok) {
 						advance(); // consume ','
