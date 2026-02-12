@@ -3961,7 +3961,53 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 	}
 	
-	// Parse the alias name
+	// Check for function pointer typedef: typedef ReturnType (*Name)(Params);
+	// Pattern: typedef void (*event_callback)(event e, ios_base& b, int i);
+	if (peek() == "("_tok) {
+		SaveHandle fnptr_check = save_token_position();
+		advance(); // consume '('
+		if (peek() == "*"_tok) {
+			advance(); // consume '*'
+			if (peek().is_identifier()) {
+				Token fnptr_name_token = peek_info();
+				advance(); // consume alias name
+				if (peek() == ")"_tok) {
+					advance(); // consume ')'
+					// Skip the parameter list
+					if (peek() == "("_tok) {
+						skip_balanced_parens();
+					}
+					discard_saved_token(fnptr_check);
+
+					auto alias_name = fnptr_name_token.handle();
+
+					// Register as a function pointer type (treat as void* for now)
+					type_spec.add_pointer_level(CVQualifier::None);
+					type_node = emplace_node<TypeSpecifierNode>(type_spec);
+
+					// Store the alias in the struct (if struct_ref provided)
+					if (struct_ref) {
+						struct_ref->add_type_alias(alias_name, type_node, current_access);
+					}
+
+					// Register the alias globally
+					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
+					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+
+					// Consume semicolon
+					if (!consume(";"_tok)) {
+						return ParseResult::error("Expected ';' after typedef", current_token_);
+					}
+
+					auto typedef_node = emplace_node<TypedefDeclarationNode>(type_node, fnptr_name_token);
+					return ParseResult::success();
+				}
+			}
+		}
+		restore_token_position(fnptr_check);
+	}
+
+	// Parse the typedef alias name
 	auto alias_token = peek_info();
 	if (!alias_token.kind().is_identifier()) {
 		return ParseResult::error("Expected alias name in typedef", peek_info());
