@@ -32,6 +32,7 @@ namespace ObjectFileCommon {
 	struct CatchHandlerInfo {
 		uint32_t type_index;      // Type to catch (0 for catch-all)
 		uint32_t handler_offset;  // Code offset of catch handler relative to function start
+		uint32_t handler_end_offset; // Code offset of catch handler end relative to function start
 		bool is_catch_all;        // True for catch(...)
 		std::string type_name;    // Name of the caught type (empty for catch-all or when type_index is 0)
 		bool is_const;            // True if caught by const
