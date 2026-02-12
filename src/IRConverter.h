@@ -14726,16 +14726,18 @@ private:
 			// For 8-bit, we'll use MOVZX which has different encoding
 			bool use_movzx = (value_size == 8);
 			
-			// Handle special case: RSP/R12 requires SIB byte
+			// Handle special case: RSP/R12 requires SIB byte, RBP/R13 requires displacement
 			uint8_t ptr_encoding = static_cast<uint8_t>(ptr_reg) & 0x07;
 			bool needs_sib = (ptr_encoding == 0x04);
+			bool needs_disp = (ptr_encoding == 0x05);  // RBP or R13
 
 			if (use_movzx) {
 				// MOVZX EAX, byte ptr [ptr_reg] - always loads into RAX
 				value_reg = X64Register::RAX;
 				
-				// ModR/M byte: mod=00 (indirect), reg=RAX (0), r/m=ptr_reg
-				uint8_t modrm_byte = (0x00 << 6) | (0x00 << 3) | ptr_encoding;
+				// ModR/M byte: mod depends on whether we need displacement
+				uint8_t mod_field = needs_disp ? 0x01 : 0x00;  // MOD=01 for RBP/R13, MOD=00 otherwise
+				uint8_t modrm_byte = (mod_field << 6) | (0x00 << 3) | ptr_encoding;
 				
 				if (static_cast<uint8_t>(ptr_reg) >= 8) {
 					textSectionData.push_back(0x41); // REX with B bit for extended base register
@@ -14746,10 +14748,14 @@ private:
 				if (needs_sib) {
 					textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
 				}
+				if (needs_disp) {
+					textSectionData.push_back(0x00); // disp8 = 0 for [RBP] or [R13]
+				}
 			} else {
 				// Regular MOV ptr_reg, [ptr_reg]
-				// ModR/M byte: mod=00 (indirect, no disp), reg=ptr_reg, r/m=ptr_reg
-				uint8_t modrm_byte = (0x00 << 6) | (ptr_encoding << 3) | ptr_encoding;
+				// ModR/M byte: mod depends on whether we need displacement
+				uint8_t mod_field = needs_disp ? 0x01 : 0x00;  // MOD=01 for RBP/R13, MOD=00 otherwise
+				uint8_t modrm_byte = (mod_field << 6) | (ptr_encoding << 3) | ptr_encoding;
 				
 				if (rex_prefix != 0x40 || static_cast<uint8_t>(ptr_reg) >= 8) {
 					textSectionData.push_back(rex_prefix);
@@ -14758,6 +14764,9 @@ private:
 				textSectionData.push_back(modrm_byte);
 				if (needs_sib) {
 					textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
+				}
+				if (needs_disp) {
+					textSectionData.push_back(0x00); // disp8 = 0 for [RBP] or [R13]
 				}
 			}
 
