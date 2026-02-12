@@ -11928,11 +11928,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Fall back to primary template params if pattern params not found
 		if (pattern_template_params.empty()) {
-			auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-				const TemplateClassDeclarationNode& primary_template = template_opt->as<TemplateClassDeclarationNode>();
-				pattern_template_params = std::vector<ASTNode>(primary_template.template_parameters().begin(),
-				                                               primary_template.template_parameters().end());
+			// Check ALL template overloads to find one with named parameters
+			// Forward declarations like `template<typename...> class tuple;` register with
+			// anonymous names (e.g., __anon_type_64), while definitions have real names (e.g., _Elements).
+			// Prefer the definition's parameters for correct sizeof...() resolution.
+			const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(template_name);
+			if (all_tmpls) {
+				const TemplateClassDeclarationNode* best = nullptr;
+				for (const auto& tmpl_node : *all_tmpls) {
+					if (tmpl_node.is<TemplateClassDeclarationNode>()) {
+						const auto& tmpl_class = tmpl_node.as<TemplateClassDeclarationNode>();
+						if (!best) {
+							best = &tmpl_class;
+						} else {
+							// Prefer template with named parameters (not __anon_type_)
+							bool current_has_anon = false;
+							bool best_has_anon = false;
+							for (const auto& param : tmpl_class.template_parameters()) {
+								if (param.is<TemplateParameterNode>() && param.as<TemplateParameterNode>().name().starts_with("__anon_type_"))
+									current_has_anon = true;
+							}
+							for (const auto& param : best->template_parameters()) {
+								if (param.is<TemplateParameterNode>() && param.as<TemplateParameterNode>().name().starts_with("__anon_type_"))
+									best_has_anon = true;
+							}
+							if (best_has_anon && !current_has_anon)
+								best = &tmpl_class;
+						}
+					}
+				}
+				if (best) {
+					pattern_template_params = std::vector<ASTNode>(best->template_parameters().begin(),
+					                                               best->template_parameters().end());
+				}
 			}
 		}
 		const std::vector<ASTNode>& template_params = pattern_template_params;
@@ -17467,10 +17495,27 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
+	// Push class template pack info so sizeof...() from the enclosing class template
+	// can be resolved during member function template body parsing.
+	// E.g., sizeof...(_Elements) inside a member function template of tuple<int, float>.
+	ClassTemplatePackGuard member_pack_guard(class_template_pack_stack_);
+	{
+		auto pack_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(struct_name));
+		if (pack_it != class_template_pack_registry_.end()) {
+			member_pack_guard.push(pack_it->second);
+		}
+	}
+
 	// Parse the function body
 	auto block_result = parse_block();
 	if (!block_result.is_error() && block_result.node().has_value()) {
-		new_func_ref.set_definition(*block_result.node());
+		// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
+		ASTNode substituted_body = substituteTemplateParameters(
+			*block_result.node(),
+			template_params,
+			template_args
+		);
+		new_func_ref.set_definition(substituted_body);
 	}
 
 	// Clean up context
@@ -19345,25 +19390,28 @@ ASTNode Parser::substituteTemplateParameters(
 						names_to_try[num_names++] = ns_builder.preview();
 						
 						for (size_t ni = 0; ni < num_names && !is_known_template_param; ++ni) {
-							FLASH_LOG(Parser, Error, "  trying template lookup: '", names_to_try[ni], "'");
-							auto tmpl_opt = gTemplateRegistry.lookupTemplate(names_to_try[ni]);
-							if (tmpl_opt.has_value()) {
-								FLASH_LOG(Parser, Error, "  found template, is TemplateClassDeclarationNode=", tmpl_opt->is<TemplateClassDeclarationNode>());
-								if (tmpl_opt->is<TemplateClassDeclarationNode>()) {
-									const auto& tmpl_class = tmpl_opt->as<TemplateClassDeclarationNode>();
-									for (const auto& param : tmpl_class.template_parameters()) {
-										if (param.is<TemplateParameterNode>()) {
-											const auto& tparam = param.as<TemplateParameterNode>();
-											FLASH_LOG(Parser, Error, "    param: name='", tparam.name(), "' variadic=", tparam.is_variadic());
-											if (tparam.is_variadic() && tparam.name() == pack_name) {
-												is_known_template_param = true;
-												break;
+							// Check ALL overloads, not just the first one
+							const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(names_to_try[ni]);
+							if (all_tmpls) {
+								for (const auto& tmpl_node : *all_tmpls) {
+									if (is_known_template_param) break;
+									if (tmpl_node.is<TemplateClassDeclarationNode>()) {
+										const auto& tmpl_class = tmpl_node.as<TemplateClassDeclarationNode>();
+										for (const auto& param : tmpl_class.template_parameters()) {
+											if (param.is<TemplateParameterNode>()) {
+												const auto& tparam = param.as<TemplateParameterNode>();
+												if (tparam.is_variadic()) {
+													// Match by name, or match if the stored name is anonymous
+													// (from forward declarations like `template<typename...> class tuple;`)
+													if (tparam.name() == pack_name || tparam.name().starts_with("__anon_type_")) {
+														is_known_template_param = true;
+														break;
+													}
+												}
 											}
 										}
 									}
 								}
-							} else {
-								FLASH_LOG(Parser, Error, "  template not found for '", names_to_try[ni], "'");
 							}
 						}
 					}
@@ -19372,21 +19420,7 @@ ASTNode Parser::substituteTemplateParameters(
 					FLASH_LOG(Templates, Debug, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
 					return node;
 				}
-				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack, template_params.size()=", template_params.size(), ", template_args.size()=", template_args.size(), ", parsing_template_body_=", parsing_template_body_, ", struct_stack_size=", struct_parsing_context_stack_.size());
-				for (size_t di = 0; di < template_params.size(); ++di) {
-					if (template_params[di].is<TemplateParameterNode>()) {
-						const auto& tp = template_params[di].as<TemplateParameterNode>();
-						FLASH_LOG(Parser, Error, "  param[", di, "]: name='", tp.name(), "' variadic=", tp.is_variadic());
-					}
-				}
-				if (!struct_parsing_context_stack_.empty()) {
-					for (auto sit = struct_parsing_context_stack_.rbegin(); sit != struct_parsing_context_stack_.rend(); ++sit) {
-						FLASH_LOG(Parser, Error, "  struct_stack: '", sit->struct_name, "'");
-					}
-				}
-				for (const auto& param_name : current_template_param_names_) {
-					FLASH_LOG(Parser, Error, "  current_tmpl_param: '", StringTable::getStringView(param_name), "'");
-				}
+				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack");
 				throw std::runtime_error("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
 			}
 			

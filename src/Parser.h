@@ -517,6 +517,23 @@ private:
                         }
                     }
                 }
+                // If struct_name is the base template name (e.g., "tuple") but registry has
+                // instantiated names (e.g., "tuple$hash"), do a prefix scan.
+                // Also handle anonymous pack names from forward declarations.
+                std::string_view struct_name = it->struct_name;
+                for (const auto& [key, infos] : class_template_pack_registry_) {
+                    std::string_view key_sv = StringTable::getStringView(key);
+                    // Check if the registry key starts with the struct name followed by '$'
+                    if (key_sv.size() > struct_name.size() && 
+                        key_sv.starts_with(struct_name) && 
+                        key_sv[struct_name.size()] == '$') {
+                        for (const auto& info : infos) {
+                            if (info.pack_name == pack_name || info.pack_name.starts_with("__anon_type_")) {
+                                return info.pack_size;
+                            }
+                        }
+                    }
+                }
             }
             return std::nullopt;
         }
