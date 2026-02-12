@@ -519,7 +519,9 @@ private:
                 }
                 // If struct_name is the base template name (e.g., "tuple") but registry has
                 // instantiated names (e.g., "tuple$hash"), do a prefix scan.
-                // Also handle anonymous pack names from forward declarations.
+                // Also handle anonymous pack names from forward declarations:
+                // only match if no exact pack_name match was found AND there is exactly
+                // one variadic pack with an anonymous name in the entry.
                 std::string_view struct_name = it->struct_name;
                 for (const auto& [key, infos] : class_template_pack_registry_) {
                     std::string_view key_sv = StringTable::getStringView(key);
@@ -527,10 +529,17 @@ private:
                     if (key_sv.size() > struct_name.size() && 
                         key_sv.starts_with(struct_name) && 
                         key_sv[struct_name.size()] == '$') {
+                        // First pass: look for exact pack_name match
                         for (const auto& info : infos) {
-                            if (info.pack_name == pack_name || info.pack_name.starts_with("__anon_type_")) {
+                            if (info.pack_name == pack_name) {
                                 return info.pack_size;
                             }
+                        }
+                        // Second pass: if exactly one anonymous variadic pack exists and
+                        // no exact match was found, assume the queried name corresponds
+                        // to it (forward declarations use anonymous names).
+                        if (infos.size() == 1 && infos[0].pack_name.starts_with("__anon_type_")) {
+                            return infos[0].pack_size;
                         }
                     }
                 }

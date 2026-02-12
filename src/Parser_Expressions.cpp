@@ -564,34 +564,6 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				return ParseResult::error("Expected ')' after sizeof... pack name", current_token_);
 			}
 			
-			// Try to resolve the pack size immediately if we're in a template instantiation context.
-			// This handles sizeof...(_Elements) inside member function templates where _Elements
-			// is from the enclosing class template that has already been instantiated.
-			size_t resolved_pack_size = count_pack_elements(pack_name);
-			if (resolved_pack_size == 0) {
-				auto class_pack_size = get_class_template_pack_size(pack_name);
-				if (class_pack_size.has_value()) {
-					resolved_pack_size = *class_pack_size;
-				}
-			}
-			if (resolved_pack_size == 0) {
-				auto pack_info_size = get_pack_size(pack_name);
-				if (pack_info_size.has_value()) {
-					resolved_pack_size = *pack_info_size;
-				}
-			}
-			
-			if (resolved_pack_size > 0) {
-				// Resolve to a numeric literal
-				StringBuilder size_builder;
-				std::string_view size_str = size_builder.append(resolved_pack_size).commit();
-				Token literal_token(Token::Type::Literal, size_str, sizeof_token.line(), sizeof_token.column(), sizeof_token.file_index());
-				auto literal_expr = emplace_node<ExpressionNode>(
-					NumericLiteralNode(literal_token, static_cast<unsigned long long>(resolved_pack_size),
-					                  Type::Int, TypeQualifier::None, 32));
-				return ParseResult::success(literal_expr);
-			}
-			
 			auto sizeof_pack_expr = emplace_node<ExpressionNode>(SizeofPackNode(pack_name, sizeof_token));
 			return ParseResult::success(sizeof_pack_expr);
 		}
