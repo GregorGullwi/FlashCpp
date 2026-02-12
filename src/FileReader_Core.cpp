@@ -272,7 +272,19 @@ public:
 				line = line.substr(0, comment_pos);
 			}
 
-			if (line.find("#include", 0) == 0) {
+			if (line.find("#include_next", 0) == 0) {
+				// GCC extension: #include_next searches for the header starting
+				// from the directory AFTER the one where the current file was found.
+				// Used by C++ standard library headers to include underlying C headers.
+				// Must be checked before #include since #include_next starts with #include.
+				append_line_with_tracking("// " + line);
+				
+				if (!processIncludeNextDirective(line, filestack_.top().file_name, line_number)) {
+					return false;
+				}
+				prev_line_number = 0;
+			}
+			else if (line.find("#include", 0) == 0) {
 				// Record the #include line in line_map BEFORE processing it
 				// so that the included file can find its parent
 				append_line_with_tracking("// " + line);  // Comment it out in output

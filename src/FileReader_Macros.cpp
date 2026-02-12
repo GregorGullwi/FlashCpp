@@ -896,6 +896,89 @@
 		return true;
 	}
 
+	bool processIncludeNextDirective(const std::string& line, const std::string_view& current_file, long include_line_number) {
+		// #include_next <header> - GCC extension
+		// Searches for the header starting from the directory AFTER the one
+		// where the current file was found. Used by C++ standard library headers
+		// to include the underlying C headers (e.g., cmath -> math.h).
+		std::istringstream iss(line);
+		std::string token;
+		iss >> token;
+		if (iss.eof() || token != "#include_next") {
+			return true;
+		}
+		iss >> token;
+		if (token.size() < 2 || (token.front() != '"' && token.front() != '<') || (token.front() == '"' && token.back() != '"') || (token.front() == '<' && token.back() != '>')) {
+			return true;
+		}
+		std::string filename(token.substr(1, token.size() - 2));
+		if (settings_.isVerboseMode()) {
+			FLASH_LOG(Lexer, Trace, "Looking for include_next file: ", filename, " (current: ", current_file, ")");
+		}
+
+		// Find which include directory contains the current file
+		std::filesystem::path current_dir;
+		if (!current_file.empty()) {
+			current_dir = std::filesystem::path(std::string(current_file)).parent_path();
+		}
+
+		// Normalize current_dir for comparison
+		std::string current_dir_str;
+		if (!current_dir.empty()) {
+			current_dir_str = std::filesystem::weakly_canonical(current_dir).string();
+		}
+
+		// Search include paths, skipping directories up to and including the one containing current_file
+		bool found_current_dir = false;
+		bool found = false;
+		for (const auto& include_dir : settings_.getIncludeDirs()) {
+			std::string canonical_include_dir = std::filesystem::weakly_canonical(std::filesystem::path(include_dir)).string();
+
+			// Check if the current file is in this include directory (or a subdirectory of it)
+			if (!found_current_dir && !current_dir_str.empty() &&
+			    current_dir_str.find(canonical_include_dir) == 0) {
+				found_current_dir = true;
+				if (settings_.isVerboseMode()) {
+					FLASH_LOG(Lexer, Trace, "  Skipping include dir (contains current file): ", include_dir);
+				}
+				continue;  // Skip this directory
+			}
+
+			if (!found_current_dir) {
+				continue;  // Haven't found the current dir yet, keep skipping
+			}
+
+			// Search in this directory
+			std::filesystem::path include_path(include_dir);
+			include_path /= filename;
+			std::string include_file = include_path.string();
+			if (settings_.isVerboseMode()) {
+				FLASH_LOG(Lexer, Trace, "  include_next checking: ", include_file);
+			}
+			if (std::filesystem::exists(include_file)) {
+				if (settings_.isVerboseMode()) {
+					FLASH_LOG(Lexer, Trace, "Found include_next file: ", include_file);
+				}
+				if (!readFile(include_file, include_line_number)) {
+					return false;
+				}
+				tree_.addDependency(current_file, include_file);
+				found = true;
+				break;
+			}
+		}
+
+		if (!found) {
+			// Fallback: if we couldn't find the current dir in include paths,
+			// just do a regular include search (better than failing)
+			if (settings_.isVerboseMode()) {
+				FLASH_LOG(Lexer, Trace, "include_next fallback to regular include for: ", filename);
+			}
+			return processIncludeDirective("#include <" + filename + ">", current_file, include_line_number);
+		}
+		return true;
+	}
+
 	void processPragmaPack(std::string_view line) {
 		// Parse #pragma pack directives
 		// Supported formats:
