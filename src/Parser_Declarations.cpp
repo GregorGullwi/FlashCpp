@@ -3961,7 +3961,52 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 	}
 	
-	// Parse the alias name
+	// Check for function pointer typedef: typedef ReturnType (*Name)(Params);
+	// Pattern: typedef void (*event_callback)(event e, ios_base& b, int i);
+	if (peek() == "("_tok) {
+		SaveHandle fnptr_check = save_token_position();
+		advance(); // consume '('
+		if (peek() == "*"_tok) {
+			advance(); // consume '*'
+			if (peek().is_identifier()) {
+				Token fnptr_name_token = peek_info();
+				advance(); // consume alias name
+				if (peek() == ")"_tok) {
+					advance(); // consume ')'
+					// Skip the parameter list
+					if (peek() == "("_tok) {
+						skip_balanced_parens();
+					}
+					discard_saved_token(fnptr_check);
+
+					auto alias_name = fnptr_name_token.handle();
+
+					// Register as a function pointer type (treat as void* for now)
+					type_spec.add_pointer_level(CVQualifier::None);
+					type_node = emplace_node<TypeSpecifierNode>(type_spec);
+
+					// Store the alias in the struct (if struct_ref provided)
+					if (struct_ref) {
+						struct_ref->add_type_alias(alias_name, type_node, current_access);
+					}
+
+					// Register the alias globally
+					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
+					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+
+					// Consume semicolon
+					if (!consume(";"_tok)) {
+						return ParseResult::error("Expected ';' after typedef", current_token_);
+					}
+
+					return ParseResult::success();
+				}
+			}
+		}
+		restore_token_position(fnptr_check);
+	}
+
+	// Parse the typedef alias name
 	auto alias_token = peek_info();
 	if (!alias_token.kind().is_identifier()) {
 		return ParseResult::error("Expected alias name in typedef", peek_info());
@@ -4032,6 +4077,18 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	auto struct_name = name_token.handle();
+
+	// Handle out-of-line nested class definitions: class Outer::Inner { ... }
+	// The parser consumes the qualified name and uses the last identifier as the struct name
+	while (peek() == "::"_tok) {
+		advance(); // consume '::'
+		if (peek().is_identifier()) {
+			name_token = advance();
+			struct_name = name_token.handle();
+		} else {
+			break;
+		}
+	}
 
 	// Check for template specialization arguments after struct name
 	// e.g., struct MyStruct<int>, struct MyStruct<T&>
@@ -5495,6 +5552,10 @@ ParseResult Parser::parse_struct_declaration()
 						advance();
 					}
 				}
+
+				// Skip GCC __attribute__ between exception specifier and initializer list
+				// e.g. polymorphic_allocator(memory_resource* __r) noexcept __attribute__((__nonnull__)) : _M_resource(__r) { }
+				skip_gcc_attributes();
 
 				// Check for member initializer list (: Base(args), member(value), ...)
 				// For delayed parsing, save the position and skip it
@@ -8947,13 +9008,32 @@ ParseResult Parser::parse_friend_declaration()
 	}
 
 	// Check for 'class' keyword (friend class declaration)
-	if (peek() == "class"_tok) {
-		advance();  // consume 'class'
+	if (peek() == "class"_tok || peek() == "struct"_tok) {
+		advance();  // consume 'class'/'struct'
 
-		// Parse class name
+		// Parse class name (may be qualified: Outer::Inner)
 		auto class_name_token = advance();
 		if (!class_name_token.kind().is_identifier()) {
 			return ParseResult::error("Expected class name after 'friend class'", current_token_);
+		}
+
+		// Handle qualified names: friend class locale::_Impl;
+		// Build full qualified name for proper friend resolution
+		std::string qualified_friend_name(class_name_token.value());
+		while (peek() == "::"_tok) {
+			advance(); // consume '::'
+			if (peek().is_identifier()) {
+				qualified_friend_name += "::";
+				class_name_token = advance();
+				qualified_friend_name += class_name_token.value();
+			} else {
+				break;
+			}
+		}
+
+		// Skip template arguments if present: friend class SomeTemplate<T>;
+		if (peek() == "<"_tok) {
+			skip_template_arguments();
 		}
 
 		// Expect semicolon
@@ -8961,7 +9041,8 @@ ParseResult Parser::parse_friend_declaration()
 			return ParseResult::error("Expected ';' after friend class declaration", current_token_);
 		}
 
-		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, class_name_token.handle());
+		auto friend_name_handle = StringTable::getOrInternStringHandle(qualified_friend_name);
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name_handle);
 		return saved_position.success(friend_node);
 	}
 
@@ -9403,8 +9484,8 @@ ParseResult Parser::parse_namespace() {
 				decl_result = parse_declaration_or_function_definition();
 			}
 		}
-		// Check if it's a struct/class declaration
-		else if ((peek() == "class"_tok || peek() == "struct"_tok)) {
+		// Check if it's a struct/class/union declaration
+		else if ((peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok)) {
 			decl_result = parse_struct_declaration();
 		}
 		// Check if it's an enum declaration
