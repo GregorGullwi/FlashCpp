@@ -2203,15 +2203,28 @@
 					
 					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
 				} else {
-					// For struct with constructor, evaluate the initializer to check if it's an rvalue
-					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-					// Check if this is an rvalue (TempVar) - function return value
-					bool is_rvalue = (init_operands.size() >= 3 && std::holds_alternative<TempVar>(init_operands[2]));
-					if (is_rvalue) {
-						// For rvalues, use direct initialization (no constructor call)
-						operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+					// For struct with constructor, check if this is copy elision case first
+					// C++17 mandates copy elision for: T x = T(args);
+					// Check if the initializer is a ConstructorCallNode of the same type
+					bool is_copy_elision_candidate = false;
+					if (init_node.is<ExpressionNode>() && std::holds_alternative<ConstructorCallNode>(init_node.as<ExpressionNode>())) {
+						// This is a constructor call in copy initialization context
+						// Don't evaluate it as an expression - let it fall through to direct constructor handling below
+						is_copy_elision_candidate = true;
 					}
-					// For lvalues, skip adding to operands - will use constructor call below
+					
+					if (!is_copy_elision_candidate) {
+						// Evaluate the initializer to check if it's an rvalue
+						auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+						// Check if this is an rvalue (TempVar) - function return value
+						bool is_rvalue = (init_operands.size() >= 3 && std::holds_alternative<TempVar>(init_operands[2]));
+						if (is_rvalue) {
+							// For rvalues, use direct initialization (no constructor call)
+							operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+						}
+						// For lvalues, skip adding to operands - will use constructor call below
+					}
+					// For copy elision candidates, skip adding to operands - will use constructor call below
 				}
 			}
 		}
