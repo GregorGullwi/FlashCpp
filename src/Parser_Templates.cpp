@@ -360,8 +360,59 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 
-				// Save body position and skip body
+				// Skip trailing requires clause if present
+				skip_trailing_requires_clause();
+
+				// Save body position (includes member initializer list for constructors)
 				SaveHandle body_start = save_token_position();
+
+				// Handle constructor member initializer list: ClassName<T>::ClassName(...) : init1(x), init2(y) { }
+				if (peek() == ":"_tok) {
+					advance(); // consume ':'
+					// Skip member initializer list entries: name(expr), name(expr), ...
+					while (!peek().is_eof()) {
+						// Skip initializer name (possibly qualified: typename X<T>::type() or Base<T>(...))
+						if (peek() == "typename"_tok) {
+							advance(); // consume 'typename'
+						}
+						// Skip tokens until we find '(' or '{' of the initializer
+						while (!peek().is_eof() && peek() != "("_tok && peek() != "{"_tok && peek() != ";"_tok) {
+							if (peek() == "<"_tok) {
+								skip_template_arguments();
+							} else if (peek() == "::"_tok) {
+								advance();
+							} else {
+								advance();
+							}
+						}
+						// Skip the initializer arguments
+						if (peek() == "("_tok) {
+							skip_balanced_parens();
+						} else if (peek() == "{"_tok) {
+							// Could be brace-init for a member, or the start of the function body
+							// If followed by a comma or another initializer, it's brace-init
+							auto check_save = save_token_position();
+							skip_balanced_braces();
+							if (peek() == ","_tok) {
+								// Brace-init member, continue
+								discard_saved_token(check_save);
+							} else {
+								// This was the function body (or end) - restore and break
+								restore_token_position(check_save);
+								break;
+							}
+						} else {
+							break;
+						}
+						// Check for more initializers
+						if (peek() == ","_tok) {
+							advance(); // consume ','
+						} else {
+							break;
+						}
+					}
+				}
+
 				if (peek() == "{"_tok) {
 					skip_balanced_braces();
 				} else if (peek() == ";"_tok) {
@@ -1605,6 +1656,8 @@ ParseResult Parser::parse_template_declaration() {
 						if (auto req = parse_trailing_requires_clause()) {
 							ctor_ref.set_requires_clause(*req);
 						}
+						// Skip GCC __attribute__ between specifiers and initializer list
+						skip_gcc_attributes();
 						
 						// Parse member initializer list if present
 						if (peek() == ":"_tok) {
@@ -2841,6 +2894,8 @@ ParseResult Parser::parse_template_declaration() {
 						if (auto req = parse_trailing_requires_clause()) {
 							ctor_ref.set_requires_clause(*req);
 						}
+						// Skip GCC __attribute__ between specifiers and initializer list
+						skip_gcc_attributes();
 						
 						// Parse member initializer list if present
 						if (peek() == ":"_tok) {
@@ -5425,6 +5480,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				if (auto req = parse_trailing_requires_clause()) {
 					ctor_ref.set_requires_clause(*req);
 				}
+				
+				// Skip GCC __attribute__ between specifiers and initializer list
+				skip_gcc_attributes();
 				
 				// Parse member initializer list if present
 				if (peek() == ":"_tok) {

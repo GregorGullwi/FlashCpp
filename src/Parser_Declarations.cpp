@@ -4033,6 +4033,18 @@ ParseResult Parser::parse_struct_declaration()
 
 	auto struct_name = name_token.handle();
 
+	// Handle out-of-line nested class definitions: class Outer::Inner { ... }
+	// The parser consumes the qualified name and uses the last identifier as the struct name
+	while (peek() == "::"_tok) {
+		advance(); // consume '::'
+		if (peek().is_identifier()) {
+			name_token = advance();
+			struct_name = name_token.handle();
+		} else {
+			break;
+		}
+	}
+
 	// Check for template specialization arguments after struct name
 	// e.g., struct MyStruct<int>, struct MyStruct<T&>
 	if (peek() == "<"_tok) {
@@ -5495,6 +5507,10 @@ ParseResult Parser::parse_struct_declaration()
 						advance();
 					}
 				}
+
+				// Skip GCC __attribute__ between exception specifier and initializer list
+				// e.g. polymorphic_allocator(memory_resource* __r) noexcept __attribute__((__nonnull__)) : _M_resource(__r) { }
+				skip_gcc_attributes();
 
 				// Check for member initializer list (: Base(args), member(value), ...)
 				// For delayed parsing, save the position and skip it
@@ -8947,13 +8963,28 @@ ParseResult Parser::parse_friend_declaration()
 	}
 
 	// Check for 'class' keyword (friend class declaration)
-	if (peek() == "class"_tok) {
-		advance();  // consume 'class'
+	if (peek() == "class"_tok || peek() == "struct"_tok) {
+		advance();  // consume 'class'/'struct'
 
-		// Parse class name
+		// Parse class name (may be qualified: Outer::Inner)
 		auto class_name_token = advance();
 		if (!class_name_token.kind().is_identifier()) {
 			return ParseResult::error("Expected class name after 'friend class'", current_token_);
+		}
+
+		// Handle qualified names: friend class locale::_Impl;
+		while (peek() == "::"_tok) {
+			advance(); // consume '::'
+			if (peek().is_identifier()) {
+				class_name_token = advance();
+			} else {
+				break;
+			}
+		}
+
+		// Skip template arguments if present: friend class SomeTemplate<T>;
+		if (peek() == "<"_tok) {
+			skip_template_arguments();
 		}
 
 		// Expect semicolon

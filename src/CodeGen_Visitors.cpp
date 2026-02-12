@@ -1459,11 +1459,39 @@ private:
 			return false;
 		}
 
+		// Helper: check if two structs are the same class, including template instantiations.
+		// Template instantiations use a '$hash' suffix (e.g., basic_string_view$291eceb35e7234a9)
+		// that must be stripped for comparison with the base template.
+		auto isSameClassOrInstantiation = [](const StructTypeInfo* a, const StructTypeInfo* b) -> bool {
+			if (a == b) return true;
+			if (!a || !b) return false;
+			std::string_view name_a = StringTable::getStringView(a->getName());
+			std::string_view name_b = StringTable::getStringView(b->getName());
+			if (name_a == name_b) return true;
+			// Strip namespace prefix and '$hash' suffix for comparison
+			auto getBaseName = [](std::string_view name) -> std::string_view {
+				// Strip namespace (take after last '::')
+				auto ns_pos = name.rfind("::");
+				if (ns_pos != std::string_view::npos) {
+					name = name.substr(ns_pos + 2);
+				}
+				// Strip template hash suffix (after '$')
+				auto dollar_pos = name.find('$');
+				if (dollar_pos != std::string_view::npos) {
+					name = name.substr(0, dollar_pos);
+				}
+				return name;
+			};
+			std::string_view base_a = getBaseName(name_a);
+			std::string_view base_b = getBaseName(name_b);
+			return !base_a.empty() && base_a == base_b;
+		};
+
 		// Private members are only accessible from:
-		// 1. The same class
+		// 1. The same class (or a template instantiation of the same class)
 		// 2. Nested classes within the same class
 		if (member->access == AccessSpecifier::Private) {
-			if (accessing_struct == member_owner_struct) {
+			if (isSameClassOrInstantiation(accessing_struct, member_owner_struct)) {
 				return true;
 			}
 			// Check if accessing_struct is nested within member_owner_struct
@@ -1471,12 +1499,12 @@ private:
 		}
 
 		// Protected members are accessible from:
-		// 1. The same class
+		// 1. The same class (or a template instantiation of the same class)
 		// 2. Derived classes (if inherited as public or protected)
 		// 3. Nested classes within the same class (C++ allows nested classes to access protected)
 		if (member->access == AccessSpecifier::Protected) {
 			// Same class
-			if (accessing_struct == member_owner_struct) {
+			if (isSameClassOrInstantiation(accessing_struct, member_owner_struct)) {
 				return true;
 			}
 

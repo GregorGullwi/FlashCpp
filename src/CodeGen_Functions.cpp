@@ -3867,7 +3867,7 @@
 			for (const auto& m : struct_info->members) {
 				std::cerr << "    - " << StringTable::getStringView(m.getName()) << "\n";
 			}
-			return {};
+			throw std::runtime_error("Member not found in struct");
 		}
 		
 		const StructMember* member = member_result.member;
@@ -3887,7 +3887,7 @@
 				std::cerr << " from '" << StringTable::getStringView(current_context->getName()) << "'";
 			}
 			std::cerr << "\n";
-			return {};
+			throw std::runtime_error("Access control violation");
 		}
 
 		// Check if base_object is a TempVar with lvalue metadata
