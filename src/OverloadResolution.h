@@ -102,10 +102,9 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 		}
 	}
 	
-	// Integer to unscoped enum (implicit in C++, standard conversion)
-	if (to == Type::Enum && is_integral_type(from)) {
-		return TypeConversionResult::conversion();
-	}
+	// Note: Integer to unscoped enum is NOT an implicit conversion in C++11+.
+	// It requires a static_cast. Do NOT add a conversion path here.
+
 	
 	// User-defined conversions: struct-to-primitive
 	// Optimistically assume conversion operator exists, CodeGen will verify
