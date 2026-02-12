@@ -3998,7 +3998,12 @@ if (struct_type_info.getStructInfo()) {
 			if (!non_type_args.empty()) {
 				func_node.set_non_type_template_args(std::move(non_type_args));
 			}
-			
+
+			// Consume trailing specifiers (const, volatile, noexcept, throw(), __attribute__, etc.)
+			// CV and ref qualifiers are captured in spec_quals for signature matching
+			FlashCpp::MemberQualifiers spec_quals;
+			skip_function_trailing_specifiers(spec_quals);
+
 			// Parse the function body, or accept forward declaration (;)
 			// C++ allows full specialization declarations without a body:
 			//   template<> void foo<int>(int);
@@ -18396,11 +18401,49 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Check for out-of-line constructor/destructor pattern first:
 	// ClassName<Args>::ClassName(...)  (constructor)
 	// ClassName<Args>::~ClassName()    (destructor)
+	// ns::ClassName<Args>::ClassName(...)  (namespace-qualified constructor)
 	// parse_type_specifier would consume the full qualified name as a type, so detect this early
 	if (peek().is_identifier()) {
 		SaveHandle ctor_check = save_token_position();
 		Token potential_class = peek_info();
-		advance(); // consume class name
+		advance(); // consume first name (could be namespace or class name)
+
+		// Skip namespace qualifiers: ns1::ns2::ClassName<Args>::ClassName(...)
+		// Keep advancing past identifier::identifier until we find identifier< or identifier::~
+		while (peek() == "::"_tok && !peek().is_eof()) {
+			// Look ahead to see if this is namespace::name or class::ctor pattern
+			SaveHandle ns_check = save_token_position();
+			advance(); // consume '::'
+			bool is_dtor_check = false;
+			if (peek_info().value() == "~") {
+				is_dtor_check = true;
+			}
+			if (!is_dtor_check && peek().is_identifier()) {
+				Token next_name = peek_info();
+				advance(); // consume name
+				if (peek() == "<"_tok || peek() == "::"_tok) {
+					// This name is either a class (followed by <Args>) or another namespace (followed by ::)
+					// Update potential_class and continue
+					potential_class = next_name;
+					if (peek() == "<"_tok) {
+						skip_template_arguments();
+					}
+					discard_saved_token(ns_check);
+					continue;
+				} else if (peek() == "("_tok && next_name.value() == potential_class.value()) {
+					// Found ClassName::ClassName( pattern without template args
+					restore_token_position(ns_check);
+					break;
+				}
+				// Unexpected pattern - restore and break
+				restore_token_position(ns_check);
+				break;
+			}
+			// Found :: followed by ~ or non-identifier - restore and let main logic handle it
+			restore_token_position(ns_check);
+			break;
+		}
+
 		// Handle both ClassName<Args>::ClassName(...) and ClassName::ClassName(...)
 		if (peek() == "<"_tok) {
 			skip_template_arguments();
@@ -18472,10 +18515,25 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 							}
 						}
 
-						// Save body position and skip body
+						// Save body position and handle body / = default / = delete
+						bool ctor_is_defaulted = false;
+						bool ctor_is_deleted = false;
 						SaveHandle ctor_body_start = save_token_position();
 						if (peek() == "{"_tok) {
 							skip_balanced_braces();
+						} else if (peek() == "="_tok) {
+							// Handle = default; and = delete;
+							advance(); // consume '='
+							if (peek() == "default"_tok) {
+								ctor_is_defaulted = true;
+								advance(); // consume 'default'
+							} else if (peek() == "delete"_tok) {
+								ctor_is_deleted = true;
+								advance(); // consume 'delete'
+							}
+							if (peek() == ";"_tok) {
+								advance(); // consume ';'
+							}
 						} else if (peek() == ";"_tok) {
 							advance();
 						}
@@ -18486,6 +18544,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						out_of_line_ctor.function_node = ctor_func_node;
 						out_of_line_ctor.body_start = ctor_body_start;
 						out_of_line_ctor.template_param_names = template_param_names;
+						out_of_line_ctor.is_defaulted = ctor_is_defaulted;
+						out_of_line_ctor.is_deleted = ctor_is_deleted;
 
 						gTemplateRegistry.registerOutOfLineMember(ctor_class_name, std::move(out_of_line_ctor));
 
@@ -18540,6 +18600,12 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	} else if (peek() == "<"_tok && return_type_node.is<TypeSpecifierNode>()) {
 		// Constructor pattern: ClassName<Args>::ClassName(...)
 		// parse_type_specifier consumed "ClassName" as return type, but it's really the class name
+		class_name_token = return_type_node.as<TypeSpecifierNode>().token();
+		class_name = class_name_token.value();
+	} else if (peek() == "::"_tok && return_type_node.is<TypeSpecifierNode>()) {
+		// Namespace-qualified constructor pattern: ns::ClassName<Args>::ClassName(...)
+		// parse_type_specifier consumed the full "ns::ClassName<Args>" as a type
+		// The :: that follows leads to the member function/constructor name
 		class_name_token = return_type_node.as<TypeSpecifierNode>().token();
 		class_name = class_name_token.value();
 	} else {
@@ -18962,11 +19028,29 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Save the position of the function body for delayed parsing
 	// body_start must be right before '{' - trailing specifiers and initializer lists
 	// are already consumed above
+	bool member_is_defaulted = false;
+	bool member_is_deleted = false;
 	SaveHandle body_start = save_token_position();
 
 	// Skip the function body for now (we'll re-parse it during instantiation or first use)
 	if (peek() == "{"_tok) {
 		skip_balanced_braces();
+	} else if (peek() == "="_tok) {
+		// Handle = default; and = delete; - store on function node and out-of-line record
+		advance(); // consume '='
+		if (peek() == "default"_tok) {
+			member_is_defaulted = true;
+			advance(); // consume 'default'
+		} else if (peek() == "delete"_tok) {
+			member_is_deleted = true;
+			func_ref.set_is_deleted(true);
+			advance(); // consume 'delete'
+		}
+		if (peek() == ";"_tok) {
+			advance(); // consume ';'
+		}
+	} else if (peek() == ";"_tok) {
+		advance(); // consume ';' (declaration without body)
 	}
 
 	// Check if this is a template member function specialization
@@ -18996,6 +19080,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.template_param_names = template_param_names;
 		out_of_line_member.inner_template_params = inner_template_params;
 		out_of_line_member.inner_template_param_names = inner_template_param_names;
+		out_of_line_member.is_defaulted = member_is_defaulted;
+		out_of_line_member.is_deleted = member_is_deleted;
 
 		gTemplateRegistry.registerOutOfLineMember(class_name, std::move(out_of_line_member));
 

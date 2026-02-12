@@ -714,6 +714,9 @@ struct OutOfLineMemberFunction {
 	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
 	std::vector<ASTNode> inner_template_params;
 	std::vector<StringHandle> inner_template_param_names;
+	// Function specifiers from out-of-line definition (= default, = delete)
+	bool is_defaulted = false;
+	bool is_deleted = false;
 };
 
 // Outer template parameter bindings for member function templates of class templates.

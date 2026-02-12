@@ -9159,6 +9159,11 @@ ParseResult Parser::parse_friend_declaration()
 				return ParseResult::error("Expected function name in friend declaration", current_token_);
 			}
 
+			// Skip template arguments on qualified name components (e.g., Class<int>::func)
+			if (peek() == "<"_tok) {
+				skip_template_arguments();
+			}
+
 			// Check for :: (qualified name)
 			if (peek() == "::"_tok) {
 				advance();  // consume '::'
@@ -9178,6 +9183,11 @@ ParseResult Parser::parse_friend_declaration()
 				break;
 			}
 		}
+	}
+
+	// Skip template arguments for explicit specialization friends (e.g., friend func<>(args...))
+	if (peek() == "<"_tok) {
+		skip_template_arguments();
 	}
 
 	// Parse function parameters
