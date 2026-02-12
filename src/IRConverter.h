@@ -5661,22 +5661,6 @@ private:
 		}
 	}
 
-	// Helper to emit MOV reg, [reg]
-	void emitMovRegFromMemReg(X64Register dest, X64Register src_addr) {
-		uint8_t rex = 0x48; // REX.W
-		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04;
-		if (static_cast<uint8_t>(src_addr) >= 8) rex |= 0x01;
-		
-		textSectionData.push_back(rex);
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		
-		// ModR/M: mod=00 (indirect), reg=dest, r/m=src_addr
-		uint8_t modrm = 0x00;
-		modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
-		modrm |= (static_cast<uint8_t>(src_addr) & 0x07);
-		textSectionData.push_back(modrm);
-	}
-
 	// Helper to emit MOV reg, [reg + disp8]
 	void emitMovRegFromMemRegDisp8(X64Register dest, X64Register src_addr, int8_t disp) {
 		uint8_t rex = 0x48; // REX.W
@@ -5692,6 +5676,111 @@ private:
 		modrm |= (static_cast<uint8_t>(src_addr) & 0x07);
 		textSectionData.push_back(modrm);
 		textSectionData.push_back(static_cast<uint8_t>(disp));
+	}
+
+	// Helper to emit size-aware MOV/MOVZX for dereferencing: dest = [src_addr]
+	// Handles 8-bit (MOVZX), 16-bit, 32-bit, and 64-bit loads
+	// Correctly handles RBP/R13 and RSP/R12 special cases
+	void emitMovRegFromMemRegSized(X64Register dest, X64Register src_addr, int size_in_bits) {
+		uint8_t src_encoding = static_cast<uint8_t>(src_addr) & 0x07;
+		bool needs_disp = (src_encoding == 0x05);  // RBP or R13
+		bool needs_sib = (src_encoding == 0x04);   // RSP or R12
+		uint8_t mod_field = needs_disp ? 0x01 : 0x00;
+		
+		if (size_in_bits == 8) {
+			// MOVZX dest, byte ptr [src_addr]
+			// For 8-bit loads, always zero-extend into 32-bit register (dest will be RAX for simplicity in handleDereference)
+			assert(dest == X64Register::RAX && "8-bit dereference should use RAX as destination");
+			
+			// REX prefix if src_addr is R8-R15
+			if (static_cast<uint8_t>(src_addr) >= 8) {
+				textSectionData.push_back(0x41); // REX with B bit
+			}
+			
+			// MOVZX opcode: 0F B6
+			textSectionData.push_back(0x0F);
+			textSectionData.push_back(0xB6);
+			
+			// ModR/M: mod depends on disp, reg=0 (RAX/AL), r/m=src_addr
+			uint8_t modrm = (mod_field << 6) | (0x00 << 3) | src_encoding;
+			textSectionData.push_back(modrm);
+			
+			if (needs_sib) {
+				textSectionData.push_back(0x24); // SIB for RSP/R12
+			}
+			if (needs_disp) {
+				textSectionData.push_back(0x00); // disp8 = 0 for RBP/R13
+			}
+		} else if (size_in_bits == 16) {
+			// MOV dest, word ptr [src_addr] - needs 0x66 prefix
+			textSectionData.push_back(0x66); // Operand size override
+			
+			// REX prefix for extended registers
+			uint8_t rex = 0x40;
+			if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04;  // R bit
+			if (static_cast<uint8_t>(src_addr) >= 8) rex |= 0x01;  // B bit
+			if (rex != 0x40) {
+				textSectionData.push_back(rex);
+			}
+			
+			textSectionData.push_back(0x8B); // MOV opcode
+			
+			uint8_t modrm = (mod_field << 6);
+			modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
+			modrm |= src_encoding;
+			textSectionData.push_back(modrm);
+			
+			if (needs_sib) {
+				textSectionData.push_back(0x24);
+			}
+			if (needs_disp) {
+				textSectionData.push_back(0x00);
+			}
+		} else if (size_in_bits == 32) {
+			// MOV dest, dword ptr [src_addr]
+			uint8_t rex = 0x40;
+			if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04;  // R bit
+			if (static_cast<uint8_t>(src_addr) >= 8) rex |= 0x01;  // B bit
+			
+			// Only emit REX if we need it for extended registers
+			if (rex != 0x40) {
+				textSectionData.push_back(rex);
+			}
+			
+			textSectionData.push_back(0x8B); // MOV opcode
+			
+			uint8_t modrm = (mod_field << 6);
+			modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
+			modrm |= src_encoding;
+			textSectionData.push_back(modrm);
+			
+			if (needs_sib) {
+				textSectionData.push_back(0x24);
+			}
+			if (needs_disp) {
+				textSectionData.push_back(0x00);
+			}
+		} else {
+			// 64-bit (default): MOV dest, qword ptr [src_addr]
+			uint8_t rex = 0x48; // REX.W for 64-bit
+			if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04;  // R bit
+			if (static_cast<uint8_t>(src_addr) >= 8) rex |= 0x01;  // B bit
+			
+			textSectionData.push_back(rex);
+			textSectionData.push_back(0x8B); // MOV opcode
+			
+			uint8_t modrm = (mod_field << 6);
+			modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
+			modrm |= src_encoding;
+			textSectionData.push_back(modrm);
+			
+			if (needs_sib) {
+				textSectionData.push_back(0x24);
+			}
+			if (needs_disp) {
+				textSectionData.push_back(0x00);
+			}
+		}
 	}
 
 	// Helper to emit TEST reg, reg
@@ -7535,7 +7624,7 @@ private:
 
 			// Step 2a: Load vptr from object (dereference the pointer)
 			// MOV RAX, [this_reg + 0]
-			emitMovRegFromMemReg(X64Register::RAX, this_reg);
+			emitMovRegFromMemRegSized(X64Register::RAX, this_reg, 64);
 		} else {
 			// Step 1b: Load object address into this_reg
 			// LEA this_reg, [RBP + object_offset]
@@ -7543,7 +7632,7 @@ private:
 
 			// Step 2b: Load vptr from object (object address is in this_reg)
 			// MOV RAX, [this_reg + 0]
-			emitMovRegFromMemReg(X64Register::RAX, this_reg);
+			emitMovRegFromMemRegSized(X64Register::RAX, this_reg, 64);
 		}
 
 		// Step 3: Load function pointer from vtable into RAX
@@ -7551,7 +7640,7 @@ private:
 		int vtable_offset = op.vtable_index * 8;
 		if (vtable_offset == 0) {
 			// No offset, use simple dereference
-			emitMovRegFromMemReg(X64Register::RAX, X64Register::RAX);
+			emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
 		} else if (vtable_offset >= -128 && vtable_offset <= 127) {
 			// Use 8-bit displacement
 			emitMovRegFromMemRegDisp8(X64Register::RAX, X64Register::RAX, static_cast<int8_t>(vtable_offset));
@@ -8051,7 +8140,7 @@ private:
 		textSectionData.push_back(0x00);
 
 		// Step 4: Load vtable pointer from object (first 8 bytes)
-		emitMovRegFromMemReg(X64Register::RAX, X64Register::RAX);
+		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
 
 		// Step 5: Load source RTTI pointer from vtable[-1] into first parameter register
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -14707,59 +14796,14 @@ private:
 			// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
 			X64Register value_reg = ptr_reg;
 
-			// Determine the correct MOV instruction based on size and build REX prefix
-			uint8_t rex_prefix = 0x40; // Base REX prefix
-			uint8_t opcode = 0x8B;     // MOV r64, r/m64
-			
-			// Check if we need REX.W (64-bit operand size)
-			if (value_size == 64) {
-				rex_prefix |= 0x08; // Set W bit for 64-bit operand
-			} else if (value_size == 32) {
-				// 32-bit uses base REX (no W bit)
-			}
-			
-			// Check if destination register (same as source) is R8-R15
-			if (static_cast<uint8_t>(ptr_reg) >= 8) {
-				rex_prefix |= 0x05; // Set both R and B bits (destination and base)
-			}
-			
-			// For 8-bit, we'll use MOVZX which has different encoding
-			bool use_movzx = (value_size == 8);
-			
-			// Handle special case: RSP/R12 requires SIB byte
-			uint8_t ptr_encoding = static_cast<uint8_t>(ptr_reg) & 0x07;
-			bool needs_sib = (ptr_encoding == 0x04);
-
-			if (use_movzx) {
-				// MOVZX EAX, byte ptr [ptr_reg] - always loads into RAX
+			// Use emit helper function to generate dereference instruction
+			// This handles all sizes (8, 16, 32, 64-bit) and special cases (RBP/R13, RSP/R12)
+			if (value_size == 8) {
+				// For 8-bit, MOVZX always uses RAX as destination
 				value_reg = X64Register::RAX;
-				
-				// ModR/M byte: mod=00 (indirect), reg=RAX (0), r/m=ptr_reg
-				uint8_t modrm_byte = (0x00 << 6) | (0x00 << 3) | ptr_encoding;
-				
-				if (static_cast<uint8_t>(ptr_reg) >= 8) {
-					textSectionData.push_back(0x41); // REX with B bit for extended base register
-				}
-				textSectionData.push_back(0x0F);
-				textSectionData.push_back(0xB6);
-				textSectionData.push_back(modrm_byte);
-				if (needs_sib) {
-					textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
-				}
-			} else {
-				// Regular MOV ptr_reg, [ptr_reg]
-				// ModR/M byte: mod=00 (indirect, no disp), reg=ptr_reg, r/m=ptr_reg
-				uint8_t modrm_byte = (0x00 << 6) | (ptr_encoding << 3) | ptr_encoding;
-				
-				if (rex_prefix != 0x40 || static_cast<uint8_t>(ptr_reg) >= 8) {
-					textSectionData.push_back(rex_prefix);
-				}
-				textSectionData.push_back(opcode);
-				textSectionData.push_back(modrm_byte);
-				if (needs_sib) {
-					textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
-				}
 			}
+			
+			emitMovRegFromMemRegSized(value_reg, ptr_reg, value_size);
 
 			// Store the dereferenced value to result_var
 			int32_t result_offset = getStackOffsetFromTempVar(op.result);
@@ -14794,59 +14838,14 @@ private:
 		// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
 		X64Register value_reg = ptr_reg;
 
-		// Determine the correct MOV instruction based on size and build REX prefix
-		uint8_t rex_prefix = 0x40; // Base REX prefix
-		uint8_t opcode = 0x8B;     // MOV r64, r/m64
-		
-		// Check if we need REX.W (64-bit operand size)
-		if (value_size == 64) {
-			rex_prefix |= 0x08; // Set W bit for 64-bit operand
-		} else if (value_size == 32) {
-			// 32-bit uses base REX (no W bit)
-		}
-		
-		// Check if destination register (same as source) is R8-R15
-		if (static_cast<uint8_t>(ptr_reg) >= 8) {
-			rex_prefix |= 0x05; // Set both R and B bits (destination and base)
-		}
-		
-		// For 8-bit, we'll use MOVZX which has different encoding
-		bool use_movzx = (value_size == 8);
-		
-		// Handle special case: RSP/R12 requires SIB byte
-		uint8_t ptr_encoding = static_cast<uint8_t>(ptr_reg) & 0x07;
-		bool needs_sib = (ptr_encoding == 0x04);
-
-		if (use_movzx) {
-			// MOVZX EAX, byte ptr [ptr_reg] - always loads into RAX
+		// Use emit helper function to generate dereference instruction
+		// This handles all sizes (8, 16, 32, 64-bit) and special cases (RBP/R13, RSP/R12)
+		if (value_size == 8) {
+			// For 8-bit, MOVZX always uses RAX as destination
 			value_reg = X64Register::RAX;
-			
-			// ModR/M byte: mod=00 (indirect), reg=RAX (0), r/m=ptr_reg
-			uint8_t modrm_byte = (0x00 << 6) | (0x00 << 3) | ptr_encoding;
-			
-			if (static_cast<uint8_t>(ptr_reg) >= 8) {
-				textSectionData.push_back(0x41); // REX with B bit for extended base register
-			}
-			textSectionData.push_back(0x0F);
-			textSectionData.push_back(0xB6);
-			textSectionData.push_back(modrm_byte);
-			if (needs_sib) {
-				textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
-			}
-		} else {
-			// Regular MOV ptr_reg, [ptr_reg]
-			// ModR/M byte: mod=00 (indirect, no disp), reg=ptr_reg, r/m=ptr_reg
-			uint8_t modrm_byte = (0x00 << 6) | (ptr_encoding << 3) | ptr_encoding;
-			
-			if (rex_prefix != 0x40 || static_cast<uint8_t>(ptr_reg) >= 8) {
-				textSectionData.push_back(rex_prefix);
-			}
-			textSectionData.push_back(opcode);
-			textSectionData.push_back(modrm_byte);
-			if (needs_sib) {
-				textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
-			}
 		}
+		
+		emitMovRegFromMemRegSized(value_reg, ptr_reg, value_size);
 
 		// Store the dereferenced value to result_var
 		auto result_var = instruction.getOperandAs<TempVar>(0);
@@ -15903,7 +15902,7 @@ private:
 		
 		// Get base_class_descriptor pointer: [R11 + RSI*8]
 		emitLeaRegScaledIndex(X64Register::RDI, X64Register::R11, X64Register::RSI, 8, 0);
-		emitMovRegFromMemReg(X64Register::RDI, X64Register::RDI);  // MOV RDI, [RDI] (load BCD pointer)
+		emitMovRegFromMemRegSized(X64Register::RDI, X64Register::RDI, 64);  // MOV RDI, [RDI] (load BCD pointer)
 		
 		// Null check on BCD
 		emitTestRegReg(X64Register::RDI);  // TEST RDI, RDI
@@ -15911,7 +15910,7 @@ private:
 		emitJumpIfZero(0);  // JZ -> loop_continue (will patch offset to skip this iteration)
 		
 		// Get type descriptor from BCD (at offset 0)
-		emitMovRegFromMemReg(X64Register::RAX, X64Register::RDI);  // MOV RAX, [RDI] (base type_desc)
+		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RDI, 64);  // MOV RAX, [RDI] (base type_desc)
 		
 		// Compare with target type descriptor: if (base_type_desc == target_type_desc) return true
 		emitCmpRegReg(X64Register::RAX, X64Register::R9);  // CMP RAX, R9 (target type_desc)
