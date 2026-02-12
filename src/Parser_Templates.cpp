@@ -3998,7 +3998,11 @@ if (struct_type_info.getStructInfo()) {
 			if (!non_type_args.empty()) {
 				func_node.set_non_type_template_args(std::move(non_type_args));
 			}
-			
+
+			// Skip trailing specifiers (const, volatile, noexcept, throw(), __attribute__, etc.)
+			FlashCpp::MemberQualifiers spec_quals;
+			skip_function_trailing_specifiers(spec_quals);
+
 			// Parse the function body, or accept forward declaration (;)
 			// C++ allows full specialization declarations without a body:
 			//   template<> void foo<int>(int);
