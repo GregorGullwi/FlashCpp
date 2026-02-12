@@ -3865,6 +3865,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			size_t enumerator_count = 0;
 			const size_t MAX_ENUMERATORS = 10000; // Safety limit
 			
+			// Store enum info early so ConstExprEvaluator can look up values during parsing
+			enum_type_info.setEnumInfo(std::move(enum_info));
+			auto* live_enum_info = enum_type_info.getEnumInfo();
+			
 			// For scoped enums, push a temporary scope so that enumerator names
 			// are visible to subsequent value expressions (C++ §9.7.1/2)
 			if (is_scoped) {
@@ -3920,9 +3924,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				enum_ref.add_enumerator(enumerator_node);
 				// Phase 7B: Intern enumerator name and use StringHandle overload
 				StringHandle enumerator_name_handle = enumerator_name_token.handle();
-				enum_info->addEnumerator(enumerator_name_handle, value);
+				live_enum_info->addEnumerator(enumerator_name_handle, value);
 				
-				// Add enumerator to current scope so subsequent enumerators can reference it
+				// Add enumerator to current scope as DeclarationNode so codegen and
+				// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 				{
 					auto enum_type_node = emplace_node<TypeSpecifierNode>(
 						Type::Enum, enum_type_index, underlying_size, enumerator_name_token);
@@ -3957,8 +3962,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				return ParseResult::error("Expected '}' after enum enumerators", peek_info());
 			}
 			
-			// Store enum info
-			enum_type_info.setEnumInfo(std::move(enum_info));
+			// enum_info was already stored in gTypeInfo before the loop
 			
 			// Parse the typedef alias name
 			auto alias_token = advance();
@@ -7526,6 +7530,10 @@ ParseResult Parser::parse_enum_declaration()
 	enum_info->underlying_type = underlying_type;
 	enum_info->underlying_size = underlying_size;
 
+	// Store enum info early so ConstExprEvaluator can look up values during parsing
+	enum_type_info.setEnumInfo(std::move(enum_info));
+	auto* live_enum_info = enum_type_info.getEnumInfo();
+
 	// Parse enumerators
 	long long next_value = 0;
 	// For scoped enums, push a temporary scope so that enumerator names
@@ -7592,9 +7600,10 @@ ParseResult Parser::parse_enum_declaration()
 		// Add enumerator to enum type info
 		// Phase 7B: Intern enumerator name and use StringHandle overload
 		StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name);
-		enum_info->addEnumerator(enumerator_name_handle, value);
+		live_enum_info->addEnumerator(enumerator_name_handle, value);
 
-		// Add enumerator to current scope so subsequent enumerators can reference it
+		// Add enumerator to current scope as DeclarationNode so codegen and
+		// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 		{
 			auto enum_type_node = emplace_node<TypeSpecifierNode>(
 				Type::Enum, enum_type_info.type_index_, underlying_size, enumerator_name_token);
@@ -7632,8 +7641,7 @@ ParseResult Parser::parse_enum_declaration()
 	// Optional semicolon
 	consume(";"_tok);
 
-	// Store enum info in type info
-	enum_type_info.setEnumInfo(std::move(enum_info));
+	// enum_info was already stored in gTypeInfo before the loop
 
 	return saved_position.success(enum_node);
 }
@@ -8249,6 +8257,11 @@ ParseResult Parser::parse_typedef_declaration()
 			underlying_size = type_spec_node.size_in_bits();
 		}
 
+		// Store enum info early so ConstExprEvaluator can look up values during parsing
+		auto& enum_type_info_ref = gTypeInfo[enum_type_index];
+		enum_type_info_ref.setEnumInfo(std::move(enum_info));
+		auto* live_enum_info = enum_type_info_ref.getEnumInfo();
+
 		// Parse enumerators
 		int64_t next_value = 0;
 		// For scoped enums, push a temporary scope so that enumerator names
@@ -8313,9 +8326,10 @@ ParseResult Parser::parse_typedef_declaration()
 			enum_ref.add_enumerator(enumerator_node);
 			// Phase 7B: Intern enumerator name and use StringHandle overload
 			StringHandle enumerator_name_handle = enumerator_name_token.handle();
-			enum_info->addEnumerator(enumerator_name_handle, value);
+			live_enum_info->addEnumerator(enumerator_name_handle, value);
 
-			// Add enumerator to current scope so subsequent enumerators can reference it
+			// Add enumerator to current scope as DeclarationNode so codegen and
+			// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 			{
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
 					Type::Enum, enum_type_index, underlying_size, enumerator_name_token);
@@ -8347,8 +8361,7 @@ ParseResult Parser::parse_typedef_declaration()
 			return ParseResult::error("Expected '}' after enum enumerators", peek_info());
 		}
 
-		// Store enum info in type info
-		enum_type_info.setEnumInfo(std::move(enum_info));
+		// enum_info was already stored in gTypeInfo before the loop
 
 		// Add enum declaration to AST
 		gSymbolTable.insert(enum_name_for_typedef, enum_node);
