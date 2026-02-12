@@ -3473,6 +3473,55 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					// No parameter list follows - restore position
 					restore_token_position(func_type_saved_pos);
 				}
+			} else if (!is_function_ref && !is_rvalue_function_ref && !is_function_ptr) {
+				// Could be a bare function type: ReturnType(Args...)
+				// e.g., using type = _Res(_Args...);
+				// The '(' was already consumed, we're looking at the first parameter type or ')'
+				std::vector<Type> param_types;
+				bool parsed_bare_function_type = false;
+				
+				while (!peek().is_eof() && peek() != ")"_tok) {
+					auto param_type_result = parse_type_specifier();
+					if (param_type_result.is_error() || !param_type_result.node().has_value()) {
+						break;
+					}
+					TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+					
+					// Handle pointer/reference/cv-qualifier modifiers after type
+					consume_pointer_ref_modifiers(param_type);
+					
+					// Handle pack expansion '...' (e.g., _Args...)
+					if (peek() == "..."_tok) {
+						advance(); // consume '...'
+						param_type.set_pack_expansion(true);
+					}
+					
+					param_types.push_back(param_type.type());
+					
+					if (peek() == ","_tok) {
+						advance(); // consume ','
+					} else {
+						break;
+					}
+				}
+				
+				if (peek() == ")"_tok) {
+					advance(); // consume ')'
+					parsed_bare_function_type = true;
+					
+					FunctionSignature func_sig;
+					func_sig.return_type = type_spec.type();
+					func_sig.parameter_types = std::move(param_types);
+					type_spec.set_function_signature(func_sig);
+					
+					FLASH_LOG(Parser, Debug, "Parsed bare function type in type alias");
+					
+					discard_saved_token(func_type_saved_pos);
+				}
+				
+				if (!parsed_bare_function_type) {
+					restore_token_position(func_type_saved_pos);
+				}
 			} else {
 				// Not a function type syntax - restore position
 				restore_token_position(func_type_saved_pos);
@@ -4715,6 +4764,12 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Parse members
 	while (!peek().is_eof() && peek() != "}"_tok) {
+		// Skip empty declarations (bare ';' tokens) - valid in C++
+		if (peek() == ";"_tok) {
+			advance();
+			continue;
+		}
+		
 		// Skip C++ attributes like [[nodiscard]], [[maybe_unused]], etc.
 		// These can appear on member declarations, conversion operators, etc.
 		skip_cpp_attributes();
@@ -5921,7 +5976,7 @@ ParseResult Parser::parse_struct_declaration()
 			if (member_result.is_error()) {
 				// In template body, recover from member parse errors by skipping to next ';' or '}'
 				if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
-					FLASH_LOG(Parser, Warning, "Template struct body: skipping unparseable member declaration at ", peek_info().value());
+					FLASH_LOG(Parser, Warning, "Template struct body (", StringTable::getStringView(struct_name), "): skipping unparseable member declaration at ", peek_info().value(), " line=", peek_info().line());
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						if (peek() == ";"_tok) {
 							advance(); // consume ';'
