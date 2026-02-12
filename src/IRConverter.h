@@ -9436,6 +9436,7 @@ private:
 				StringHandle param_name_handle = instruction.getOperandAs<StringHandle>(paramIndex + FunctionDeclLayout::PARAM_NAME);
 				std::string_view param_name = StringTable::getStringView(param_name_handle);
 				variable_scopes.back().variables[param_name_handle].offset = offset;
+				variable_scopes.back().variables[param_name_handle].size_in_bits = param_size;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				// Also track pointer parameters (T*) since they also contain addresses that need dereferencing
@@ -9552,6 +9553,7 @@ private:
 
 				// Phase 4: Use helper to get param name for map key
 				variable_scopes.back().variables[param.getName()].offset = offset;
+				variable_scopes.back().variables[param.getName()].size_in_bits = param.size_in_bits;
 
 				// Track reference parameters and pointer parameters
 				// Both need pointer dereferencing when accessing their members
@@ -10365,9 +10367,18 @@ private:
 		// pop rbp (restore caller's base pointer)
 		textSectionData.push_back(0x5D);
 
-		// Track CFI: After pop rbp, CFA = RSP+8 (back to call site state)
-		// This CFI instruction describes the state AFTER pop rbp executes
+		// Track CFI: Wrap epilogue in remember/restore state to handle early returns.
+		// Without this, the POP_RBP CFI would affect subsequent code in the function
+		// (e.g., throw statements after an if-return), making the unwinder think the
+		// frame is gone when it's still active.
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Save CFI state before epilogue
+			current_function_cfi_.push_back({
+				ElfFileWriter::CFIInstruction::REMEMBER_STATE,
+				static_cast<uint32_t>(textSectionData.size() - current_function_offset_ - 4), // before mov rsp,rbp
+				0
+			});
+			// After pop rbp, CFA = RSP+8 (back to call site state)
 			current_function_cfi_.push_back({
 				ElfFileWriter::CFIInstruction::POP_RBP,
 				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
@@ -10377,6 +10388,15 @@ private:
 
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
+
+		// Track CFI: Restore state after ret so subsequent code has correct frame info
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			current_function_cfi_.push_back({
+				ElfFileWriter::CFIInstruction::RESTORE_STATE,
+				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
+				0
+			});
+		}
 
 		// NOTE: We do NOT pop variable_scopes here because there may be multiple
 		// return statements in a function (e.g., early returns in if statements).
