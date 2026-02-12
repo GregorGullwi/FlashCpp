@@ -8932,6 +8932,12 @@ ParseResult Parser::parse_do_while_loop() {
         return body_result;
     }
 
+    // For non-block body statements, consume the trailing semicolon
+    // (parse_block handles this internally, but single statements don't)
+    if (body_result.node().has_value() && !body_result.node()->is<BlockNode>()) {
+        consume(";"_tok);
+    }
+
     if (!consume("while"_tok)) {
         return ParseResult::error("Expected 'while' after do-while body", current_token_);
     }
@@ -10280,8 +10286,33 @@ ParseResult Parser::parse_template_brace_initialization(
 	auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
 	auto type_it = gTypesByName.find(type_handle);
 	if (type_it == gTypesByName.end()) {
-		// Type not found - instantiation may have failed
-		return ParseResult::error("Template instantiation failed or type not found", identifier_token);
+		// Type not found with provided args - try filling in default template arguments
+		auto template_lookup = gTemplateRegistry.lookupTemplate(template_name);
+		if (template_lookup.has_value() && template_lookup->is<TemplateClassDeclarationNode>()) {
+			const auto& template_class = template_lookup->as<TemplateClassDeclarationNode>();
+			const auto& template_params = template_class.template_parameters();
+			if (template_args.size() < template_params.size()) {
+				std::vector<TemplateTypeArg> filled_args = template_args;
+				for (size_t i = filled_args.size(); i < template_params.size(); ++i) {
+					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+					if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
+						const ASTNode& default_node = param.default_value();
+						if (default_node.is<TypeSpecifierNode>()) {
+							filled_args.push_back(TemplateTypeArg(default_node.as<TypeSpecifierNode>()));
+						}
+					}
+				}
+				if (filled_args.size() > template_args.size()) {
+					instantiated_name = get_instantiated_class_name(template_name, filled_args);
+					type_handle = StringTable::getOrInternStringHandle(instantiated_name);
+					type_it = gTypesByName.find(type_handle);
+				}
+			}
+		}
+		if (type_it == gTypesByName.end()) {
+			// Type not found - instantiation may have failed
+			return ParseResult::error("Template instantiation failed or type not found", identifier_token);
+		}
 	}
 	
 	// Determine which token checking method to use based on what token is '{'
