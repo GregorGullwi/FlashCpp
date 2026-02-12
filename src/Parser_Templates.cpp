@@ -1477,7 +1477,7 @@ ParseResult Parser::parse_template_declaration() {
 				nullptr  // local_struct_info - not needed during template instantiation
 			});
 
-			while (peek() != "}"_tok) {
+			while (!peek().is_eof() && peek() != "}"_tok) {
 				// Skip empty declarations (bare ';' tokens) - valid in C++
 				if (peek() == ";"_tok) {
 					advance();
@@ -2750,7 +2750,7 @@ ParseResult Parser::parse_template_declaration() {
 			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get(), {}});
 			
 			// Parse class body (same as full specialization)
-			while (peek() != "}"_tok) {
+			while (!peek().is_eof() && peek() != "}"_tok) {
 				// Skip empty declarations (bare ';' tokens) - valid in C++
 				if (peek() == ";"_tok) {
 					advance();
@@ -6212,7 +6212,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			parsing_template_body_ = saved_ptb_partial;
 		});
 		
-		while (peek() != "}"_tok) {
+		while (!peek().is_eof() && peek() != "}"_tok) {
 			// Skip empty declarations (bare ';' tokens) - valid in C++
 			if (peek() == ";"_tok) {
 				advance();
@@ -6556,7 +6556,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		parsing_template_body_ = saved_parsing_template_body;
 	});
 	
-	while (peek() != "}"_tok) {
+	while (!peek().is_eof() && peek() != "}"_tok) {
 		// Skip empty declarations (bare ';' tokens) - valid in C++
 		if (peek() == ";"_tok) {
 			advance();
