@@ -979,7 +979,8 @@
 			}
 			return processIncludeDirective("#include <" + filename + ">", current_file, include_line_number);
 		} else if (!found) {
-			FLASH_LOG(Lexer, Warning, "#include_next: file not found after current directory: ", filename);
+			FLASH_LOG(Lexer, Error, "#include_next: file not found after current directory: ", filename);
+			return false;
 		}
 		return true;
 	}
