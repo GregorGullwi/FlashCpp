@@ -1478,6 +1478,12 @@ ParseResult Parser::parse_template_declaration() {
 			});
 
 			while (peek() != "}"_tok) {
+				// Skip empty declarations (bare ';' tokens) - valid in C++
+				if (peek() == ";"_tok) {
+					advance();
+					continue;
+				}
+				
 				// Check for access specifiers
 				if (peek().is_keyword()) {
 					if (peek() == "public"_tok) {
@@ -2745,6 +2751,12 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Parse class body (same as full specialization)
 			while (peek() != "}"_tok) {
+				// Skip empty declarations (bare ';' tokens) - valid in C++
+				if (peek() == ";"_tok) {
+					advance();
+					continue;
+				}
+				
 				// Check for access specifiers
 				if (peek().is_keyword()) {
 					if (peek() == "public"_tok) {
@@ -6201,6 +6213,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		});
 		
 		while (peek() != "}"_tok) {
+			// Skip empty declarations (bare ';' tokens) - valid in C++
+			if (peek() == ";"_tok) {
+				advance();
+				continue;
+			}
+			
 			// Check for access specifiers
 			if (peek().is_keyword()) {
 				std::string_view keyword = peek_info().value();
@@ -6539,6 +6557,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	});
 	
 	while (peek() != "}"_tok) {
+		// Skip empty declarations (bare ';' tokens) - valid in C++
+		if (peek() == ";"_tok) {
+			advance();
+			continue;
+		}
+		
 		// Check for access specifiers
 		if (peek().is_keyword()) {
 			std::string_view keyword = peek_info().value();

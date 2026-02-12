@@ -4765,6 +4765,12 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Parse members
 	while (!peek().is_eof() && peek() != "}"_tok) {
+		// Skip empty declarations (bare ';' tokens) - valid in C++
+		if (peek() == ";"_tok) {
+			advance();
+			continue;
+		}
+		
 		// Skip C++ attributes like [[nodiscard]], [[maybe_unused]], etc.
 		// These can appear on member declarations, conversion operators, etc.
 		skip_cpp_attributes();
@@ -5971,7 +5977,7 @@ ParseResult Parser::parse_struct_declaration()
 			if (member_result.is_error()) {
 				// In template body, recover from member parse errors by skipping to next ';' or '}'
 				if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
-					FLASH_LOG(Parser, Warning, "Template struct body: skipping unparseable member declaration at ", peek_info().value());
+					FLASH_LOG(Parser, Warning, "Template struct body (", StringTable::getStringView(struct_name), "): skipping unparseable member declaration at ", peek_info().value(), " line=", peek_info().line());
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						if (peek() == ";"_tok) {
 							advance(); // consume ';'
