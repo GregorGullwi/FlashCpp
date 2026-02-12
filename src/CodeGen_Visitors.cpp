@@ -1885,9 +1885,8 @@ private:
 		return false;
 	}
 
-	// Handle compound assignment to lvalues (e.g., v.x += 5)
-	// Currently only supports Member kind (struct member access)
-	// Array subscript support can be added later if needed
+	// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] += 5)
+	// Supports Member kind (struct member access), Indirect kind (dereferenced pointers), and ArrayElement kind (array subscripts)
 	// This is similar to handleLValueAssignment but also performs the arithmetic operation
 	bool handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
 	                                     const std::vector<IrOperand>& rhs_operands,
@@ -2008,8 +2007,92 @@ private:
 			return true;
 		}
 		
+		// Handle ArrayElement kind for compound assignments (e.g., arr[i] += 5)
+		if (lv_info.kind == LValueInfo::Kind::ArrayElement) {
+			// Check if we have the index stored in metadata
+			if (!lv_info.array_index.has_value()) {
+				FLASH_LOG(Codegen, Debug, "     ArrayElement: No index in metadata for compound assignment");
+				return false;
+			}
+			
+			FLASH_LOG(Codegen, Debug, "     ArrayElement compound assignment: proceeding with unified handler");
+			
+			// Build TypedValue for index from metadata
+			IrValue index_value = lv_info.array_index.value();
+			TypedValue index_tv;
+			index_tv.value = index_value;
+			index_tv.type = Type::Int;  // Index type (typically int)
+			index_tv.size_in_bits = 32;  // Standard index size
+			
+			// Create ArrayAccessOp to load current value
+			ArrayAccessOp load_op;
+			load_op.result = current_value_temp;
+			load_op.element_type = std::get<Type>(lhs_operands[0]);
+			load_op.element_size_in_bits = std::get<int>(lhs_operands[1]);
+			load_op.array = lv_info.base;
+			load_op.index = index_tv;
+			load_op.member_offset = lv_info.offset;
+			load_op.is_pointer_to_array = lv_info.is_pointer_to_array;
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(load_op), token));
+			
+			// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
+			TempVar result_temp = var_counter.next();
+			
+			// Map compound assignment operator to the corresponding operation
+			static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
+				{"+=", IrOpcode::Add},
+				{"-=", IrOpcode::Subtract},
+				{"*=", IrOpcode::Multiply},
+				{"/=", IrOpcode::Divide},
+				{"%=", IrOpcode::Modulo},
+				{"&=", IrOpcode::BitwiseAnd},
+				{"|=", IrOpcode::BitwiseOr},
+				{"^=", IrOpcode::BitwiseXor},
+				{"<<=", IrOpcode::ShiftLeft},
+				{">>=", IrOpcode::ShiftRight}
+			};
+			
+			auto op_it = compound_op_map.find(op);
+			if (op_it == compound_op_map.end()) {
+				FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
+				return false;
+			}
+			IrOpcode operation_opcode = op_it->second;
+			
+			// Create the binary operation
+			BinaryOp bin_op;
+			bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
+			bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+			bin_op.lhs.value = current_value_temp;
+			bin_op.rhs = toTypedValue(rhs_operands);
+			bin_op.result = result_temp;
+			
+			ir_.addInstruction(IrInstruction(operation_opcode, std::move(bin_op), token));
+			
+			// Finally, store the result back to the array element
+			TypedValue result_tv;
+			result_tv.type = std::get<Type>(lhs_operands[0]);
+			result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+			result_tv.value = result_temp;
+			
+			// Emit the store using helper
+			emitArrayStore(
+				std::get<Type>(lhs_operands[0]),  // element_type
+				std::get<int>(lhs_operands[1]),   // element_size_bits
+				lv_info.base,                      // array
+				index_tv,                          // index
+				result_tv,                         // value (result of operation)
+				lv_info.offset,                    // member_offset
+				lv_info.is_pointer_to_array,       // is_pointer_to_array
+				token
+			);
+			
+			return true;
+		}
+		
 		if (lv_info.kind != LValueInfo::Kind::Member) {
-			FLASH_LOG(Codegen, Debug, "     Compound assignment only supports Member or Indirect kind for now, got: ", static_cast<int>(lv_info.kind));
+			FLASH_LOG(Codegen, Debug, "     Compound assignment only supports Member, Indirect, or ArrayElement kind, got: ", static_cast<int>(lv_info.kind));
 			return false;
 		}
 		
