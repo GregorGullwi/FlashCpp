@@ -18488,21 +18488,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	// Check for template arguments after class name: ClassName<T>, etc.
 	// This is optional - only present for template classes
+	// Uses skip_template_arguments() which correctly handles '>>' tokens
+	// for nested templates like hash<vector<bool, _Alloc>>
 	if (peek() == "<"_tok) {
-		// Parse template arguments (these should match the template parameters)
-		// For now, we'll just skip over them - we know they're template parameters
-		advance();  // consume '<'
-
-		// Skip template arguments until we find '>'
-		int angle_bracket_depth = 1;
-		while (angle_bracket_depth > 0 && !peek().is_eof()) {
-			if (peek() == "<"_tok) {
-				angle_bracket_depth++;
-			} else if (peek() == ">"_tok) {
-				angle_bracket_depth--;
-			}
-			advance();
-		}
+		skip_template_arguments();
 	}
 
 	// Check for '::'
