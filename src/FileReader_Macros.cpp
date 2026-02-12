@@ -936,7 +936,10 @@
 
 			// Check if the current file is in this include directory (or a subdirectory of it)
 			if (!found_current_dir && !current_dir_str.empty() &&
-			    current_dir_str.find(canonical_include_dir) == 0) {
+			    current_dir_str.find(canonical_include_dir) == 0 &&
+			    (current_dir_str.size() == canonical_include_dir.size() ||
+			     current_dir_str[canonical_include_dir.size()] == '/' ||
+			     current_dir_str[canonical_include_dir.size()] == '\\')) {
 				found_current_dir = true;
 				if (settings_.isVerboseMode()) {
 					FLASH_LOG(Lexer, Trace, "  Skipping include dir (contains current file): ", include_dir);
