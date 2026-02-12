@@ -3716,6 +3716,7 @@ private:
 				ObjectFileWriter::CatchHandlerInfo handler_info;
 				handler_info.type_index = static_cast<uint32_t>(handler.type_index);
 				handler_info.handler_offset = handler.handler_offset;
+				handler_info.handler_end_offset = handler.handler_end_offset;
 				handler_info.is_catch_all = handler.is_catch_all;
 				handler_info.is_const = handler.is_const;
 				handler_info.is_reference = handler.is_reference;
@@ -9235,6 +9236,7 @@ private:
 			next_temp_var_offset_ = 8;  // Reset TempVar allocation offset
 			current_function_try_blocks_.clear();  // Clear exception tracking for next function
 			current_try_block_ = nullptr;
+			current_catch_handler_ = nullptr;
 			current_function_local_objects_.clear();  // Clear local object tracking
 			current_function_unwind_map_.clear();  // Clear unwind map
 			current_exception_state_ = -1;  // Reset state counter
@@ -15659,6 +15661,7 @@ private:
 			
 			CatchHandler handler;
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			handler.handler_end_offset = 0;
 			
 			// Extract data from typed payload
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
@@ -15681,6 +15684,7 @@ private:
 			}
 			
 			try_block.catch_handlers.push_back(handler);
+			current_catch_handler_ = &try_block.catch_handlers.back();
 		}
 		
 		// Platform-specific landing pad code generation
@@ -15805,6 +15809,10 @@ private:
 		}
 		
 		// CatchEnd marks the end of a catch handler
+		if (current_catch_handler_) {
+			current_catch_handler_->handler_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			current_catch_handler_ = nullptr;
+		}
 		
 		// Platform-specific cleanup
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -16398,6 +16406,7 @@ private:
 			// Clear the current function state
 			current_function_name_ = StringHandle();
 			current_function_offset_ = 0;
+			current_catch_handler_ = nullptr;
 		}
 
 		writer.add_data(textSectionData, SectionType::TEXT);
@@ -16853,6 +16862,7 @@ private:
 		TypeIndex type_index;  // Type index for user-defined types
 		Type exception_type;   // Type enum for built-in types (Int, Double, etc.)
 		uint32_t handler_offset;  // Code offset of catch handler
+		uint32_t handler_end_offset;  // Code offset where catch handler ends
 		int32_t catch_obj_stack_offset;  // Pre-computed stack offset for exception object
 		bool is_catch_all;  // True for catch(...)
 		bool is_const;  // True if caught by const
@@ -16881,6 +16891,7 @@ private:
 
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
+	CatchHandler* current_catch_handler_ = nullptr;  // Currently active catch handler being processed
 	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF).
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors

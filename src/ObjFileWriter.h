@@ -1018,6 +1018,8 @@ public:
 		// Determine if this is SEH or C++ exception handling
 		bool is_seh = !seh_try_blocks.empty();
 		bool is_cpp = !try_blocks.empty();
+		uint32_t cpp_funcinfo_rva_for_funclets = 0;
+		bool has_cpp_funcinfo_for_funclets = false;
 
 		if (is_seh && is_cpp) {
 			FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
@@ -1258,6 +1260,8 @@ public:
 			[[maybe_unused]] uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
 			if (has_cpp_funcinfo_rva_field) {
 				uint32_t funcinfo_rva = xdata_offset + funcinfo_offset;
+				cpp_funcinfo_rva_for_funclets = funcinfo_rva;
+				has_cpp_funcinfo_for_funclets = true;
 				xdata[cpp_funcinfo_rva_field_offset + 0] = static_cast<char>(funcinfo_rva & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 1] = static_cast<char>((funcinfo_rva >> 8) & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 2] = static_cast<char>((funcinfo_rva >> 16) & 0xFF);
@@ -1721,6 +1725,84 @@ public:
 		// Add relocations for PDATA section
 		// These relocations are critical for the linker to resolve addresses correctly
 		add_pdata_relocations(pdata_offset, mangled_name, xdata_offset);
+
+		// Preliminary catch-funclet support for C++ EH:
+		// Emit dedicated minimal unwind records and pdata entries for each catch range.
+		if (is_cpp) {
+			for (const auto& tb : try_blocks) {
+				for (size_t i = 0; i < tb.catch_handlers.size(); ++i) {
+					const auto& handler = tb.catch_handlers[i];
+
+					uint32_t handler_start_rel = handler.handler_offset;
+					uint32_t handler_end_rel = handler.handler_end_offset;
+
+					if (handler_end_rel == 0) {
+						if (i + 1 < tb.catch_handlers.size()) {
+							handler_end_rel = tb.catch_handlers[i + 1].handler_offset;
+						} else {
+							handler_end_rel = function_size;
+						}
+					}
+
+					if (handler_end_rel <= handler_start_rel || handler_end_rel > function_size) {
+						continue;
+					}
+
+					// Catch funclet UNWIND_INFO.
+					// Use C++ EH handler flags and include the parent FuncInfo pointer so
+					// __CxxFrameHandler3 can process catch-state transitions for funclets.
+					std::vector<char> catch_xdata;
+					if (has_cpp_funcinfo_for_funclets) {
+						catch_xdata = {
+							static_cast<char>(0x01 | (0x03 << 3)), // Version=1, EHANDLER|UHANDLER
+							static_cast<char>(0x00),
+							static_cast<char>(0x00),
+							static_cast<char>(0x00),
+							static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), // handler RVA
+							static_cast<char>(cpp_funcinfo_rva_for_funclets & 0xFF),
+							static_cast<char>((cpp_funcinfo_rva_for_funclets >> 8) & 0xFF),
+							static_cast<char>((cpp_funcinfo_rva_for_funclets >> 16) & 0xFF),
+							static_cast<char>((cpp_funcinfo_rva_for_funclets >> 24) & 0xFF)
+						};
+					} else {
+						catch_xdata = {
+							static_cast<char>(0x01),
+							static_cast<char>(0x00),
+							static_cast<char>(0x00),
+							static_cast<char>(0x00)
+						};
+					}
+
+					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+					uint32_t catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
+					add_data(catch_xdata, SectionType::XDATA);
+					if (has_cpp_funcinfo_for_funclets) {
+						add_xdata_relocation(catch_xdata_offset + 4, "__CxxFrameHandler3");
+
+						auto* xdata_symbol = coffi_.get_symbol(".xdata");
+						auto xdata_sec_for_reloc = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+						if (xdata_symbol) {
+							COFFI::rel_entry_generic reloc_funcinfo;
+							reloc_funcinfo.virtual_address = catch_xdata_offset + 8;
+							reloc_funcinfo.symbol_table_index = xdata_symbol->get_index();
+							reloc_funcinfo.type = IMAGE_REL_AMD64_ADDR32NB;
+							xdata_sec_for_reloc->add_relocation_entry(&reloc_funcinfo);
+						}
+					}
+
+					auto pdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
+					uint32_t catch_pdata_offset = static_cast<uint32_t>(pdata_section_curr->get_data_size());
+
+					std::vector<char> catch_pdata(12);
+					*reinterpret_cast<uint32_t*>(&catch_pdata[0]) = function_start + handler_start_rel;
+					*reinterpret_cast<uint32_t*>(&catch_pdata[4]) = function_start + handler_end_rel;
+					*reinterpret_cast<uint32_t*>(&catch_pdata[8]) = catch_xdata_offset;
+					add_data(catch_pdata, SectionType::PDATA);
+
+					add_pdata_relocations(catch_pdata_offset, mangled_name, catch_xdata_offset);
+				}
+			}
+		}
 	}
 
 	void finalize_debug_info() {
