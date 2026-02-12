@@ -1462,29 +1462,45 @@ private:
 		// Helper: check if two structs are the same class, including template instantiations.
 		// Template instantiations use a '$hash' suffix (e.g., basic_string_view$291eceb35e7234a9)
 		// that must be stripped for comparison with the base template.
+		// Template instantiation names may lack namespace prefix (e.g., "basic_string_view$hash"
+		// vs "std::basic_string_view"), so we compare the unqualified class name only when
+		// one name is a namespace-qualified version of the other.
 		auto isSameClassOrInstantiation = [](const StructTypeInfo* a, const StructTypeInfo* b) -> bool {
 			if (a == b) return true;
 			if (!a || !b) return false;
 			std::string_view name_a = StringTable::getStringView(a->getName());
 			std::string_view name_b = StringTable::getStringView(b->getName());
 			if (name_a == name_b) return true;
-			// Strip namespace prefix and '$hash' suffix for comparison
-			auto getBaseName = [](std::string_view name) -> std::string_view {
-				// Strip namespace (take after last '::')
-				auto ns_pos = name.rfind("::");
-				if (ns_pos != std::string_view::npos) {
-					name = name.substr(ns_pos + 2);
-				}
-				// Strip template hash suffix (after '$')
+			// Strip '$hash' suffix only
+			auto stripHash = [](std::string_view name) -> std::string_view {
 				auto dollar_pos = name.find('$');
 				if (dollar_pos != std::string_view::npos) {
 					name = name.substr(0, dollar_pos);
 				}
 				return name;
 			};
-			std::string_view base_a = getBaseName(name_a);
-			std::string_view base_b = getBaseName(name_b);
-			return !base_a.empty() && base_a == base_b;
+			std::string_view base_a = stripHash(name_a);
+			std::string_view base_b = stripHash(name_b);
+			if (base_a.empty() || base_b.empty()) return false;
+			if (base_a == base_b) return true;
+			// Handle asymmetric namespace qualification:
+			// "basic_string_view" should match "std::basic_string_view" but
+			// "ns1::Foo" should NOT match "ns2::Foo"
+			// Check if the shorter name matches the unqualified part of the longer name
+			auto getUnqualified = [](std::string_view name) -> std::string_view {
+				auto ns_pos = name.rfind("::");
+				if (ns_pos != std::string_view::npos) {
+					return name.substr(ns_pos + 2);
+				}
+				return name;
+			};
+			// Only allow match when one has no namespace and the other does
+			bool a_has_ns = base_a.find("::") != std::string_view::npos;
+			bool b_has_ns = base_b.find("::") != std::string_view::npos;
+			if (a_has_ns == b_has_ns) return false; // both qualified or both unqualified - already compared
+			std::string_view unqual_a = getUnqualified(base_a);
+			std::string_view unqual_b = getUnqualified(base_b);
+			return unqual_a == unqual_b;
 		};
 
 		// Private members are only accessible from:

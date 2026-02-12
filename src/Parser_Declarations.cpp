@@ -3999,7 +3999,6 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						return ParseResult::error("Expected ';' after typedef", current_token_);
 					}
 
-					auto typedef_node = emplace_node<TypedefDeclarationNode>(type_node, fnptr_name_token);
 					return ParseResult::success();
 				}
 			}
@@ -9019,10 +9018,14 @@ ParseResult Parser::parse_friend_declaration()
 		}
 
 		// Handle qualified names: friend class locale::_Impl;
+		// Build full qualified name for proper friend resolution
+		std::string qualified_friend_name(class_name_token.value());
 		while (peek() == "::"_tok) {
 			advance(); // consume '::'
 			if (peek().is_identifier()) {
+				qualified_friend_name += "::";
 				class_name_token = advance();
+				qualified_friend_name += class_name_token.value();
 			} else {
 				break;
 			}
@@ -9038,7 +9041,8 @@ ParseResult Parser::parse_friend_declaration()
 			return ParseResult::error("Expected ';' after friend class declaration", current_token_);
 		}
 
-		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, class_name_token.handle());
+		auto friend_name_handle = StringTable::getOrInternStringHandle(qualified_friend_name);
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name_handle);
 		return saved_position.success(friend_node);
 	}
 
