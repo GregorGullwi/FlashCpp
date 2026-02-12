@@ -11928,11 +11928,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Fall back to primary template params if pattern params not found
 		if (pattern_template_params.empty()) {
-			auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-				const TemplateClassDeclarationNode& primary_template = template_opt->as<TemplateClassDeclarationNode>();
-				pattern_template_params = std::vector<ASTNode>(primary_template.template_parameters().begin(),
-				                                               primary_template.template_parameters().end());
+			// Check ALL template overloads to find one with named parameters
+			// Forward declarations like `template<typename...> class tuple;` register with
+			// anonymous names (e.g., __anon_type_64), while definitions have real names (e.g., _Elements).
+			// Prefer the definition's parameters for correct sizeof...() resolution.
+			const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(template_name);
+			if (all_tmpls) {
+				const TemplateClassDeclarationNode* best = nullptr;
+				for (const auto& tmpl_node : *all_tmpls) {
+					if (tmpl_node.is<TemplateClassDeclarationNode>()) {
+						const auto& tmpl_class = tmpl_node.as<TemplateClassDeclarationNode>();
+						if (!best) {
+							best = &tmpl_class;
+						} else {
+							// Prefer template with named parameters (not __anon_type_)
+							bool current_has_anon = false;
+							bool best_has_anon = false;
+							for (const auto& param : tmpl_class.template_parameters()) {
+								if (param.is<TemplateParameterNode>() && param.as<TemplateParameterNode>().name().starts_with("__anon_type_"))
+									current_has_anon = true;
+							}
+							for (const auto& param : best->template_parameters()) {
+								if (param.is<TemplateParameterNode>() && param.as<TemplateParameterNode>().name().starts_with("__anon_type_"))
+									best_has_anon = true;
+							}
+							if (best_has_anon && !current_has_anon)
+								best = &tmpl_class;
+						}
+					}
+				}
+				if (best) {
+					pattern_template_params = std::vector<ASTNode>(best->template_parameters().begin(),
+					                                               best->template_parameters().end());
+				}
 			}
 		}
 		const std::vector<ASTNode>& template_params = pattern_template_params;
@@ -17467,10 +17495,27 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
+	// Push class template pack info so sizeof...() from the enclosing class template
+	// can be resolved during member function template body parsing.
+	// E.g., sizeof...(_Elements) inside a member function template of tuple<int, float>.
+	ClassTemplatePackGuard member_pack_guard(class_template_pack_stack_);
+	{
+		auto pack_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(struct_name));
+		if (pack_it != class_template_pack_registry_.end()) {
+			member_pack_guard.push(pack_it->second);
+		}
+	}
+
 	// Parse the function body
 	auto block_result = parse_block();
 	if (!block_result.is_error() && block_result.node().has_value()) {
-		new_func_ref.set_definition(*block_result.node());
+		// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
+		ASTNode substituted_body = substituteTemplateParameters(
+			*block_result.node(),
+			template_params,
+			template_args
+		);
+		new_func_ref.set_definition(substituted_body);
 	}
 
 	// Clean up context
@@ -19261,13 +19306,17 @@ ASTNode Parser::substituteTemplateParameters(
 				// The pack_name is the function parameter name (e.g., "rest")
 				// We need to find the corresponding variadic template parameter (e.g., "Rest")
 				// The mapping: function param type uses the template param name
+				// IMPORTANT: Only match the variadic parameter whose name matches pack_name.
+				// Without this check, a member function template with its own variadic params
+				// (e.g., Args...) would incorrectly match when sizeof... asks about the class
+				// template's pack (e.g., Elements...).
 				size_t non_variadic_count = 0;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (template_params[i].is<TemplateParameterNode>()) {
 						const auto& tparam = template_params[i].as<TemplateParameterNode>();
-						if (tparam.is_variadic()) {
+						if (tparam.is_variadic() && tparam.name() == pack_name) {
 							found_variadic = true;
-						} else {
+						} else if (!tparam.is_variadic()) {
 							non_variadic_count++;
 						}
 					}
@@ -19345,15 +19394,25 @@ ASTNode Parser::substituteTemplateParameters(
 						names_to_try[num_names++] = ns_builder.preview();
 						
 						for (size_t ni = 0; ni < num_names && !is_known_template_param; ++ni) {
-							auto tmpl_opt = gTemplateRegistry.lookupTemplate(names_to_try[ni]);
-							if (tmpl_opt.has_value() && tmpl_opt->is<TemplateClassDeclarationNode>()) {
-								const auto& tmpl_class = tmpl_opt->as<TemplateClassDeclarationNode>();
-								for (const auto& param : tmpl_class.template_parameters()) {
-									if (param.is<TemplateParameterNode>()) {
-										const auto& tparam = param.as<TemplateParameterNode>();
-										if (tparam.is_variadic() && tparam.name() == pack_name) {
-											is_known_template_param = true;
-											break;
+							// Check ALL overloads, not just the first one
+							const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(names_to_try[ni]);
+							if (all_tmpls) {
+								for (const auto& tmpl_node : *all_tmpls) {
+									if (is_known_template_param) break;
+									if (tmpl_node.is<TemplateClassDeclarationNode>()) {
+										const auto& tmpl_class = tmpl_node.as<TemplateClassDeclarationNode>();
+										for (const auto& param : tmpl_class.template_parameters()) {
+											if (param.is<TemplateParameterNode>()) {
+												const auto& tparam = param.as<TemplateParameterNode>();
+												if (tparam.is_variadic()) {
+													// Match by name, or match if the stored name is anonymous
+													// (from forward declarations like `template<typename...> class tuple;`)
+													if (tparam.name() == pack_name || tparam.name().starts_with("__anon_type_")) {
+														is_known_template_param = true;
+														break;
+													}
+												}
+											}
 										}
 									}
 								}

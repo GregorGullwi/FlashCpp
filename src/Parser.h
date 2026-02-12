@@ -508,6 +508,12 @@ private:
                 }
             }
             // Also check struct_parsing_context_stack_ (for bodies parsed during class instantiation)
+            // Note: struct_parsing_context_stack_ entries pushed during template instantiation
+            // use the instantiated name (e.g., "tuple$hash"), so the direct lookup here
+            // matches the registry key exactly.
+            // Two passes: first try exact pack_name match across all entries, then fall back
+            // to anonymous pack matching. This prevents an unrelated intermediate class template
+            // with an anonymous pack from short-circuiting before the correct entry is reached.
             for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
                 auto reg_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(it->struct_name));
                 if (reg_it != class_template_pack_registry_.end()) {
@@ -515,6 +521,16 @@ private:
                         if (info.pack_name == pack_name) {
                             return info.pack_size;
                         }
+                    }
+                }
+            }
+            // Second pass: handle anonymous pack names from forward declarations.
+            // Only fall back if exactly one anonymous variadic pack exists in the entry.
+            for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
+                auto reg_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(it->struct_name));
+                if (reg_it != class_template_pack_registry_.end()) {
+                    if (reg_it->second.size() == 1 && reg_it->second[0].pack_name.starts_with("__anon_type_")) {
+                        return reg_it->second[0].pack_size;
                     }
                 }
             }
