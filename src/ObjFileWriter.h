@@ -1018,10 +1018,11 @@ public:
 		// Determine if this is SEH or C++ exception handling
 		bool is_seh = !seh_try_blocks.empty();
 		bool is_cpp = !try_blocks.empty();
-		uint32_t cpp_funcinfo_rva_for_funclets = 0;
-		bool has_cpp_funcinfo_for_funclets = false;
 		uint32_t cpp_funcinfo_local_offset = 0;
 		bool has_cpp_funcinfo_local_offset = false;
+		StringBuilder cppx_sym_sb;
+		cppx_sym_sb.append("$cppxdata$").append(mangled_name);
+		std::string cppx_sym_name(cppx_sym_sb.commit());
 
 		if (is_seh && is_cpp) {
 			FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
@@ -1264,12 +1265,42 @@ public:
 			has_cpp_funcinfo_local_offset = true;
 			if (has_cpp_funcinfo_rva_field) {
 				uint32_t funcinfo_rva = xdata_offset + funcinfo_offset;
-				cpp_funcinfo_rva_for_funclets = funcinfo_rva;
-				has_cpp_funcinfo_for_funclets = true;
 				xdata[cpp_funcinfo_rva_field_offset + 0] = static_cast<char>(funcinfo_rva & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 1] = static_cast<char>((funcinfo_rva >> 8) & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 2] = static_cast<char>((funcinfo_rva >> 16) & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 3] = static_cast<char>((funcinfo_rva >> 24) & 0xFF);
+			}
+
+			struct CatchStateBinding {
+				const CatchHandlerInfo* handler;
+				int32_t catch_state;
+			};
+
+			struct TryStateLayout {
+				int32_t try_low;
+				int32_t try_high;
+				int32_t catch_high;
+				std::vector<CatchStateBinding> catches;
+			};
+
+			std::vector<TryStateLayout> try_state_layout;
+			try_state_layout.reserve(try_blocks.size());
+
+			int32_t next_state = 0;
+			for (const auto& try_block : try_blocks) {
+				TryStateLayout layout;
+				layout.try_low = next_state++;
+				layout.try_high = layout.try_low;
+				layout.catch_high = layout.try_high;
+				layout.catches.reserve(try_block.catch_handlers.size());
+
+				for (const auto& handler : try_block.catch_handlers) {
+					int32_t catch_state = next_state++;
+					layout.catches.push_back(CatchStateBinding{&handler, catch_state});
+					layout.catch_high = catch_state;
+				}
+
+				try_state_layout.push_back(std::move(layout));
 			}
 			
 			// Magic number for modern FuncInfo used with __CxxFrameHandler3/__CxxFrameHandler4.
@@ -1279,9 +1310,8 @@ public:
 			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 24) & 0xFF));
 			
-			// maxState - maximum state number (accounts for tryLow, tryHigh, catchHigh per try block + unwind states)
-			// If we have an unwind map, max_state should be at least the size of the unwind map
-			uint32_t max_state = static_cast<uint32_t>(try_blocks.size() * 2);
+			// maxState - state count used by FH3 state machine.
+			uint32_t max_state = static_cast<uint32_t>(next_state);
 			if (!unwind_map.empty() && unwind_map.size() > max_state) {
 				max_state = static_cast<uint32_t>(unwind_map.size());
 			}
@@ -1408,23 +1438,24 @@ public:
 			
 			for (size_t i = 0; i < try_blocks.size(); ++i) {
 				const auto& try_block = try_blocks[i];
+				const auto& state_layout = try_state_layout[i];
 				
 				// tryLow (state when entering try block)
-				uint32_t try_low = static_cast<uint32_t>(i * 2);
+				uint32_t try_low = static_cast<uint32_t>(state_layout.try_low);
 				xdata.push_back(static_cast<char>(try_low & 0xFF));
 				xdata.push_back(static_cast<char>((try_low >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((try_low >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((try_low >> 24) & 0xFF));
 				
-				// tryHigh (for simple EH with no local destructor states, same as tryLow)
-				uint32_t try_high = try_low;
+				// tryHigh (inclusive state range for the try body)
+				uint32_t try_high = static_cast<uint32_t>(state_layout.try_high);
 				xdata.push_back(static_cast<char>(try_high & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 24) & 0xFF));
 				
-				// catchHigh (state after handling exception)
-				uint32_t catch_high = try_low + 1;
+				// catchHigh (highest state owned by this try + catch funclets)
+				uint32_t catch_high = static_cast<uint32_t>(state_layout.catch_high);
 				xdata.push_back(static_cast<char>(catch_high & 0xFF));
 				xdata.push_back(static_cast<char>((catch_high >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((catch_high >> 16) & 0xFF));
@@ -1523,7 +1554,7 @@ public:
 			}
 			
 			// Now generate HandlerType entries with proper pType references
-			auto ensure_catch_symbol = [this, function_start](std::string_view parent_mangled_name, uint32_t handler_offset, size_t handler_index) -> std::string {
+			auto ensure_catch_symbol = [this, function_start](std::string_view parent_mangled_name, uint32_t funclet_entry_offset, size_t handler_index) -> std::string {
 				StringBuilder sb;
 				sb.append("$catch$").append(parent_mangled_name).append("$").append(handler_index);
 				std::string catch_symbol_name(sb.commit());
@@ -1538,14 +1569,16 @@ public:
 				catch_symbol->set_type(0x20);  // function symbol
 				catch_symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
 				catch_symbol->set_section_number(text_section->get_index() + 1);
-				catch_symbol->set_value(function_start + handler_offset);
+				catch_symbol->set_value(function_start + funclet_entry_offset);
 
 				return catch_symbol_name;
 			};
 
 			size_t handler_index = 0;
-			for (const auto& try_block : try_blocks) {
-				for (const auto& handler : try_block.catch_handlers) {
+			for (size_t try_index = 0; try_index < try_blocks.size(); ++try_index) {
+				const auto& state_layout = try_state_layout[try_index];
+				for (const auto& catch_binding : state_layout.catches) {
+					const auto& handler = *catch_binding.handler;
 					// adjectives - MSVC exception handler flags
 					// 0x01 = const
 					// 0x08 = reference (lvalue reference &)
@@ -1596,7 +1629,8 @@ public:
 					
 					// addressOfHandler - RVA of catch handler entry.
 					// Use a dedicated catch symbol to mirror MSVC's handler map relocation style.
-					std::string catch_symbol_name = ensure_catch_symbol(mangled_name, handler.handler_offset, handler_index);
+					uint32_t funclet_entry_offset = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+					std::string catch_symbol_name = ensure_catch_symbol(mangled_name, funclet_entry_offset, handler_index);
 					uint32_t address_of_handler_field_offset = static_cast<uint32_t>(xdata.size());
 					xdata.push_back(0x00);
 					xdata.push_back(0x00);
@@ -1608,27 +1642,56 @@ public:
 				}
 			}
 
-			// Build a minimal IP-to-state map so __CxxFrameHandler3 can resolve active states.
+			// Build a funclet-aware IP-to-state map so __CxxFrameHandler3 can resolve
+			// active try states and active catch funclet states.
 			struct IpStateEntry {
 				uint32_t ip_rva;
 				int32_t state;
 			};
+
+			auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
+				return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+			};
+
+			auto resolve_funclet_end = [function_size, &resolve_funclet_start](
+				const CatchHandlerInfo& handler,
+				const CatchHandlerInfo* next_handler) -> uint32_t {
+				uint32_t start = resolve_funclet_start(handler);
+				uint32_t end = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
+				if (end == 0 && next_handler != nullptr) {
+					end = resolve_funclet_start(*next_handler);
+				}
+				if (end == 0 || end > function_size) {
+					end = function_size;
+				}
+				if (end <= start) {
+					return start;
+				}
+				return end;
+			};
+
 			std::vector<IpStateEntry> ip_to_state_entries;
-			ip_to_state_entries.reserve(try_blocks.size() * 3 + 1);
+			ip_to_state_entries.reserve(try_blocks.size() * 6 + 2);
 			ip_to_state_entries.push_back({function_start, -1});
 
 			for (size_t i = 0; i < try_blocks.size(); ++i) {
 				const auto& tb = try_blocks[i];
-				const int32_t try_low_state = static_cast<int32_t>(i * 2);
-				const int32_t catch_state = try_low_state + 1;
+				const auto& state_layout = try_state_layout[i];
+				const int32_t try_low_state = state_layout.try_low;
 
 				ip_to_state_entries.push_back({function_start + tb.try_start_offset, try_low_state});
 				ip_to_state_entries.push_back({function_start + tb.try_end_offset, -1});
 
-				for (const auto& handler : tb.catch_handlers) {
-					ip_to_state_entries.push_back({function_start + handler.handler_offset, catch_state});
-					if (handler.handler_end_offset > handler.handler_offset && handler.handler_end_offset <= function_size) {
-						ip_to_state_entries.push_back({function_start + handler.handler_end_offset, -1});
+				for (size_t j = 0; j < state_layout.catches.size(); ++j) {
+					const auto& binding = state_layout.catches[j];
+					const CatchHandlerInfo& handler = *binding.handler;
+					const CatchHandlerInfo* next_handler = (j + 1 < tb.catch_handlers.size()) ? &tb.catch_handlers[j + 1] : nullptr;
+
+					uint32_t funclet_start = resolve_funclet_start(handler);
+					uint32_t funclet_end = resolve_funclet_end(handler, next_handler);
+					if (funclet_start < function_size && funclet_end > funclet_start) {
+						ip_to_state_entries.push_back({function_start + funclet_start, binding.catch_state});
+						ip_to_state_entries.push_back({function_start + funclet_end, -1});
 					}
 				}
 			}
@@ -1686,10 +1749,6 @@ public:
 					xdata.begin() + static_cast<std::ptrdiff_t>(cpp_funcinfo_local_offset),
 					xdata.begin() + static_cast<std::ptrdiff_t>(cpp_funcinfo_local_offset + kFuncInfoSize));
 				add_data(cppxdata_blob, SectionType::RDATA);
-
-				StringBuilder cppx_sym_sb;
-				cppx_sym_sb.append("$cppxdata$").append(mangled_name);
-				std::string cppx_sym_name(cppx_sym_sb.commit());
 
 				auto* cppx_sym = coffi_.get_symbol(cppx_sym_name);
 				if (!cppx_sym) {
@@ -1769,9 +1828,7 @@ public:
 			add_xdata_relocation(xdata_offset + handler_rva_offset, "__CxxFrameHandler3");
 			FLASH_LOG(Codegen, Debug, "Added relocation to __CxxFrameHandler3 for C++");
 			if (has_cpp_funcinfo_rva_field) {
-				StringBuilder cppx_sym_sb;
-				cppx_sym_sb.append("$cppxdata$").append(mangled_name);
-				add_xdata_relocation(xdata_offset + cpp_funcinfo_rva_field_offset, cppx_sym_sb.commit());
+				add_xdata_relocation(xdata_offset + cpp_funcinfo_rva_field_offset, cppx_sym_name);
 			}
 
 			// Add IMAGE_REL_AMD64_ADDR32NB relocations for C++ EH metadata RVAs.
@@ -1817,69 +1874,57 @@ public:
 		// These relocations are critical for the linker to resolve addresses correctly
 		add_pdata_relocations(pdata_offset, mangled_name, xdata_offset);
 
-		// Preliminary catch-funclet support for C++ EH:
-		// Emit dedicated minimal unwind records and pdata entries for each catch range.
+		// Canonical catch funclet emission for C++ EH.
+		// Emit dedicated UNWIND_INFO + PDATA entries for each concrete catch funclet range.
 		if (is_cpp) {
+			auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
+				return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+			};
+
+			auto resolve_funclet_end = [function_size, &resolve_funclet_start](
+				const CatchHandlerInfo& handler,
+				const CatchHandlerInfo* next_handler) -> uint32_t {
+				uint32_t start = resolve_funclet_start(handler);
+				uint32_t end = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
+				if (end == 0 && next_handler != nullptr) {
+					end = resolve_funclet_start(*next_handler);
+				}
+				if (end == 0 || end > function_size) {
+					end = function_size;
+				}
+				if (end <= start) {
+					return start;
+				}
+				return end;
+			};
+
 			for (const auto& tb : try_blocks) {
 				for (size_t i = 0; i < tb.catch_handlers.size(); ++i) {
 					const auto& handler = tb.catch_handlers[i];
+					const CatchHandlerInfo* next_handler = (i + 1 < tb.catch_handlers.size()) ? &tb.catch_handlers[i + 1] : nullptr;
 
-					uint32_t handler_start_rel = handler.handler_offset;
-					uint32_t handler_end_rel = handler.handler_end_offset;
-
-					if (handler_end_rel == 0) {
-						if (i + 1 < tb.catch_handlers.size()) {
-							handler_end_rel = tb.catch_handlers[i + 1].handler_offset;
-						} else {
-							handler_end_rel = function_size;
-						}
-					}
+					uint32_t handler_start_rel = resolve_funclet_start(handler);
+					uint32_t handler_end_rel = resolve_funclet_end(handler, next_handler);
 
 					if (handler_end_rel <= handler_start_rel || handler_end_rel > function_size) {
 						continue;
 					}
 
-					// Catch funclet UNWIND_INFO.
-					// Use C++ EH handler flags and include the parent FuncInfo pointer so
-					// __CxxFrameHandler3 can process catch-state transitions for funclets.
-					std::vector<char> catch_xdata;
-					if (has_cpp_funcinfo_for_funclets) {
-						catch_xdata = {
-							static_cast<char>(0x01 | (0x03 << 3)), // Version=1, EHANDLER|UHANDLER
-							static_cast<char>(0x00),
-							static_cast<char>(0x00),
-							static_cast<char>(0x00),
-							static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), // handler RVA
-							static_cast<char>(cpp_funcinfo_rva_for_funclets & 0xFF),
-							static_cast<char>((cpp_funcinfo_rva_for_funclets >> 8) & 0xFF),
-							static_cast<char>((cpp_funcinfo_rva_for_funclets >> 16) & 0xFF),
-							static_cast<char>((cpp_funcinfo_rva_for_funclets >> 24) & 0xFF)
-						};
-					} else {
-						catch_xdata = {
-							static_cast<char>(0x01),
-							static_cast<char>(0x00),
-							static_cast<char>(0x00),
-							static_cast<char>(0x00)
-						};
-					}
+					// Catch funclet UNWIND_INFO uses FH3 and the same FuncInfo blob as the parent.
+					std::vector<char> catch_xdata = {
+						static_cast<char>(0x01 | (0x03 << 3)), // Version=1, EHANDLER|UHANDLER
+						static_cast<char>(0x00),
+						static_cast<char>(0x00),
+						static_cast<char>(0x00),
+						static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), // handler RVA
+						static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00)  // FuncInfo RVA
+					};
 
 					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 					uint32_t catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 					add_data(catch_xdata, SectionType::XDATA);
-					if (has_cpp_funcinfo_for_funclets) {
-						add_xdata_relocation(catch_xdata_offset + 4, "__CxxFrameHandler3");
-
-						auto* xdata_symbol = coffi_.get_symbol(".xdata");
-						auto xdata_sec_for_reloc = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-						if (xdata_symbol) {
-							COFFI::rel_entry_generic reloc_funcinfo;
-							reloc_funcinfo.virtual_address = catch_xdata_offset + 8;
-							reloc_funcinfo.symbol_table_index = xdata_symbol->get_index();
-							reloc_funcinfo.type = IMAGE_REL_AMD64_ADDR32NB;
-							xdata_sec_for_reloc->add_relocation_entry(&reloc_funcinfo);
-						}
-					}
+					add_xdata_relocation(catch_xdata_offset + 4, "__CxxFrameHandler3");
+					add_xdata_relocation(catch_xdata_offset + 8, cppx_sym_name);
 
 					auto pdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
 					uint32_t catch_pdata_offset = static_cast<uint32_t>(pdata_section_curr->get_data_size());

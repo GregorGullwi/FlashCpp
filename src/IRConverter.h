@@ -3717,6 +3717,8 @@ private:
 				handler_info.type_index = static_cast<uint32_t>(handler.type_index);
 				handler_info.handler_offset = handler.handler_offset;
 				handler_info.handler_end_offset = handler.handler_end_offset;
+				handler_info.funclet_entry_offset = handler.funclet_entry_offset;
+				handler_info.funclet_end_offset = handler.funclet_end_offset;
 				handler_info.is_catch_all = handler.is_catch_all;
 				handler_info.is_const = handler.is_const;
 				handler_info.is_reference = handler.is_reference;
@@ -15662,6 +15664,8 @@ private:
 			CatchHandler handler;
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			handler.handler_end_offset = 0;
+			handler.funclet_entry_offset = handler.handler_offset;
+			handler.funclet_end_offset = 0;
 			
 			// Extract data from typed payload
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
@@ -15863,6 +15867,7 @@ private:
 		// CatchEnd marks the end of a catch handler
 		if (current_catch_handler_) {
 			current_catch_handler_->handler_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			current_catch_handler_->funclet_end_offset = current_catch_handler_->handler_end_offset;
 			current_catch_handler_ = nullptr;
 		}
 		
@@ -16915,6 +16920,8 @@ private:
 		Type exception_type;   // Type enum for built-in types (Int, Double, etc.)
 		uint32_t handler_offset;  // Code offset of catch handler
 		uint32_t handler_end_offset;  // Code offset where catch handler ends
+		uint32_t funclet_entry_offset;  // Code offset of catch funclet entry
+		uint32_t funclet_end_offset;  // Code offset where catch funclet ends
 		int32_t catch_obj_stack_offset;  // Pre-computed stack offset for exception object
 		bool is_catch_all;  // True for catch(...)
 		bool is_const;  // True if caught by const
