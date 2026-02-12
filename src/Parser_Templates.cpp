@@ -3393,6 +3393,15 @@ ParseResult Parser::parse_template_declaration() {
 							if (init_result.node().has_value()) {
 								default_initializer = *init_result.node();
 							}
+						} else if (peek() == "{"_tok) {
+							// Brace-init default member initializer: _Tp _M_tp{};
+							auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (init_result.is_error()) {
+								return init_result;
+							}
+							if (init_result.node().has_value()) {
+								default_initializer = *init_result.node();
+							}
 						}
 						struct_ref.add_member(member_node, current_access, default_initializer);
 
@@ -3758,12 +3767,14 @@ if (struct_type_info.getStructInfo()) {
 						TypeSpecifierNode& param_type = guide_params.back().as<TypeSpecifierNode>();
 
 						// Handle array reference pattern: _Type(&)[_ArrayExtent] or _Type(&&)[_ArrayExtent]
+						// Also handle function pointer pattern: _Type(*)(Args...)
 						if (peek() == "("_tok) {
 							SaveHandle paren_pos = save_token_position();
 							advance(); // consume '('
 							
 							auto pre_ref_qualifiers = param_type.reference_qualifier();
 							auto pre_pointer_depth = param_type.pointer_depth();
+							bool is_func_ptr = (peek() == "*"_tok);
 							consume_pointer_ref_modifiers(param_type);
 							
 							// Optional identifier inside parens
@@ -3771,9 +3782,9 @@ if (struct_type_info.getStructInfo()) {
 								advance(); // skip name
 							}
 							
-							if (param_type.is_reference() && peek() == ")"_tok) {
+							if ((param_type.is_reference() || is_func_ptr) && peek() == ")"_tok) {
 								advance(); // consume ')'
-								if (peek() == "["_tok) {
+								if (param_type.is_reference() && peek() == "["_tok) {
 									advance(); // consume '['
 									// Skip array extent expression
 									while (!peek().is_eof() && peek() != "]"_tok) {
@@ -3784,6 +3795,32 @@ if (struct_type_info.getStructInfo()) {
 									}
 									param_type.set_array(true);
 									discard_saved_token(paren_pos);
+								} else if (is_func_ptr && peek() == "("_tok) {
+									// Function pointer parameter list: (*)(Args...)
+									advance(); // consume '('
+									while (!peek().is_eof() && peek() != ")"_tok) {
+										auto fp_param_result = parse_type_specifier();
+										if (fp_param_result.is_error()) break;
+										while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
+											   peek() == "const"_tok || peek() == "volatile"_tok) {
+											advance();
+										}
+										if (peek() == "..."_tok) advance();
+										if (peek() == ","_tok) { advance(); } else { break; }
+									}
+									if (peek() == ")"_tok) {
+										advance(); // consume ')'
+										// Handle noexcept on function pointer
+										if (peek() == "noexcept"_tok) {
+											advance();
+											if (peek() == "("_tok) skip_balanced_parens();
+										}
+										discard_saved_token(paren_pos);
+									} else {
+										param_type.limit_pointer_depth(pre_pointer_depth);
+										param_type.set_reference_qualifier(pre_ref_qualifiers);
+										restore_token_position(paren_pos);
+									}
 								} else {
 									param_type.limit_pointer_depth(pre_pointer_depth); // restore
 									param_type.set_reference_qualifier(pre_ref_qualifiers); // restore

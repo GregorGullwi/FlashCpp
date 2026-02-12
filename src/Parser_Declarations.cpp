@@ -3473,6 +3473,56 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					// No parameter list follows - restore position
 					restore_token_position(func_type_saved_pos);
 				}
+			} else if (!is_function_ref && !is_rvalue_function_ref && !is_function_ptr) {
+				// Could be a bare function type: ReturnType(Args...)
+				// e.g., using type = _Res(_Args...);
+				// The '(' was already consumed, we're looking at the first parameter type or ')'
+				std::vector<Type> param_types;
+				bool parsed_bare_function_type = false;
+				
+				while (!peek().is_eof() && peek() != ")"_tok) {
+					auto param_type_result = parse_type_specifier();
+					if (param_type_result.is_error() || !param_type_result.node().has_value()) {
+						break;
+					}
+					const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+					param_types.push_back(param_type.type());
+					
+					// Handle pointer/reference/cv-qualifier modifiers after type
+					while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
+						   peek() == "const"_tok || peek() == "volatile"_tok) {
+						advance();
+					}
+					
+					// Handle pack expansion '...' (e.g., _Args...)
+					if (peek() == "..."_tok) {
+						advance(); // consume '...'
+					}
+					
+					if (peek() == ","_tok) {
+						advance(); // consume ','
+					} else {
+						break;
+					}
+				}
+				
+				if (peek() == ")"_tok) {
+					advance(); // consume ')'
+					parsed_bare_function_type = true;
+					
+					FunctionSignature func_sig;
+					func_sig.return_type = type_spec.type();
+					func_sig.parameter_types = std::move(param_types);
+					type_spec.set_function_signature(func_sig);
+					
+					FLASH_LOG(Parser, Debug, "Parsed bare function type in type alias");
+					
+					discard_saved_token(func_type_saved_pos);
+				}
+				
+				if (!parsed_bare_function_type) {
+					restore_token_position(func_type_saved_pos);
+				}
 			} else {
 				// Not a function type syntax - restore position
 				restore_token_position(func_type_saved_pos);
