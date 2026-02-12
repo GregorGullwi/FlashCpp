@@ -5006,7 +5006,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::error("Expected '}' after brace initializer", current_token_);
 				}
 
-				unsigned char type_size = struct_info ? static_cast<unsigned char>(struct_info->total_size * 8) : 0;
+				int type_size = struct_info ? static_cast<int>(struct_info->total_size * 8) : 0;
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, final_identifier);
 				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
 				return ParseResult::success(*result);
