@@ -1600,8 +1600,8 @@
 
 								// Check if this is an abstract class (only for non-pointer types)
 								if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
-									FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
-									assert(false && "Cannot instantiate abstract class");
+									FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
+									throw std::runtime_error("Cannot instantiate abstract class");
 								}
 
 								const auto& initializers = init_list.initializers();
@@ -2357,8 +2357,8 @@
 				if (type_info.struct_info_) {
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
-						FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
-						assert(false && "Cannot instantiate abstract class");
+						FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
+						throw std::runtime_error("Cannot instantiate abstract class");
 					}
 
 					if (type_info.struct_info_->hasAnyConstructor() || type_info.struct_info_->needs_default_constructor) {
@@ -2636,11 +2636,11 @@
 									
 									// If found a converting constructor and it's explicit, emit error
 									if (converting_ctor && converting_ctor->is_explicit()) {
-										FLASH_LOG(Codegen, Error, "Cannot use copy initialization with explicit constructor for type '", 
+										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '", 
 											StringTable::getStringView(type_info.name()), "'");
-										FLASH_LOG(Codegen, Error, "  Use direct initialization: ", 
+										FLASH_LOG(General, Error, "  Use direct initialization: ", 
 											decl.identifier_token().value(), "(value) instead of = value");
-										assert(false && "Cannot use copy initialization with explicit constructor");
+										throw std::runtime_error("Cannot use copy initialization with explicit constructor");
 									}
 								}
 							}
