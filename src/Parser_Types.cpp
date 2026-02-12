@@ -223,7 +223,8 @@ ParseResult Parser::parse_type_specifier()
 		auto k = peek();
 		if (k == "constexpr"_tok || k == "consteval"_tok || k == "constinit"_tok ||
 		    k == "inline"_tok || k == "static"_tok || k == "extern"_tok ||
-		    k == "virtual"_tok || k == "explicit"_tok || k == "friend"_tok) {
+		    k == "virtual"_tok || k == "explicit"_tok || k == "friend"_tok ||
+		    k == "mutable"_tok) {
 			advance(); // skip the function specifier
 			// C++20 explicit(condition) - skip the condition expression
 			if (k == "explicit"_tok && peek() == "("_tok) {
