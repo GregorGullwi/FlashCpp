@@ -4824,52 +4824,6 @@ ParseResult Parser::parse_struct_declaration()
 				continue;
 			}
 
-			// Check for 'enum' keyword - nested enum
-			if (keyword == "enum") {
-				auto enum_result = parse_enum_declaration();
-				if (enum_result.is_error()) {
-					return enum_result;
-				}
-
-				// Add enum as a nested type
-				if (auto enum_node = enum_result.node()) {
-					struct_ref.add_nested_class(*enum_node);  // Enums are stored as nested types
-				}
-
-				continue;
-			}
-
-			// Check for 'friend' keyword
-			if (keyword == "friend") {
-				auto friend_result = parse_friend_declaration();
-				if (friend_result.is_error()) {
-					return friend_result;
-				}
-
-				// Add friend declaration to struct
-				if (auto friend_node = friend_result.node()) {
-					struct_ref.add_friend(*friend_node);
-
-					// Add to StructTypeInfo
-					const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
-					if (friend_decl.kind() == FriendKind::Class) {
-						StringHandle friend_class_name_handle = friend_decl.name();
-						struct_info->addFriendClass(friend_class_name_handle);
-					} else if (friend_decl.kind() == FriendKind::Function) {
-						StringHandle friend_func_name_handle = friend_decl.name();
-						struct_info->addFriendFunction(friend_func_name_handle);
-					} else if (friend_decl.kind() == FriendKind::MemberFunction) {
-						StringHandle friend_class_name_handle = friend_decl.class_name();
-						StringHandle friend_func_name_handle = friend_decl.name();
-						struct_info->addFriendMemberFunction(
-							friend_class_name_handle,
-							friend_func_name_handle);
-					}
-				}
-
-				continue;  // Skip to next member
-			}
-
 			// Check for 'using' keyword - type alias
 			if (keyword == "using") {
 				auto alias_result = parse_member_type_alias("using", &struct_ref, current_access);
@@ -4885,120 +4839,6 @@ ParseResult Parser::parse_struct_declaration()
 				if (alias_result.is_error()) {
 					return alias_result;
 				}
-				continue;
-			}
-
-			// Check for 'static' keyword - static member
-			if (keyword == "static") {
-				// For now, just parse and skip static members
-				// Full implementation would handle static data member initialization
-				advance(); // consume 'static'
-				
-				// Check if it's const or constexpr
-				bool is_const = false;
-				bool is_static_constexpr = false;
-				while (peek().is_keyword()) {
-					std::string_view kw = peek_info().value();
-					if (kw == "const") {
-						is_const = true;
-						advance();
-					} else if (kw == "constexpr") {
-						is_static_constexpr = true;
-						advance();
-					} else if (kw == "inline") {
-						advance(); // consume 'inline'
-					} else {
-						break;
-					}
-				}
-				
-				// Parse type and name
-				auto type_and_name_result = parse_type_and_name();
-				if (type_and_name_result.is_error()) {
-					return type_and_name_result;
-				}
-				
-				// Check if this is a static member function (has '(')
-				if (parse_static_member_function(type_and_name_result, is_static_constexpr,
-				                                   qualified_struct_name, struct_ref, struct_info.get(),
-				                                   current_access, current_template_param_names_)) {
-					// Function was handled (or error occurred)
-					if (type_and_name_result.is_error()) {
-						return type_and_name_result;
-					}
-					continue;
-				}
-				
-				// Check for initialization (static data member)
-				std::optional<ASTNode> init_expr_opt;
-				if (peek() == "="_tok) {
-					advance(); // consume '='
-					
-					// Push struct context so static member references can be resolved
-					// This enables expressions like `!is_signed` to find `is_signed` as a static member
-					size_t struct_type_index = 0;
-					auto type_it = gTypesByName.find(qualified_struct_name);
-					if (type_it != gTypesByName.end()) {
-						struct_type_index = type_it->second->type_index_;
-					}
-					member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
-					
-					// Parse the initializer expression
-					auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					
-					// Pop context after parsing
-					member_function_context_stack_.pop_back();
-					
-					if (init_result.is_error()) {
-						return init_result;
-					}
-					init_expr_opt = init_result.node();
-				} else if (peek() == "{"_tok) {
-					// Brace initialization: static constexpr int x{42};
-					advance(); // consume '{'
-					
-					auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (init_result.is_error()) {
-						return init_result;
-					}
-					init_expr_opt = init_result.node();
-					
-					if (!consume("}"_tok)) {
-						return ParseResult::error("Expected '}' after brace initializer", current_token_);
-					}
-				}
-
-				// Expect semicolon
-				if (!consume(";"_tok)) {
-					return ParseResult::error("Expected ';' after static member declaration", current_token_);
-				}
-
-				// Get the declaration and type specifier
-				if (!type_and_name_result.node().has_value()) {
-					return ParseResult::error("Expected static member declaration", current_token_);
-				}
-				const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
-				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-
-				// Register static member in struct info
-				// Calculate size and alignment for the static member
-				size_t static_member_size = get_type_size_bits(type_spec.type()) / 8;
-				size_t static_member_alignment = get_type_alignment(type_spec.type(), static_member_size);
-
-				// Add to struct's static members
-				// Phase 7B: Intern static member name and use StringHandle overload
-				StringHandle static_member_name_handle = decl.identifier_token().handle();
-				struct_info->addStaticMember(
-					static_member_name_handle,
-					type_spec.type(),
-					type_spec.type_index(),
-					static_member_size,
-					static_member_alignment,
-					current_access,
-					init_expr_opt,  // initializer
-					is_const
-				);
-
 				continue;
 			}
 
@@ -5520,7 +5360,151 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
+		// This also handles cases where specifiers precede 'static' or 'friend' in any order,
+		// e.g., "constexpr static int x = 42;" or "inline friend void foo() {}"
 		auto member_specs = parse_member_leading_specifiers();
+
+		// Check for 'friend' keyword - may appear after specifiers like constexpr/inline
+		if (peek() == "friend"_tok) {
+			auto friend_result = parse_friend_declaration();
+			if (friend_result.is_error()) {
+				return friend_result;
+			}
+
+			// Add friend declaration to struct
+			if (auto friend_node = friend_result.node()) {
+				struct_ref.add_friend(*friend_node);
+
+				// Add to StructTypeInfo
+				const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
+				if (friend_decl.kind() == FriendKind::Class) {
+					StringHandle friend_class_name_handle = friend_decl.name();
+					struct_info->addFriendClass(friend_class_name_handle);
+				} else if (friend_decl.kind() == FriendKind::Function) {
+					StringHandle friend_func_name_handle = friend_decl.name();
+					struct_info->addFriendFunction(friend_func_name_handle);
+				} else if (friend_decl.kind() == FriendKind::MemberFunction) {
+					StringHandle friend_class_name_handle = friend_decl.class_name();
+					StringHandle friend_func_name_handle = friend_decl.name();
+					struct_info->addFriendMemberFunction(
+						friend_class_name_handle,
+						friend_func_name_handle);
+				}
+			}
+
+			continue;  // Skip to next member
+		}
+
+		// Check for 'static' keyword - may appear after specifiers like constexpr/inline
+		if (peek() == "static"_tok) {
+			advance(); // consume 'static'
+			
+			// Check if it's const or constexpr (some may already be consumed by parse_member_leading_specifiers)
+			bool is_const = false;
+			bool is_static_constexpr = !!(member_specs & FlashCpp::MLS_Constexpr);
+			while (peek().is_keyword()) {
+				std::string_view kw = peek_info().value();
+				if (kw == "const") {
+					is_const = true;
+					advance();
+				} else if (kw == "constexpr") {
+					is_static_constexpr = true;
+					advance();
+				} else if (kw == "inline") {
+					advance(); // consume 'inline'
+				} else {
+					break;
+				}
+			}
+			
+			// Parse type and name
+			auto type_and_name_result = parse_type_and_name();
+			if (type_and_name_result.is_error()) {
+				return type_and_name_result;
+			}
+			
+			// Check if this is a static member function (has '(')
+			if (parse_static_member_function(type_and_name_result, is_static_constexpr,
+			                                   qualified_struct_name, struct_ref, struct_info.get(),
+			                                   current_access, current_template_param_names_)) {
+				// Function was handled (or error occurred)
+				if (type_and_name_result.is_error()) {
+					return type_and_name_result;
+				}
+				continue;
+			}
+			
+			// Check for initialization (static data member)
+			std::optional<ASTNode> init_expr_opt;
+			if (peek() == "="_tok) {
+				advance(); // consume '='
+				
+				// Push struct context so static member references can be resolved
+				// This enables expressions like `!is_signed` to find `is_signed` as a static member
+				size_t struct_type_index = 0;
+				auto type_it = gTypesByName.find(qualified_struct_name);
+				if (type_it != gTypesByName.end()) {
+					struct_type_index = type_it->second->type_index_;
+				}
+				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
+				
+				// Parse the initializer expression
+				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				
+				// Pop context after parsing
+				member_function_context_stack_.pop_back();
+				
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				init_expr_opt = init_result.node();
+			} else if (peek() == "{"_tok) {
+				// Brace initialization: static constexpr int x{42};
+				advance(); // consume '{'
+				
+				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				init_expr_opt = init_result.node();
+				
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after brace initializer", current_token_);
+				}
+			}
+
+			// Expect semicolon
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after static member declaration", current_token_);
+			}
+
+			// Get the declaration and type specifier
+			if (!type_and_name_result.node().has_value()) {
+				return ParseResult::error("Expected static member declaration", current_token_);
+			}
+			const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
+			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+			// Register static member in struct info
+			// Calculate size and alignment for the static member
+			size_t static_member_size = get_type_size_bits(type_spec.type()) / 8;
+			size_t static_member_alignment = get_type_alignment(type_spec.type(), static_member_size);
+
+			// Add to struct's static members
+			StringHandle static_member_name_handle = decl.identifier_token().handle();
+			struct_info->addStaticMember(
+				static_member_name_handle,
+				type_spec.type(),
+				type_spec.type_index(),
+				static_member_size,
+				static_member_alignment,
+				current_access,
+				init_expr_opt,  // initializer
+				is_const
+			);
+
+			continue;
+		}
 
 		// Check for constructor (identifier matching struct name followed by '(')
 		// Save position BEFORE checking to allow restoration if not a constructor

@@ -222,15 +222,16 @@ ParseResult Parser::parse_type_specifier()
 	// - parse_variable_declaration() stores StorageClass (static, extern, mutable) via DeclarationSpecifiers
 	// - parse_declaration_or_function_definition() stores constexpr/inline/extern via StorageSpecifiers
 	// - Struct member parsing stores MemberLeadingSpecifiers (constexpr, virtual, explicit, inline)
-	// This loop handles the case where parse_type_specifier() is called from contexts
-	// (e.g., template specialization, out-of-line definitions) that have already handled or
-	// don't need these specifiers — skipping them prevents parse errors on the type.
+	//   and handles static/friend after parse_member_leading_specifiers()
+	// This loop is a safety net for contexts (e.g., template specialization, out-of-line definitions,
+	// std library headers) where specifiers may appear but are not semantically relevant.
 	while (!peek().is_eof()) {
 		auto k = peek();
 		if (k == "constexpr"_tok || k == "consteval"_tok || k == "constinit"_tok ||
 		    k == "inline"_tok || k == "static"_tok || k == "extern"_tok ||
 		    k == "virtual"_tok || k == "explicit"_tok || k == "friend"_tok ||
 		    k == "mutable"_tok) {
+			FLASH_LOG(Parser, Debug, "parse_type_specifier: skipping declaration specifier '", peek_info().value(), "' — caller should have consumed this");
 			advance(); // skip the specifier (caller already stored it if needed)
 			// C++20 explicit(condition) - skip the condition expression
 			if (k == "explicit"_tok && peek() == "("_tok) {
