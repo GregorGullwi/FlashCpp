@@ -5661,7 +5661,6 @@ private:
 		}
 	}
 
-	// Helper to emit MOV reg, [reg]
 	// Helper to emit MOV reg, [reg + disp8]
 	void emitMovRegFromMemRegDisp8(X64Register dest, X64Register src_addr, int8_t disp) {
 		uint8_t rex = 0x48; // REX.W
@@ -14839,59 +14838,14 @@ private:
 		// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
 		X64Register value_reg = ptr_reg;
 
-		// Determine the correct MOV instruction based on size and build REX prefix
-		uint8_t rex_prefix = 0x40; // Base REX prefix
-		uint8_t opcode = 0x8B;     // MOV r64, r/m64
-		
-		// Check if we need REX.W (64-bit operand size)
-		if (value_size == 64) {
-			rex_prefix |= 0x08; // Set W bit for 64-bit operand
-		} else if (value_size == 32) {
-			// 32-bit uses base REX (no W bit)
-		}
-		
-		// Check if destination register (same as source) is R8-R15
-		if (static_cast<uint8_t>(ptr_reg) >= 8) {
-			rex_prefix |= 0x05; // Set both R and B bits (destination and base)
-		}
-		
-		// For 8-bit, we'll use MOVZX which has different encoding
-		bool use_movzx = (value_size == 8);
-		
-		// Handle special case: RSP/R12 requires SIB byte
-		uint8_t ptr_encoding = static_cast<uint8_t>(ptr_reg) & 0x07;
-		bool needs_sib = (ptr_encoding == 0x04);
-
-		if (use_movzx) {
-			// MOVZX EAX, byte ptr [ptr_reg] - always loads into RAX
+		// Use emit helper function to generate dereference instruction
+		// This handles all sizes (8, 16, 32, 64-bit) and special cases (RBP/R13, RSP/R12)
+		if (value_size == 8) {
+			// For 8-bit, MOVZX always uses RAX as destination
 			value_reg = X64Register::RAX;
-			
-			// ModR/M byte: mod=00 (indirect), reg=RAX (0), r/m=ptr_reg
-			uint8_t modrm_byte = (0x00 << 6) | (0x00 << 3) | ptr_encoding;
-			
-			if (static_cast<uint8_t>(ptr_reg) >= 8) {
-				textSectionData.push_back(0x41); // REX with B bit for extended base register
-			}
-			textSectionData.push_back(0x0F);
-			textSectionData.push_back(0xB6);
-			textSectionData.push_back(modrm_byte);
-			if (needs_sib) {
-				textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
-			}
-		} else {
-			// Regular MOV ptr_reg, [ptr_reg]
-			// ModR/M byte: mod=00 (indirect, no disp), reg=ptr_reg, r/m=ptr_reg
-			uint8_t modrm_byte = (0x00 << 6) | (ptr_encoding << 3) | ptr_encoding;
-			
-			if (rex_prefix != 0x40 || static_cast<uint8_t>(ptr_reg) >= 8) {
-				textSectionData.push_back(rex_prefix);
-			}
-			textSectionData.push_back(opcode);
-			textSectionData.push_back(modrm_byte);
-			if (needs_sib) {
-				textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
-			}
 		}
+		
+		emitMovRegFromMemRegSized(value_reg, ptr_reg, value_size);
 
 		// Store the dereferenced value to result_var
 		auto result_var = instruction.getOperandAs<TempVar>(0);
