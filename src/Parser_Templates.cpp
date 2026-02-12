@@ -19345,18 +19345,25 @@ ASTNode Parser::substituteTemplateParameters(
 						names_to_try[num_names++] = ns_builder.preview();
 						
 						for (size_t ni = 0; ni < num_names && !is_known_template_param; ++ni) {
+							FLASH_LOG(Parser, Error, "  trying template lookup: '", names_to_try[ni], "'");
 							auto tmpl_opt = gTemplateRegistry.lookupTemplate(names_to_try[ni]);
-							if (tmpl_opt.has_value() && tmpl_opt->is<TemplateClassDeclarationNode>()) {
-								const auto& tmpl_class = tmpl_opt->as<TemplateClassDeclarationNode>();
-								for (const auto& param : tmpl_class.template_parameters()) {
-									if (param.is<TemplateParameterNode>()) {
-										const auto& tparam = param.as<TemplateParameterNode>();
-										if (tparam.is_variadic() && tparam.name() == pack_name) {
-											is_known_template_param = true;
-											break;
+							if (tmpl_opt.has_value()) {
+								FLASH_LOG(Parser, Error, "  found template, is TemplateClassDeclarationNode=", tmpl_opt->is<TemplateClassDeclarationNode>());
+								if (tmpl_opt->is<TemplateClassDeclarationNode>()) {
+									const auto& tmpl_class = tmpl_opt->as<TemplateClassDeclarationNode>();
+									for (const auto& param : tmpl_class.template_parameters()) {
+										if (param.is<TemplateParameterNode>()) {
+											const auto& tparam = param.as<TemplateParameterNode>();
+											FLASH_LOG(Parser, Error, "    param: name='", tparam.name(), "' variadic=", tparam.is_variadic());
+											if (tparam.is_variadic() && tparam.name() == pack_name) {
+												is_known_template_param = true;
+												break;
+											}
 										}
 									}
 								}
+							} else {
+								FLASH_LOG(Parser, Error, "  template not found for '", names_to_try[ni], "'");
 							}
 						}
 					}
@@ -19365,7 +19372,21 @@ ASTNode Parser::substituteTemplateParameters(
 					FLASH_LOG(Templates, Debug, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
 					return node;
 				}
-				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack");
+				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack, template_params.size()=", template_params.size(), ", template_args.size()=", template_args.size(), ", parsing_template_body_=", parsing_template_body_, ", struct_stack_size=", struct_parsing_context_stack_.size());
+				for (size_t di = 0; di < template_params.size(); ++di) {
+					if (template_params[di].is<TemplateParameterNode>()) {
+						const auto& tp = template_params[di].as<TemplateParameterNode>();
+						FLASH_LOG(Parser, Error, "  param[", di, "]: name='", tp.name(), "' variadic=", tp.is_variadic());
+					}
+				}
+				if (!struct_parsing_context_stack_.empty()) {
+					for (auto sit = struct_parsing_context_stack_.rbegin(); sit != struct_parsing_context_stack_.rend(); ++sit) {
+						FLASH_LOG(Parser, Error, "  struct_stack: '", sit->struct_name, "'");
+					}
+				}
+				for (const auto& param_name : current_template_param_names_) {
+					FLASH_LOG(Parser, Error, "  current_tmpl_param: '", StringTable::getStringView(param_name), "'");
+				}
 				throw std::runtime_error("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
 			}
 			
