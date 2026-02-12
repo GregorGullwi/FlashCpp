@@ -4970,6 +4970,48 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			// If parsing failed, fall through to function call check
 		}
+
+		// Check if this is a non-template brace initialization: ns::Type{args}
+		if (!template_args.has_value() && current_token_.value() == "{") {
+			std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+			StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
+			auto type_it = gTypesByName.find(qualified_handle);
+			if (type_it == gTypesByName.end()) {
+				type_it = gTypesByName.find(final_identifier.handle());
+			}
+			if (type_it != gTypesByName.end()) {
+				const TypeInfo* type_info_ptr = type_it->second;
+				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
+				TypeIndex type_index = type_info_ptr->type_index_;
+
+				advance(); // consume '{'
+
+				ChunkedVector<ASTNode> args;
+				while (!current_token_.kind().is_eof() && current_token_.value() != "}") {
+					auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (argResult.is_error()) {
+						return argResult;
+					}
+					if (auto node = argResult.node()) {
+						args.push_back(*node);
+					}
+					if (current_token_.value() == ",") {
+						advance();
+					} else if (current_token_.value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
+					}
+				}
+
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after brace initializer", current_token_);
+				}
+
+				unsigned char type_size = struct_info ? static_cast<unsigned char>(struct_info->total_size * 8) : 0;
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, final_identifier);
+				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
+				return ParseResult::success(*result);
+			}
+		}
 		
 		// Check if followed by '(' for function call
 		if (current_token_.value() == "(") {
