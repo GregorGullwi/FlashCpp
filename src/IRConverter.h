@@ -9191,9 +9191,26 @@ private:
 		
 		// Finalize previous function before starting new one
 		if (current_function_name_.isValid()) {
+			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+			auto seh_try_blocks = convertSehInfoToWriterFormat();
+
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+
+			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
+			// Some catch temp offsets are reserved through EH paths and may not be reflected in
+			// scope_stack_space at this point.
+			for (const auto& try_block : try_blocks) {
+				for (const auto& handler : try_block.catch_handlers) {
+					if (handler.catch_obj_offset < 0) {
+						size_t required_stack = static_cast<size_t>(-handler.catch_obj_offset);
+						if (required_stack > total_stack) {
+							total_stack = required_stack;
+						}
+					}
+				}
+			}
 			
 			// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
 			// System V AMD64 / MS x64: after `push rbp`, RSP is misaligned by 8 bytes.
@@ -9219,8 +9236,6 @@ private:
 			writer.set_function_debug_range(mangled, 0, 0);	// doesn't seem needed
 
 			// Add exception handling information (required for x64) - uses mangled name
-			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-			auto seh_try_blocks = convertSehInfoToWriterFormat();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
 			} else {
@@ -15802,59 +15817,13 @@ private:
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
-			// Minimal catch materialization path:
-			// Assume exception object pointer is available in RAX on catch entry and
-			// copy/store into the catch temp slot for simple built-in/reference cases.
-			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
-			if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0) {
-				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
-
-				if (catch_op.is_reference || catch_op.is_rvalue_reference) {
-					emitMovToFrame(X64Register::RAX, stack_offset, 64);
-				} else {
-					int type_size_bits = 0;
-					bool is_builtin = false;
-					switch (catch_op.exception_type) {
-						case Type::Bool:
-						case Type::Char:
-						case Type::UnsignedChar:
-						case Type::Short:
-						case Type::UnsignedShort:
-						case Type::Int:
-						case Type::UnsignedInt:
-						case Type::Long:
-						case Type::UnsignedLong:
-						case Type::LongLong:
-						case Type::UnsignedLongLong:
-						case Type::Float:
-						case Type::Double:
-						case Type::LongDouble:
-						case Type::FunctionPointer:
-						case Type::MemberFunctionPointer:
-						case Type::MemberObjectPointer:
-						case Type::Nullptr:
-							is_builtin = true;
-							break;
-						default:
-							is_builtin = false;
-							break;
-					}
-
-					if (is_builtin) {
-						type_size_bits = get_type_size_bits(catch_op.exception_type);
-					} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
-						type_size_bits = gTypeInfo[catch_op.type_index].type_size_;
-					}
-
-					size_t type_size = type_size_bits / 8;
-					if (type_size > 0 && type_size <= 8) {
-						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
-						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
-					} else {
-						emitMovToFrame(X64Register::RAX, stack_offset, 64);
-					}
-				}
-			}
+			// True Windows FH3 path:
+			// catch object materialization is provided by __CxxFrameHandler3 using
+			// HandlerType::dispCatchObj in FuncInfo. Do not assume RAX carries the
+			// exception object pointer here; dereferencing it can fault in funclets.
+			//
+			// Do not rewrite nonvolatile frame registers in-place here. Catch funclet
+			// unwind metadata must match prologue behavior exactly.
 		}
 	}
 
@@ -16421,9 +16390,24 @@ private:
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (current_function_name_.isValid()) {
+			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+			auto seh_try_blocks = convertSehInfoToWriterFormat();
+
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+
+			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
+			for (const auto& try_block : try_blocks) {
+				for (const auto& handler : try_block.catch_handlers) {
+					if (handler.catch_obj_offset < 0) {
+						size_t required_stack = static_cast<size_t>(-handler.catch_obj_offset);
+						if (required_stack > total_stack) {
+							total_stack = required_stack;
+						}
+					}
+				}
+			}
 			
 			// Stack alignment: After PUSH RBP, RSP is 16-aligned.
 			// SUB RSP, N must keep it 16-aligned for subsequent CALLs.
@@ -16452,8 +16436,6 @@ private:
 			}
 
 			// Add exception handling information (required for x64) - uses mangled name
-			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-			auto seh_try_blocks = convertSehInfoToWriterFormat();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
 			} else {

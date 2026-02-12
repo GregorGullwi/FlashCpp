@@ -1269,6 +1269,7 @@ public:
 				xdata[cpp_funcinfo_rva_field_offset + 1] = static_cast<char>((funcinfo_rva >> 8) & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 2] = static_cast<char>((funcinfo_rva >> 16) & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 3] = static_cast<char>((funcinfo_rva >> 24) & 0xFF);
+				cpp_xdata_rva_field_offsets.push_back(cpp_funcinfo_rva_field_offset);
 			}
 
 			struct CatchStateBinding {
@@ -1303,8 +1304,8 @@ public:
 				try_state_layout.push_back(std::move(layout));
 			}
 			
-			// Magic number for modern FuncInfo used with __CxxFrameHandler3/__CxxFrameHandler4.
-			uint32_t magic = 0x19930522;
+			// Magic number for classic FH3 FuncInfo layout.
+			uint32_t magic = 0x19930520;
 			xdata.push_back(static_cast<char>(magic & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
@@ -1314,6 +1315,15 @@ public:
 			uint32_t max_state = static_cast<uint32_t>(next_state);
 			if (!unwind_map.empty() && unwind_map.size() > max_state) {
 				max_state = static_cast<uint32_t>(unwind_map.size());
+			}
+
+			// FH3 expects a valid unwind map for the active state range.
+			// If IR-level unwind actions are missing, synthesize no-op entries.
+			uint32_t unwind_entry_count = !unwind_map.empty()
+				? static_cast<uint32_t>(unwind_map.size())
+				: max_state;
+			if (unwind_entry_count > max_state) {
+				max_state = unwind_entry_count;
 			}
 			xdata.push_back(static_cast<char>(max_state & 0xFF));
 			xdata.push_back(static_cast<char>((max_state >> 8) & 0xFF));
@@ -1355,17 +1365,6 @@ public:
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
 
-			// dispUnwindHelp - frame-relative helper slot used by FH3 runtime.
-			// Empirically MSVC places this in caller stack space near the top of frame.
-			uint32_t disp_unwind_help = 8;
-			if (stack_frame_size >= 0x20) {
-				disp_unwind_help = stack_frame_size - 0x20;
-			}
-			xdata.push_back(static_cast<char>(disp_unwind_help & 0xFF));
-			xdata.push_back(static_cast<char>((disp_unwind_help >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((disp_unwind_help >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((disp_unwind_help >> 24) & 0xFF));
-
 			// pESTypeList - dynamic exception specification type list (unused)
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
@@ -1387,7 +1386,7 @@ public:
 			};
 
 			uint32_t unwind_map_offset = 0;
-			if (!unwind_map.empty()) {
+			if (unwind_entry_count > 0) {
 				unwind_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
 				patch_u32(p_unwind_map_field_offset, unwind_map_offset);
 				cpp_xdata_rva_field_offsets.push_back(p_unwind_map_field_offset);
@@ -1397,10 +1396,11 @@ public:
 			// Each UnwindMapEntry:
 			//   int toState (state to transition to, -1 = end of unwind chain)
 			//   DWORD action (RVA to cleanup/destructor function, or 0 for no action)
-			if (!unwind_map.empty()) {
-				for (const auto& unwind_entry : unwind_map) {
+			if (unwind_entry_count > 0) {
+				for (uint32_t i = 0; i < unwind_entry_count; ++i) {
+					const bool has_ir_entry = i < unwind_map.size();
 					// toState
-					int32_t to_state = unwind_entry.to_state;
+					int32_t to_state = has_ir_entry ? unwind_map[i].to_state : -1;
 					xdata.push_back(static_cast<char>(to_state & 0xFF));
 					xdata.push_back(static_cast<char>((to_state >> 8) & 0xFF));
 					xdata.push_back(static_cast<char>((to_state >> 16) & 0xFF));
@@ -1410,7 +1410,7 @@ public:
 					// For now, we'll use 0 (no action) since we don't have destructor function addresses yet
 					// TODO: Add relocation for destructor function when we have the mangled name
 					uint32_t action_rva = 0;
-					if (!unwind_entry.action.empty()) {
+					if (has_ir_entry && !unwind_map[i].action.empty()) {
 						// We would need to add a relocation here for the destructor function
 						// For now, just set to 0 and add TODO comment
 						// action_rva will be patched via relocation
@@ -1619,9 +1619,8 @@ public:
 					// For catch(...), pType remains 0 (no relocation needed)
 					
 					// catchObjOffset (dispCatchObj).
-					// For current FH3 path, keep this as 0 to avoid writing into an invalid
-					// establisher-frame slot. Catch variable materialization is handled in codegen.
-					int32_t catch_offset = 0;
+					// Use the catch object stack slot computed by codegen.
+					int32_t catch_offset = handler.catch_obj_offset;
 					xdata.push_back(static_cast<char>(catch_offset & 0xFF));
 					xdata.push_back(static_cast<char>((catch_offset >> 8) & 0xFF));
 					xdata.push_back(static_cast<char>((catch_offset >> 16) & 0xFF));
@@ -1642,61 +1641,24 @@ public:
 				}
 			}
 
-			// Build a funclet-aware IP-to-state map so __CxxFrameHandler3 can resolve
-			// active try states and active catch funclet states.
+			// Build a conservative IP-to-state map for FH3 state lookup.
+			// Use try-range transitions only (no catch-funclet state transitions yet).
 			struct IpStateEntry {
 				uint32_t ip_rva;
 				int32_t state;
 			};
 
-			auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
-				return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
-			};
-
-			auto resolve_funclet_end = [function_size, &resolve_funclet_start](
-				const CatchHandlerInfo& handler,
-				const CatchHandlerInfo* next_handler) -> uint32_t {
-				uint32_t start = resolve_funclet_start(handler);
-				uint32_t end = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
-				if (end == 0 && next_handler != nullptr) {
-					end = resolve_funclet_start(*next_handler);
-				}
-				if (end == 0 || end > function_size) {
-					end = function_size;
-				}
-				if (end <= start) {
-					return start;
-				}
-				return end;
-			};
-
 			std::vector<IpStateEntry> ip_to_state_entries;
-			ip_to_state_entries.reserve(try_blocks.size() * 6 + 2);
+			ip_to_state_entries.reserve(try_blocks.size() * 2 + 2);
 			ip_to_state_entries.push_back({function_start, -1});
 
 			for (size_t i = 0; i < try_blocks.size(); ++i) {
 				const auto& tb = try_blocks[i];
-				const auto& state_layout = try_state_layout[i];
-				const int32_t try_low_state = state_layout.try_low;
-
-				ip_to_state_entries.push_back({function_start + tb.try_start_offset, try_low_state});
+				const auto& layout = try_state_layout[i];
+				ip_to_state_entries.push_back({function_start + tb.try_start_offset, layout.try_low});
 				ip_to_state_entries.push_back({function_start + tb.try_end_offset, -1});
-
-				for (size_t j = 0; j < state_layout.catches.size(); ++j) {
-					const auto& binding = state_layout.catches[j];
-					const CatchHandlerInfo& handler = *binding.handler;
-					const CatchHandlerInfo* next_handler = (j + 1 < tb.catch_handlers.size()) ? &tb.catch_handlers[j + 1] : nullptr;
-
-					uint32_t funclet_start = resolve_funclet_start(handler);
-					uint32_t funclet_end = resolve_funclet_end(handler, next_handler);
-					if (funclet_start < function_size && funclet_end > funclet_start) {
-						ip_to_state_entries.push_back({function_start + funclet_start, binding.catch_state});
-						ip_to_state_entries.push_back({function_start + funclet_end, -1});
-					}
-				}
 			}
 
-			// Sentinel state at function end.
 			ip_to_state_entries.push_back({function_start + function_size, -1});
 
 			std::sort(ip_to_state_entries.begin(), ip_to_state_entries.end(), [](const IpStateEntry& a, const IpStateEntry& b) {
@@ -1706,23 +1668,22 @@ public:
 				return a.state < b.state;
 			});
 
-			// Deduplicate equal IP entries by keeping the last state for that address.
-			std::vector<IpStateEntry> compact_ip_to_state;
-			compact_ip_to_state.reserve(ip_to_state_entries.size());
+			std::vector<IpStateEntry> compact_entries;
+			compact_entries.reserve(ip_to_state_entries.size());
 			for (const auto& entry : ip_to_state_entries) {
-				if (!compact_ip_to_state.empty() && compact_ip_to_state.back().ip_rva == entry.ip_rva) {
-					compact_ip_to_state.back().state = entry.state;
+				if (!compact_entries.empty() && compact_entries.back().ip_rva == entry.ip_rva) {
+					compact_entries.back().state = entry.state;
 				} else {
-					compact_ip_to_state.push_back(entry);
+					compact_entries.push_back(entry);
 				}
 			}
 
 			uint32_t ip_to_state_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
-			patch_u32(n_ip_map_entries_field_offset, static_cast<uint32_t>(compact_ip_to_state.size()));
+			patch_u32(n_ip_map_entries_field_offset, static_cast<uint32_t>(compact_entries.size()));
 			patch_u32(p_ip_to_state_map_field_offset, ip_to_state_map_offset);
 			cpp_xdata_rva_field_offsets.push_back(p_ip_to_state_map_field_offset);
 
-			for (const auto& entry : compact_ip_to_state) {
+			for (const auto& entry : compact_entries) {
 				uint32_t ip_field_offset = static_cast<uint32_t>(xdata.size());
 				xdata.push_back(static_cast<char>(entry.ip_rva & 0xFF));
 				xdata.push_back(static_cast<char>((entry.ip_rva >> 8) & 0xFF));
@@ -1738,12 +1699,13 @@ public:
 		}
 		
 		// Mirror FuncInfo into .rdata and repoint UNWIND language-specific data pointer.
-		if (is_cpp && has_cpp_funcinfo_rva_field && has_cpp_funcinfo_local_offset) {
+		// Disabled while stabilizing FH3 metadata layout; keep FuncInfo in .xdata.
+		if (is_cpp && false && has_cpp_funcinfo_rva_field && has_cpp_funcinfo_local_offset) {
 			auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 			uint32_t cppxdata_rva = static_cast<uint32_t>(rdata_section->get_data_size());
 
-			// FuncInfo has 10 DWORD fields (40 bytes).
-			constexpr uint32_t kFuncInfoSize = 40;
+			// FuncInfo uses 9 DWORD fields (36 bytes) for FH3-compatible layout.
+			constexpr uint32_t kFuncInfoSize = 36;
 			if (cpp_funcinfo_local_offset + kFuncInfoSize <= xdata.size()) {
 				std::vector<char> cppxdata_blob(
 					xdata.begin() + static_cast<std::ptrdiff_t>(cpp_funcinfo_local_offset),
@@ -1827,9 +1789,6 @@ public:
 		} else if (is_cpp) {
 			add_xdata_relocation(xdata_offset + handler_rva_offset, "__CxxFrameHandler3");
 			FLASH_LOG(Codegen, Debug, "Added relocation to __CxxFrameHandler3 for C++");
-			if (has_cpp_funcinfo_rva_field) {
-				add_xdata_relocation(xdata_offset + cpp_funcinfo_rva_field_offset, cppx_sym_name);
-			}
 
 			// Add IMAGE_REL_AMD64_ADDR32NB relocations for C++ EH metadata RVAs.
 			// These fields are image-relative RVAs and must be fixed by the linker.
@@ -1874,9 +1833,10 @@ public:
 		// These relocations are critical for the linker to resolve addresses correctly
 		add_pdata_relocations(pdata_offset, mangled_name, xdata_offset);
 
-		// Canonical catch funclet emission for C++ EH.
-		// Emit dedicated UNWIND_INFO + PDATA entries for each concrete catch funclet range.
-		if (is_cpp) {
+		// Catch funclet PDATA/XDATA emission is temporarily disabled.
+		// Current catch handlers are still inline in parent .text ranges, and emitting
+		// overlapping runtime function table entries can trigger fail-fast at runtime.
+		if (is_cpp && false) {
 			auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
 				return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
 			};
@@ -1910,22 +1870,18 @@ public:
 						continue;
 					}
 
-					// Catch funclet UNWIND_INFO uses FH3 and the same FuncInfo blob as the parent.
+					// Catch funclet UNWIND_INFO should be a plain unwind record.
+					// Parent function owns FH3 language-specific data (FuncInfo/TryMap/IPMap).
 					std::vector<char> catch_xdata = {
-						static_cast<char>(0x01 | (0x03 << 3)), // Version=1, EHANDLER|UHANDLER
+						static_cast<char>(0x01), // Version=1, no EH/UH flags
 						static_cast<char>(0x00),
 						static_cast<char>(0x00),
-						static_cast<char>(0x00),
-						static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), // handler RVA
-						static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00), static_cast<char>(0x00)  // FuncInfo RVA
+						static_cast<char>(0x00)
 					};
 
 					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 					uint32_t catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 					add_data(catch_xdata, SectionType::XDATA);
-					add_xdata_relocation(catch_xdata_offset + 4, "__CxxFrameHandler3");
-					add_xdata_relocation(catch_xdata_offset + 8, cppx_sym_name);
-
 					auto pdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
 					uint32_t catch_pdata_offset = static_cast<uint32_t>(pdata_section_curr->get_data_size());
 
