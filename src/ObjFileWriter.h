@@ -1041,8 +1041,10 @@ public:
 			// UHANDLER triggers it during the unwind phase (__finally handlers)
 			unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
 		} else if (is_cpp) {
-			// C++ uses UNW_FLAG_EHANDLER (0x01) for __CxxFrameHandler3
-			unwind_flags = 0x01;  // UNW_FLAG_EHANDLER
+			// For C++ EH with __CxxFrameHandler3, use both dispatch and unwind handler flags.
+			// This matches MSVC FH3 objects where catch dispatch and unwind pass both route through
+			// the language-specific handler.
+			unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
 		}
 
 		// Build unwind codes array dynamically based on actual prologue:
@@ -1120,6 +1122,19 @@ public:
 		xdata.push_back(0x00);
 		xdata.push_back(0x00);
 		xdata.push_back(0x00);
+
+		// For C++ EH, __CxxFrameHandler3 expects language-specific data to begin with
+		// a 32-bit image-relative pointer to FuncInfo.
+		uint32_t cpp_funcinfo_rva_field_offset = 0;
+		bool has_cpp_funcinfo_rva_field = false;
+		if (is_cpp) {
+			cpp_funcinfo_rva_field_offset = static_cast<uint32_t>(xdata.size());
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			has_cpp_funcinfo_rva_field = true;
+		}
 
 		// Generate SEH-specific exception data
 		// Track scope table entry offsets for relocations
@@ -1241,10 +1256,17 @@ public:
 
 		if (is_cpp && !try_blocks.empty()) {
 			[[maybe_unused]] uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
+			if (has_cpp_funcinfo_rva_field) {
+				uint32_t funcinfo_rva = xdata_offset + funcinfo_offset;
+				xdata[cpp_funcinfo_rva_field_offset + 0] = static_cast<char>(funcinfo_rva & 0xFF);
+				xdata[cpp_funcinfo_rva_field_offset + 1] = static_cast<char>((funcinfo_rva >> 8) & 0xFF);
+				xdata[cpp_funcinfo_rva_field_offset + 2] = static_cast<char>((funcinfo_rva >> 16) & 0xFF);
+				xdata[cpp_funcinfo_rva_field_offset + 3] = static_cast<char>((funcinfo_rva >> 24) & 0xFF);
+				cpp_xdata_rva_field_offsets.push_back(cpp_funcinfo_rva_field_offset);
+			}
 			
-			// Magic number for FuncInfo4 (0x19930522 = EH4 with continuation addresses)
-			// Using 0x19930521 = EH3 style which is simpler
-			uint32_t magic = 0x19930521;
+			// Magic number for modern FuncInfo used with __CxxFrameHandler3/__CxxFrameHandler4.
+			uint32_t magic = 0x19930522;
 			xdata.push_back(static_cast<char>(magic & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
@@ -1260,60 +1282,62 @@ public:
 			xdata.push_back(static_cast<char>((max_state >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((max_state >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((max_state >> 24) & 0xFF));
-			
-			// Calculate sizes and offsets for all structures
-			// FuncInfo is 32 bytes (8 DWORD fields)
-			// UnwindMapEntry is 8 bytes (2 DWORD fields)
-			// TryBlockMapEntry is 20 bytes (5 DWORD fields)
-			[[maybe_unused]] uint32_t unwind_map_size = static_cast<uint32_t>(unwind_map.size()) * 8;  // 8 bytes per entry
-			[[maybe_unused]] uint32_t tryblock_map_size = static_cast<uint32_t>(try_blocks.size()) * 20;  // 20 bytes per entry
-			
-			// pUnwindMap - RVA to unwind map (will be right after FuncInfo if present)
-			uint32_t unwind_map_offset = 0;
-			if (!unwind_map.empty()) {
-				unwind_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size()) + 8; // +8 for remaining FuncInfo fields (nIPMapEntries + pIPToStateMap)
-			}
+
+			// pUnwindMap - patch after map emission
 			uint32_t p_unwind_map_field_offset = static_cast<uint32_t>(xdata.size());
-			xdata.push_back(static_cast<char>(unwind_map_offset & 0xFF));
-			xdata.push_back(static_cast<char>((unwind_map_offset >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((unwind_map_offset >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((unwind_map_offset >> 24) & 0xFF));
-			if (!unwind_map.empty()) {
-				cpp_xdata_rva_field_offsets.push_back(p_unwind_map_field_offset);
-			}
-			
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+
 			// nTryBlocks - number of try blocks
 			uint32_t num_try_blocks = static_cast<uint32_t>(try_blocks.size());
 			xdata.push_back(static_cast<char>(num_try_blocks & 0xFF));
 			xdata.push_back(static_cast<char>((num_try_blocks >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((num_try_blocks >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((num_try_blocks >> 24) & 0xFF));
-			
-			// pTryBlockMap - RVA to try block map (will be after UnwindMap if present, otherwise after FuncInfo)
-			uint32_t tryblock_map_offset;
-			if (!unwind_map.empty()) {
-				tryblock_map_offset = unwind_map_offset + unwind_map_size;
-			} else {
-				tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size()) + 8; // +8 for remaining FuncInfo fields
-			}
+
+			// pTryBlockMap - patch after map emission
 			uint32_t p_try_block_map_field_offset = static_cast<uint32_t>(xdata.size());
-			xdata.push_back(static_cast<char>(tryblock_map_offset & 0xFF));
-			xdata.push_back(static_cast<char>((tryblock_map_offset >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((tryblock_map_offset >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((tryblock_map_offset >> 24) & 0xFF));
-			cpp_xdata_rva_field_offsets.push_back(p_try_block_map_field_offset);
-			
-			// nIPMapEntries - number of IP-to-state map entries (0 for simple implementation)
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
-			
-			// pIPToStateMap - RVA to IP-to-state map (0 for simple implementation)
+
+			// nIPMapEntries - patch after map emission
+			uint32_t n_ip_map_entries_field_offset = static_cast<uint32_t>(xdata.size());
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
+
+			// pIPToStateMap - patch after map emission
+			uint32_t p_ip_to_state_map_field_offset = static_cast<uint32_t>(xdata.size());
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+
+			// EHFlags (bit 0 set for /EHs semantics)
+			uint32_t eh_flags = 0x1;
+			xdata.push_back(static_cast<char>(eh_flags & 0xFF));
+			xdata.push_back(static_cast<char>((eh_flags >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((eh_flags >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((eh_flags >> 24) & 0xFF));
+
+			auto patch_u32 = [&xdata](uint32_t field_offset, uint32_t value) {
+				xdata[field_offset + 0] = static_cast<char>(value & 0xFF);
+				xdata[field_offset + 1] = static_cast<char>((value >> 8) & 0xFF);
+				xdata[field_offset + 2] = static_cast<char>((value >> 16) & 0xFF);
+				xdata[field_offset + 3] = static_cast<char>((value >> 24) & 0xFF);
+			};
+
+			uint32_t unwind_map_offset = 0;
+			if (!unwind_map.empty()) {
+				unwind_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
+				patch_u32(p_unwind_map_field_offset, unwind_map_offset);
+				cpp_xdata_rva_field_offsets.push_back(p_unwind_map_field_offset);
+			}
 			
 			// Now add UnwindMap entries (if present)
 			// Each UnwindMapEntry:
@@ -1343,6 +1367,10 @@ public:
 					xdata.push_back(static_cast<char>((action_rva >> 24) & 0xFF));
 				}
 			}
+
+			uint32_t tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
+			patch_u32(p_try_block_map_field_offset, tryblock_map_offset);
+			cpp_xdata_rva_field_offsets.push_back(p_try_block_map_field_offset);
 			
 			// Now add TryBlockMap entries
 			// Each TryBlockMapEntry:
@@ -1358,21 +1386,21 @@ public:
 				const auto& try_block = try_blocks[i];
 				
 				// tryLow (state when entering try block)
-				uint32_t try_low = static_cast<uint32_t>(i);
+				uint32_t try_low = static_cast<uint32_t>(i * 2);
 				xdata.push_back(static_cast<char>(try_low & 0xFF));
 				xdata.push_back(static_cast<char>((try_low >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((try_low >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((try_low >> 24) & 0xFF));
 				
-				// tryHigh (state when exiting try block - should be different from tryLow)
-				uint32_t try_high = static_cast<uint32_t>(i) + 1;
+				// tryHigh (for simple EH with no local destructor states, same as tryLow)
+				uint32_t try_high = try_low;
 				xdata.push_back(static_cast<char>(try_high & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 24) & 0xFF));
 				
 				// catchHigh (state after handling exception)
-				uint32_t catch_high = static_cast<uint32_t>(i) + 2;
+				uint32_t catch_high = try_low + 1;
 				xdata.push_back(static_cast<char>(catch_high & 0xFF));
 				xdata.push_back(static_cast<char>((catch_high >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((catch_high >> 16) & 0xFF));
@@ -1532,6 +1560,67 @@ public:
 					
 					handler_index++;
 				}
+			}
+
+			// Build a minimal IP-to-state map so __CxxFrameHandler3 can resolve active states.
+			struct IpStateEntry {
+				uint32_t ip_rva;
+				int32_t state;
+			};
+			std::vector<IpStateEntry> ip_to_state_entries;
+			ip_to_state_entries.reserve(try_blocks.size() * 3 + 1);
+
+			for (size_t i = 0; i < try_blocks.size(); ++i) {
+				const auto& tb = try_blocks[i];
+				const int32_t try_low_state = static_cast<int32_t>(i * 2);
+				const int32_t catch_state = try_low_state + 1;
+
+				ip_to_state_entries.push_back({function_start + tb.try_start_offset, try_low_state});
+				ip_to_state_entries.push_back({function_start + tb.try_end_offset, -1});
+
+				for (const auto& handler : tb.catch_handlers) {
+					ip_to_state_entries.push_back({function_start + handler.handler_offset, catch_state});
+				}
+			}
+
+			// Sentinel state at function end.
+			ip_to_state_entries.push_back({function_start + function_size, -1});
+
+			std::sort(ip_to_state_entries.begin(), ip_to_state_entries.end(), [](const IpStateEntry& a, const IpStateEntry& b) {
+				if (a.ip_rva != b.ip_rva) {
+					return a.ip_rva < b.ip_rva;
+				}
+				return a.state < b.state;
+			});
+
+			// Deduplicate equal IP entries by keeping the last state for that address.
+			std::vector<IpStateEntry> compact_ip_to_state;
+			compact_ip_to_state.reserve(ip_to_state_entries.size());
+			for (const auto& entry : ip_to_state_entries) {
+				if (!compact_ip_to_state.empty() && compact_ip_to_state.back().ip_rva == entry.ip_rva) {
+					compact_ip_to_state.back().state = entry.state;
+				} else {
+					compact_ip_to_state.push_back(entry);
+				}
+			}
+
+			uint32_t ip_to_state_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
+			patch_u32(n_ip_map_entries_field_offset, static_cast<uint32_t>(compact_ip_to_state.size()));
+			patch_u32(p_ip_to_state_map_field_offset, ip_to_state_map_offset);
+			cpp_xdata_rva_field_offsets.push_back(p_ip_to_state_map_field_offset);
+
+			for (const auto& entry : compact_ip_to_state) {
+				uint32_t ip_field_offset = static_cast<uint32_t>(xdata.size());
+				xdata.push_back(static_cast<char>(entry.ip_rva & 0xFF));
+				xdata.push_back(static_cast<char>((entry.ip_rva >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((entry.ip_rva >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((entry.ip_rva >> 24) & 0xFF));
+				cpp_text_rva_field_offsets.push_back(ip_field_offset);
+
+				xdata.push_back(static_cast<char>(entry.state & 0xFF));
+				xdata.push_back(static_cast<char>((entry.state >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((entry.state >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((entry.state >> 24) & 0xFF));
 			}
 		}
 		
