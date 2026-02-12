@@ -2300,8 +2300,8 @@
 						assert(false && "Cannot instantiate abstract class");
 					}
 
-					if (type_info.struct_info_->hasAnyConstructor()) {
-						FLASH_LOG(Codegen, Debug, "Struct ", type_info.name(), " has constructor");
+					if (type_info.struct_info_->hasAnyConstructor() || type_info.struct_info_->needs_default_constructor) {
+						FLASH_LOG(Codegen, Debug, "Struct ", type_info.name(), " has constructor or needs default constructor");
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"
 						// Skip if the variable was already initialized with an rvalue (function return)
 						bool has_copy_init = false;
