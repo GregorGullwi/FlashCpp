@@ -19306,13 +19306,17 @@ ASTNode Parser::substituteTemplateParameters(
 				// The pack_name is the function parameter name (e.g., "rest")
 				// We need to find the corresponding variadic template parameter (e.g., "Rest")
 				// The mapping: function param type uses the template param name
+				// IMPORTANT: Only match the variadic parameter whose name matches pack_name.
+				// Without this check, a member function template with its own variadic params
+				// (e.g., Args...) would incorrectly match when sizeof... asks about the class
+				// template's pack (e.g., Elements...).
 				size_t non_variadic_count = 0;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (template_params[i].is<TemplateParameterNode>()) {
 						const auto& tparam = template_params[i].as<TemplateParameterNode>();
-						if (tparam.is_variadic()) {
+						if (tparam.is_variadic() && tparam.name() == pack_name) {
 							found_variadic = true;
-						} else {
+						} else if (!tparam.is_variadic()) {
 							non_variadic_count++;
 						}
 					}
