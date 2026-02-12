@@ -1904,7 +1904,7 @@ private:
 		auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
 		
 		if (!lvalue_info_opt.has_value()) {
-			FLASH_LOG_FORMAT(Codegen, Info, "handleLValueCompoundAssignment: FAIL - no lvalue metadata for TempVar {}", lhs_temp.var_number);
+			FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: FAIL - no lvalue metadata for TempVar {}", lhs_temp.var_number);
 			return false;
 		}
 

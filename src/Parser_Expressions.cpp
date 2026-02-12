@@ -1313,12 +1313,47 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 							return ParseResult::error("Expected ')' after function call arguments", current_token_);
 						}
 						
-						// Create forward declaration and function call
-						auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
-						auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
-						DeclarationNode& decl_ref = forward_decl.as<DeclarationNode>();
+						// Try to resolve Template<Args>::member to a real member function declaration
+						const DeclarationNode* decl_ptr = nullptr;
+						const FunctionDeclarationNode* func_decl_ptr = nullptr;
+
+						if (!base_name.empty() && template_args.has_value()) {
+							std::string_view instantiated_class_name;
+							auto instantiation_result = try_instantiate_class_template(base_name, *template_args);
+							if (instantiation_result.has_value() && instantiation_result->is<StructDeclarationNode>()) {
+								instantiated_class_name = StringTable::getStringView(instantiation_result->as<StructDeclarationNode>().name());
+							} else {
+								instantiated_class_name = get_instantiated_class_name(base_name, *template_args);
+							}
+
+							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_class_name));
+							if (type_it != gTypesByName.end() && type_it->second) {
+								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+								if (struct_info) {
+									StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_token.value());
+									for (const auto& member_func : struct_info->member_functions) {
+										if (member_func.getName() == member_name_handle && member_func.function_decl.is<FunctionDeclarationNode>()) {
+											func_decl_ptr = &member_func.function_decl.as<FunctionDeclarationNode>();
+											decl_ptr = &func_decl_ptr->decl_node();
+											break;
+										}
+									}
+								}
+							}
+						}
+
+						// Fall back to forward declaration if lookup failed
+						if (!decl_ptr) {
+							auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+							auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
+							decl_ptr = &forward_decl.as<DeclarationNode>();
+						}
+
 						auto call_node = emplace_node<ExpressionNode>(
-							FunctionCallNode(decl_ref, std::move(args_result.args), member_token));
+							FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args_result.args), member_token));
+						if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
+							std::get<FunctionCallNode>(call_node.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
+						}
 						result = ParseResult::success(call_node);
 						continue;
 					}
@@ -2138,9 +2173,11 @@ bool Parser::parse_static_member_function(
 	}
 
 	// Add static member function to struct
+	FLASH_LOG(Templates, Debug, "Adding static member function '", decl_node.identifier_token().value(), "' to struct '", StringTable::getStringView(struct_name_handle), "'");
 	struct_ref.add_member_function(member_func_node, current_access,
 	                               false, false, false, false,
 	                               member_quals.is_const, member_quals.is_volatile);
+	FLASH_LOG(Templates, Debug, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
 	
 	// Also register in StructTypeInfo
 	auto& registered = struct_info->member_functions.emplace_back(
@@ -4925,6 +4962,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						const DeclarationNode* decl_ptr = nullptr;
 						if (member_lookup.has_value()) {
 							decl_ptr = getDeclarationNode(*member_lookup);
+						}
+						if (!decl_ptr) {
+							// Member may not be in namespace symbol table - resolve from instantiated struct members.
+							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+							if (type_it != gTypesByName.end() && type_it->second) {
+								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+								if (struct_info) {
+									StringHandle member_name_handle = member_token.handle();
+									for (const auto& member_func : struct_info->member_functions) {
+										if (member_func.getName() == member_name_handle && member_func.function_decl.is<FunctionDeclarationNode>()) {
+											member_lookup = member_func.function_decl;
+											decl_ptr = &member_func.function_decl.as<FunctionDeclarationNode>().decl_node();
+											break;
+										}
+									}
+								}
+							}
 						}
 						if (!decl_ptr) {
 							// Create a forward declaration
@@ -10369,6 +10423,8 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	std::string_view member_name,
 	const Token& member_token) {
 	
+	FLASH_LOG(Templates, Debug, "try_parse_member_template_function_call called for: ", instantiated_class_name, "::", member_name);
+	
 	// Check for member template arguments: Template<T>::member<U>
 	std::optional<std::vector<TemplateTypeArg>> member_template_args;
 	if (peek() == "<"_tok) {
@@ -10450,6 +10506,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	if (!instantiated_func.has_value()) {
 		StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
 		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		FLASH_LOG(Templates, Debug, "Checking lazy instantiation for: ", instantiated_class_name, "::", member_name);
 		if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
 			FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for qualified call: ", instantiated_class_name, "::", member_name);
 			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
@@ -10520,10 +10577,30 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		func_decl_ptr = &instantiated_func->as<FunctionDeclarationNode>();
 		decl_ptr = &func_decl_ptr->decl_node();
 	} else {
-		// Fall back to forward declaration if instantiation failed
-		auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
-		auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
-		decl_ptr = &forward_decl.as<DeclarationNode>();
+		// For non-template member functions (e.g. Template<T>::allocate()),
+		// resolve directly from the instantiated class before creating a fallback decl.
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		auto type_it = gTypesByName.find(class_name_handle);
+		if (type_it != gTypesByName.end() && type_it->second) {
+			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+			if (struct_info) {
+				for (const auto& member_func : struct_info->member_functions) {
+					if (member_func.getName() == member_name_handle && member_func.function_decl.is<FunctionDeclarationNode>()) {
+						func_decl_ptr = &member_func.function_decl.as<FunctionDeclarationNode>();
+						decl_ptr = &func_decl_ptr->decl_node();
+						break;
+					}
+				}
+			}
+		}
+
+		// Fall back to forward declaration only if we still couldn't resolve.
+		if (!decl_ptr) {
+			auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
+			auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
+			decl_ptr = &forward_decl.as<DeclarationNode>();
+		}
 	}
 	
 	auto result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), func_token));
