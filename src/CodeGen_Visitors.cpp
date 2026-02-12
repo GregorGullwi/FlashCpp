@@ -1886,7 +1886,7 @@ private:
 	}
 
 	// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] += 5)
-	// Supports Member kind (struct member access), Indirect kind (dereferenced pointers), and ArrayElement kind (array subscripts)
+	// Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
 	// This is similar to handleLValueAssignment but also performs the arithmetic operation
 	bool handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
 	                                     const std::vector<IrOperand>& rhs_operands,

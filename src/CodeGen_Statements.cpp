@@ -2237,8 +2237,56 @@
 			}
 		}
 		if (node.initializer() && !decl.is_array() && operands.size() >= 10) {
-			TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
-			decl_op.initializer = std::move(tv);
+			// For reference initialization, check if the initializer is an array element (arr[i])
+			// If so, we need to emit an ArrayElementAddress instruction to compute the actual address
+			if ((type_node.is_reference() || type_node.is_rvalue_reference()) &&
+			    std::holds_alternative<TempVar>(operands[9])) {
+				TempVar init_temp = std::get<TempVar>(operands[9]);
+				auto lvalue_info_opt = getTempVarLValueInfo(init_temp);
+				
+				if (lvalue_info_opt.has_value() && 
+				    lvalue_info_opt->kind == LValueInfo::Kind::ArrayElement &&
+				    lvalue_info_opt->array_index.has_value()) {
+					// Need to compute the address of the array element
+					const LValueInfo& lv_info = lvalue_info_opt.value();
+					
+					// Create a new temp var for the address result
+					TempVar addr_temp = var_counter.next();
+					
+					// Build ArrayElementAddressOp
+					ArrayElementAddressOp addr_op;
+					addr_op.result = addr_temp;
+					addr_op.element_type = std::get<Type>(operands[7]);
+					addr_op.element_size_in_bits = std::get<int>(operands[8]);
+					addr_op.array = lv_info.base;
+					
+					// Build TypedValue for index from metadata
+					IrValue index_value = lv_info.array_index.value();
+					addr_op.index.value = index_value;
+					addr_op.index.type = Type::Int;  // Index type (typically int)
+					addr_op.index.size_in_bits = 32;  // Standard index size
+					
+					addr_op.is_pointer_to_array = lv_info.is_pointer_to_array;
+					
+					// Emit the instruction
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), decl.identifier_token()));
+					
+					// Use the address temp as the initializer instead of the original temp
+					TypedValue tv;
+					tv.type = std::get<Type>(operands[7]);
+					tv.size_in_bits = 64;  // Address is 64-bit pointer
+					tv.value = addr_temp;
+					decl_op.initializer = std::move(tv);
+				} else {
+					// Not an array element, use the value as-is
+					TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
+					decl_op.initializer = std::move(tv);
+				}
+			} else {
+				// Not a reference, or not a TempVar - use the value as-is
+				TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
+				decl_op.initializer = std::move(tv);
+			}
 		}
 		
 		// Track whether the variable was already initialized with an rvalue (function return value)
