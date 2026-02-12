@@ -16017,8 +16017,24 @@ private:
 			// Set up arguments for _CxxThrowException
 			// RCX (first argument) = pointer to exception object = RSP+32
 			emitLeaFromRSPDisp8(X64Register::RCX, 32);
-			// RDX (second argument) = NULL (no throw info)
-			emitXorRegReg(X64Register::RDX);
+			// RDX (second argument) = pointer to _ThrowInfo metadata
+			std::string throw_type_name;
+			if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
+				throw_type_name = std::string(StringTable::getStringView(gTypeInfo[throw_op.type_index].name()));
+			} else {
+				throw_type_name = std::string(getTypeName(throw_op.exception_type));
+			}
+
+			std::string throw_info_symbol;
+			if (!throw_type_name.empty() && throw_type_name != "void") {
+				throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size);
+			}
+
+			if (!throw_info_symbol.empty()) {
+				emitLeaRipRelativeWithRelocation(X64Register::RDX, throw_info_symbol);
+			} else {
+				emitXorRegReg(X64Register::RDX);
+			}
 			
 			emitCall("_CxxThrowException");
 			// Note: _CxxThrowException never returns

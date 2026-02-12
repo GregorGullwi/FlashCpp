@@ -763,6 +763,25 @@ public:
 		if (g_enable_debug_output) std::cerr << "Added XDATA relocation for handler " << handler_name << " at offset " << xdata_offset << std::endl;
 	}
 
+	void add_rdata_relocation(uint32_t rdata_offset, std::string_view symbol_name, uint32_t relocation_type = IMAGE_REL_AMD64_ADDR32NB) {
+		auto* target_symbol = coffi_.get_symbol(symbol_name);
+		if (!target_symbol) {
+			target_symbol = coffi_.add_symbol(symbol_name);
+			target_symbol->set_value(0);
+			target_symbol->set_section_number(0);
+			target_symbol->set_type(0x20);
+			target_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		}
+
+		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+
+		COFFI::rel_entry_generic reloc;
+		reloc.virtual_address = rdata_offset;
+		reloc.symbol_table_index = target_symbol->get_index();
+		reloc.type = relocation_type;
+		rdata_section->add_relocation_entry(&reloc);
+	}
+
 	// Simple type name mangling for exception type descriptors
 	// Converts C++ type names to MSVC-style mangled names
 	std::string mangleTypeName(const std::string& type_name) const {
@@ -788,6 +807,136 @@ public:
 		// This is a simplified approach - full MSVC would encode nested namespaces, templates, etc.
 		// Format: V<name>@@ for struct/class
 		return "V" + type_name + "@@";
+	}
+
+	// Returns (type descriptor symbol name, type descriptor runtime name string)
+	// for use in MSVC exception metadata.
+	std::pair<std::string, std::string> getMsvcTypeDescriptorInfo(const std::string& type_name) const {
+		// Built-ins use canonical MSVC RTTI descriptor naming with @8 suffix
+		// and runtime type name strings with leading dot (e.g., ".H" for int).
+		if (type_name == "int") {
+			return {"??_R0H@8", ".H"};
+		}
+
+		// Fallback to existing simplified naming for non-builtins.
+		std::string mangled_type_name = mangleTypeName(type_name);
+		return {"??_R0" + mangled_type_name, mangled_type_name};
+	}
+
+	std::string get_or_create_exception_throw_info(const std::string& type_name, size_t type_size = 0) {
+		if (type_name.empty() || type_name == "void") {
+			return std::string();
+		}
+
+		// Keep canonical, known-good path for int.
+		if (type_name == "int") {
+			return get_or_create_builtin_throwinfo(Type::Int);
+		}
+
+		auto cached_it = throw_info_symbols_.find(type_name);
+		if (cached_it != throw_info_symbols_.end()) {
+			return cached_it->second;
+		}
+
+		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+		if (!rdata_section) {
+			return std::string();
+		}
+
+		auto [type_desc_symbol, type_runtime_name] = getMsvcTypeDescriptorInfo(type_name);
+
+		auto* type_desc_sym = coffi_.get_symbol(type_desc_symbol);
+		if (!type_desc_sym) {
+			uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+
+			std::vector<char> type_desc_data;
+			type_desc_data.resize(POINTER_SIZE * 2, 0);
+			for (char c : type_runtime_name) type_desc_data.push_back(c);
+			type_desc_data.push_back(0);
+
+			add_data(type_desc_data, SectionType::RDATA);
+
+			type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+			type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+			type_desc_sym->set_value(type_desc_offset);
+
+			// vftable pointer at offset 0 -> type_info::vftable
+			add_rdata_relocation(type_desc_offset, "??_7type_info@@6B@", IMAGE_REL_AMD64_ADDR64);
+		}
+
+		const std::string mangled_type_name = mangleTypeName(type_name);
+		const std::string catchable_type_symbol = "$flash$ct$" + mangled_type_name;
+		const std::string catchable_array_symbol = "$flash$cta$" + mangled_type_name;
+		const std::string throw_info_symbol = "$flash$ti$" + mangled_type_name;
+
+		auto* catchable_type_sym = coffi_.get_symbol(catchable_type_symbol);
+		if (!catchable_type_sym) {
+			uint32_t catchable_type_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			uint32_t throw_size = static_cast<uint32_t>(type_size == 0 ? 8 : type_size);
+
+			std::vector<char> catchable_type_data;
+			catchable_type_data.reserve(28);
+			auto append_u32 = [&catchable_type_data](uint32_t v) {
+				catchable_type_data.push_back(static_cast<char>(v & 0xFF));
+				catchable_type_data.push_back(static_cast<char>((v >> 8) & 0xFF));
+				catchable_type_data.push_back(static_cast<char>((v >> 16) & 0xFF));
+				catchable_type_data.push_back(static_cast<char>((v >> 24) & 0xFF));
+			};
+
+			append_u32(0);              // properties
+			append_u32(0);              // pType (relocated)
+			append_u32(0);              // thisDisplacement.mdisp
+			append_u32(0xFFFFFFFFu);    // thisDisplacement.pdisp
+			append_u32(0);              // thisDisplacement.vdisp
+			append_u32(throw_size);     // sizeOrOffset
+			append_u32(0);              // copyFunction
+
+			add_data(catchable_type_data, SectionType::RDATA);
+
+			catchable_type_sym = coffi_.add_symbol(catchable_type_symbol);
+			catchable_type_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			catchable_type_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+			catchable_type_sym->set_section_number(rdata_section->get_index() + 1);
+			catchable_type_sym->set_value(catchable_type_offset);
+
+			add_rdata_relocation(catchable_type_offset + 4, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
+		}
+
+		auto* catchable_array_sym = coffi_.get_symbol(catchable_array_symbol);
+		if (!catchable_array_sym) {
+			uint32_t catchable_array_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			std::vector<char> catchable_array_data(0x0C, 0);
+			catchable_array_data[0] = 1; // nCatchableTypes
+			add_data(catchable_array_data, SectionType::RDATA);
+
+			catchable_array_sym = coffi_.add_symbol(catchable_array_symbol);
+			catchable_array_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			catchable_array_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+			catchable_array_sym->set_section_number(rdata_section->get_index() + 1);
+			catchable_array_sym->set_value(catchable_array_offset);
+
+			add_rdata_relocation(catchable_array_offset + 4, catchable_type_symbol, IMAGE_REL_AMD64_ADDR32NB);
+		}
+
+		auto* throw_info_sym = coffi_.get_symbol(throw_info_symbol);
+		if (!throw_info_sym) {
+			uint32_t throw_info_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			std::vector<char> throw_info_data(0x1C, 0);
+			add_data(throw_info_data, SectionType::RDATA);
+
+			throw_info_sym = coffi_.add_symbol(throw_info_symbol);
+			throw_info_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			throw_info_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+			throw_info_sym->set_section_number(rdata_section->get_index() + 1);
+			throw_info_sym->set_value(throw_info_offset);
+
+			add_rdata_relocation(throw_info_offset + 12, catchable_array_symbol, IMAGE_REL_AMD64_ADDR32NB);
+		}
+
+		throw_info_symbols_[type_name] = throw_info_symbol;
+		return throw_info_symbol;
 	}
 
 	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
@@ -983,6 +1132,9 @@ public:
 			bool needs_jump_reloc;    // True if JumpTarget needs a relocation (non-zero RVA)
 		};
 		std::vector<ScopeTableReloc> scope_relocs;
+		// C++ EH relocation tracking (for __CxxFrameHandler3 metadata)
+		std::vector<uint32_t> cpp_xdata_rva_field_offsets; // fields that point within .xdata
+		std::vector<uint32_t> cpp_text_rva_field_offsets;  // fields that point into .text
 
 		if (is_seh) {
 			// SEH uses a scope table instead of FuncInfo
@@ -1121,10 +1273,14 @@ public:
 			if (!unwind_map.empty()) {
 				unwind_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size()) + 8; // +8 for remaining FuncInfo fields (nIPMapEntries + pIPToStateMap)
 			}
+			uint32_t p_unwind_map_field_offset = static_cast<uint32_t>(xdata.size());
 			xdata.push_back(static_cast<char>(unwind_map_offset & 0xFF));
 			xdata.push_back(static_cast<char>((unwind_map_offset >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((unwind_map_offset >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((unwind_map_offset >> 24) & 0xFF));
+			if (!unwind_map.empty()) {
+				cpp_xdata_rva_field_offsets.push_back(p_unwind_map_field_offset);
+			}
 			
 			// nTryBlocks - number of try blocks
 			uint32_t num_try_blocks = static_cast<uint32_t>(try_blocks.size());
@@ -1140,10 +1296,12 @@ public:
 			} else {
 				tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size()) + 8; // +8 for remaining FuncInfo fields
 			}
+			uint32_t p_try_block_map_field_offset = static_cast<uint32_t>(xdata.size());
 			xdata.push_back(static_cast<char>(tryblock_map_offset & 0xFF));
 			xdata.push_back(static_cast<char>((tryblock_map_offset >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((tryblock_map_offset >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((tryblock_map_offset >> 24) & 0xFF));
+			cpp_xdata_rva_field_offsets.push_back(p_try_block_map_field_offset);
 			
 			// nIPMapEntries - number of IP-to-state map entries (0 for simple implementation)
 			xdata.push_back(0x00);
@@ -1229,10 +1387,12 @@ public:
 				
 				// pHandlerArray - RVA to handler array for this try block
 				uint32_t handler_array_offset = handler_array_base;
+				uint32_t p_handler_array_field_offset = static_cast<uint32_t>(xdata.size());
 				xdata.push_back(static_cast<char>(handler_array_offset & 0xFF));
 				xdata.push_back(static_cast<char>((handler_array_offset >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((handler_array_offset >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((handler_array_offset >> 24) & 0xFF));
+				cpp_xdata_rva_field_offsets.push_back(p_handler_array_field_offset);
 				
 				handler_array_base += num_catches * 16; // 16 bytes per HandlerType entry
 			}
@@ -1251,8 +1411,7 @@ public:
 				for (const auto& handler : try_block.catch_handlers) {
 					if (!handler.is_catch_all && !handler.type_name.empty()) {
 						// Mangle the type name to get the symbol name
-						std::string mangled_type_name = mangleTypeName(handler.type_name);
-						std::string type_desc_symbol = "??_R0" + mangled_type_name;
+						auto [type_desc_symbol, type_desc_runtime_name] = getMsvcTypeDescriptorInfo(handler.type_name);
 						
 						// Check if we've already created a descriptor for this type
 						// by checking both the class member map and if the symbol already exists
@@ -1288,7 +1447,7 @@ public:
 								for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
 								
 								// mangled name (null-terminated)
-								for (char c : mangled_type_name) type_desc_data.push_back(c);
+								for (char c : type_desc_runtime_name) type_desc_data.push_back(c);
 								type_desc_data.push_back(0);
 								
 								// Add to .rdata section
@@ -1345,8 +1504,8 @@ public:
 					
 					if (!handler.is_catch_all && !handler.type_name.empty()) {
 						// Type-specific catch - add relocation for pType to point to the type descriptor
-						std::string mangled_type_name = mangleTypeName(handler.type_name);
-						std::string type_desc_symbol = "??_R0" + mangled_type_name;
+						auto type_desc_info = getMsvcTypeDescriptorInfo(handler.type_name);
+						const std::string& type_desc_symbol = type_desc_info.first;
 						add_xdata_relocation(xdata_offset + ptype_offset, type_desc_symbol);
 						
 						if (g_enable_debug_output) std::cerr << "  Added pType relocation for handler " << handler_index 
@@ -1364,10 +1523,12 @@ public:
 					
 					// addressOfHandler - RVA of catch handler (relative to function start)
 					uint32_t handler_rva = function_start + handler.handler_offset;
+					uint32_t address_of_handler_field_offset = static_cast<uint32_t>(xdata.size());
 					xdata.push_back(static_cast<char>(handler_rva & 0xFF));
 					xdata.push_back(static_cast<char>((handler_rva >> 8) & 0xFF));
 					xdata.push_back(static_cast<char>((handler_rva >> 16) & 0xFF));
 					xdata.push_back(static_cast<char>((handler_rva >> 24) & 0xFF));
+					cpp_text_rva_field_offsets.push_back(address_of_handler_field_offset);
 					
 					handler_index++;
 				}
@@ -1428,6 +1589,32 @@ public:
 		} else if (is_cpp) {
 			add_xdata_relocation(xdata_offset + handler_rva_offset, "__CxxFrameHandler3");
 			FLASH_LOG(Codegen, Debug, "Added relocation to __CxxFrameHandler3 for C++");
+
+			// Add IMAGE_REL_AMD64_ADDR32NB relocations for C++ EH metadata RVAs.
+			// These fields are image-relative RVAs and must be fixed by the linker.
+			auto* xdata_symbol = coffi_.get_symbol(".xdata");
+			auto* text_symbol = coffi_.get_symbol(".text");
+			auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+
+			if (xdata_symbol) {
+				for (uint32_t field_off : cpp_xdata_rva_field_offsets) {
+					COFFI::rel_entry_generic reloc;
+					reloc.virtual_address = xdata_offset + field_off;
+					reloc.symbol_table_index = xdata_symbol->get_index();
+					reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+					xdata_sec->add_relocation_entry(&reloc);
+				}
+			}
+
+			if (text_symbol) {
+				for (uint32_t field_off : cpp_text_rva_field_offsets) {
+					COFFI::rel_entry_generic reloc;
+					reloc.virtual_address = xdata_offset + field_off;
+					reloc.symbol_table_index = text_symbol->get_index();
+					reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+					xdata_sec->add_relocation_entry(&reloc);
+				}
+			}
 		}
 
 		// Get current PDATA section size to calculate relocation offsets
@@ -1889,6 +2076,143 @@ public:
 		          << " in .rdata section (total size with RTTI: " << vtable_size << " bytes)" << std::endl;
 	}
 
+	// Get or create MSVC _ThrowInfo metadata symbol for a built-in thrown type.
+	// Current implementation provides concrete metadata for int (Type::Int), which
+	// is enough to make basic throw/catch(int) and noexcept(int throw) flows work.
+	//
+	// Emitted layout mirrors MSVC x64 objects:
+	//   _TI1H            (ThrowInfo, 0x1C bytes)
+	//   _CTA1H           (CatchableTypeArray, 0x0C bytes)
+	//   _CT??_R0H@84     (CatchableType, 0x24 bytes)
+	//   ??_R0H@8         (RTTI Type Descriptor, created on-demand if missing)
+	std::string get_or_create_builtin_throwinfo(Type type) {
+		if (type != Type::Int) {
+			return std::string();
+		}
+
+		const std::string throw_info_symbol = "_TI1H";
+		auto* existing_throw_info = coffi_.get_symbol(throw_info_symbol);
+		if (existing_throw_info) {
+			return throw_info_symbol;
+		}
+
+		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+
+		// Ensure RTTI type descriptor for int exists: ??_R0H@8
+		const std::string type_desc_symbol_name = "??_R0H@8";
+		auto* type_desc_symbol = coffi_.get_symbol(type_desc_symbol_name);
+		if (!type_desc_symbol) {
+			uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+
+			std::vector<char> type_desc_data;
+			// vftable pointer (8 bytes) - relocated to type_info vftable
+			type_desc_data.resize(16, 0);
+			// Mangled built-in type name for int
+			type_desc_data.push_back('.');
+			type_desc_data.push_back('H');
+			type_desc_data.push_back(0);
+
+			add_data(type_desc_data, SectionType::RDATA);
+
+			type_desc_symbol = coffi_.add_symbol(type_desc_symbol_name);
+			type_desc_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			type_desc_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			type_desc_symbol->set_section_number(rdata_section->get_index() + 1);
+			type_desc_symbol->set_value(type_desc_offset);
+
+			// Relocate vftable pointer to type_info::vftable
+			auto* type_info_vftable = coffi_.get_symbol("??_7type_info@@6B@");
+			if (!type_info_vftable) {
+				type_info_vftable = coffi_.add_symbol("??_7type_info@@6B@");
+				type_info_vftable->set_value(0);
+				type_info_vftable->set_section_number(0);
+				type_info_vftable->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+				type_info_vftable->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			}
+
+			COFFI::rel_entry_generic td_vft_reloc;
+			td_vft_reloc.virtual_address = type_desc_offset;
+			td_vft_reloc.symbol_table_index = type_info_vftable->get_index();
+			td_vft_reloc.type = IMAGE_REL_AMD64_ADDR64;
+			rdata_section->add_relocation_entry(&td_vft_reloc);
+		}
+
+		// Emit CatchableType: _CT??_R0H@84 (0x24 bytes)
+		const std::string catchable_type_symbol_name = "_CT??_R0H@84";
+		auto* catchable_type_symbol = coffi_.get_symbol(catchable_type_symbol_name);
+		if (!catchable_type_symbol) {
+			uint32_t ct_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			std::vector<char> ct_data(0x24, 0);
+			// properties = 1 (simple by-value scalar)
+			ct_data[0] = 0x01;
+			// thisDisplacement.pdisp = -1
+			ct_data[0x0C] = static_cast<char>(0xFF);
+			ct_data[0x0D] = static_cast<char>(0xFF);
+			ct_data[0x0E] = static_cast<char>(0xFF);
+			ct_data[0x0F] = static_cast<char>(0xFF);
+			// sizeOrOffset = 4 (sizeof(int))
+			ct_data[0x14] = 0x04;
+
+			add_data(ct_data, SectionType::RDATA);
+
+			catchable_type_symbol = coffi_.add_symbol(catchable_type_symbol_name);
+			catchable_type_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			catchable_type_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			catchable_type_symbol->set_section_number(rdata_section->get_index() + 1);
+			catchable_type_symbol->set_value(ct_offset);
+
+			// pType -> ??_R0H@8 (image-relative)
+			COFFI::rel_entry_generic ct_type_reloc;
+			ct_type_reloc.virtual_address = ct_offset + 0x04;
+			ct_type_reloc.symbol_table_index = type_desc_symbol->get_index();
+			ct_type_reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+			rdata_section->add_relocation_entry(&ct_type_reloc);
+		}
+
+		// Emit CatchableTypeArray: _CTA1H (0x0C bytes)
+		const std::string cta_symbol_name = "_CTA1H";
+		auto* cta_symbol = coffi_.get_symbol(cta_symbol_name);
+		if (!cta_symbol) {
+			uint32_t cta_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			std::vector<char> cta_data(0x0C, 0);
+			// nCatchableTypes = 1
+			cta_data[0] = 0x01;
+			add_data(cta_data, SectionType::RDATA);
+
+			cta_symbol = coffi_.add_symbol(cta_symbol_name);
+			cta_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			cta_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			cta_symbol->set_section_number(rdata_section->get_index() + 1);
+			cta_symbol->set_value(cta_offset);
+
+			COFFI::rel_entry_generic cta_reloc;
+			cta_reloc.virtual_address = cta_offset + 0x04;
+			cta_reloc.symbol_table_index = catchable_type_symbol->get_index();
+			cta_reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+			rdata_section->add_relocation_entry(&cta_reloc);
+		}
+
+		// Emit ThrowInfo: _TI1H (0x1C bytes), with pCatchableTypeArray at +0x0C
+		uint32_t ti_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::vector<char> ti_data(0x1C, 0);
+		add_data(ti_data, SectionType::RDATA);
+
+		auto* ti_symbol = coffi_.add_symbol(throw_info_symbol);
+		ti_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		ti_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		ti_symbol->set_section_number(rdata_section->get_index() + 1);
+		ti_symbol->set_value(ti_offset);
+
+		COFFI::rel_entry_generic ti_reloc;
+		ti_reloc.virtual_address = ti_offset + 0x0C;
+		ti_reloc.symbol_table_index = cta_symbol->get_index();
+		ti_reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+		rdata_section->add_relocation_entry(&ti_reloc);
+
+		if (g_enable_debug_output) std::cerr << "Created builtin throw metadata symbol: " << throw_info_symbol << std::endl;
+		return throw_info_symbol;
+	}
+
 	// Helper: get or create symbol index for a function name
 	uint32_t get_or_create_symbol_index(const std::string& symbol_name) {
 		// First, check if symbol already exists
@@ -1936,6 +2260,9 @@ protected:
 	// Track type descriptors that have been created to avoid duplicates across functions
 	// Maps type name to its offset in .rdata section
 	std::unordered_map<std::string, uint32_t> type_descriptor_offsets_;
+
+	// Track generated throw-info symbols by type name
+	std::unordered_map<std::string, std::string> throw_info_symbols_;
 
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;
