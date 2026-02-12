@@ -706,6 +706,69 @@
 				int arg_size = std::get<int>(argumentIrOperands[1]);
 				Type param_base_type = param_type->type();
 				
+				// Check if argument type doesn't match parameter type and parameter expects struct
+				// This handles implicit conversions via converting constructors
+				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
+					TypeIndex param_type_index = param_type->type_index();
+					
+					if (param_type_index > 0 && param_type_index < gTypeInfo.size()) {
+						const TypeInfo& target_type_info = gTypeInfo[param_type_index];
+						const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
+						
+						// Look for a converting constructor that takes the argument type
+						if (target_struct_info) {
+							const ConstructorDeclarationNode* converting_ctor = nullptr;
+							for (const auto& func : target_struct_info->member_functions) {
+								if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+									const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+									const auto& params = ctor_node.parameter_nodes();
+									
+									// Check for single-parameter constructor (or multi-parameter with defaults)
+									if (params.size() >= 1) {
+										if (params[0].is<DeclarationNode>()) {
+											const auto& ctor_param_decl = params[0].as<DeclarationNode>();
+											const auto& ctor_param_type = ctor_param_decl.type_node().as<TypeSpecifierNode>();
+											
+											// Match if types are compatible
+											bool param_matches = false;
+											if (ctor_param_type.type() == arg_type) {
+												param_matches = true;
+											}
+											
+											if (param_matches) {
+												// Check if remaining parameters have defaults
+												bool all_have_defaults = true;
+												for (size_t i = 1; i < params.size(); ++i) {
+													if (!params[i].is<DeclarationNode>() || 
+													    !params[i].as<DeclarationNode>().has_default_value()) {
+														all_have_defaults = false;
+														break;
+													}
+												}
+												
+												if (all_have_defaults) {
+													converting_ctor = &ctor_node;
+													break;
+												}
+											}
+										}
+									}
+								}
+							}
+							
+							// If found a converting constructor and it's explicit, emit error
+							if (converting_ctor && converting_ctor->is_explicit()) {
+								FLASH_LOG(Codegen, Error, "Cannot use implicit conversion with explicit constructor for type '",
+									StringTable::getStringView(target_type_info.name()), "'");
+								FLASH_LOG(Codegen, Error, "  In function call at argument ", arg_index);
+								FLASH_LOG(Codegen, Error, "  Use explicit construction: ", 
+									StringTable::getStringView(target_type_info.name()), "(value)");
+								assert(false && "Cannot use implicit conversion with explicit constructor in function argument");
+							}
+						}
+					}
+				}
+				
 				// Check if argument is struct type and parameter expects different type
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
 					TypeIndex arg_type_index = 0;

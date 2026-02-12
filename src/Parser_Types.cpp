@@ -2756,10 +2756,45 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 			specs |= MLS_Inline;
 			advance();
 		} else if (k == "explicit"_tok) {
-			specs |= MLS_Explicit;
 			advance();
 			if (peek() == "("_tok) {
-				skip_balanced_parens(); // explicit(condition)
+				// explicit(condition) - parse and evaluate the condition using constexpr evaluator
+				advance(); // consume '('
+				
+				// Parse the condition expression
+				ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				bool explicit_value = true;  // Default to true if evaluation fails
+				
+				if (!condition_result.is_error() && condition_result.node().has_value()) {
+					// Evaluate the constant expression using ConstExprEvaluator
+					ConstExpr::EvaluationContext ctx(gSymbolTable);
+					ctx.parser = this;  // Enable template function instantiation if needed
+					
+					auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
+					
+					if (eval_result.success()) {
+						// Convert result to bool - any non-zero value is true
+						explicit_value = eval_result.as_bool();
+					} else {
+						// If evaluation fails (e.g., template-dependent expression),
+						// default to true for safety (explicit is the safer default)
+						FLASH_LOG(Parser, Debug, "explicit(condition) evaluation failed: ", 
+							eval_result.error_message, " - defaulting to explicit=true");
+						explicit_value = true;
+					}
+				}
+				
+				if (!consume(")"_tok)) {
+					// Error: expected closing paren
+				}
+				
+				// Only set MLS_Explicit if the condition is true
+				if (explicit_value) {
+					specs |= MLS_Explicit;
+				}
+			} else {
+				// Plain explicit (no condition) - always true
+				specs |= MLS_Explicit;
 			}
 		} else if (k == "virtual"_tok) {
 			specs |= MLS_Virtual;

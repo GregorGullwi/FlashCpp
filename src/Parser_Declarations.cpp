@@ -5439,6 +5439,10 @@ ParseResult Parser::parse_struct_declaration()
 				// If variadic constructor support becomes needed, ConstructorDeclarationNode
 				// can be extended with set_is_variadic() similar to FunctionDeclarationNode.
 
+				// Apply specifiers from member_specs
+				ctor_ref.set_explicit(member_specs & FlashCpp::MLS_Explicit);
+				ctor_ref.set_constexpr(member_specs & FlashCpp::MLS_Constexpr);
+
 				// Enter a temporary scope for parsing the initializer list (Phase 3: RAII)
 				// This allows the initializer expressions to reference the constructor parameters
 				FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);

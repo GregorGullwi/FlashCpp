@@ -2057,7 +2057,7 @@
 				bool is_struct_with_constructor = false;
 				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index() < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-					if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
+					if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
 						is_struct_with_constructor = true;
 					}
 				}
@@ -2203,15 +2203,28 @@
 					
 					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
 				} else {
-					// For struct with constructor, evaluate the initializer to check if it's an rvalue
-					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-					// Check if this is an rvalue (TempVar) - function return value
-					bool is_rvalue = (init_operands.size() >= 3 && std::holds_alternative<TempVar>(init_operands[2]));
-					if (is_rvalue) {
-						// For rvalues, use direct initialization (no constructor call)
-						operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+					// For struct with constructor, check if this is copy elision case first
+					// C++17 mandates copy elision for: T x = T(args);
+					// Check if the initializer is a ConstructorCallNode of the same type
+					bool is_copy_elision_candidate = false;
+					if (init_node.is<ExpressionNode>() && std::holds_alternative<ConstructorCallNode>(init_node.as<ExpressionNode>())) {
+						// This is a constructor call in copy initialization context
+						// Don't evaluate it as an expression - let it fall through to direct constructor handling below
+						is_copy_elision_candidate = true;
 					}
-					// For lvalues, skip adding to operands - will use constructor call below
+					
+					if (!is_copy_elision_candidate) {
+						// Evaluate the initializer to check if it's an rvalue
+						auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+						// Check if this is an rvalue (TempVar) - function return value
+						bool is_rvalue = (init_operands.size() >= 3 && std::holds_alternative<TempVar>(init_operands[2]));
+						if (is_rvalue) {
+							// For rvalues, use direct initialization (no constructor call)
+							operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+						}
+						// For lvalues, skip adding to operands - will use constructor call below
+					}
+					// For copy elision candidates, skip adding to operands - will use constructor call below
 				}
 			}
 		}
@@ -2300,8 +2313,8 @@
 						assert(false && "Cannot instantiate abstract class");
 					}
 
-					if (type_info.struct_info_->hasConstructor()) {
-						FLASH_LOG(Codegen, Debug, "Struct ", type_info.name(), " has constructor");
+					if (type_info.struct_info_->hasAnyConstructor() || type_info.struct_info_->needs_default_constructor) {
+						FLASH_LOG(Codegen, Debug, "Struct ", type_info.name(), " has constructor or needs default constructor");
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"
 						// Skip if the variable was already initialized with an rvalue (function return)
 						bool has_copy_init = false;
@@ -2511,16 +2524,84 @@
 								);
 							}
 						} else if (has_copy_init) {
-							// Generate copy constructor call
+							// Generate copy constructor call or converting constructor call
+							const ASTNode& init_node = *node.initializer();
+							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							// init_operands = [type, size, value, type_index?]
+							
+							// Check if this is a converting constructor case (initializer type != target type)
+							bool is_converting_ctor = false;
+							if (init_operands.size() >= 3) {
+								Type init_type = std::get<Type>(init_operands[0]);
+								TypeIndex init_type_index = 0;
+								if (init_operands.size() >= 4 && std::holds_alternative<unsigned long long>(init_operands[3])) {
+									init_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(init_operands[3]));
+								}
+								
+								// Check if types differ
+								is_converting_ctor = (init_type != Type::Struct) || (init_type_index != type_node.type_index());
+								
+								// For converting constructors in copy initialization, check if constructor is explicit
+								if (is_converting_ctor && type_info.struct_info_) {
+									// Find a constructor that takes the initializer type as single parameter
+									const ConstructorDeclarationNode* converting_ctor = nullptr;
+									for (const auto& func : type_info.struct_info_->member_functions) {
+										if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+											const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+											const auto& params = ctor_node.parameter_nodes();
+											
+											// Check for single-parameter constructor (or multi-parameter with defaults)
+											if (params.size() >= 1) {
+												// Check if first parameter type matches initializer type
+												if (params[0].is<DeclarationNode>()) {
+													const auto& param_decl = params[0].as<DeclarationNode>();
+													const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+													
+													// Match if types are compatible (exact match or implicit conversion)
+													bool param_matches = false;
+													if (param_type.type() == init_type) {
+														if (init_type != Type::Struct || param_type.type_index() == init_type_index) {
+															param_matches = true;
+														}
+													}
+													
+													if (param_matches) {
+														// Check if remaining parameters have defaults
+														bool all_have_defaults = true;
+														for (size_t i = 1; i < params.size(); ++i) {
+															if (!params[i].is<DeclarationNode>() || 
+															    !params[i].as<DeclarationNode>().has_default_value()) {
+																all_have_defaults = false;
+																break;
+															}
+														}
+														
+														if (all_have_defaults) {
+															converting_ctor = &ctor_node;
+															break;
+														}
+													}
+												}
+											}
+										}
+									}
+									
+									// If found a converting constructor and it's explicit, emit error
+									if (converting_ctor && converting_ctor->is_explicit()) {
+										FLASH_LOG(Codegen, Error, "Cannot use copy initialization with explicit constructor for type '", 
+											StringTable::getStringView(type_info.name()), "'");
+										FLASH_LOG(Codegen, Error, "  Use direct initialization: ", 
+											decl.identifier_token().value(), "(value) instead of = value");
+										assert(false && "Cannot use copy initialization with explicit constructor");
+									}
+								}
+							}
+							
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();
 							ctor_op.object = decl.identifier_token().handle();
 
-							// Add initializer as copy constructor parameter
-							// Copy constructors take const lvalue reference parameters
-							const ASTNode& init_node = *node.initializer();
-							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-							// init_operands = [type, size, value]
+							// Add initializer as constructor parameter
 							if (init_operands.size() >= 3) {
 								TypedValue init_arg;
 								
