@@ -758,12 +758,12 @@
 							
 							// If found a converting constructor and it's explicit, emit error
 							if (converting_ctor && converting_ctor->is_explicit()) {
-								FLASH_LOG(Codegen, Error, "Cannot use implicit conversion with explicit constructor for type '",
+								FLASH_LOG(General, Error, "Cannot use implicit conversion with explicit constructor for type '",
 									StringTable::getStringView(target_type_info.name()), "'");
-								FLASH_LOG(Codegen, Error, "  In function call at argument ", arg_index);
-								FLASH_LOG(Codegen, Error, "  Use explicit construction: ", 
+								FLASH_LOG(General, Error, "  In function call at argument ", arg_index);
+								FLASH_LOG(General, Error, "  Use explicit construction: ", 
 									StringTable::getStringView(target_type_info.name()), "(value)");
-								assert(false && "Cannot use implicit conversion with explicit constructor in function argument");
+								throw std::runtime_error("Cannot use implicit conversion with explicit constructor in function argument");
 							}
 						}
 					}
