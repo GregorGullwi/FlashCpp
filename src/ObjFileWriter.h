@@ -1503,6 +1503,26 @@ public:
 			}
 			
 			// Now generate HandlerType entries with proper pType references
+			auto ensure_catch_symbol = [this, function_start](std::string_view parent_mangled_name, uint32_t handler_offset, size_t handler_index) -> std::string {
+				StringBuilder sb;
+				sb.append("$catch$").append(parent_mangled_name).append("$").append(handler_index);
+				std::string catch_symbol_name(sb.commit());
+
+				auto* existing = coffi_.get_symbol(catch_symbol_name);
+				if (existing) {
+					return catch_symbol_name;
+				}
+
+				auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+				auto* catch_symbol = coffi_.add_symbol(catch_symbol_name);
+				catch_symbol->set_type(0x20);  // function symbol
+				catch_symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+				catch_symbol->set_section_number(text_section->get_index() + 1);
+				catch_symbol->set_value(function_start + handler_offset);
+
+				return catch_symbol_name;
+			};
+
 			size_t handler_index = 0;
 			for (const auto& try_block : try_blocks) {
 				for (const auto& handler : try_block.catch_handlers) {
@@ -1545,22 +1565,24 @@ public:
 					}
 					// For catch(...), pType remains 0 (no relocation needed)
 					
-					// catchObjOffset - frame offset for caught exception object (RBP-relative)
-					// This is the stack location where the exception object is stored for access in the catch block
-					int32_t catch_offset = handler.catch_obj_offset;
+					// catchObjOffset (dispCatchObj).
+					// For current FH3 path, keep this as 0 to avoid writing into an invalid
+					// establisher-frame slot. Catch variable materialization is handled in codegen.
+					int32_t catch_offset = 0;
 					xdata.push_back(static_cast<char>(catch_offset & 0xFF));
 					xdata.push_back(static_cast<char>((catch_offset >> 8) & 0xFF));
 					xdata.push_back(static_cast<char>((catch_offset >> 16) & 0xFF));
 					xdata.push_back(static_cast<char>((catch_offset >> 24) & 0xFF));
 					
-					// addressOfHandler - RVA of catch handler (relative to function start)
-					uint32_t handler_rva = function_start + handler.handler_offset;
+					// addressOfHandler - RVA of catch handler entry.
+					// Use a dedicated catch symbol to mirror MSVC's handler map relocation style.
+					std::string catch_symbol_name = ensure_catch_symbol(mangled_name, handler.handler_offset, handler_index);
 					uint32_t address_of_handler_field_offset = static_cast<uint32_t>(xdata.size());
-					xdata.push_back(static_cast<char>(handler_rva & 0xFF));
-					xdata.push_back(static_cast<char>((handler_rva >> 8) & 0xFF));
-					xdata.push_back(static_cast<char>((handler_rva >> 16) & 0xFF));
-					xdata.push_back(static_cast<char>((handler_rva >> 24) & 0xFF));
-					cpp_text_rva_field_offsets.push_back(address_of_handler_field_offset);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					add_xdata_relocation(xdata_offset + address_of_handler_field_offset, catch_symbol_name);
 					
 					handler_index++;
 				}
