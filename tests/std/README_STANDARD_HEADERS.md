@@ -14,7 +14,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~183ms (2026-02-11: Fixed with self-referential template handling and dependent type detection) |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Fails at `stl_bvector.h:1610` (No matching function for call to `__fill_bvector` - enum-to-unsigned implicit conversion in overload resolution) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Progressed past enum overload issue (2026-02-12); now fails further in `vector.tcc:1224` (hash specialization out-of-line definition pattern) |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Timeout | Hangs during template instantiation |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed from line 499→1137; 5 separate fixes: func template call disambiguation, member variable template partial spec, nested templates in member struct bodies, func pointer pack expansion in type aliases. Now fails at `variant:1137` (struct body boundary tracking issue) |
@@ -114,10 +114,17 @@ The following parser issues were fixed to unblock standard header compilation:
 |---------|-----------------|---------|
 | IR conversion `bad_any_cast` during template member body | `<string>`, `<iostream>`, `<ranges>`, `<map>`, `<set>` | Parsing succeeds but codegen crashes on instantiated template member functions; root cause appears to be deferred body token position restoration |
 | Template instantiation timeout/infinite loop | `<tuple>`, `<functional>`, `<memory>` | Template instantiation hangs, likely due to deeply nested or recursive instantiation chains |
-| Struct body boundary tracking | `<variant>` | Parser's struct body parsing consumes tokens past the `}` boundary during error recovery, causing namespace-level declarations to be misattributed as struct members |
-| Overload resolution for enum-to-unsigned conversion | `<vector>` | `__fill_bvector` call with enum constant `_S_word_bit` (unnamed enum) fails overload resolution for `unsigned int` parameter |
+| Struct body boundary tracking (`skip_balanced_braces` token limit) | `<variant>` | After `skip_balanced_braces()` for `_Copy_assign_base::operator=` body, parser lands on stray `;` instead of next member. Investigation shows the 10000-token limit in `skip_balanced_braces()` is NOT exceeded, and braces are balanced — root cause appears to be the preprocessor producing an unexpected `;` token after the function body `}`. Needs further investigation of the preprocessor token stream for the variant lambda body. |
 | `compare_exchange_weak` template | `<atomic>`, `<barrier>`, `<thread>`, `<stop_token>` | Template instantiation failure for member function with `__cmpexch_failure_order()` call |
 | Forward declaration in namespace block | `<chrono>`, `<shared_mutex>`, `<condition_variable>` | `namespace filesystem { struct __file_clock; };` at `bits/chrono.h:54` fails to parse |
+
+### Recent Fixes (2026-02-12)
+
+The following issues were fixed to unblock standard header compilation:
+
+1. **Enum-to-integer implicit conversion in overload resolution**: `can_convert_type()` now handles `Type::Enum` → integer promotions and conversions per C++20 §[conv.prom] and §[conv.integral]. Unscoped enums promote to `int`/`unsigned int` and convert to any integral or floating-point type. This unblocks `<vector>` past the `__fill_bvector` overload resolution error where enum constant `_S_word_bit` needed to match an `unsigned int` parameter.
+
+2. **Enum constant function arguments resolved as immediates**: When an enumerator constant (e.g., `Green` from `enum Color { Red, Green, Blue }`) is used as a function call argument, the codegen now resolves it to its integer value (an immediate constant) instead of passing it as a variable reference. Previously, the identifier path in `generateFunctionCallIr()` treated enum constants like variables, causing codegen failures since enumerator constants don't have stack frame entries.
 
 ### Recent Fixes (2026-02-11)
 

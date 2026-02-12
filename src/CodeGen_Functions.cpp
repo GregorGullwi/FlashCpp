@@ -906,6 +906,26 @@
 				const auto& decl_node = *decl_ptr;
 				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
+				// Check if this is an enumerator constant (not a variable of enum type)
+				// Enumerator constants should be passed as immediate values, not variable references
+				if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
+					size_t enum_type_index = type_node.type_index();
+					if (enum_type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[enum_type_index];
+						const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+						if (enum_info) {
+							const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifier.name()));
+							if (enumerator) {
+								// Pass enumerator value as immediate constant
+								irOperands.emplace_back(enum_info->underlying_type);
+								irOperands.emplace_back(static_cast<int>(enum_info->underlying_size));
+								irOperands.emplace_back(static_cast<unsigned long long>(enumerator->value));
+								return;
+							}
+						}
+					}
+				}
+
 				// Check if this is an array - arrays decay to pointers when passed to functions
 				if (decl_node.is_array()) {
 					// For arrays, we need to pass the address of the first element
