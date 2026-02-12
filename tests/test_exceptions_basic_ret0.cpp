@@ -1,5 +1,4 @@
 // Basic exception handling test - try/catch/throw
-extern "C" int printf(const char*, ...);
 
 int test_simple_throw_catch() {
     try {
@@ -21,17 +20,16 @@ int test_no_exception() {
 
 int main() {
     int result1 = test_simple_throw_catch();
-    printf("test_simple_throw_catch: %d (expected 42)\n", result1);
     
     int result2 = test_no_exception();
-    printf("test_no_exception: %d (expected 100)\n", result2);
     
     // Test catching different types
+	int result3 = 0;
     try {
         throw 123;
     } catch (int x) {
-        printf("Caught int: %d (expected 123)\n", x);
+		result3 = x;
     }
     
-    return 0;
+    return result1 + result2 + result3 - 42 - 100 - 123;
 }

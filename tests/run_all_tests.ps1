@@ -27,10 +27,10 @@ Write-Host ""
 # On GitHub Actions, MSBuild builds FlashCppMSVC.exe
 # Locally, build_flashcpp.bat builds FlashCpp.exe
 $flashCppPath = ""
-if (Test-Path "x64\Debug\FlashCppMSVC.exe") {
-	$flashCppPath = "x64\Debug\FlashCppMSVC.exe"
-} elseif (Test-Path "x64\Debug\FlashCpp.exe") {
+if (Test-Path "x64\Debug\FlashCpp.exe") {
 	$flashCppPath = "x64\Debug\FlashCpp.exe"
+} elseif (Test-Path "x64\Debug\FlashCppMSVC.exe") {
+	$flashCppPath = "x64\Debug\FlashCppMSVC.exe"
 } else {
 	Write-Host "FlashCpp not found, building..."
 	& .\build_flashcpp.bat
