@@ -971,13 +971,15 @@
 			}
 		}
 
-		if (!found) {
+		if (!found && !found_current_dir) {
 			// Fallback: if we couldn't find the current dir in include paths,
 			// just do a regular include search (better than failing)
 			if (settings_.isVerboseMode()) {
 				FLASH_LOG(Lexer, Trace, "include_next fallback to regular include for: ", filename);
 			}
 			return processIncludeDirective("#include <" + filename + ">", current_file, include_line_number);
+		} else if (!found) {
+			FLASH_LOG(Lexer, Warning, "#include_next: file not found after current directory: ", filename);
 		}
 		return true;
 	}
