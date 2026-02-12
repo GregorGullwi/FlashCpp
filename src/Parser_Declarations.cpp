@@ -3865,11 +3865,18 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			size_t enumerator_count = 0;
 			const size_t MAX_ENUMERATORS = 10000; // Safety limit
 			
+			// For scoped enums, push a temporary scope so that enumerator names
+			// are visible to subsequent value expressions (C++ §9.7.1/2)
+			if (is_scoped) {
+				gSymbolTable.enter_scope(ScopeType::Block);
+			}
+			
 			while (!peek().is_eof() && peek() != "}"_tok && enumerator_count < MAX_ENUMERATORS) {
 				enumerator_count++;
 				
 				auto enumerator_name_token = advance();
 				if (!enumerator_name_token.kind().is_identifier()) {
+					if (is_scoped) gSymbolTable.exit_scope();
 					return ParseResult::error("Expected enumerator name in enum", enumerator_name_token);
 				}
 				
@@ -3880,11 +3887,13 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					advance(); // consume '='
 					auto value_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (value_expr_result.is_error()) {
+						if (is_scoped) gSymbolTable.exit_scope();
 						return value_expr_result;
 					}
 					if (auto value_node = value_expr_result.node()) {
 						enumerator_value = *value_node;
 						// Extract numeric value if possible
+						bool value_extracted = false;
 						if (value_node->is<ExpressionNode>()) {
 							const auto& expr = value_node->as<ExpressionNode>();
 							if (std::holds_alternative<NumericLiteralNode>(expr)) {
@@ -3892,7 +3901,16 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 								const auto& val = lit.value();
 								if (std::holds_alternative<unsigned long long>(val)) {
 									value = static_cast<int64_t>(std::get<unsigned long long>(val));
+									value_extracted = true;
 								}
+							}
+						}
+						// Fallback: use ConstExprEvaluator for complex expressions
+						if (!value_extracted) {
+							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*value_node, eval_ctx);
+							if (eval_result.success()) {
+								value = eval_result.as_int();
 							}
 						}
 					}
@@ -3904,8 +3922,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				StringHandle enumerator_name_handle = enumerator_name_token.handle();
 				enum_info->addEnumerator(enumerator_name_handle, value);
 				
-				// For unscoped enums, add to current scope
-				if (!is_scoped) {
+				// Add enumerator to current scope so subsequent enumerators can reference it
+				{
 					auto enum_type_node = emplace_node<TypeSpecifierNode>(
 						Type::Enum, enum_type_index, underlying_size, enumerator_name_token);
 					auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
@@ -3925,7 +3943,13 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			if (enumerator_count >= MAX_ENUMERATORS) {
+				if (is_scoped) gSymbolTable.exit_scope();
 				return ParseResult::error("Enum has too many enumerators (possible infinite loop detected)", current_token_);
+			}
+			
+			// Pop temporary scope for scoped enums
+			if (is_scoped) {
+				gSymbolTable.exit_scope();
 			}
 			
 			// Expect closing brace
@@ -7504,10 +7528,16 @@ ParseResult Parser::parse_enum_declaration()
 
 	// Parse enumerators
 	long long next_value = 0;
+	// For scoped enums, push a temporary scope so that enumerator names
+	// are visible to subsequent value expressions (C++ §9.7.1/2)
+	if (is_scoped) {
+		gSymbolTable.enter_scope(ScopeType::Block);
+	}
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		// Parse enumerator name
 		auto enumerator_name_token = advance();
 		if (!enumerator_name_token.kind().is_identifier()) {
+			if (is_scoped) gSymbolTable.exit_scope();
 			return ParseResult::error("Expected enumerator name", enumerator_name_token);
 		}
 
@@ -7521,6 +7551,7 @@ ParseResult Parser::parse_enum_declaration()
 
 			auto value_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (value_result.is_error()) {
+				if (is_scoped) gSymbolTable.exit_scope();
 				return value_result;
 			}
 
@@ -7528,7 +7559,7 @@ ParseResult Parser::parse_enum_declaration()
 				enumerator_value = *value_node;
 
 				// Try to evaluate constant expression
-				// For now, we only handle numeric literals
+				bool value_extracted = false;
 				if (value_node->is<ExpressionNode>()) {
 					const auto& expr = value_node->as<ExpressionNode>();
 					if (std::holds_alternative<NumericLiteralNode>(expr)) {
@@ -7536,9 +7567,19 @@ ParseResult Parser::parse_enum_declaration()
 						const auto& literal_value = literal.value();
 						if (std::holds_alternative<unsigned long long>(literal_value)) {
 							value = static_cast<long long>(std::get<unsigned long long>(literal_value));
+							value_extracted = true;
 						} else if (std::holds_alternative<double>(literal_value)) {
 							value = static_cast<long long>(std::get<double>(literal_value));
+							value_extracted = true;
 						}
+					}
+				}
+				// Fallback: use ConstExprEvaluator for complex expressions
+				if (!value_extracted) {
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					auto eval_result = ConstExpr::Evaluator::evaluate(*value_node, eval_ctx);
+					if (eval_result.success()) {
+						value = eval_result.as_int();
 					}
 				}
 			}
@@ -7553,9 +7594,8 @@ ParseResult Parser::parse_enum_declaration()
 		StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name);
 		enum_info->addEnumerator(enumerator_name_handle, value);
 
-		// For unscoped enums, add enumerator to current scope as a constant
-		// This allows unscoped enum values to be used without qualification
-		if (!is_scoped) {
+		// Add enumerator to current scope so subsequent enumerators can reference it
+		{
 			auto enum_type_node = emplace_node<TypeSpecifierNode>(
 				Type::Enum, enum_type_info.type_index_, underlying_size, enumerator_name_token);
 			auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
@@ -7574,8 +7614,14 @@ ParseResult Parser::parse_enum_declaration()
 		} else if (peek() == "}"_tok) {
 			break;
 		} else {
+			if (is_scoped) gSymbolTable.exit_scope();
 			return ParseResult::error("Expected ',' or '}' after enumerator", peek_info());
 		}
+	}
+
+	// Pop temporary scope for scoped enums
+	if (is_scoped) {
+		gSymbolTable.exit_scope();
 	}
 
 	// Expect closing brace
@@ -8205,10 +8251,16 @@ ParseResult Parser::parse_typedef_declaration()
 
 		// Parse enumerators
 		int64_t next_value = 0;
+		// For scoped enums, push a temporary scope so that enumerator names
+		// are visible to subsequent value expressions (C++ §9.7.1/2)
+		if (is_scoped) {
+			gSymbolTable.enter_scope(ScopeType::Block);
+		}
 		while (!peek().is_eof() && peek() != "}"_tok) {
 			// Parse enumerator name
 			auto enumerator_name_token = advance();
 			if (!enumerator_name_token.kind().is_identifier()) {
+				if (is_scoped) gSymbolTable.exit_scope();
 				return ParseResult::error("Expected enumerator name in enum", enumerator_name_token);
 			}
 
@@ -8222,13 +8274,15 @@ ParseResult Parser::parse_typedef_declaration()
 				// Parse constant expression
 				auto value_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (value_expr_result.is_error()) {
+					if (is_scoped) gSymbolTable.exit_scope();
 					return value_expr_result;
 				}
 
-				// Extract value from expression (simplified - assumes numeric literal)
+				// Extract value from expression
 				if (auto value_node = value_expr_result.node()) {
 					enumerator_value = *value_node;
 					
+					bool value_extracted = false;
 					if (value_node->is<ExpressionNode>()) {
 						const auto& expr = value_node->as<ExpressionNode>();
 						if (std::holds_alternative<NumericLiteralNode>(expr)) {
@@ -8236,9 +8290,19 @@ ParseResult Parser::parse_typedef_declaration()
 							const auto& val = lit.value();
 							if (std::holds_alternative<unsigned long long>(val)) {
 								value = static_cast<int64_t>(std::get<unsigned long long>(val));
+								value_extracted = true;
 							} else if (std::holds_alternative<double>(val)) {
 								value = static_cast<int64_t>(std::get<double>(val));
+								value_extracted = true;
 							}
+						}
+					}
+					// Fallback: use ConstExprEvaluator for complex expressions
+					if (!value_extracted) {
+						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						auto eval_result = ConstExpr::Evaluator::evaluate(*value_node, eval_ctx);
+						if (eval_result.success()) {
+							value = eval_result.as_int();
 						}
 					}
 				}
@@ -8251,9 +8315,8 @@ ParseResult Parser::parse_typedef_declaration()
 			StringHandle enumerator_name_handle = enumerator_name_token.handle();
 			enum_info->addEnumerator(enumerator_name_handle, value);
 
-			// For unscoped enums, add enumerator to current scope as a constant
-			// This allows unscoped enum values to be used without qualification
-			if (!is_scoped) {
+			// Add enumerator to current scope so subsequent enumerators can reference it
+			{
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
 					Type::Enum, enum_type_index, underlying_size, enumerator_name_token);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
@@ -8272,6 +8335,11 @@ ParseResult Parser::parse_typedef_declaration()
 			} else {
 				break;
 			}
+		}
+
+		// Pop temporary scope for scoped enums
+		if (is_scoped) {
+			gSymbolTable.exit_scope();
 		}
 
 		// Expect closing brace
