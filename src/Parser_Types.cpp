@@ -170,21 +170,6 @@ ReferenceQualifier Parser::parse_reference_qualifier() {
 	return ReferenceQualifier::None;
 }
 
-// Helper function to append template type argument suffix to a StringBuilder
-// Consolidates the logic for building instantiated template names (e.g., "is_arithmetic_int")
-// Previously duplicated in 4 locations throughout Parser.cpp
-void Parser::append_type_name_suffix(StringBuilder& sb, const TemplateTypeArg& arg) {
-	if (arg.is_value) {
-		sb.append(static_cast<uint64_t>(arg.value));
-	} else if (arg.base_type == Type::Void) {
-		sb.append("void");
-	} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-		sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
-	} else {
-		sb.append(getTypeName(arg.base_type));
-	}
-}
-
 ParseResult Parser::parse_type_specifier()
 {
 	// Add parsing depth check to prevent infinite loops

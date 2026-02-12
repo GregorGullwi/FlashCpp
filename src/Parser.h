@@ -687,10 +687,6 @@ private:
         // Returns ReferenceQualifier: None, LValueReference, or RValueReference
         ReferenceQualifier parse_reference_qualifier();
         
-        // Helper function to append template type argument suffix to a StringBuilder
-        // Used when building instantiated template names (e.g., "is_arithmetic_int")
-        static void append_type_name_suffix(StringBuilder& sb, const TemplateTypeArg& arg);
-        
         // Phase 4: Unified declaration parsing
         // This is the single entry point for parsing all declarations (variables and functions)
         // Context determines what forms are legal and how they're interpreted
