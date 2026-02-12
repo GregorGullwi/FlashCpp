@@ -11,6 +11,12 @@ ParseResult Parser::parse_top_level_node()
 	}
 #endif
 
+	// Skip empty declarations (lone semicolons) - valid in C++ (empty-declaration)
+	if (peek() == ";"_tok) {
+		advance();
+		return saved_position.success();
+	}
+
 	// Check for __pragma() - Microsoft's inline pragma syntax
 	// e.g., __pragma(pack(push, 8))
 	if (peek_info().type() == Token::Type::Identifier && peek_info().value() == "__pragma") {
@@ -7583,6 +7589,17 @@ ParseResult Parser::parse_static_assert()
 	}
 	
 	if (!eval_result.success()) {
+		// If we're inside a struct body, defer - our constexpr evaluator is incomplete
+		// and many standard library static_asserts use complex constexpr functions
+		if (!struct_parsing_context_stack_.empty()) {
+			FLASH_LOG(Parser, Debug, "Deferring static_assert with unevaluable condition in struct body: ", eval_result.error_message);
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			if (struct_ctx.struct_node) {
+				StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+				struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+			}
+			return saved_position.success();
+		}
 		return ParseResult::error(
 			"static_assert condition is not a constant expression: " + eval_result.error_message,
 			static_assert_keyword
@@ -9359,6 +9376,12 @@ ParseResult Parser::parse_namespace() {
 	// Parse declarations within the namespace
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		ParseResult decl_result;
+
+		// Skip empty declarations (lone semicolons) - valid in C++ (e.g., namespace foo { }; )
+		if (peek() == ";"_tok) {
+			advance();
+			continue;
+		}
 
 		// Check if it's a using directive, using declaration, or namespace alias
 		if (peek() == "using"_tok) {
