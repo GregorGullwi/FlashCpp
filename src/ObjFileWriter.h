@@ -1020,6 +1020,8 @@ public:
 		bool is_cpp = !try_blocks.empty();
 		uint32_t cpp_funcinfo_rva_for_funclets = 0;
 		bool has_cpp_funcinfo_for_funclets = false;
+		uint32_t cpp_funcinfo_local_offset = 0;
+		bool has_cpp_funcinfo_local_offset = false;
 
 		if (is_seh && is_cpp) {
 			FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
@@ -1258,6 +1260,8 @@ public:
 
 		if (is_cpp && !try_blocks.empty()) {
 			[[maybe_unused]] uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
+			cpp_funcinfo_local_offset = funcinfo_offset;
+			has_cpp_funcinfo_local_offset = true;
 			if (has_cpp_funcinfo_rva_field) {
 				uint32_t funcinfo_rva = xdata_offset + funcinfo_offset;
 				cpp_funcinfo_rva_for_funclets = funcinfo_rva;
@@ -1266,7 +1270,6 @@ public:
 				xdata[cpp_funcinfo_rva_field_offset + 1] = static_cast<char>((funcinfo_rva >> 8) & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 2] = static_cast<char>((funcinfo_rva >> 16) & 0xFF);
 				xdata[cpp_funcinfo_rva_field_offset + 3] = static_cast<char>((funcinfo_rva >> 24) & 0xFF);
-				cpp_xdata_rva_field_offsets.push_back(cpp_funcinfo_rva_field_offset);
 			}
 			
 			// Magic number for modern FuncInfo used with __CxxFrameHandler3/__CxxFrameHandler4.
@@ -1317,6 +1320,23 @@ public:
 
 			// pIPToStateMap - patch after map emission
 			uint32_t p_ip_to_state_map_field_offset = static_cast<uint32_t>(xdata.size());
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+
+			// dispUnwindHelp - frame-relative helper slot used by FH3 runtime.
+			// Empirically MSVC places this in caller stack space near the top of frame.
+			uint32_t disp_unwind_help = 8;
+			if (stack_frame_size >= 0x20) {
+				disp_unwind_help = stack_frame_size - 0x20;
+			}
+			xdata.push_back(static_cast<char>(disp_unwind_help & 0xFF));
+			xdata.push_back(static_cast<char>((disp_unwind_help >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((disp_unwind_help >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((disp_unwind_help >> 24) & 0xFF));
+
+			// pESTypeList - dynamic exception specification type list (unused)
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
@@ -1595,6 +1615,7 @@ public:
 			};
 			std::vector<IpStateEntry> ip_to_state_entries;
 			ip_to_state_entries.reserve(try_blocks.size() * 3 + 1);
+			ip_to_state_entries.push_back({function_start, -1});
 
 			for (size_t i = 0; i < try_blocks.size(); ++i) {
 				const auto& tb = try_blocks[i];
@@ -1606,6 +1627,9 @@ public:
 
 				for (const auto& handler : tb.catch_handlers) {
 					ip_to_state_entries.push_back({function_start + handler.handler_offset, catch_state});
+					if (handler.handler_end_offset > handler.handler_offset && handler.handler_end_offset <= function_size) {
+						ip_to_state_entries.push_back({function_start + handler.handler_end_offset, -1});
+					}
 				}
 			}
 
@@ -1650,6 +1674,46 @@ public:
 			}
 		}
 		
+		// Mirror FuncInfo into .rdata and repoint UNWIND language-specific data pointer.
+		if (is_cpp && has_cpp_funcinfo_rva_field && has_cpp_funcinfo_local_offset) {
+			auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+			uint32_t cppxdata_rva = static_cast<uint32_t>(rdata_section->get_data_size());
+
+			// FuncInfo has 10 DWORD fields (40 bytes).
+			constexpr uint32_t kFuncInfoSize = 40;
+			if (cpp_funcinfo_local_offset + kFuncInfoSize <= xdata.size()) {
+				std::vector<char> cppxdata_blob(
+					xdata.begin() + static_cast<std::ptrdiff_t>(cpp_funcinfo_local_offset),
+					xdata.begin() + static_cast<std::ptrdiff_t>(cpp_funcinfo_local_offset + kFuncInfoSize));
+				add_data(cppxdata_blob, SectionType::RDATA);
+
+				StringBuilder cppx_sym_sb;
+				cppx_sym_sb.append("$cppxdata$").append(mangled_name);
+				std::string cppx_sym_name(cppx_sym_sb.commit());
+
+				auto* cppx_sym = coffi_.get_symbol(cppx_sym_name);
+				if (!cppx_sym) {
+					cppx_sym = coffi_.add_symbol(cppx_sym_name);
+					cppx_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+					cppx_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+					cppx_sym->set_section_number(rdata_section->get_index() + 1);
+					cppx_sym->set_value(cppxdata_rva);
+				}
+
+				// Repoint UNWIND language-specific pointer to $cppxdata$ symbol in .rdata.
+				xdata[cpp_funcinfo_rva_field_offset + 0] = static_cast<char>(cppxdata_rva & 0xFF);
+				xdata[cpp_funcinfo_rva_field_offset + 1] = static_cast<char>((cppxdata_rva >> 8) & 0xFF);
+				xdata[cpp_funcinfo_rva_field_offset + 2] = static_cast<char>((cppxdata_rva >> 16) & 0xFF);
+				xdata[cpp_funcinfo_rva_field_offset + 3] = static_cast<char>((cppxdata_rva >> 24) & 0xFF);
+
+				// Ensure FuncInfo internal map pointers in .rdata are image-relative via relocations.
+				// Offsets within FuncInfo: pUnwindMap=+8, pTryBlockMap=+16, pIPToStateMap=+24.
+				add_rdata_relocation(cppxdata_rva + 8, ".xdata", IMAGE_REL_AMD64_ADDR32NB);
+				add_rdata_relocation(cppxdata_rva + 16, ".xdata", IMAGE_REL_AMD64_ADDR32NB);
+				add_rdata_relocation(cppxdata_rva + 24, ".xdata", IMAGE_REL_AMD64_ADDR32NB);
+			}
+		}
+
 		// Add the XDATA to the section
 		add_data(xdata, SectionType::XDATA);
 
@@ -1704,6 +1768,11 @@ public:
 		} else if (is_cpp) {
 			add_xdata_relocation(xdata_offset + handler_rva_offset, "__CxxFrameHandler3");
 			FLASH_LOG(Codegen, Debug, "Added relocation to __CxxFrameHandler3 for C++");
+			if (has_cpp_funcinfo_rva_field) {
+				StringBuilder cppx_sym_sb;
+				cppx_sym_sb.append("$cppxdata$").append(mangled_name);
+				add_xdata_relocation(xdata_offset + cpp_funcinfo_rva_field_offset, cppx_sym_sb.commit());
+			}
 
 			// Add IMAGE_REL_AMD64_ADDR32NB relocations for C++ EH metadata RVAs.
 			// These fields are image-relative RVAs and must be fixed by the linker.

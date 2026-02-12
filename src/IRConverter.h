@@ -15798,7 +15798,59 @@ private:
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
-			// Windows uses SEH which is already handled by existing code
+			// Minimal catch materialization path:
+			// Assume exception object pointer is available in RAX on catch entry and
+			// copy/store into the catch temp slot for simple built-in/reference cases.
+			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+			if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0) {
+				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+
+				if (catch_op.is_reference || catch_op.is_rvalue_reference) {
+					emitMovToFrame(X64Register::RAX, stack_offset, 64);
+				} else {
+					int type_size_bits = 0;
+					bool is_builtin = false;
+					switch (catch_op.exception_type) {
+						case Type::Bool:
+						case Type::Char:
+						case Type::UnsignedChar:
+						case Type::Short:
+						case Type::UnsignedShort:
+						case Type::Int:
+						case Type::UnsignedInt:
+						case Type::Long:
+						case Type::UnsignedLong:
+						case Type::LongLong:
+						case Type::UnsignedLongLong:
+						case Type::Float:
+						case Type::Double:
+						case Type::LongDouble:
+						case Type::FunctionPointer:
+						case Type::MemberFunctionPointer:
+						case Type::MemberObjectPointer:
+						case Type::Nullptr:
+							is_builtin = true;
+							break;
+						default:
+							is_builtin = false;
+							break;
+					}
+
+					if (is_builtin) {
+						type_size_bits = get_type_size_bits(catch_op.exception_type);
+					} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
+						type_size_bits = gTypeInfo[catch_op.type_index].type_size_;
+					}
+
+					size_t type_size = type_size_bits / 8;
+					if (type_size > 0 && type_size <= 8) {
+						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
+						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
+					} else {
+						emitMovToFrame(X64Register::RAX, stack_offset, 64);
+					}
+				}
+			}
 		}
 	}
 
