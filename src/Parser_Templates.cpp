@@ -3999,7 +3999,8 @@ if (struct_type_info.getStructInfo()) {
 				func_node.set_non_type_template_args(std::move(non_type_args));
 			}
 
-			// Skip trailing specifiers (const, volatile, noexcept, throw(), __attribute__, etc.)
+			// Consume trailing specifiers (const, volatile, noexcept, throw(), __attribute__, etc.)
+			// CV and ref qualifiers are captured in spec_quals for signature matching
 			FlashCpp::MemberQualifiers spec_quals;
 			skip_function_trailing_specifiers(spec_quals);
 
@@ -18514,15 +18515,21 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 							}
 						}
 
-						// Save body position and skip body
+						// Save body position and handle body / = default / = delete
+						bool ctor_is_defaulted = false;
+						bool ctor_is_deleted = false;
 						SaveHandle ctor_body_start = save_token_position();
 						if (peek() == "{"_tok) {
 							skip_balanced_braces();
 						} else if (peek() == "="_tok) {
 							// Handle = default; and = delete;
 							advance(); // consume '='
-							if (peek() == "default"_tok || peek() == "delete"_tok) {
-								advance(); // consume 'default' or 'delete'
+							if (peek() == "default"_tok) {
+								ctor_is_defaulted = true;
+								advance(); // consume 'default'
+							} else if (peek() == "delete"_tok) {
+								ctor_is_deleted = true;
+								advance(); // consume 'delete'
 							}
 							if (peek() == ";"_tok) {
 								advance(); // consume ';'
@@ -18537,6 +18544,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						out_of_line_ctor.function_node = ctor_func_node;
 						out_of_line_ctor.body_start = ctor_body_start;
 						out_of_line_ctor.template_param_names = template_param_names;
+						out_of_line_ctor.is_defaulted = ctor_is_defaulted;
+						out_of_line_ctor.is_deleted = ctor_is_deleted;
 
 						gTemplateRegistry.registerOutOfLineMember(ctor_class_name, std::move(out_of_line_ctor));
 
@@ -19019,16 +19028,23 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Save the position of the function body for delayed parsing
 	// body_start must be right before '{' - trailing specifiers and initializer lists
 	// are already consumed above
+	bool member_is_defaulted = false;
+	bool member_is_deleted = false;
 	SaveHandle body_start = save_token_position();
 
 	// Skip the function body for now (we'll re-parse it during instantiation or first use)
 	if (peek() == "{"_tok) {
 		skip_balanced_braces();
 	} else if (peek() == "="_tok) {
-		// Handle = default; and = delete;
+		// Handle = default; and = delete; - store on function node and out-of-line record
 		advance(); // consume '='
-		if (peek() == "default"_tok || peek() == "delete"_tok) {
-			advance(); // consume 'default' or 'delete'
+		if (peek() == "default"_tok) {
+			member_is_defaulted = true;
+			advance(); // consume 'default'
+		} else if (peek() == "delete"_tok) {
+			member_is_deleted = true;
+			func_ref.set_is_deleted(true);
+			advance(); // consume 'delete'
 		}
 		if (peek() == ";"_tok) {
 			advance(); // consume ';'
@@ -19064,6 +19080,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.template_param_names = template_param_names;
 		out_of_line_member.inner_template_params = inner_template_params;
 		out_of_line_member.inner_template_param_names = inner_template_param_names;
+		out_of_line_member.is_defaulted = member_is_defaulted;
+		out_of_line_member.is_deleted = member_is_deleted;
 
 		gTemplateRegistry.registerOutOfLineMember(class_name, std::move(out_of_line_member));
 
