@@ -1331,12 +1331,24 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 								if (struct_info) {
 									StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_token.value());
+									const FunctionDeclarationNode* first_name_match = nullptr;
+									size_t call_arg_count = args_result.args.size();
 									for (const auto& member_func : struct_info->member_functions) {
 										if (member_func.getName() == member_name_handle && member_func.function_decl.is<FunctionDeclarationNode>()) {
-											func_decl_ptr = &member_func.function_decl.as<FunctionDeclarationNode>();
-											decl_ptr = &func_decl_ptr->decl_node();
-											break;
+											const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+											if (!first_name_match) {
+												first_name_match = &candidate;
+											}
+											if (candidate.parameter_nodes().size() == call_arg_count) {
+												func_decl_ptr = &candidate;
+												decl_ptr = &func_decl_ptr->decl_node();
+												break;
+											}
 										}
+									}
+									if (!decl_ptr && first_name_match) {
+										func_decl_ptr = first_name_match;
+										decl_ptr = &func_decl_ptr->decl_node();
 									}
 								}
 							}
@@ -4970,12 +4982,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 								if (struct_info) {
 									StringHandle member_name_handle = member_token.handle();
+									const FunctionDeclarationNode* first_name_match = nullptr;
+									size_t call_arg_count = args.size();
 									for (const auto& member_func : struct_info->member_functions) {
 										if (member_func.getName() == member_name_handle && member_func.function_decl.is<FunctionDeclarationNode>()) {
-											member_lookup = member_func.function_decl;
-											decl_ptr = &member_func.function_decl.as<FunctionDeclarationNode>().decl_node();
-											break;
+											const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+											if (!first_name_match) {
+												first_name_match = &candidate;
+											}
+											if (candidate.parameter_nodes().size() == call_arg_count) {
+												member_lookup = member_func.function_decl;
+												decl_ptr = &candidate.decl_node();
+												break;
+											}
 										}
+									}
+									if (!decl_ptr && first_name_match) {
+										decl_ptr = &first_name_match->decl_node();
 									}
 								}
 							}
@@ -10585,12 +10608,24 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		if (type_it != gTypesByName.end() && type_it->second) {
 			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 			if (struct_info) {
+				const FunctionDeclarationNode* first_name_match = nullptr;
+				size_t call_arg_count = args.size();
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.getName() == member_name_handle && member_func.function_decl.is<FunctionDeclarationNode>()) {
-						func_decl_ptr = &member_func.function_decl.as<FunctionDeclarationNode>();
-						decl_ptr = &func_decl_ptr->decl_node();
-						break;
+						const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+						if (!first_name_match) {
+							first_name_match = &candidate;
+						}
+						if (candidate.parameter_nodes().size() == call_arg_count) {
+							func_decl_ptr = &candidate;
+							decl_ptr = &func_decl_ptr->decl_node();
+							break;
+						}
 					}
+				}
+				if (!decl_ptr && first_name_match) {
+					func_decl_ptr = first_name_match;
+					decl_ptr = &func_decl_ptr->decl_node();
 				}
 			}
 		}
