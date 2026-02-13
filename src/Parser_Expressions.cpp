@@ -3067,6 +3067,34 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				};
 				
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
+				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
+					if (!func_decl.get_definition().has_value()) {
+						StringBuilder class_scope_builder;
+						for (size_t i = 0; i < namespaces.size(); ++i) {
+							if (i > 0) {
+								class_scope_builder.append("::");
+							}
+							class_scope_builder.append(std::string_view(namespaces[i]));
+						}
+						std::string_view class_scope = class_scope_builder.commit();
+						if (class_scope.find('$') != std::string_view::npos) {
+							StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_scope);
+							StringHandle member_name_handle = final_identifier.handle();
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
+								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
+								if (lazy_info_opt.has_value()) {
+									auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
+									if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+										qualified_symbol = instantiated_func;
+										decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
+										LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle);
+									}
+								}
+							}
+						}
+					}
+				}
 				
 				// If symbol not found and we're not in extern "C", try template instantiation
 				if (!decl_ptr && current_linkage_ != Linkage::C) {
@@ -5705,6 +5733,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						auto qualified_result = parse_qualified_identifier_after_template(final_identifier);
 						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
 							auto qualified_node2 = qualified_result.node()->as<QualifiedIdentifierNode>();
+							auto member_call_result = try_parse_member_template_function_call(
+								StringTable::getStringView(inst_struct.name()),
+								qualified_node2.name(),
+								qualified_node2.identifier_token());
+							if (member_call_result.has_value()) {
+								if (member_call_result->is_error()) {
+									return *member_call_result;
+								}
+								return ParseResult::success(*member_call_result->node());
+							}
 							result = emplace_node<ExpressionNode>(qualified_node2);
 							return ParseResult::success(*result);
 						}
@@ -5831,6 +5869,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// Get the DeclarationNode
+				if (identifierType.has_value() && identifierType->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+					if (!func_decl.get_definition().has_value()) {
+						std::string_view qualified_scope = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+						if (qualified_scope.find('$') != std::string_view::npos) {
+							StringHandle class_name_handle = StringTable::getOrInternStringHandle(qualified_scope);
+							StringHandle member_name_handle = qual_id.identifier_token().handle();
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
+								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
+								if (lazy_info_opt.has_value()) {
+									auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
+									if (instantiated_func.has_value()) {
+										identifierType = *instantiated_func;
+										LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle);
+									}
+								}
+							}
+						}
+					}
+				}
+
 				const DeclarationNode* decl_ptr = identifierType.has_value() ? getDeclarationNode(*identifierType) : nullptr;
 				if (!decl_ptr) {
 					return ParseResult::error("Invalid function declaration (qualified id path)", final_identifier);
@@ -12078,4 +12137,3 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 
 // Note: Type size lookup is now unified in ::get_type_size_bits() from AstNodeTypes.h
 // This ensures consistent handling of target-dependent types like 'long' (LLP64 vs LP64)
-

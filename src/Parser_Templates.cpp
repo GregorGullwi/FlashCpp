@@ -15492,7 +15492,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const DeclarationNode& decl = func_decl.decl_node();
 
 			// For lazy instantiation, register function for later instantiation instead of instantiating now
-			if (use_lazy_instantiation && (func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
+			if (use_lazy_instantiation &&
+			    instantiated_name.view().find("::") == std::string_view::npos &&
+			    (func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
 				// Register this member function for lazy instantiation
 				LazyMemberFunctionInfo lazy_info;
 				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
@@ -19587,6 +19589,8 @@ ASTNode Parser::substituteTemplateParameters(
 						std::string_view struct_name = sit->struct_name;
 						// Try multiple lookup candidates following unqualified lookup rules:
 						// direct name, template base name for instantiated classes, and each enclosing namespace.
+						std::vector<std::string_view> base_names_to_try;
+						base_names_to_try.reserve(2);
 						std::vector<std::string_view> names_to_try;
 						names_to_try.reserve(8);
 						auto add_name_to_try = [&names_to_try](std::string_view name) {
@@ -19600,20 +19604,33 @@ ASTNode Parser::substituteTemplateParameters(
 							}
 							names_to_try.push_back(name);
 						};
+						auto add_base_name_to_try = [&base_names_to_try](std::string_view name) {
+							if (name.empty()) {
+								return;
+							}
+							for (const auto existing : base_names_to_try) {
+								if (existing == name) {
+									return;
+								}
+							}
+							base_names_to_try.push_back(name);
+						};
 
-						add_name_to_try(struct_name);
+						add_base_name_to_try(struct_name);
 						size_t hash_pos = struct_name.find('$');
 						if (hash_pos != std::string_view::npos) {
-							add_name_to_try(struct_name.substr(0, hash_pos));
+							add_base_name_to_try(struct_name.substr(0, hash_pos));
+						}
+						for (std::string_view base_name : base_names_to_try) {
+							add_name_to_try(base_name);
 						}
 
 						NamespaceHandle ns = sit->namespace_handle.isValid() ? sit->namespace_handle : gSymbolTable.get_current_namespace_handle();
 						NamespaceHandle walk_ns = ns;
 						while (walk_ns.isValid() && !walk_ns.isGlobal()) {
-							const size_t current_name_count = names_to_try.size();
-							for (size_t i = 0; i < current_name_count; ++i) {
+							for (std::string_view base_name : base_names_to_try) {
 								StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
-									walk_ns, StringTable::getOrInternStringHandle(names_to_try[i]));
+									walk_ns, StringTable::getOrInternStringHandle(base_name));
 								add_name_to_try(StringTable::getStringView(qualified));
 							}
 							walk_ns = gNamespaceRegistry.getParent(walk_ns);
