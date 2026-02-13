@@ -219,6 +219,6 @@ echo $?  # Should be 249 (109 + 40 + 100)
 - Complex scenarios fail due to state not being isolated properly
 
 ---
-*Created: 2025-12-21*  
-*Author: GitHub Copilot*  
-*Status: Analysis Complete, Implementation Pending*
+*Created: 2025-12-21*
+*Author: GitHub Copilot*
+*Status: **RESOLVED** — Phase 2 (lambda context stack) fully implemented. See `LambdaContext` struct and `pushLambdaContext()`/`popLambdaContext()` in CodeGen_Lambdas.cpp and CodeGen_Visitors.cpp. Test coverage in `tests/test_lambda_copy_this_multiple_lambdas_ret84.cpp`.*
