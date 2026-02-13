@@ -6838,10 +6838,20 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			if (width_result.is_error()) {
 				return width_result;
 			}
+			std::optional<ASTNode> init;
+			if (peek() == "="_tok) {
+				advance(); // consume '='
+				auto init_result = parse_expression(2, ExpressionContext::Normal);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				init = init_result.node();
+			}
 			if (!consume(";"_tok)) {
 				return ParseResult::error("Expected ';' after bitfield member", peek_info());
 			}
-			member_struct_ref.add_member(*member_result.node(), current_access, std::nullopt);
+			member_struct_ref.add_member(*member_result.node(), current_access, init);
+
 		} else if (peek() == ";"_tok) {
 			// Data member
 			advance(); // consume ';'
