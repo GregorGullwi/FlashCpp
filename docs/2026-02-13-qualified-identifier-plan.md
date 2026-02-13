@@ -19,19 +19,28 @@ Bundle the namespace and identifier into a single struct so they always travel t
 
 ```cpp
 struct QualifiedIdentifier {
-    StringHandle namespace_handle;   // e.g., "std" — empty for global namespace
-    StringHandle identifier_handle;  // e.g., "vector"
+    NamespaceHandle namespace_handle;  // hierarchical namespace (e.g., std), GLOBAL_NAMESPACE for global
+    StringHandle identifier_handle;    // e.g., "vector"
 
     bool valid() const { return identifier_handle.handle != 0; }
-    bool hasNamespace() const { return namespace_handle.handle != 0; }
+    bool hasNamespace() const { return !namespace_handle.isGlobal(); }
 
-    // Construct from a possibly-qualified name like "std::vector"
-    static QualifiedIdentifier fromQualifiedName(std::string_view name) {
+    // Construct from a possibly-qualified name like "std::vector".
+    // current_ns is the namespace the code is being parsed in — used to resolve
+    // unqualified names so the namespace context is never lost.
+    static QualifiedIdentifier fromQualifiedName(
+            std::string_view name,
+            NamespaceHandle current_ns = NamespaceRegistry::GLOBAL_NAMESPACE) {
         QualifiedIdentifier result;
         if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
-            result.namespace_handle = StringTable::getOrInternStringHandle(name.substr(0, pos));
+            // Qualified name: resolve the namespace prefix through NamespaceRegistry
+            std::string_view ns_part = name.substr(0, pos);
+            result.namespace_handle = gNamespaceRegistry.getOrCreatePath(
+                NamespaceRegistry::GLOBAL_NAMESPACE, {ns_part});
             result.identifier_handle = StringTable::getOrInternStringHandle(name.substr(pos + 2));
         } else {
+            // Unqualified name: inherit the current namespace context
+            result.namespace_handle = current_ns;
             result.identifier_handle = StringTable::getOrInternStringHandle(name);
         }
         return result;
@@ -116,6 +125,25 @@ These are pre-existing issues that this refactoring would address:
 3. **Phases 3–5** — can be done incrementally as needed
 
 ## Key Code Locations
+
+### NamespaceRegistry (`src/NamespaceRegistry.h`)
+
+The existing `NamespaceRegistry` (global: `gNamespaceRegistry`) already provides the hierarchical infrastructure `QualifiedIdentifier` should build on:
+
+| Helper | Purpose |
+|--------|---------|
+| `getOrCreateNamespace(parent, name)` | Create/find a child namespace under a parent handle |
+| `getOrCreatePath(start, components)` | Walk a multi-segment namespace path (e.g., `{"std", "chrono"}`) |
+| `getQualifiedName(handle)` | Return the full dotted name (e.g., `"std::chrono"`) |
+| `getQualifiedNameHandle(handle)` | Same as above but returns `StringHandle` |
+| `buildQualifiedIdentifier(ns, id)` | Produce `"ns::id"` as a `StringHandle` |
+| `getParent(handle)` | Navigate one level up the namespace hierarchy |
+| `isAncestorOf(ancestor, child)` | Walk up from `child` checking whether `ancestor` is on the path |
+| `getRootNamespace(handle)` | E.g., `"std"` for `"std::chrono::duration"` |
+| `getName(handle)` | Local name of a namespace (e.g., `"filesystem"` for `"std::filesystem"`) |
+| `getDepth(handle)` | 0 = global, 1 = top-level, etc. |
+
+These helpers mean `QualifiedIdentifier` does not need to reimplement namespace traversal — it can store a `NamespaceHandle` and delegate to the registry for comparisons, qualified-name construction, and ancestor checks.
 
 ### TypeInfo Template Metadata
 - `src/AstNodeTypes.h:1180-1218` — `base_template_name_`, `setTemplateInstantiationInfo()`

@@ -37,9 +37,10 @@ public:
 	// Register a member function for lazy instantiation
 	// Key format: "instantiated_class_name::member_function_name"
 	void registerLazyMember(LazyMemberFunctionInfo info) {
+		StringHandle normalized_class = normalizeClassName(info.instantiated_class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
-			.append(info.instantiated_class_name)
+			.append(normalized_class)
 			.append("::")
 			.append(info.member_function_name)
 			.commit();
