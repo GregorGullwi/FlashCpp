@@ -2291,7 +2291,8 @@ ParseResult Parser::parse_template_declaration() {
 					referenced_size_bits,
 					false,
 					{},
-					static_cast<int>(type_spec.pointer_depth())
+					static_cast<int>(type_spec.pointer_depth()),
+					member_decl.bitfield_width
 				);
 			}
 
