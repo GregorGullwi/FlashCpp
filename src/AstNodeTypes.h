@@ -667,7 +667,7 @@ struct StructTypeInfo {
 			if (active_bitfield_unit_size > 0) {
 				size_t unit_end = active_bitfield_unit_offset + active_bitfield_unit_size;
 				size_t raw_candidate_offset = active_bitfield_unit_offset + ((active_bitfield_bits_used + 7) / 8);
-				size_t candidate_offset = ((raw_candidate_offset + effective_alignment - 1) & ~(effective_alignment - 1));
+				size_t candidate_offset = ((raw_candidate_offset + effective_alignment - 1) / effective_alignment) * effective_alignment;
 				if ((candidate_offset + member_size) <= unit_end) {
 					offset = candidate_offset;
 					placed_in_active_bitfield_unit = true;
