@@ -10,8 +10,8 @@
  * ## Key Design Decisions
  * 
  * 1. **TypeIndex-based Keys**: Template instantiation keys use TypeIndex (an index
- *    into gTypeInfo) instead of type name strings. This prevents ambiguity when
- *    type names contain underscores (e.g., "is_arithmetic_int" vs "is_arithmetic" + "_int").
+ *    into gTypeInfo) instead of type name strings. Combined with hash-based naming
+ *    (e.g., "is_arithmetic$a1b2c3d4"), this prevents ambiguity with underscore-containing types.
  * 
  * 2. **InlineVector for Efficiency**: Most templates have 1-4 arguments. Using inline
  *    storage avoids heap allocation in ~95% of cases.
