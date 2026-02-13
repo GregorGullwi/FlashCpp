@@ -47,21 +47,7 @@ The spaceship operator `<=>` is now assigned precedence **14** in `get_operator_
 
 ## New Findings (Feb 2026)
 
-### 6. Coroutines — NOT IMPLEMENTED (High Severity)
-
-`co_await`, `co_yield`, and `co_return` are **not recognized as keywords** in TokenTable.h, TokenKind.h, or Lexer.h. No parsing logic exists anywhere in the Parser_*.cpp files.
-
-**Misleading macro:** `__cpp_impl_coroutine` is defined as `201902L` in FileReader_Macros.cpp:1459, which tells user code that coroutines are supported when they are not. Headers guarded by this macro (like `<coroutine>`) may appear to preprocess but will fail at the parsing stage.
-
-**Impact:** Any code using coroutines will fail to parse.
-
-### 7. Modules — NOT IMPLEMENTED (High Severity)
-
-`import` and `module` are **not defined as keywords** anywhere in the lexer or token tables. No parsing logic exists for module declarations (`module foo;`), module imports (`import std;`), or module exports (`export module foo;`).
-
-**Impact:** Any code using C++20 modules will fail to parse.
-
-### 8. Template Lambdas — Parsed but Discarded (Medium Severity)
+### 6. Template Lambdas — Parsed but Discarded (Medium Severity)
 
 The parser recognizes the C++20 `[]<typename T>(T x) {}` syntax (Parser_Expressions.cpp:9446-9483) and parses the template parameter names. However, the parsed `template_param_names` vector is **never stored in the AST**. `LambdaExpressionNode` (AstNodeTypes.h:3529-3569) has no field for template parameters, and the node constructor doesn't accept them.
 
@@ -72,7 +58,7 @@ Simple cases work incidentally via auto-parameter deduction, but explicit templa
 *   `constexpr`/`consteval` on lambdas — not parsed
 *   `requires` clause on lambdas — not parsed
 
-### 9. Aggregate Parenthesized Initialization — Not Properly Implemented (Medium Severity)
+### 7. Aggregate Parenthesized Initialization — Not Properly Implemented (Medium Severity)
 
 C++20 (P0960) allows aggregate types to be initialized with parentheses: `Point p(1, 2)` where `Point` has no constructors.
 
@@ -80,7 +66,7 @@ The feature macro `__cpp_aggregate_paren_init` is defined as `201902L` (FileRead
 
 **Impact:** Aggregate paren init will fail or produce incorrect results for types without user-defined constructors.
 
-### 10. `[[likely]]`/`[[unlikely]]` in switch/case — Partial (Medium Severity)
+### 8. `[[likely]]`/`[[unlikely]]` in switch/case — Partial (Medium Severity)
 
 These attributes are correctly skipped in `if`/`else` contexts (Parser_Expressions.cpp:10131-10157). However, `parse_switch_statement()` (Parser_Expressions.cpp:10280-10409) does **not** call `skip_cpp_attributes()` after `case VALUE:` or `default:` labels.
 
@@ -94,13 +80,13 @@ switch (x) {
 
 This will fail to parse because `[[likely]]` is treated as an unexpected token after the colon.
 
-### 11. Misleading Feature Macros (Low Severity)
+### 9. Misleading Feature Macros (Low Severity)
 
 Several `__cpp_*` feature-test macros advertise support for features that are not (fully) implemented:
 
 | Macro | Value | Actual Status |
 |-------|-------|---------------|
-| `__cpp_impl_coroutine` | `201902L` | Not implemented at all |
+| `__cpp_impl_coroutine` | `201902L` | Not planned (see below) |
 | `__cpp_aggregate_paren_init` | `201902L` | Only brace form works, not parenthesized |
 
 These can cause user code to take codepaths that the compiler cannot handle, producing confusing errors far from the actual limitation.
@@ -116,25 +102,35 @@ These can cause user code to take codepaths that the compiler cannot handle, pro
 | 3 | Redundant specifier parsing | — | **Fixed** (shared `parse_declaration_specifiers`) |
 | 4 | `<=>` operator precedence | — | **Fixed** (precedence 14, between shift and relational) |
 | 5 | Range-for with init-statement | — | **Fixed** (full C++20 support) |
-| 6 | Coroutines (`co_await`/`co_yield`/`co_return`) | **High** | Not implemented; misleading macro defined |
-| 7 | Modules (`import`/`module`) | **High** | Not implemented |
-| 8 | Template lambda params discarded | **Medium** | Parsed but not stored in AST |
-| 9 | Aggregate parenthesized init | **Medium** | Feature macro set but not implemented for `()` form |
-| 10 | `[[likely]]`/`[[unlikely]]` in switch/case | **Medium** | Only if/else handled, not switch/case |
-| 11 | Misleading feature-test macros | Low | `__cpp_impl_coroutine`, `__cpp_aggregate_paren_init` |
+| 6 | Template lambda params discarded | **Medium** | Parsed but not stored in AST |
+| 7 | Aggregate parenthesized init | **Medium** | Feature macro set but not implemented for `()` form |
+| 8 | `[[likely]]`/`[[unlikely]]` in switch/case | **Medium** | Only if/else handled, not switch/case |
+| 9 | Misleading feature-test macros | Low | `__cpp_impl_coroutine`, `__cpp_aggregate_paren_init` |
+
+---
+
+## Not Planned Features
+
+These C++20 features are intentionally out of scope for FlashCpp.
+
+### Coroutines
+
+`co_await`, `co_yield`, and `co_return` are not recognized as keywords and no parsing logic exists. The `__cpp_impl_coroutine` macro is currently defined as `201902L` in FileReader_Macros.cpp:1459, which should be removed to avoid misleading user code into coroutine codepaths.
+
+### Modules
+
+`import` and `module` are not defined as keywords anywhere in the lexer or token tables. No parsing logic exists for module declarations, imports, or exports.
+
+---
 
 ## Recommended Actions
 
 1.  **Dispatch cleanup (low priority):** Route all declaration-starting keywords to `parse_declaration_or_function_definition` to eliminate the indirect path through `parse_variable_declaration`. This is cleanup, not a correctness fix.
 
-2.  **Coroutine keywords (high priority):** Add `co_await`, `co_yield`, `co_return` to the lexer/token tables and implement basic parsing. Alternatively, remove the `__cpp_impl_coroutine` macro until support is real.
+2.  **Template lambda storage:** Add a `template_params_` field to `LambdaExpressionNode` and wire it through construction.
 
-3.  **Module keywords (high priority):** Add `import`, `module` to the lexer/token tables and implement basic parsing. This is a large feature and can be deferred, but the keywords should at least be recognized to produce a clear error.
+3.  **Lambda specifiers:** Add parsing for `noexcept`, `constexpr`/`consteval`, and `requires` on lambda expressions.
 
-4.  **Template lambda storage:** Add a `template_params_` field to `LambdaExpressionNode` and wire it through construction.
+4.  **Switch/case attributes:** Add `skip_cpp_attributes()` call after case/default label colons in `parse_switch_statement()`.
 
-5.  **Lambda specifiers:** Add parsing for `noexcept`, `constexpr`/`consteval`, and `requires` on lambda expressions.
-
-6.  **Switch/case attributes:** Add `skip_cpp_attributes()` call after case/default label colons in `parse_switch_statement()`.
-
-7.  **Feature macro audit:** Remove or downgrade `__cpp_impl_coroutine` and `__cpp_aggregate_paren_init` until the features are actually implemented.
+5.  **Feature macro audit:** Remove `__cpp_impl_coroutine` (not planned). Remove or downgrade `__cpp_aggregate_paren_init` until parenthesized aggregate init is implemented.
