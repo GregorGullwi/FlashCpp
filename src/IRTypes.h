@@ -1454,6 +1454,11 @@ struct CatchBeginOp {
 	bool is_catch_all;            // True for catch(...) - catches all exceptions
 };
 
+// Catch block end marker
+struct CatchEndOp {
+	std::string_view continuation_label;  // Label to continue parent function execution after catch funclet returns
+};
+
 // Throw exception operation
 struct ThrowOp {
 	TypeIndex type_index;         // Type of exception being thrown
@@ -2827,8 +2832,15 @@ public:
 		break;
 
 		case IrOpcode::CatchEnd:
-			oss << "catch_end";
-			break;
+		{
+			if (hasTypedPayload()) {
+				const auto& op = getTypedPayload<CatchEndOp>();
+				oss << "catch_end -> @" << op.continuation_label;
+			} else {
+				oss << "catch_end";
+			}
+		}
+		break;
 
 		case IrOpcode::Throw:
 		{

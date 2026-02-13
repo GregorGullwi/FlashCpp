@@ -1843,10 +1843,10 @@ public:
 		// These relocations are critical for the linker to resolve addresses correctly
 		add_pdata_relocations(pdata_offset, mangled_name, xdata_offset);
 
-		// Catch funclet PDATA/XDATA emission is temporarily disabled.
-		// Current catch handlers are still inline in parent .text ranges, and emitting
-		// overlapping runtime function table entries can trigger fail-fast at runtime.
-		if (is_cpp && false) {
+		// Emit PDATA/XDATA for C++ catch funclets.
+		// Catch handlers are emitted as real funclets with prologue:
+		//   push rbp; sub rsp, 32; mov rbp, rdx
+		if (is_cpp) {
 			auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
 				return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
 			};
@@ -1880,13 +1880,21 @@ public:
 						continue;
 					}
 
-					// Catch funclet UNWIND_INFO should be a plain unwind record.
-					// Parent function owns FH3 language-specific data (FuncInfo/TryMap/IPMap).
+					// Catch funclet UNWIND_INFO: plain unwind record (no language handler).
+					// Prologue layout:
+					//   0: push rbp            (1 byte)   -> UWOP_PUSH_NONVOL @ offset 1
+					//   1: sub rsp, 32         (4 bytes)  -> UWOP_ALLOC_SMALL @ offset 5, info=3
+					//   5: mov rbp, rdx        (3 bytes)  -> no unwind opcode
+					// Prolog size = 8 bytes, frame register = 0 (none)
 					std::vector<char> catch_xdata = {
-						static_cast<char>(0x01), // Version=1, no EH/UH flags
-						static_cast<char>(0x00),
-						static_cast<char>(0x00),
-						static_cast<char>(0x00)
+						static_cast<char>(0x01), // Version=1, Flags=0 (no EH/UH handler)
+						static_cast<char>(0x08), // SizeOfProlog = 8
+						static_cast<char>(0x02), // CountOfCodes = 2
+						static_cast<char>(0x00), // FrameRegister=0, FrameOffset=0
+						static_cast<char>(0x05), // CodeOffset for UWOP_ALLOC_SMALL
+						static_cast<char>(0x32), // info=3, UWOP_ALLOC_SMALL (2)
+						static_cast<char>(0x01), // CodeOffset for UWOP_PUSH_NONVOL
+						static_cast<char>(0x50)  // info=5 (RBP), UWOP_PUSH_NONVOL (0)
 					};
 
 					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];

@@ -6,7 +6,14 @@ The 8 C++ EH test files (`test_eh_throw_catchall_ret0.cpp`, `test_eh_twofunc_thr
 
 The SEH `__finally` funclet pattern (already working) provides the exact model to follow. The Linux/ELF path (Itanium ABI with `__cxa_*` functions) must remain unchanged.
 
-## Plan
+## Plan (Reviewed/Updated)
+
+The direction is correct. A few sequencing details are critical:
+
+1. `CatchEnd` must carry an explicit continuation label from IR so codegen can return a valid continuation in `RAX`.
+2. Catch funclet prologue/epilogue must mirror the working SEH funclet pattern (`push rbp; sub rsp, 32; mov rbp, rdx` / `add rsp, 32; pop rbp; ret`).
+3. `return` inside catch funclet needs a dedicated trampoline path (save return value to parent frame slot, return trampoline address in `RAX`).
+4. Catch funclet PDATA/XDATA must be enabled only after (2), with valid unwind codes (not zeroed placeholder records).
 
 ### Step 1: Add `CatchEndOp` payload with continuation label
 
@@ -57,11 +64,15 @@ When `in_catch_funclet_` is true on Windows:
   - `add rsp, 32; pop rbp; ret` (funclet epilogue)
 - Emit the return trampoline label + parent epilogue code inline (it will be reached via the funclet's RAX return)
 
-Actually, simpler approach: The return value should already be placed in the appropriate location on the parent frame. The catch funclet just needs to return a continuation address that points to a trampoline doing `mov eax, <saved_value>; mov rsp, rbp; pop rbp; ret`. But since we don't know the return value at compile time, we need to:
+Use a concrete trampoline strategy:
 1. Store return value to a fixed slot on the parent frame (e.g., `[rbp - 8]` or a dedicated spill slot)
 2. LEA RAX to a trampoline label
 3. Funclet epilogue + ret
 4. At the trampoline: load from `[rbp - 8]` into EAX, then parent epilogue
+
+Notes:
+- This step should be implemented as an MVP for integer/pointer returns first (existing failing tests return integers).
+- Float/aggregate return-in-catch handling can be a follow-up once baseline stability is restored.
 
 ### Step 5: Enable catch funclet PDATA/XDATA in ObjFileWriter
 
@@ -96,6 +107,12 @@ The ELF/Linux path remains completely unchanged — it uses the Itanium ABI mode
 - Run the existing C++ EH tests that currently crash — they should now work
 - Run the full test suite to verify no regressions
 - Create additional test if needed for return-from-catch
+
+Execution order for fastest validation:
+1. `test_eh_throw_catchall_ret0.cpp`
+2. `test_eh_twofunc_throw_ret0.cpp`
+3. Remaining `test_eh_*` files
+4. Full `tests/run_all_tests.ps1`
 
 ## Files to Modify
 

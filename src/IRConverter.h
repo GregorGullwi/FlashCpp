@@ -3556,12 +3556,6 @@ public:
 			case IrOpcode::SehLeave:
 				handleSehLeave(instruction);
 				break;
-			case IrOpcode::SehGetExceptionCode:
-				handleSehGetExceptionCode(instruction);
-				break;
-			case IrOpcode::SehGetExceptionInfo:
-				handleSehGetExceptionInfo(instruction);
-				break;
 			default:
 				throw std::runtime_error("Not implemented yet");
 				break;
@@ -9266,6 +9260,9 @@ private:
 			current_function_seh_try_blocks_.clear();  // Clear SEH tracking for next function
 			seh_try_block_stack_.clear();
 			current_seh_filter_funclet_offset_ = 0;
+			in_catch_funclet_ = false;
+			catch_funclet_return_slot_offset_ = 0;
+			catch_funclet_return_label_counter_ = 0;
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				current_function_cfi_.clear();  // Clear CFI tracking for next function
 			}
@@ -10021,6 +10018,9 @@ private:
 
 	void handleReturn(const IrInstruction& instruction) {
 		FLASH_LOG(Codegen, Debug, "handleReturn called");
+		bool has_return_value = false;
+		bool return_is_float = false;
+		int return_size_bits = 0;
 		
 		if (variable_scopes.empty()) {
 			FLASH_LOG(Codegen, Error, "FATAL [handleReturn]: variable_scopes is EMPTY!");
@@ -10043,6 +10043,9 @@ private:
 		// Check for typed payload first
 		if (instruction.hasTypedPayload()) {
 			const auto& ret_op = instruction.getTypedPayload<ReturnOp>();
+			has_return_value = ret_op.return_value.has_value();
+			return_size_bits = ret_op.return_size;
+			return_is_float = ret_op.return_type.has_value() && is_floating_point_type(ret_op.return_type.value());
 			
 			// Void return - no value to return
 			if (!ret_op.return_value.has_value()) {
@@ -10593,6 +10596,10 @@ private:
 				}
 			}
 		}
+
+		(void)has_return_value;
+		(void)return_is_float;
+		(void)return_size_bits;
 
 		// MSVC-style epilogue
 		//int32_t total_stack_space = variable_scopes.back().scope_stack_space;
@@ -15823,18 +15830,17 @@ private:
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
-			// True Windows FH3 path:
-			// catch object materialization is provided by __CxxFrameHandler3 using
-			// HandlerType::dispCatchObj in FuncInfo. Do not assume RAX carries the
-			// exception object pointer here; dereferencing it can fault in funclets.
-			//
-			// Inline catch handlers are entered by the runtime using establisher-frame
-			// context in RDX. Rebind RBP so frame-relative locals/catch slots resolve.
+			// Catch handler is a real FH3 funclet entered with establisher-frame in RDX.
+			// Emit a funclet prologue so the runtime can unwind it as an independent
+			// range and all frame-relative accesses resolve against the parent frame.
+			emitPushReg(X64Register::RBP);
+			emitSubRSP(32);
 			emitMovRegReg(X64Register::RBP, X64Register::RDX);
+			in_catch_funclet_ = true;
 		}
 	}
 
-	void handleCatchEnd([[maybe_unused]] const IrInstruction& instruction) {
+	void handleCatchEnd(const IrInstruction& instruction) {
 		// Skip exception handling if disabled
 		if (!g_enable_exceptions) {
 			return;
@@ -15843,8 +15849,6 @@ private:
 		// CatchEnd marks the end of a catch handler
 		if (current_catch_handler_) {
 			current_catch_handler_->handler_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-			current_catch_handler_->funclet_end_offset = current_catch_handler_->handler_end_offset;
-			current_catch_handler_ = nullptr;
 		}
 		
 		// Platform-specific cleanup
@@ -15858,7 +15862,35 @@ private:
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
-			// Windows SEH cleanup already handled
+			// Return continuation address in RAX, then emit funclet epilogue.
+			flushAllDirtyRegisters();
+
+			if (instruction.hasTypedPayload()) {
+				const auto& catch_end_op = instruction.getTypedPayload<CatchEndOp>();
+				StringHandle continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
+
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x8D);
+				textSectionData.push_back(0x05);
+				uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_branches_.push_back({continuation_handle, lea_patch});
+			} else {
+				emitXorRegReg(X64Register::RAX);
+			}
+
+			emitAddRSP(32);
+			emitPopReg(X64Register::RBP);
+			textSectionData.push_back(0xC3);
+			in_catch_funclet_ = false;
+		}
+
+		if (current_catch_handler_) {
+			current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			current_catch_handler_ = nullptr;
 		}
 	}
 
@@ -16352,46 +16384,6 @@ private:
 		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
 	}
 
-	void handleSehGetExceptionCode(const IrInstruction& instruction) {
-		// GetExceptionCode() intrinsic - called inside a filter funclet
-		// RCX = EXCEPTION_POINTERS* (set by __C_specific_handler)
-		// EXCEPTION_POINTERS->ExceptionRecord is at offset +0 (pointer)
-		// EXCEPTION_RECORD->ExceptionCode is at offset +0 (DWORD)
-		// So: GetExceptionCode() = *(DWORD*)(*(void**)RCX)
-		const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
-
-		FLASH_LOG(Codegen, Debug, "SEH GetExceptionCode() intrinsic");
-
-		// mov rax, [rcx]    ; load ExceptionRecord pointer from EXCEPTION_POINTERS
-		textSectionData.push_back(0x48); // REX.W
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		textSectionData.push_back(0x01); // ModR/M: [RCX] -> RAX
-
-		// mov eax, [rax]    ; load ExceptionCode (DWORD) from ExceptionRecord
-		textSectionData.push_back(0x8B); // MOV r32, r/m32
-		textSectionData.push_back(0x00); // ModR/M: [RAX] -> EAX
-
-		// Store result to temp var's stack slot
-		int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
-		emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
-	}
-
-	void handleSehGetExceptionInfo(const IrInstruction& instruction) {
-		// GetExceptionInformation() intrinsic - called inside a filter funclet
-		// RCX = EXCEPTION_POINTERS* (set by __C_specific_handler)
-		// Just return RCX directly
-		const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
-
-		FLASH_LOG(Codegen, Debug, "SEH GetExceptionInformation() intrinsic");
-
-		// mov rax, rcx    ; copy EXCEPTION_POINTERS* to RAX
-		emitMovRegReg(X64Register::RAX, X64Register::RCX);
-
-		// Store result to temp var's stack slot
-		int32_t result_offset = getStackOffsetFromTempVar(op.result, 64);
-		emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
-	}
-
 	void finalizeSections() {
 		// Emit global variables to .data or .bss sections FIRST
 		// This creates the symbols that relocations will reference
@@ -16485,6 +16477,9 @@ private:
 			current_function_name_ = StringHandle();
 			current_function_offset_ = 0;
 			current_catch_handler_ = nullptr;
+			in_catch_funclet_ = false;
+			catch_funclet_return_slot_offset_ = 0;
+			catch_funclet_return_label_counter_ = 0;
 		}
 
 		writer.add_data(textSectionData, SectionType::TEXT);
@@ -16973,6 +16968,9 @@ private:
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
 	CatchHandler* current_catch_handler_ = nullptr;  // Currently active catch handler being processed
 	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF).
+	bool in_catch_funclet_ = false;  // Tracks whether codegen is currently inside a Windows catch funclet.
+	int32_t catch_funclet_return_slot_offset_ = 0;  // Parent-frame spill slot used to preserve return value across catch funclet continuation setup.
+	uint32_t catch_funclet_return_label_counter_ = 0;  // Monotonic counter for synthetic catch return trampoline labels.
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
