@@ -296,9 +296,9 @@
 									while (token_end < replace_str.size() && (std::isalnum(static_cast<unsigned char>(replace_str[token_end])) || replace_str[token_end] == '_'))
 										++token_end;
 									std::string right_token = replace_str.substr(wa, token_end - wa);
-									auto it = defines_.find(right_token);
-									if (it != defines_.end()) {
-										if (auto* func_dir = it->second.get_if<FunctionDirective>()) {
+									auto it_r = defines_.find(right_token);
+									if (it_r != defines_.end()) {
+										if (auto* func_dir = it_r->second.get_if<FunctionDirective>()) {
 											std::string expanded = func_dir->getBody();
 											replace_str = replace_str.substr(0, wa) + expanded + replace_str.substr(token_end);
 											// wa stays the same, but the token is now the expanded value
@@ -312,9 +312,9 @@
 										--token_start;
 									if (token_start < wb) {
 										std::string left_token = replace_str.substr(token_start, wb - token_start);
-										auto it = defines_.find(left_token);
-										if (it != defines_.end()) {
-											if (auto* func_dir = it->second.get_if<FunctionDirective>()) {
+										auto it_l = defines_.find(left_token);
+										if (it_l != defines_.end()) {
+											if (auto* func_dir = it_l->second.get_if<FunctionDirective>()) {
 												std::string expanded = func_dir->getBody();
 												// Replace the left token with its expansion, adjusting positions
 												size_t old_len = wb - token_start;
