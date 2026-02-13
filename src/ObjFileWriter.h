@@ -1135,7 +1135,7 @@ public:
 		// a 32-bit image-relative pointer to FuncInfo.
 		uint32_t cpp_funcinfo_rva_field_offset = 0;
 		bool has_cpp_funcinfo_rva_field = false;
-		if (is_cpp && mangled_name.find("main") == std::string_view::npos) {
+		if (is_cpp) {
 			cpp_funcinfo_rva_field_offset = static_cast<uint32_t>(xdata.size());
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
