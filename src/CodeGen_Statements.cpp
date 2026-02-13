@@ -1053,7 +1053,7 @@
 			visit(catch_clause.body());
 
 			// Emit CatchEnd marker
-			ir_.addInstruction(IrOpcode::CatchEnd, {}, catch_clause.catch_token());
+			ir_.addInstruction(IrOpcode::CatchEnd, CatchEndOp{.continuation_label = end_label}, catch_clause.catch_token());
 
 			// Exit catch block scope
 			symbol_table.exit_scope();
