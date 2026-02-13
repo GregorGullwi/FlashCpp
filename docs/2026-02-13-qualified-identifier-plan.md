@@ -30,7 +30,7 @@ struct QualifiedIdentifier {
     // unqualified names so the namespace context is never lost.
     static QualifiedIdentifier fromQualifiedName(
             std::string_view name,
-            NamespaceHandle current_ns = NamespaceRegistry::GLOBAL_NAMESPACE) {
+            NamespaceHandle current_ns) { // current namespace can be found in the Parser class
         QualifiedIdentifier result;
         if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
             // Qualified name: resolve the namespace prefix through NamespaceRegistry
