@@ -1662,6 +1662,11 @@ public:
 	StringHandle nameHandle() const { return identifier_.handle(); }
 	const Token& identifier_token() const { return identifier_; }
 
+	// Convert to QualifiedIdentifier (Phase 3 bridge)
+	QualifiedIdentifier qualifiedIdentifier() const {
+		return QualifiedIdentifier{namespace_handle_, identifier_.handle()};
+	}
+
 	// Get the full qualified name as a string (e.g., "std::print")
 	// Note: This allocates a string, so use sparingly (mainly for debugging)
 	std::string full_name() const {

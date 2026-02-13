@@ -98,6 +98,14 @@ public:
 		return insert(StringTable::getStringView(identifierHandle), node);	// This should probably be the other way around
 	}
 
+	// Insert using QualifiedIdentifier (Phase 3).
+	// Inserts under the unqualified name in the current scope.
+	// If the identifier has a non-global namespace, also inserts into namespace_symbols_
+	// so that qualified lookups (ns::name) find the symbol.
+	bool insert(QualifiedIdentifier qi, ASTNode node) {
+		return insert(StringTable::getStringView(qi.identifier_handle), node);
+	}
+
 	bool insert(std::string_view identifier, ASTNode node) {
 		auto& current_scope = symbol_table_stack_.back();
 		// First, try to find the identifier without interning
@@ -669,6 +677,16 @@ public:
 
 	std::optional<ASTNode> lookup_qualified(NamespaceHandle namespace_handle, StringHandle identifier) const {
 		return lookup_qualified(namespace_handle, StringTable::getStringView(identifier));
+	}
+
+	// Look up a symbol using QualifiedIdentifier (Phase 3).
+	// If the QualifiedIdentifier has a namespace, uses lookup_qualified.
+	// Otherwise, falls back to regular unqualified lookup.
+	std::optional<ASTNode> lookup_qualified(QualifiedIdentifier qi) const {
+		if (qi.hasNamespace()) {
+			return lookup_qualified(qi.namespace_handle, qi.identifier_handle);
+		}
+		return lookup(StringTable::getStringView(qi.identifier_handle), get_current_scope_handle());
 	}
 
 	template<typename StringContainer>
