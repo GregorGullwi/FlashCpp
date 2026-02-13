@@ -436,28 +436,78 @@ public:
 				// Handle multiline macro invocations.
 				// If a line has an incomplete macro invocation (unmatched parens),
 				// keep reading lines until we have matching parens.
+				// Also handles function-like macro names on one line with '(' on the next.
 				// BUT: Stop if the next line is a preprocessor directive (starts with #)
 				// because preprocessor directives cannot be inside macro invocations.
-				while (hasIncompleteMacroInvocation(line)) {
+				auto mergeNextLine = [&]() -> bool {
 					std::string next_line;
-					if (!std::getline(stream, next_line)) break;
+					if (!std::getline(stream, next_line)) return false;
 					++line_number;
 					
-					// Check if next_line is a preprocessor directive
-					// First, find the first non-whitespace character
 					size_t first_non_ws = next_line.find_first_not_of(" \t");
 					if (first_non_ws != std::string::npos && next_line[first_non_ws] == '#') {
-						// The next line is a preprocessor directive - don't merge it!
-						// Store it as a pending line to be processed on the next iteration
 						pending_line = std::move(next_line);
 						has_pending_line = true;
-						--line_number;  // Undo the increment; it will be incremented when pending_line is processed
-						break;
+						--line_number;
+						return false;
 					}
 					
-					// Join with the previous line with a space (not newline) to avoid line_map mismatch
-					// The newline preservation isn't critical for macro expansion
 					line += " " + next_line;
+					return true;
+				};
+				while (hasIncompleteMacroInvocation(line)) {
+					if (!mergeNextLine()) break;
+				}
+				// C standard §6.10.3: If a function-like macro name is NOT followed
+				// by '(' it is not a macro invocation. When the '(' appears on the
+				// next line we must merge those lines before expansion.
+				if (!hasIncompleteMacroInvocation(line)) {
+					// Extract trailing identifier and check if it's a function-like macro
+					size_t end = line.size();
+					while (end > 0 && std::isspace(static_cast<unsigned char>(line[end - 1])))
+						--end;
+					size_t id_end = end;
+					while (end > 0 && (std::isalnum(static_cast<unsigned char>(line[end - 1])) || line[end - 1] == '_'))
+						--end;
+					if (end < id_end) {
+						std::string trailing_id(line, end, id_end - end);
+						auto it = defines_.find(trailing_id);
+						if (it != defines_.end()) {
+							auto* dd = it->second.get_if<DefineDirective>();
+							if (dd && dd->is_function_like) {
+								// Peek at the next line to see if it starts with '('
+								std::string peek_line;
+								bool got_peek = false;
+								if (has_pending_line) {
+									peek_line = pending_line;
+									got_peek = true;
+								} else if (std::getline(stream, peek_line)) {
+									++line_number;
+									got_peek = true;
+								}
+								if (got_peek) {
+									size_t fw = peek_line.find_first_not_of(" \t");
+									if (fw != std::string::npos && peek_line[fw] == '(') {
+										// Merge: the next line continues this macro invocation
+										if (has_pending_line)
+											has_pending_line = false;
+										line += " " + peek_line;
+										// Continue merging if parens are still unmatched
+										while (hasIncompleteMacroInvocation(line)) {
+											if (!mergeNextLine()) break;
+										}
+									} else {
+										// Not a macro invocation; push back the peeked line
+										if (!has_pending_line) {
+											pending_line = std::move(peek_line);
+											has_pending_line = true;
+											--line_number;
+										}
+									}
+								}
+							}
+						}
+					}
 				}
 				
 				// Expand macros in non-directive lines (regular source code).

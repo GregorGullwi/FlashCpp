@@ -839,6 +839,31 @@ private:
 			                         EvalErrorType::TemplateDependentExpression);
 		}
 		
+		// Check if it's a DeclarationNode for an enum constant
+		if (symbol_node.is<DeclarationNode>()) {
+			const DeclarationNode& decl = symbol_node.as<DeclarationNode>();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				if (type_spec.type() == Type::Enum) {
+					// Look up the enumerator value from the type info
+					auto type_index = type_spec.type_index();
+					if (type_index != 0 && type_index < gTypeInfo.size()) {
+						const TypeInfo& ti = gTypeInfo[type_index];
+						const EnumTypeInfo* enum_info = ti.getEnumInfo();
+						if (enum_info) {
+							StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
+							const Enumerator* e = enum_info->findEnumerator(name_handle);
+							if (e) {
+								return EvalResult(static_cast<int64_t>(e->value));
+							}
+						}
+					}
+					// Enum constant but value not found - not an error per se, just unknown
+					return EvalResult::error("Enum constant value not found: " + std::string(var_name));
+				}
+			}
+		}
+		
 		// Check if it's a VariableDeclarationNode
 		if (!symbol_node.is<VariableDeclarationNode>()) {
 			return EvalResult::error("Identifier in constant expression is not a variable: " + std::string(var_name));
