@@ -6912,6 +6912,17 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			// Data member
 			advance(); // consume ';'
 			member_struct_ref.add_member(*member_result.node(), current_access, std::nullopt);
+		} else if (peek() == "="_tok) {
+			// Data member with initializer
+			advance(); // consume '='
+			auto init_result = parse_expression(2, ExpressionContext::Normal);
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after member initializer", peek_info());
+			}
+			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
 		} else {
 			return ParseResult::error("Expected '(' or ';' after member declaration", peek_info());
 		}

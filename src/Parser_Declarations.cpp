@@ -3840,10 +3840,14 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Create type specifier for the typedef
+			int struct_size_bits = 0;
+			if (const StructTypeInfo* finalized_struct_info = struct_type_info.getStructInfo()) {
+				struct_size_bits = static_cast<int>(finalized_struct_info->total_size * 8);
+			}
 			TypeSpecifierNode type_spec(
 				Type::Struct,
 				struct_type_index,
-				static_cast<int>(struct_info->total_size * 8),
+				struct_size_bits,
 				alias_token
 			);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
@@ -5245,12 +5249,21 @@ ParseResult Parser::parse_struct_declaration()
 							anon_member_type_spec.add_pointer_level(ptr_cv);
 						}
 						
-						// Parse member name
+						// Parse member name (allow unnamed bitfields: int : 0;)
 						auto anon_member_name_token = peek_info();
-						if (!anon_member_name_token.kind().is_identifier()) {
+						if (anon_member_name_token.kind().is_identifier()) {
+							advance(); // consume the member name
+						} else if (peek() == ":"_tok) {
+							anon_member_name_token = Token(
+								Token::Type::Identifier,
+								""sv,
+								current_token_.line(),
+								current_token_.column(),
+								current_token_.file_index()
+							);
+						} else {
 							return ParseResult::error("Expected member name in anonymous union", anon_member_name_token);
 						}
-						advance(); // consume the member name
 						
 						// Check for array declarator
 						std::vector<ASTNode> anon_array_dimensions;
@@ -5272,9 +5285,32 @@ ParseResult Parser::parse_struct_declaration()
 							advance(); // consume ']'
 						}
 						
+						std::optional<size_t> bitfield_width;
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (width_result.is_error()) {
+								return width_result;
+							}
+							if (width_result.node().has_value()) {
+								ConstExpr::EvaluationContext ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+								if (!eval_result.success() || eval_result.as_int() < 0) {
+									return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
+								}
+								bitfield_width = static_cast<size_t>(eval_result.as_int());
+							}
+						}
+
 						// Calculate member size and alignment
 						auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(anon_member_type_spec);
 						size_t referenced_size_bits = anon_member_type_spec.size_in_bits();
+						if (bitfield_width.has_value() && *bitfield_width == 0) {
+							// Zero-width bitfields in anonymous unions are layout directives:
+							// they don't contribute storage and should not raise union alignment.
+							member_size = 0;
+							member_alignment = 1;
+						}
 						
 						// For struct types, get size and alignment from the struct type info
 						if (anon_member_type_spec.type() == Type::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
@@ -5323,10 +5359,12 @@ ParseResult Parser::parse_struct_declaration()
 							anon_member_type_spec.type_index(),
 							member_size,
 							member_alignment,
+							bitfield_width,
 							referenced_size_bits,
 							is_ref_member,
 							is_rvalue_ref_member,
 							is_array,
+							static_cast<int>(anon_member_type_spec.pointer_depth()),
 							std::move(array_dimensions)
 						);
 						
@@ -5338,7 +5376,7 @@ ParseResult Parser::parse_struct_declaration()
 						} else {
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token);
 						}
-						struct_ref.add_member(anon_member_decl_node, AccessSpecifier::Public, std::nullopt);
+						struct_ref.add_member(anon_member_decl_node, AccessSpecifier::Public, std::nullopt, bitfield_width);
 						
 						// Expect semicolon
 						if (!consume(";"_tok)) {
@@ -6644,7 +6682,9 @@ ParseResult Parser::parse_struct_declaration()
 					union_member.is_rvalue_reference,
 					union_member.referenced_size_bits,
 					union_member.is_array,
-					union_member.array_dimensions
+					union_member.array_dimensions,
+					union_member.pointer_depth,
+					union_member.bitfield_width
 				);
 				
 				// Update struct alignment
