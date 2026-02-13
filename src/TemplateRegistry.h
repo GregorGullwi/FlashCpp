@@ -1136,10 +1136,40 @@ public:
 		alias_templates_[key] = alias_node;
 	}
 
+	// Register an alias template using QualifiedIdentifier (Phase 2).
+	// Registers under both unqualified and qualified names.
+	void register_alias_template(QualifiedIdentifier qi, ASTNode alias_node) {
+		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
+		register_alias_template(simple, alias_node);
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified);
+			if (qualified_name != simple) {
+				register_alias_template(qualified_name, alias_node);
+			}
+		}
+	}
+
 	// Register a variable template: template<typename T> constexpr T pi = T(3.14159...);
 	void registerVariableTemplate(std::string_view name, ASTNode variable_template_node) {
 		std::string key(name);
 		variable_templates_[key] = variable_template_node;
+	}
+
+	// Register a variable template using QualifiedIdentifier (Phase 2).
+	// Registers under both unqualified and qualified names.
+	void registerVariableTemplate(QualifiedIdentifier qi, ASTNode variable_template_node) {
+		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
+		registerVariableTemplate(simple, variable_template_node);
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified);
+			if (qualified_name != simple) {
+				registerVariableTemplate(qualified_name, variable_template_node);
+			}
+		}
 	}
 
 	// Look up a variable template by name
@@ -1217,6 +1247,18 @@ public:
 	
 	std::optional<ASTNode> lookupTemplate(StringHandle name) const {
 		return lookupTemplate(StringTable::getStringView(name));
+	}
+
+	// Look up a template using QualifiedIdentifier (Phase 2).
+	// Tries the qualified name first, then falls back to unqualified.
+	std::optional<ASTNode> lookupTemplate(QualifiedIdentifier qi) const {
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			auto result = lookupTemplate(qualified);
+			if (result.has_value()) return result;
+		}
+		return lookupTemplate(qi.identifier_handle);
 	}
 
 	// Look up all template overloads for a given name

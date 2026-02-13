@@ -860,18 +860,10 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Register the alias template in the template registry
 		// We'll handle instantiation later when the alias is used
-		// Register with simple name for unqualified lookups
-		gTemplateRegistry.register_alias_template(std::string(alias_name), alias_node);
-		
-		// If in a namespace, also register with qualified name for namespace-qualified lookups
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		if (!current_handle.isGlobal()) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(alias_name);
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			FLASH_LOG_FORMAT(Templates, Debug, "Registering alias template with qualified name: {}", qualified_name);
-			gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
-		}
+		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
+		gTemplateRegistry.register_alias_template(
+			QualifiedIdentifier::fromQualifiedName(alias_name, gSymbolTable.get_current_namespace_handle()),
+			alias_node);
 		
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
@@ -1142,30 +1134,14 @@ ParseResult Parser::parse_template_declaration() {
 				}
 			}
 			std::string_view pattern_key = pattern_name.commit();
-			gTemplateRegistry.registerVariableTemplate(pattern_key, template_var_node);
+			gTemplateRegistry.registerVariableTemplate(
+				QualifiedIdentifier::fromQualifiedName(pattern_key, gSymbolTable.get_current_namespace_handle()),
+				template_var_node);
 			FLASH_LOG(Parser, Debug, "Registered variable template partial specialization: ", pattern_key);
-			
-			// If in a namespace, also register with qualified pattern name
-			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-			if (!current_handle.isGlobal()) {
-				StringHandle pattern_handle = StringTable::getOrInternStringHandle(pattern_key);
-				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, pattern_handle);
-				std::string_view qualified_pattern_key = StringTable::getStringView(qualified_handle);
-				gTemplateRegistry.registerVariableTemplate(qualified_pattern_key, template_var_node);
-				FLASH_LOG(Parser, Debug, "Registered variable template partial specialization with qualified name: ", qualified_pattern_key);
-			}
 		} else {
-			gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
-			
-			// If in a namespace, also register with qualified name for namespace-qualified lookups
-			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-			if (!current_handle.isGlobal()) {
-				StringHandle var_handle = StringTable::getOrInternStringHandle(var_name);
-				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, var_handle);
-				std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-				FLASH_LOG_FORMAT(Templates, Debug, "Registering variable template with qualified name: {}", qualified_name);
-				gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
-			}
+			gTemplateRegistry.registerVariableTemplate(
+				QualifiedIdentifier::fromQualifiedName(var_name, gSymbolTable.get_current_namespace_handle()),
+				template_var_node);
 		}
 		
 		// Also add to symbol table so identifier lookup works
