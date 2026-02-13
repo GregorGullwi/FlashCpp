@@ -1104,6 +1104,27 @@ public:
 		templates_[key].push_back(template_node);
 	}
 
+	// Register a template using QualifiedIdentifier (Phase 2).
+	// Stores under the unqualified name for backward-compatible lookups.
+	// If the identifier has a non-global namespace, also stores under the
+	// fully-qualified name (e.g. "std::vector") so that namespace-qualified
+	// lookups work without manual dual registration by the caller.
+	void registerTemplate(QualifiedIdentifier qi, ASTNode template_node) {
+		// Always register under the unqualified identifier
+		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
+		registerTemplate(simple, template_node);
+
+		// If there is a non-global namespace, also register under qualified name
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified);
+			if (qualified_name != simple) {
+				registerTemplate(qualified_name, template_node);
+			}
+		}
+	}
+
 	// Register template parameter names for a template
 	void registerTemplateParameters(StringHandle key, const std::vector<StringHandle>& param_names) {
 		template_parameters_[key] = std::vector<StringHandle>(param_names.begin(), param_names.end());

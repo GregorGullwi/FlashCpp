@@ -4213,21 +4213,13 @@ if (struct_type_info.getStructInfo()) {
 			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Function has ", func_decl.parameter_nodes().size(), " parameters");
 		}
 		
-		// Register with simple name (for backward compatibility and unqualified lookups)
-		gTemplateRegistry.registerTemplate(simple_name, template_func_node);
+		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
+		gTemplateRegistry.registerTemplate(
+			QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
+			template_func_node);
 		
 		if (simple_name == "__call_is_nt") {
 			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Successfully registered __call_is_nt");
-		}
-		
-		// If in a namespace, also register with qualified name for namespace-qualified lookups
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		if (!current_handle.isGlobal()) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(simple_name);
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
-			gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 		}
 
 		// Add the template function to the symbol table so it can be found during overload resolution
@@ -4280,30 +4272,13 @@ if (struct_type_info.getStructInfo()) {
 		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
 		std::string_view simple_name = StringTable::getStringView(struct_decl.name());
 		
-		// Register with simple name (for backward compatibility and unqualified lookups)
-		FLASH_LOG_FORMAT(Templates, Debug, "Registering template class with simple name: '{}'", simple_name);
-		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
-		
-		// If in a namespace, also register with qualified name for namespace-qualified lookups
-		// Note: struct_decl.name() may already be qualified (e.g., "std::numeric_limits")
-		// if parse_struct_declaration prepended the namespace. Extract the unqualified name
-		// to avoid double-prefixing (e.g., "std::std::numeric_limits").
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		if (!current_handle.isGlobal()) {
-			std::string_view unqualified_name = simple_name;
-			auto last_colon = simple_name.rfind("::");
-			if (last_colon != std::string_view::npos) {
-				unqualified_name = simple_name.substr(last_colon + 2);
-			}
-			StringHandle name_handle = StringTable::getOrInternStringHandle(unqualified_name);
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			// Only register if the qualified name is different from the simple name
-			if (qualified_name != simple_name) {
-				FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
-				gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
-			}
-		}
+		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
+		// Note: simple_name may already be qualified (e.g., "std::numeric_limits") if
+		// parse_struct_declaration prepended the namespace. fromQualifiedName() handles both cases.
+		FLASH_LOG_FORMAT(Templates, Debug, "Registering template class: '{}'", simple_name);
+		gTemplateRegistry.registerTemplate(
+			QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
+			template_class_node);
 
 		// Primary templates shouldn't be added to AST - only instantiations and specializations
 		// Return success with no node so the caller doesn't add it to ast_nodes_
