@@ -346,15 +346,15 @@ struct StructMember {
 	int pointer_depth;      // Pointer indirection level (e.g., int* = 1, int** = 2)
 
 	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
-	            AccessSpecifier acc = AccessSpecifier::Public,
-	            std::optional<ASTNode> init = std::nullopt,
-	            bool is_ref = false,
-	            bool is_rvalue_ref = false,
-	            size_t ref_size_bits = 0,
-	            bool is_arr = false,
-	            std::vector<size_t> arr_dims = {},
-	            int ptr_depth = 0,
-	            std::optional<size_t> bf_width = std::nullopt)
+	            AccessSpecifier acc,
+	            std::optional<ASTNode> init,
+	            bool is_ref,
+	            bool is_rvalue_ref,
+	            size_t ref_size_bits,
+	            bool is_arr,
+	            std::vector<size_t> arr_dims,
+	            int ptr_depth,
+	            std::optional<size_t> bf_width)
 		: name(n), type(t), type_index(tidx), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),

@@ -5046,7 +5046,9 @@ ParseResult Parser::parse_struct_declaration()
 								false,  // is_rvalue_reference
 								0,      // referenced_size_bits
 								false,  // is_array
-								{}      // array_dimensions
+								{},     // array_dimensions
+								0,      // pointer_depth
+								std::nullopt // bitfield_width
 							});
 							
 							// Expect semicolon
@@ -8000,7 +8002,9 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member()
 		false,  // is_rvalue_reference
 		0,      // referenced_size_bits
 		false,  // is_array
-		{}      // array_dimensions
+		{},     // array_dimensions
+		0,      // pointer_depth
+		std::nullopt // bitfield_width
 	};
 }
 
@@ -8123,7 +8127,9 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					false,  // is_rvalue_reference
 					0,      // referenced_size_bits
 					false,  // is_array
-					{}      // array_dimensions
+					{},     // array_dimensions
+					0,      // pointer_depth
+					std::nullopt // bitfield_width
 				});
 				
 				// Expect semicolon
@@ -8209,7 +8215,9 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			false,  // is_rvalue_reference
 			0,      // referenced_size_bits
 			!array_dimensions.empty(),  // is_array
-			{}      // array_dimensions
+			{},     // array_dimensions
+			0,      // pointer_depth
+			std::nullopt // bitfield_width
 		});
 		
 		// Expect semicolon
