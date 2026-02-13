@@ -5046,7 +5046,9 @@ ParseResult Parser::parse_struct_declaration()
 								false,  // is_rvalue_reference
 								0,      // referenced_size_bits
 								false,  // is_array
-								{}      // array_dimensions
+								{},     // array_dimensions
+								0,      // pointer_depth
+								std::nullopt // bitfield_width
 							});
 							
 							// Expect semicolon
@@ -8000,7 +8002,9 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member()
 		false,  // is_rvalue_reference
 		0,      // referenced_size_bits
 		false,  // is_array
-		{}      // array_dimensions
+		{},     // array_dimensions
+		0,      // pointer_depth
+		std::nullopt // bitfield_width
 	};
 }
 
@@ -8123,7 +8127,9 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					false,  // is_rvalue_reference
 					0,      // referenced_size_bits
 					false,  // is_array
-					{}      // array_dimensions
+					{},     // array_dimensions
+					0,      // pointer_depth
+					std::nullopt // bitfield_width
 				});
 				
 				// Expect semicolon
@@ -8193,6 +8199,18 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		
 		// Calculate member size and alignment
 		auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
+		size_t referenced_size_bits = member_size * 8;
+		std::vector<size_t> resolved_array_dimensions;
+		for (const auto& dim_expr : array_dimensions) {
+			ConstExpr::EvaluationContext ctx(gSymbolTable);
+			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+			if (eval_result.success() && eval_result.as_int() > 0) {
+				size_t dim_size = static_cast<size_t>(eval_result.as_int());
+				resolved_array_dimensions.push_back(dim_size);
+				member_size *= dim_size;
+				referenced_size_bits *= dim_size;
+			}
+		}
 		
 		// Add member to the anonymous type
 		StringHandle member_name_handle = member_name_token.handle();
@@ -8207,9 +8225,11 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			std::nullopt,  // no default initializer
 			false,  // is_reference
 			false,  // is_rvalue_reference
-			0,      // referenced_size_bits
-			!array_dimensions.empty(),  // is_array
-			{}      // array_dimensions
+			referenced_size_bits,
+			!resolved_array_dimensions.empty(),  // is_array
+			std::move(resolved_array_dimensions), // array_dimensions
+			0,      // pointer_depth
+			std::nullopt // bitfield_width
 		});
 		
 		// Expect semicolon
