@@ -15822,8 +15822,9 @@ private:
 			// HandlerType::dispCatchObj in FuncInfo. Do not assume RAX carries the
 			// exception object pointer here; dereferencing it can fault in funclets.
 			//
-			// Do not rewrite nonvolatile frame registers in-place here. Catch funclet
-			// unwind metadata must match prologue behavior exactly.
+			// Inline catch handlers are entered by the runtime using establisher-frame
+			// context in RDX. Rebind RBP so frame-relative locals/catch slots resolve.
+			emitMovRegReg(X64Register::RBP, X64Register::RDX);
 		}
 	}
 
@@ -15992,15 +15993,13 @@ private:
 			// Call _CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo)
 			//
 			// Windows x64 calling convention: RCX, RDX, R8, R9
+
+			// IMPORTANT:
+			// Do not adjust RSP here. Windows unwind metadata only describes prologue/epilogue
+			// stack moves; a throw from a dynamically adjusted frame can break EH dispatch/unwind.
+			// Use a temporary spill area above home space instead.
 			
-			// Calculate stack space needed:
-			// - 32 bytes shadow space (Windows x64 calling convention)
-			// - N bytes for exception object (rounded up to 8-byte alignment)
-			// - Total rounded up to 16-byte alignment
-			size_t total_stack = ((32 + aligned_exception_size) + 15) & ~15;
-			emitSubRSP(static_cast<int32_t>(total_stack));
-			
-			// Copy exception object to stack at [RSP+32]
+			// Copy exception object to spill area at [RSP+32]
 			if (exception_size <= 8) {
 				// Small object: load into RAX and store
 				// Use IrValue variant to handle TempVar or immediate
@@ -16097,12 +16096,6 @@ private:
 			// ========== Windows/COFF (MSVC ABI) ==========
 			// Call _CxxThrowException(NULL, NULL) to rethrow current exception
 			// Windows x64 calling convention: RCX, RDX
-			
-			// Allocate shadow space for Windows x64 calling convention
-			// - Requires 32 bytes shadow space
-			// - Stack must be 16-byte aligned at CALL instruction
-			// Round up to 48 bytes to maintain 16-byte alignment
-			emitSubRSP(48);
 			
 			// Set up arguments for _CxxThrowException to rethrow current exception
 			// RCX (first argument) = NULL (rethrow current exception object)

@@ -1119,14 +1119,17 @@ public:
 			xdata.push_back(static_cast<char>(b));
 		}
 		
-		// Add placeholder for exception handler RVA (4 bytes)
-		// This will point to __C_specific_handler (SEH) or __CxxFrameHandler3 (C++)
-		// We'll add a relocation for this
-		uint32_t handler_rva_offset = static_cast<uint32_t>(xdata.size());
-		xdata.push_back(0x00);
-		xdata.push_back(0x00);
-		xdata.push_back(0x00);
-		xdata.push_back(0x00);
+		// Add exception handler RVA only when EHANDLER/UHANDLER flags are present.
+		// For plain unwind info (no language-specific handler), UNWIND_INFO ends after
+		// the aligned UNWIND_CODE array.
+		uint32_t handler_rva_offset = 0;
+		if (is_seh || is_cpp) {
+			handler_rva_offset = static_cast<uint32_t>(xdata.size());
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+		}
 
 		// For C++ EH, __CxxFrameHandler3 expects language-specific data to begin with
 		// a 32-bit image-relative pointer to FuncInfo.
@@ -1304,8 +1307,8 @@ public:
 				try_state_layout.push_back(std::move(layout));
 			}
 			
-			// Magic number for classic FH3 FuncInfo layout.
-			uint32_t magic = 0x19930520;
+			// Magic number for x64 FH3 FuncInfo layout.
+			uint32_t magic = 0x19930522;
 			xdata.push_back(static_cast<char>(magic & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
@@ -1584,6 +1587,9 @@ public:
 					// 0x08 = reference (lvalue reference &)
 					// 0x10 = rvalue reference (&&)
 					uint32_t adjectives = 0;
+					if (handler.is_catch_all) {
+						adjectives |= 0x40;
+					}
 					if (handler.is_const) {
 						adjectives |= 0x01;
 					}
@@ -1656,7 +1662,11 @@ public:
 				const auto& tb = try_blocks[i];
 				const auto& layout = try_state_layout[i];
 				ip_to_state_entries.push_back({function_start + tb.try_start_offset, layout.try_low});
-				ip_to_state_entries.push_back({function_start + tb.try_end_offset, -1});
+				uint32_t try_end_ip = tb.try_end_offset;
+				if (try_end_ip < function_size) {
+					try_end_ip += 1;
+				}
+				ip_to_state_entries.push_back({function_start + try_end_ip, -1});
 			}
 
 			ip_to_state_entries.push_back({function_start + function_size, -1});

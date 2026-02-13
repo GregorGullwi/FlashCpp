@@ -5061,6 +5061,9 @@ private:
 					}
 				}
 				
+				// Call any enclosing __finally funclets before returning
+				emitSehFinallyCallsBeforeReturn(node.return_token());
+
 				// Now return the temporary variable
 				ReturnOp ret_op;
 				ret_op.return_value = temp_var;
@@ -5088,6 +5091,7 @@ private:
 						if (std::holds_alternative<IdentifierNode>(operand_expr)) {
 							const auto& ident = std::get<IdentifierNode>(operand_expr);
 							if (ident.name() == "this") {
+								emitSehFinallyCallsBeforeReturn(node.return_token());
 								ReturnOp ret_op;
 								ret_op.return_value = StringTable::getOrInternStringHandle("this");
 								ret_op.return_type = current_function_return_type_;
@@ -5117,6 +5121,7 @@ private:
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
 				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
+					emitSehFinallyCallsBeforeReturn(node.return_token());
 					ReturnOp ret_op;  // No return value for void
 					ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
 					return;
@@ -5282,9 +5287,12 @@ private:
 				}
 			}
 			
+			// Call any enclosing __finally funclets before returning
+			emitSehFinallyCallsBeforeReturn(node.return_token());
+
 			// Create ReturnOp with the return value
 			ReturnOp ret_op;
-			
+
 			// Check if operands has at least 3 elements before accessing
 			if (operands.size() < 3) {
 				FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed or returned insufficient operands");
@@ -5322,6 +5330,8 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
 		}
 		else {
+			// Call any enclosing __finally funclets before returning
+			emitSehFinallyCallsBeforeReturn(node.return_token());
 			// For void returns, we don't need any operands
 			ReturnOp ret_op;  // No return value for void
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
