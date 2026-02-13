@@ -1547,11 +1547,45 @@ public:
 		}
 	}
 
+	// Register a template specialization pattern using QualifiedIdentifier (Phase 4).
+	// Registers under both unqualified and qualified names.
+	void registerSpecializationPattern(QualifiedIdentifier qi,
+	                                   const std::vector<ASTNode>& template_params,
+	                                   const std::vector<TemplateTypeArg>& pattern_args,
+	                                   ASTNode specialized_node,
+	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
+		registerSpecializationPattern(simple, template_params, pattern_args, specialized_node, sfinae_cond);
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified);
+			if (qualified_name != simple) {
+				registerSpecializationPattern(qualified_name, template_params, pattern_args, specialized_node, sfinae_cond);
+			}
+		}
+	}
+
 	// Register a template specialization (exact match)
 	void registerSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
 		SpecializationKey key{std::string(template_name), template_args};
 		specializations_[key] = specialized_node;
 		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
+	}
+
+	// Register a template specialization using QualifiedIdentifier (Phase 4).
+	// Registers under both unqualified and qualified names for consistent lookup.
+	void registerSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
+		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
+		registerSpecialization(simple, template_args, specialized_node);
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified);
+			if (qualified_name != simple) {
+				registerSpecialization(qualified_name, template_args, specialized_node);
+			}
+		}
 	}
 
 	// Look up an exact template specialization (no pattern matching)
@@ -1587,6 +1621,18 @@ public:
 			FLASH_LOG(Templates, Debug, "  No pattern match found");
 		}
 		return pattern_result;
+	}
+
+	// Look up a template specialization using QualifiedIdentifier (Phase 4).
+	// Tries qualified name first, then falls back to unqualified.
+	std::optional<ASTNode> lookupSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args) const {
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			auto result = lookupSpecialization(StringTable::getStringView(qualified), template_args);
+			if (result.has_value()) return result;
+		}
+		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args);
 	}
 	
 	// Find a matching specialization pattern
