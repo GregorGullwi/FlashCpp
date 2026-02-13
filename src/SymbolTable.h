@@ -512,7 +512,6 @@ public:
 			gNamespaceRegistry.markDeclared(ns_handle);
 			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(ns_handle);
 			scope.namespace_name = entry.name;
-			scope.namespace_name = entry.name;
 			// Preload existing namespace symbols so unqualified lookup works when re-entering
 			auto ns_it = namespace_symbols_.find(ns_handle);
 			if (ns_it != namespace_symbols_.end()) {
