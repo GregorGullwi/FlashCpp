@@ -5960,7 +5960,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	// Register the alias template with qualified name (ClassName::AliasName)
 	StringBuilder sb;
 	std::string_view qualified_name = sb.append(struct_node.name()).append("::").append(alias_name).commit();
-	gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
+	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", qualified_name);
 
@@ -15527,7 +15527,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto alias_opt = gTemplateRegistry.lookup_alias_template(base_alias_name);
 			if (alias_opt.has_value()) {
 				// Re-register with the instantiated name
-				gTemplateRegistry.register_alias_template(std::string(inst_alias_name), *alias_opt);
+				gTemplateRegistry.register_alias_template(inst_alias_name, *alias_opt);
 			}
 		}
 	}

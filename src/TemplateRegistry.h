@@ -1122,8 +1122,12 @@ public:
 
 	// Register an alias template: template<typename T> using Ptr = T*;
 	void register_alias_template(std::string_view name, ASTNode alias_node) {
-		std::string key(name);
+		StringHandle key = StringTable::getOrInternStringHandle(name);
 		alias_templates_[key] = alias_node;
+	}
+
+	void register_alias_template(StringHandle name, ASTNode alias_node) {
+		alias_templates_[name] = alias_node;
 	}
 
 	// Register an alias template using QualifiedIdentifier (Phase 2).
@@ -1135,8 +1139,12 @@ public:
 
 	// Register a variable template: template<typename T> constexpr T pi = T(3.14159...);
 	void registerVariableTemplate(std::string_view name, ASTNode variable_template_node) {
-		std::string key(name);
+		StringHandle key = StringTable::getOrInternStringHandle(name);
 		variable_templates_[key] = variable_template_node;
+	}
+
+	void registerVariableTemplate(StringHandle name, ASTNode variable_template_node) {
+		variable_templates_[name] = variable_template_node;
 	}
 
 	// Register a variable template using QualifiedIdentifier (Phase 2).
@@ -1148,6 +1156,15 @@ public:
 
 	// Look up a variable template by name
 	std::optional<ASTNode> lookupVariableTemplate(std::string_view name) const {
+		StringHandle key = StringTable::getOrInternStringHandle(name);
+		auto it = variable_templates_.find(key);
+		if (it != variable_templates_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+
+	std::optional<ASTNode> lookupVariableTemplate(StringHandle name) const {
 		auto it = variable_templates_.find(name);
 		if (it != variable_templates_.end()) {
 			return it->second;
@@ -1157,8 +1174,8 @@ public:
 
 	// Look up an alias template by name
 	std::optional<ASTNode> lookup_alias_template(std::string_view name) const {
-		// Heterogeneous lookup - string_view accepted directly without temporary string allocation
-		auto it = alias_templates_.find(name);
+		StringHandle key = StringTable::getOrInternStringHandle(name);
+		auto it = alias_templates_.find(key);
 		if (it != alias_templates_.end()) {
 			return it->second;
 		}
@@ -1166,14 +1183,19 @@ public:
 	}
 
 	std::optional<ASTNode> lookup_alias_template(StringHandle name) const {
-		return lookup_alias_template(StringTable::getStringView(name));
+		auto it = alias_templates_.find(name);
+		if (it != alias_templates_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
 	}
 
 	// Get all alias template names with a given prefix (for template instantiation)
 	// Used to copy member template aliases from primary template to instantiated template
 	std::vector<std::string_view> get_alias_templates_with_prefix(std::string_view prefix) const {
 		std::vector<std::string_view> result;
-		for (const auto& [name, node] : alias_templates_) {
+		for (const auto& [name_handle, node] : alias_templates_) {
+			std::string_view name = StringTable::getStringView(name_handle);
 			if (name.starts_with(prefix)) {
 				result.push_back(name);
 			}
@@ -1694,11 +1716,11 @@ private:
 	// Map from template name to template parameter names (supports heterogeneous lookup)
 	std::unordered_map<StringHandle, std::vector<StringHandle>, TransparentStringHash, std::equal_to<>> template_parameters_;
 
-	// Map from alias template name to TemplateAliasNode (supports heterogeneous lookup)
-	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
+	// Map from alias template name to TemplateAliasNode (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
 
-	// Map from variable template name to TemplateVariableDeclarationNode (supports heterogeneous lookup)
-	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> variable_templates_;
+	// Map from variable template name to TemplateVariableDeclarationNode (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, std::equal_to<>> variable_templates_;
 
 	// Map from class template name to deduction guides (supports heterogeneous lookup)
 	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> deduction_guides_;

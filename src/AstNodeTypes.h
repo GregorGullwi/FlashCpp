@@ -1158,6 +1158,13 @@ struct QualifiedIdentifier {
 	bool valid() const { return identifier_handle.handle != 0; }
 	bool hasNamespace() const { return namespace_handle.isValid() && !namespace_handle.isGlobal(); }
 
+	// Construct from a StringHandle — resolves to string_view and delegates.
+	static QualifiedIdentifier fromQualifiedName(
+			StringHandle name,
+			NamespaceHandle current_ns) {
+		return fromQualifiedName(StringTable::getStringView(name), current_ns);
+	}
+
 	// Construct from a possibly-qualified name like "std::vector".
 	// current_ns is the namespace the code is being parsed in — used to resolve
 	// unqualified names so the namespace context is never lost.
