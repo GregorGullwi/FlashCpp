@@ -9228,6 +9228,15 @@ private:
 					textSectionData[patch_offset + i] = bytes[i];
 				}
 			}
+
+			// Patch catch continuation fixup SUB RSP instructions with the same stack size
+			for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[fixup_patch_offset + i] = bytes[i];
+				}
+			}
+			catch_continuation_sub_rsp_patches_.clear();
 			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
@@ -9267,6 +9276,8 @@ private:
 			catch_funclet_terminated_by_return_ = false;
 			current_catch_continuation_label_ = StringHandle();
 			catch_return_bridges_.clear();
+			catch_continuation_fixup_map_.clear();
+			catch_continuation_sub_rsp_patches_.clear();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				current_function_cfi_.clear();  // Clear CFI tracking for next function
 			}
@@ -15986,12 +15997,23 @@ private:
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
 			// Return continuation address in RAX, then emit funclet epilogue.
+			// After the funclet ret, emit a fixup stub for the catch continuation path.
 			flushAllDirtyRegisters();
+
+			StringHandle continuation_handle;
+			StringHandle fixup_handle;
+			bool has_continuation = false;
 
 			if (instruction.hasTypedPayload()) {
 				const auto& catch_end_op = instruction.getTypedPayload<CatchEndOp>();
-				StringHandle continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
+				continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
+				has_continuation = true;
 
+				// Create a unique fixup label for the catch continuation fixup stub.
+				std::string fixup_name = "__catch_fixup_" + std::to_string(textSectionData.size());
+				fixup_handle = StringTable::getOrInternStringHandle(fixup_name);
+
+				// LEA RAX, [fixup_label] — return fixup stub address to the CRT
 				textSectionData.push_back(0x48);
 				textSectionData.push_back(0x8D);
 				textSectionData.push_back(0x05);
@@ -16000,21 +16022,68 @@ private:
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
-				pending_branches_.push_back({continuation_handle, lea_patch});
+				pending_branches_.push_back({fixup_handle, lea_patch});
 			} else {
 				emitXorRegReg(X64Register::RAX);
 			}
 
+			// Funclet epilogue
 			emitAddRSP(32);
 			emitPopReg(X64Register::RBP);
-			textSectionData.push_back(0xC3);
+			textSectionData.push_back(0xC3);  // ret
+
+			// Record funclet end BEFORE the fixup stub (fixup is parent code, not funclet)
+			if (current_catch_handler_) {
+				current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			}
+
+			// Emit catch continuation fixup stub (in parent function code space).
+			// When the CRT's _JumpToContinuation transfers control after a caught exception:
+			//   RSP = establisher_frame (= parent's original RBP value)
+			//   RBP = NOT restored (corrupted by CRT internals)
+			// The fixup restores both registers, then jumps to the real continuation.
+			// Normal execution paths (try body without exception) jump directly to the
+			// continuation label and never execute this fixup.
+			if (has_continuation) {
+				// Define the fixup label position
+				label_positions_[fixup_handle] = static_cast<uint32_t>(textSectionData.size());
+
+				// mov rbp, rsp  (48 8B EC) — restore frame pointer from establisher frame
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x8B);
+				textSectionData.push_back(0xEC);
+
+				// sub rsp, imm32  (48 81 EC xx xx xx xx) — re-allocate stack frame (patched later)
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x81);
+				textSectionData.push_back(0xEC);
+				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+
+				// jmp continuation_label  (E9 xx xx xx xx) — join normal code path
+				textSectionData.push_back(0xE9);
+				uint32_t jmp_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_branches_.push_back({continuation_handle, jmp_patch});
+			}
+
 			in_catch_funclet_ = false;
 			catch_funclet_terminated_by_return_ = false;
 			current_catch_continuation_label_ = StringHandle();
 		}
 
 		if (current_catch_handler_) {
-			current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			// For ELF, record funclet_end_offset here. For Windows/COFF, it was already
+			// recorded inside the platform-specific block (before the fixup stub).
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			}
 			current_catch_handler_ = nullptr;
 		}
 	}
@@ -17119,6 +17188,8 @@ private:
 		bool is_float;
 	};
 	std::unordered_map<StringHandle, CatchReturnBridge> catch_return_bridges_;
+	std::unordered_map<StringHandle, StringHandle> catch_continuation_fixup_map_;  // continuation_label → fixup_label for catch path stack restoration
+	std::vector<uint32_t> catch_continuation_sub_rsp_patches_;  // Offsets of SUB RSP IMM32 in fixup code, patched with total_stack at function end
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
