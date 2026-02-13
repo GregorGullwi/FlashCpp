@@ -19590,7 +19590,7 @@ ASTNode Parser::substituteTemplateParameters(
 						// Also try "std::" + name as a common case
 						StringBuilder ns_builder;
 						ns_builder.append("std::").append(struct_name);
-						names_to_try[num_names++] = ns_builder.preview();
+						names_to_try[num_names++] = ns_builder.commit();
 						
 						for (size_t ni = 0; ni < num_names && !is_known_template_param; ++ni) {
 							// Check ALL overloads, not just the first one

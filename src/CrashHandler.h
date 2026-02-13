@@ -373,6 +373,8 @@ static char s_filenameBuffer[kMaxPathLength];
 static char s_timestampBuffer[kTimestampBufferSize];
 static char s_commandBuffer[kMaxCommandLength];
 static char s_demangledBuffer[kMaxSymbolLength];
+// Flag to indicate we're inside a signal handler - prevents calling non-async-signal-safe functions
+static volatile sig_atomic_t s_inSignalHandler = 0;
 
 // Get signal name as a human-readable string
 inline const char* getSignalName(int sig) {
@@ -458,6 +460,13 @@ inline const char* demangleSymbol(const char* mangledName) {
 //   by the shell to prevent command injection.
 inline bool getSourceLocation(const char* executablePath, void* addr, char* buffer, size_t bufferSize) {
     if (executablePath == nullptr || addr == nullptr) {
+        buffer[0] = '\0';
+        return false;
+    }
+    
+    // popen/fgets are not async-signal-safe; skip addr2line inside signal handlers
+    // to prevent deadlocks (popen forks and can inherit locks held by the parent)
+    if (s_inSignalHandler) {
         buffer[0] = '\0';
         return false;
     }
@@ -564,6 +573,9 @@ inline void writeStackFrame(FILE* file, int frameNum, void* addr) {
 // but are commonly used in crash handlers and work reliably in practice.
 // Safety: Uses preallocated static buffers to avoid memory allocation.
 inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
+    // Mark that we're inside a signal handler to prevent non-async-signal-safe calls
+    s_inSignalHandler = 1;
+    
     // Generate crash log filename with timestamp using preallocated buffers
     getTimestampString(s_timestampBuffer, kTimestampBufferSize);
     snprintf(s_filenameBuffer, kMaxPathLength, "flashcpp_crash_%s.log", s_timestampBuffer);
