@@ -462,6 +462,7 @@ inline OverloadResolutionResult resolve_overload(
 	const ASTNode* best_match = nullptr;
 	std::vector<ConversionRank> best_ranks;
 	int num_best_matches = 0;
+	std::vector<const ASTNode*> tied_candidates;  // All candidates with best rank
 	
 	// Evaluate each overload
 	for (const auto& overload : overloads) {
@@ -528,6 +529,8 @@ inline OverloadResolutionResult resolve_overload(
 			best_match = &overload;
 			best_ranks = conversion_ranks;
 			num_best_matches = 1;
+			tied_candidates.clear();
+			tied_candidates.push_back(&overload);
 		} else {
 			// Compare conversion ranks
 			bool this_is_better = false;
@@ -546,9 +549,12 @@ inline OverloadResolutionResult resolve_overload(
 				best_match = &overload;
 				best_ranks = conversion_ranks;
 				num_best_matches = 1;
+				tied_candidates.clear();
+				tied_candidates.push_back(&overload);
 			} else if (!this_is_better && !this_is_worse) {
 				// This overload is equally good - ambiguous
 				num_best_matches++;
+				tied_candidates.push_back(&overload);
 			}
 			// If this_is_worse, ignore this overload
 		}
@@ -559,6 +565,40 @@ inline OverloadResolutionResult resolve_overload(
 	}
 	
 	if (num_best_matches > 1) {
+		// Check if all tied candidates differ only in cv-qualification (const/volatile)
+		// on their parameters. FlashCpp doesn't fully track volatile qualifiers, so
+		// overloads like f(T*) vs f(volatile T*) score identically. In that case,
+		// prefer the first declared overload rather than reporting ambiguity.
+		bool differs_only_in_cv = true;
+		const FunctionDeclarationNode* best_func = &best_match->as<FunctionDeclarationNode>();
+		for (const auto* candidate : tied_candidates) {
+			if (candidate == best_match) continue;
+			const FunctionDeclarationNode* cand_func = &candidate->as<FunctionDeclarationNode>();
+			const auto& best_params = best_func->parameter_nodes();
+			const auto& cand_params = cand_func->parameter_nodes();
+			if (best_params.size() != cand_params.size()) {
+				differs_only_in_cv = false;
+				break;
+			}
+			for (size_t i = 0; i < best_params.size(); ++i) {
+				const auto& bp = best_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				const auto& cp = cand_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				// If base types and pointer depths match, they differ only in cv-qualification
+				if (bp.type() != cp.type() || bp.type_index() != cp.type_index() ||
+				    bp.pointer_depth() != cp.pointer_depth() ||
+				    bp.is_reference() != cp.is_reference() ||
+				    bp.is_rvalue_reference() != cp.is_rvalue_reference()) {
+					differs_only_in_cv = false;
+					break;
+				}
+			}
+			if (!differs_only_in_cv) break;
+		}
+		
+		if (differs_only_in_cv) {
+			// Candidates differ only in cv-qualification — prefer the first match
+			return OverloadResolutionResult(best_match);
+		}
 		return OverloadResolutionResult::ambiguous();
 	}
 	
@@ -711,9 +751,9 @@ inline FlashCpp::FunctionSignatureKey makeFunctionSignatureKey(
  * Key: FunctionSignatureKey (function name + TypeIndex-based parameter types)
  * Value: Pointer to the selected function declaration ASTNode (or nullptr if no match)
  */
-inline std::unordered_map<FlashCpp::FunctionSignatureKey, const ASTNode*, 
+inline std::unordered_map<FlashCpp::FunctionSignatureKey, OverloadResolutionResult, 
                           FlashCpp::FunctionSignatureKeyHash>& getFunctionResolutionCache() {
-	static std::unordered_map<FlashCpp::FunctionSignatureKey, const ASTNode*,
+	static std::unordered_map<FlashCpp::FunctionSignatureKey, OverloadResolutionResult,
 	                          FlashCpp::FunctionSignatureKeyHash> cache;
 	return cache;
 }
@@ -751,18 +791,15 @@ inline OverloadResolutionResult resolve_overload_cached(
 	auto& cache = getFunctionResolutionCache();
 	auto it = cache.find(key);
 	if (it != cache.end()) {
-		// Cache hit
-		if (it->second == nullptr) {
-			return OverloadResolutionResult::no_match();
-		}
-		return OverloadResolutionResult(it->second);
+		// Cache hit - return the cached result directly (preserves ambiguous/no_match/match states)
+		return it->second;
 	}
 	
 	// Cache miss - perform full overload resolution
 	auto result = resolve_overload(overloads, argument_types);
 	
 	// Cache the result
-	cache[key] = result.selected_overload;
+	cache[key] = result;
 	
 	return result;
 }

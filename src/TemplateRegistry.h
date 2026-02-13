@@ -236,7 +236,17 @@ struct TemplateTypeArg {
 		// from a pack expansion ns::sum<Args...> where Args=int, the lookup arg
 		// has is_pack=true but should still match the specialization which has is_pack=false.
 		
-		return base_type == other.base_type &&
+		// For non-type value parameters, Bool and Int are interchangeable (C++ allows bool as non-type template parameter)
+		bool base_type_match = (base_type == other.base_type);
+		if (!base_type_match && is_value && other.is_value) {
+			bool this_is_bool_or_int = (base_type == Type::Bool || base_type == Type::Int);
+			bool other_is_bool_or_int = (other.base_type == Type::Bool || other.base_type == Type::Int);
+			if (this_is_bool_or_int && other_is_bool_or_int) {
+				base_type_match = true;
+			}
+		}
+		
+		return base_type_match &&
 		       type_index_match &&
 		       is_reference == other.is_reference &&
 		       is_rvalue_reference == other.is_rvalue_reference &&
@@ -904,8 +914,15 @@ struct TemplatePattern {
 					          " concrete_arg.value=", concrete_arg.value);
 				}
 				if (pattern_arg.base_type != concrete_arg.base_type) {
-					FLASH_LOG(Templates, Trace, "    FAILED: base types don't match");
-					return false;
+					// For non-type value parameters, Bool and Int are interchangeable
+					// (e.g., template<bool B> with default false stored as Bool vs Int)
+					bool compatible_value_types = pattern_arg.is_value && concrete_arg.is_value &&
+						((pattern_arg.base_type == Type::Bool && concrete_arg.base_type == Type::Int) ||
+						 (pattern_arg.base_type == Type::Int && concrete_arg.base_type == Type::Bool));
+					if (!compatible_value_types) {
+						FLASH_LOG(Templates, Trace, "    FAILED: base types don't match");
+						return false;
+					}
 				}
 				// For non-type template parameters, also check the value matches
 				if (pattern_arg.is_value && concrete_arg.is_value) {

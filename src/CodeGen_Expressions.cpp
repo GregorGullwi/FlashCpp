@@ -667,7 +667,7 @@
 			FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
 			FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
 			FLASH_LOG(Codegen, Error, "  Current struct: ", current_struct_name_);
-			assert(false && "Expected symbol to exist");
+			throw std::runtime_error("Expected symbol '" + std::string(identifierNode.name()) + "' to exist in code generation");
 			return {};
 		}
 

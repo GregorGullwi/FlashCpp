@@ -34,336 +34,55 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Parse Error | Fails at `bits/chrono.h:54` (`namespace filesystem { struct __file_clock; };` forward declaration in namespace block) |
-| `<atomic>` | N/A | ❌ Parse Error | Conversion operator in partial specialization fixed; now fails at `atomic_base.h:1562` (`compare_exchange_weak` template instantiation) |
+| `<atomic>` | N/A | ❌ Codegen Error | ~492ms (2026-02-13: Parsing completes after member function call shadowing fix; codegen fails on `_Size` symbol) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<typeindex>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
-| `<csignal>` | N/A | ❌ Parse Error | `__attribute_deprecated_msg__` at `signal.h:368` (pre-existing, depends on system headers) |
+| `<csignal>` | N/A | ✅ Compiled | ~133ms (2026-02-13: Now compiles successfully) |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
 | `<spanstream>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<print>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<expected>` | N/A | ✅ Compiled | ~18ms (C++23) |
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
-| `<barrier>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (enum bitwise ops) |
+| `<barrier>` | N/A | ❌ Timeout | Hangs during template instantiation (depends on `<atomic>`) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ❌ Parse Error | Qualified static member brace init fixed; now hangs during template instantiation (infinite loop) |
+| `<coroutine>` | N/A | ❌ Timeout | Hangs during template instantiation (infinite loop) |
+| `<numeric>` | N/A | ✅ Compiled | ~911ms (2026-02-13: Compiles successfully) |
+| `<latch>` | N/A | ❌ Codegen Error | Parsing completes ~382ms; fails on `_Size` symbol (non-type template param not substituted) |
+| `<shared_mutex>` | N/A | ❌ Codegen Error | Parsing completes ~574ms; fails on `_S_epoch_diff` symbol |
+| `<cstdlib>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstdio>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstring>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cctype>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cwchar>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cwctype>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cerrno>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cassert>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstdarg>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstddef>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstdint>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cinttypes>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cuchar>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cfenv>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<clocale>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<ctime>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<climits>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cfloat>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cmath>` | N/A | ❌ Parse Error | `__attribute__` after function declaration in system headers (`mathcalls-helper-functions.h`) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-### Recent Fixes (2026-02-06)
+### Recent Fixes (2026-02-13)
 
-The following parser issues were fixed to unblock standard header compilation:
+1. **Member function call shadowed by template function lookup**: When parsing a member function body inside a template struct, a call like `compare_exchange_weak(expected, desired, order, order)` would find the name in the template registry even though it was already resolved as a class member function. Fix: skip template registry lookup when `found_member_function_in_context` is already true. Unblocks `<atomic>` parsing.
 
-1. **GCC `__attribute__((...))` between return type and function name**: `parse_type_and_name()` now skips `__attribute__` specifications that appear after the return type but before the function name (e.g., `_Atomic_word __attribute__((__always_inline__)) __exchange_and_add(...)`). This unblocks `atomicity.h` used by `<iostream>`.
+2. **`using Base::operator Type;` not parsed**: Using-declarations for conversion operators and assignment operators (e.g., `using __base_type::operator __integral_type;`) hit the `else { break; }` branch because `operator` is a keyword. Fix: handle `operator` keyword after `::` and build the full operator name.
 
-2. **`__ATOMIC_*` memory ordering macros**: Added `__ATOMIC_RELAXED` (0), `__ATOMIC_CONSUME` (1), `__ATOMIC_ACQUIRE` (2), `__ATOMIC_RELEASE` (3), `__ATOMIC_ACQ_REL` (4), `__ATOMIC_SEQ_CST` (5) as predefined macros. These are used by `<atomic>` and `<iostream>` via `atomicity.h`.
+3. **Bool/Int type mismatch in partial specialization pattern matching**: Default bool template arguments (`template<typename T, bool = false>`) were stored as `Type::Int` during fill-in but `Type::Bool` in patterns, causing pattern matching to fail silently. Fix: use `Type::Bool` for bool defaults, and allow `Bool`/`Int` interchangeability in pattern matching for non-type value parameters. This fix enables partial specialization member function codegen.
 
-3. **Type trait whitelist instead of prefix matching**: The expression parser now uses a whitelist of known type traits (`__is_void`, `__is_integral`, etc.) instead of matching all identifiers with `__is_*` or `__has_*` prefixes. This prevents regular functions like `__gnu_cxx::__is_single_threaded()` from being misidentified as type trait intrinsics. Unblocks `<iostream>`.
+4. **Overload resolution ambiguity**: When multiple overloads tie on conversion rank (e.g., `f(T*)` vs `f(volatile T*)`), the resolver now picks the first match instead of returning ambiguous.
 
-4. **Conversion operator detection in template struct bodies**: Template specialization struct body parsing now correctly detects conversion operators like `constexpr explicit operator bool() const noexcept`. Previously these failed with "Unexpected token in type specifier: 'operator'" because `parse_type_and_name()` doesn't handle conversion operators. This progresses `<coroutine>`.
-
-5. **`sizeof` returning 0 for dependent types**: `evaluate_sizeof()` now returns a `TemplateDependentExpression` error instead of 0 when the type size is unknown. In standard C++, `sizeof` never returns 0, so a zero result indicates an incomplete or dependent type. This prevents false `static_assert` failures in templates.
-
-6. **Improved `static_assert` deferral in template contexts**: `parse_static_assert()` now always defers evaluation when the condition contains template-dependent expressions (regardless of parsing context), and also defers in template struct bodies when evaluation fails for any reason. This unblocks `<atomic>` and `<barrier>` past the `static_assert(sizeof(__waiter_type) == sizeof(__waiter_pool_base))` check.
-
-### Recent Fixes (2026-02-06, PR #2)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **`::operator new()` and `::operator delete()` in expressions and statements**: Added handling for `::operator new(...)`, `::operator delete(...)`, and array variants in both expression context (e.g., `static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)))`) and statement context. This unblocks `new_allocator.h` which is included by all container headers.
-
-2. **`alignas` with expression arguments**: `parse_alignas_specifier()` now falls back to parsing a constant expression when literal and type parsing fail. This handles patterns like `alignas(__alignof__(_Tp2::_M_t))` used in `aligned_buffer.h`. Unblocks `<variant>`.
-
-3. **C-style cast backtracking**: When a C-style cast is attempted but the expression after the cast fails to parse (e.g., `(__p)` followed by `,`), the parser now backtracks instead of returning an error. This fixes function arguments like `::operator delete((__p), (__n) * sizeof(_Tp))`.
-
-4. **`__attribute__` between `using` alias name and `=`**: `parse_member_type_alias()` now calls `skip_gcc_attributes()` after the alias name, handling patterns like `using is_always_equal __attribute__((__deprecated__("..."))) = true_type;`.
-
-5. **Destructor in full template specializations**: Added destructor parsing (`~ClassName()`) in the full template specialization body loop, matching the existing handling in partial specializations.
-
-6. **Template constructor detection in full specializations**: Constructor detection in `parse_member_function_template()` now also checks the base template name (via `TypeInfo::baseTemplateName()`), not just the instantiated name. This correctly detects `allocator(...)` as a constructor in `template<> struct allocator<void>`.
-
-7. **Delayed function body processing for constructors/destructors**: Fixed null pointer dereference in full specialization delayed body processing when `func_node` is null (which it is for constructors/destructors). Now correctly handles constructor/destructor bodies and template parameter restoration.
-
-8. **Template base class in member initializer lists**: Added `skip_template_arguments()` handling in ALL initializer list parsing locations (4 files) for patterns like `: Base<T>(args)`.
-
-9. **`Base<T>::member(args)` qualified call expressions**: Statement parser now recognizes `Type<Args>::member(args)` as an expression (not a variable declaration) when `::` follows template arguments. Expression parser handles `::member(args)` after template argument disambiguation.
-
-### Recent Fixes (2026-02-08)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **Member function pointer types in template specialization patterns**: Added parsing of `_Res (_Class::*)(_ArgTypes...)` syntax in template arguments, including variants with `const`, `volatile`, `&`, `&&`, `noexcept`, and C-style varargs (`_ArgTypes... ...`). This unblocks `refwrap.h` used by `<string>`, `<iostream>`, and 10+ other headers.
-
-2. **Bare function types in template arguments**: Added parsing of `_Res(_ArgTypes...)` (bare function types, not pointers) in template specialization patterns. This handles `_Weak_result_type_impl<_Res(_ArgTypes...)>` patterns in `refwrap.h`.
-
-3. **`noexcept(expr)` on function types in template arguments**: Extended function type parsing in template arguments to handle `noexcept(_NE)` conditional noexcept on function types, function pointers, and member function pointers.
-
-4. **`= delete` / `= default` on static member functions**: Static member function declarations now accept `= delete;` and `= default;` syntax.
-
-5. **Conversion operators returning reference types**: Conversion operator detection in struct bodies now handles pointer (`*`) and reference (`&`, `&&`) modifiers after the target type (e.g., `operator _Tp&() const noexcept`).
-
-6. **Template context flags for `static_assert` deferral in member struct template bodies**: `parse_member_struct_template()` now properly sets `parsing_template_body_` and `current_template_param_names_` before parsing the body of both primary and partial specialization member struct templates. This ensures `static_assert` with template-dependent expressions is properly deferred. Unblocks `alloc_traits.h`.
-
-7. **`decltype` expression fallback with pack expansion**: Fixed `parse_decltype_specifier()` to save and restore the parser position before the expression when the fallback to dependent type is triggered. Previously, failed expression parsing (e.g., `decltype(func(args...))` with pack expansion) could leave the parser at an unpredictable position, causing the paren-skipping logic to malfunction. Unblocks trailing return types with pack expansion in `alloc_traits.h`.
-
-### Current Blockers for Major Headers
-
-| Blocker | Affected Headers | Details |
-|---------|-----------------|---------|
-| IR conversion `bad_any_cast` during template member body | `<string>`, `<iostream>`, `<ranges>`, `<map>`, `<set>` | Parsing succeeds but codegen crashes on instantiated template member functions; root cause appears to be deferred body token position restoration |
-| Template instantiation timeout/infinite loop | `<tuple>`, `<functional>`, `<memory>` | Template instantiation hangs, likely due to deeply nested or recursive instantiation chains |
-| Struct body boundary tracking (`skip_balanced_braces` token limit) | `<variant>` | After `skip_balanced_braces()` for `_Copy_assign_base::operator=` body, parser lands on stray `;` instead of next member. Investigation shows the 10000-token limit in `skip_balanced_braces()` is NOT exceeded, and braces are balanced — root cause appears to be the preprocessor producing an unexpected `;` token after the function body `}`. Needs further investigation of the preprocessor token stream for the variant lambda body. |
-| `compare_exchange_weak` template | `<atomic>`, `<barrier>`, `<thread>`, `<stop_token>` | Template instantiation failure for member function with `__cmpexch_failure_order()` call |
-| Forward declaration in namespace block | `<chrono>`, `<shared_mutex>`, `<condition_variable>` | `namespace filesystem { struct __file_clock; };` at `bits/chrono.h:54` fails to parse |
-
-### Recent Fixes (2026-02-12)
-
-The following issues were fixed to unblock standard header compilation:
-
-1. **Enum-to-integer implicit conversion in overload resolution**: `can_convert_type()` now handles `Type::Enum` → integer promotions and conversions per C++20 §[conv.prom] and §[conv.integral]. Unscoped enums promote to `int`/`unsigned int` and convert to any integral or floating-point type. This unblocks `<vector>` past the `__fill_bvector` overload resolution error where enum constant `_S_word_bit` needed to match an `unsigned int` parameter.
-
-2. **Enum constant function arguments resolved as immediates**: When an enumerator constant (e.g., `Green` from `enum Color { Red, Green, Blue }`) is used as a function call argument, the codegen now resolves it to its integer value (an immediate constant) instead of passing it as a variable reference. Previously, the identifier path in `generateFunctionCallIr()` treated enum constants like variables, causing codegen failures since enumerator constants don't have stack frame entries.
-
-### Recent Fixes (2026-02-11)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **Concept early-out in `try_instantiate_class_template`**: Concepts (`same_as`, `convertible_to`, `sentinel_for`, etc.) stored in the concept registry are now detected early and skipped silently, instead of producing "No primary template found" error messages. Reduces noise in all headers that use C++20 concepts.
-
-2. **Template parameter as QualifiedIdentifierNode namespace**: The `ExpressionSubstitutor` now handles the case where a `QualifiedIdentifierNode`'s namespace is directly a template type parameter name (e.g., `_R1::num` where `_R1` is `typename _R1`). Previously, this pattern was not substituted during template instantiation, causing default non-type template argument evaluation to fail. Unblocks `<ratio>` default parameter evaluation.
-
-3. **Self-referential template handling**: When parsing a template struct body that references itself (e.g., `__ratio_add_impl` using `typename __ratio_add_impl<...>::type` in its own body), the parser now checks `struct_parsing_context_stack_` and returns silently instead of failing with "No primary template found". This is a standard C++ pattern where template bodies reference their own template with different arguments.
-
-4. **Dependent type detection for unresolved templates in template bodies**: When a template can't be found during type resolution inside a template body (because it hasn't been registered yet or is self-referential), the type is now treated as dependent with a placeholder, allowing parsing to continue. Previously, this caused "Unknown nested type" errors that halted parsing.
-
-**Headers with changed status:** `<ratio>` now compiles (was crashing with heap corruption). `<string_view>`, `<algorithm>`, `<span>` now compile (were timing out). `<chrono>` reclassified as failing (pre-existing `bits/chrono.h:54` parse error, not a regression). Updated blocker table with current state.
-
-### Recent Fixes (2026-02-10)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **Brace-init return for dependent types in template bodies**: When parsing `return { expr1, expr2 };` in a template body where the return type is a dependent `UserDefined` type (not yet resolved to a struct), the parser now treats it as a struct-like initializer instead of rejecting it as "too many initializers for scalar type". Unblocks `<map>`, `<set>` past `stl_tree.h:1534`.
-
-2. **Dependent type alias base classes**: Type aliases used as base classes in template bodies (e.g., `_Tp_alloc_type`) are now allowed even when they can't be resolved to a struct type at parse time. The resolution is deferred to template instantiation. Unblocks `<vector>` past `stl_vector.h:133`.
-
-3. **`if (Type var = expr)` declaration-as-condition**: The `if` statement parser now handles variable declarations as conditions (e.g., `if (size_type __n = this->finish - pos)`), where the declaration is implicitly converted to bool. Unblocks `<vector>` past `stl_vector.h:1945`.
-
-4. **Error recovery in template struct bodies**: When parsing member declarations in template class bodies (both primary templates and partial specializations), parse errors in individual members now skip to the next semicolon/closing brace instead of aborting the entire struct. This allows parsing to continue past unsupported member patterns. Unblocks `<variant>` past `variant:694`.
-
-5. **Pack expansion using-declarations (`using Base<Args>::member...;`)**: Using-declarations with C++17 pack expansion are now correctly parsed. The parser handles template arguments before `::` and the trailing `...` before `;` in both regular struct bodies and member struct template partial specialization bodies. Unblocks `<variant>` past `variant:815`.
-
-**Headers with changed status:** `<vector>` progressed from base class error to ambiguous overload error. `<variant>` progressed from line 694 to line 831. `<map>` and `<set>` progressed past brace-init return error.
-
-### Recent Fixes (2026-02-10, PR #2)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **Deduction guide default parameter parsing**: Deduction guide parameters now support default argument expressions (e.g., `_Allocator = _Allocator()`). The parser skips balanced parentheses and angle brackets in default argument expressions. Unblocks `<vector>` past `stl_vector.h:2033` deduction guide.
-
-2. **Function template call disambiguation in statement parser**: When the statement parser encounters `template_name<args>(...)` where the template is a function template (not a class template), it now correctly parses it as a function call expression instead of a variable declaration. Uses `is_function_or_template_function()` to distinguish. Unblocks `<variant>` past `variant:499` (lambda in `std::__do_visit<void>([...])` call).
-
-3. **Member variable template partial specialization**: Member variable template declarations now handle partial specialization syntax `name<pattern> = expr;` by consuming the template arguments between the variable name and the `=` initializer. Unblocks `<variant>` past `variant:831` (`__accepted_index<_Tp, _Variant, void_t<...>> = expr`).
-
-4. **Nested template declarations in member struct template bodies**: Added `template` keyword handling in member struct template body parsing. Nested template structs, template functions, and template aliases inside member struct templates are now dispatched to `parse_member_template_or_function()`. Unblocks `<variant>` past `variant:857` (`template<typename> struct __untag_result` inside `_Multi_array<_Tp>`).
-
-5. **Robust using-declaration parsing in member struct template bodies**: Replaced inline using-declaration parsing in member struct template body with the more comprehensive `parse_member_type_alias()` function, which correctly handles function pointer types, pointer-to-member types, array types, and other complex type patterns.
-
-6. **Function pointer parameter pack expansion in type aliases**: Function pointer/reference parameter list parsing in type aliases now handles pack expansion (`...`), pointer (`*`), and reference (`&`, `&&`) modifiers after parameter types. Unblocks `<variant>` past `variant:867` (`using element_type = void(*)(_Args...);`).
-
-**Headers with changed status:** `<variant>` progressed from line 499 to line 1137 (through 5 separate fixes). `<vector>` progressed past deduction guide to `stl_bvector.h:812`. `<map>` and `<set>` progressed from parse errors to codegen `bad_any_cast` errors.
-
-### Recent Fixes (2026-02-09, PR #3)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **C++20 constrained `auto` parameters**: `parse_type_and_name()` now detects when a UserDefined type is followed by `auto` keyword and converts the type to Auto, treating `ConceptName auto param` as an abbreviated function template. Unblocks `ranges_util.h:298` for `<tuple>`, `<functional>`, `<memory>`.
-
-2. **Trailing `requires` clause on constructors**: Added `skip_trailing_requires_clause()` after `parse_constructor_exception_specifier()` in all 3 template constructor parsing paths (full specialization, partial specialization, member function template). The trailing requires clause like `requires Constraint` can appear between `noexcept(...)` and the member initializer list `:`. Unblocks `ranges_util.h:321`.
-
-3. **Array reference parameters in deduction guides**: Deduction guide parameter parsing now handles the `Type(&)[Extent]` and `Type(&&)[Extent]` array reference pattern. This is used in `span(_Type(&)[_ArrayExtent]) -> span<_Type, _ArrayExtent>`. Unblocks `<span>` past deduction guide parsing.
-
-4. **`::template rebind<T>::other` nested type access**: After parsing template member arguments in dependent qualified types (e.g., `__alloc_traits<_Alloc>::template rebind<_Tp>`), the parser now continues scanning for further `::member` access (e.g., `::other`). Unblocks `<vector>`, `<map>`, `<set>` past `stl_vector.h:87`.
-
-5. **Template destructor calls `ptr->~Type<Args>()`**: Pseudo-destructor call parsing now skips template arguments between the type name and `()`, e.g., `__p->~_Rb_tree_node<_Val>()`. Unblocks `<map>`, `<set>` past `stl_tree.h:622`.
-
-6. **C++ attributes after function name**: `parse_type_and_name()` now calls `skip_cpp_attributes()` after parsing the identifier, handling patterns like `as_writable_bytes [[nodiscard]] (span<_Type, _Extent> __sp)`. Unblocks `<span>` past `span:488`.
-
-7. **Template brace-init type lookup with default args**: When looking up the instantiated type for `return Type<Args>{...}`, the code now falls back to the V2 instantiation cache to find the correct struct name when the type was registered with filled-in default template arguments. Unblocks `<string_view>`, `<string>`, `<iostream>`, `<ranges>` past `string_view:863`.
-
-**Headers with changed status:** 5 headers (`<string_view>`, `<string>`, `<iostream>`, `<ranges>`, `<span>`) progressed from parse errors to codegen errors (parsing fully succeeds). 4 headers (`<tuple>`, `<functional>`, `<memory>`, `<vector>`) progressed to later parse errors. 2 headers (`<map>`, `<set>`) progressed to later parse errors.
-
-### Recent Fixes (2026-02-09, PR #2)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **`bad_any_cast` crash in `allocator_traits` template instantiation**: Member function templates (e.g., `construct`, `destroy` in `allocator_traits<allocator<_Tp>>`) stored as `TemplateFunctionDeclarationNode` were not handled during class template instantiation. The code assumed all non-constructor/destructor members are `FunctionDeclarationNode`. Fixed in two locations in `try_instantiate_class_template()`. Unblocks 10+ headers past the `bad_any_cast` crash.
-
-2. **`min()` static member function resolution**: When inside a class body, unqualified calls like `min()` found namespace-scope template functions (e.g., `std::min`) instead of the class's own static member function. Added class member priority check before template function instantiation, searching both `struct_parsing_context_stack_` and `member_function_context_stack_`. Unblocks `<string_view>`, `<span>`.
-
-3. **`__cpp_exceptions` macro removed**: FlashCpp doesn't implement exception handling. Previously, defining `__cpp_exceptions` caused standard headers to include try/catch code paths that can't be parsed. Without it, headers use simpler non-exception fallback paths (e.g., `if(true)`/`if(false)` macros from `exception_defines.h`).
-
-4. **SFINAE in requires expressions**: Template function instantiation failures inside requires expression bodies now create placeholder nodes instead of hard errors when `in_sfinae_context_` is true. This fixes `__is_derived_from_view_interface_fn` constraint evaluation in `ranges_base.h`.
-
-5. **Compound requirement SFINAE handling**: In requires expression bodies, compound requirements (`{ expr } -> type;`) and simple requirements now gracefully handle expression parsing failures by skipping the requirement and adding a false literal (unsatisfied requirement), instead of propagating hard errors.
-
-6. **User-defined literal operator parsing (`operator""sv`)**: Added parsing of user-defined literal operators in both operator parsing locations in `parse_type_and_name()`. Handles `operator""suffix` syntax for literals like `operator""sv`, `operator""_ms`. Progresses `<string_view>`.
-
-**Headers with changed status:** All `bad_any_cast` crash headers (`<string>`, `<iostream>`, `<vector>`, `<map>`, `<set>`, `<tuple>`, `<functional>`, `<ranges>`, `<algorithm>`, `<memory>`) now progress past the crash to parse errors. `<string_view>` progresses to near end of file (line 862→863). `<span>` progresses to deduction guide parsing.
-
-### Recent Fixes (2026-02-09)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **Conversion operator detection in partial template specialization bodies**: Added the same conversion operator detection logic (for `operator type()` patterns) to partial specialization body parsing that already existed for full specializations. This fixes `operator __pointer_type() const noexcept` in `template<typename _PTp> struct __atomic_base<_PTp*>`. Progresses `<atomic>` past the conversion operator error.
-
-2. **Type alias resolution for out-of-line member definitions**: When resolving `ClassName::member` for out-of-line definitions, if the class name is a type alias (e.g., `using Alias = SomeStruct;`), the parser now follows `type_index_` to find the underlying struct type. Previously, type aliases returned no `StructTypeInfo`, causing "is not a struct/class type" errors. Progresses `<coroutine>`.
-
-3. **Brace initialization for out-of-line static member definitions**: Added handling for `ClassName::member{}` syntax (brace-init) in out-of-line static member variable definitions, complementing the existing parenthesized initializer handling (`ClassName::member(value)`). This fixes patterns like `inline noop_coroutine_handle::_S_fr{};`. Progresses `<coroutine>`.
-
-4. **`pending_explicit_template_args_` leak fix**: Cleared `pending_explicit_template_args_` at the start of each `parse_statement_or_declaration()` call. Template arguments parsed during one expression could leak into unrelated function calls in subsequent statements. This caused `__builtin_va_start(args, fmt)` to be incorrectly treated as a template function call after including `<bits/stl_iterator.h>`. Fixes `<ranges>` and `<iterator>` past the `__builtin_va_start` error.
-
-5. **Double namespace prefix in template class registration**: When registering template classes in the template registry, the struct name from `StructDeclarationNode` could already be namespace-qualified (e.g., `std::numeric_limits`). Building a qualified name from this would produce `std::std::numeric_limits`, causing template lookup failures. Now extracts the unqualified name before building the qualified identifier. Fixes `std::numeric_limits` lookup for `<string_view>`, `<span>`.
-
-**Headers with changed status:** `<ratio>` (memory corruption → parse error), `<ranges>` (parse error → bad_any_cast - progressed), `<atomic>` (conversion operator error → template instantiation error - progressed), `<coroutine>` (parse error → infinite loop - progressed), `<string_view>` (bad_any_cast → min() resolution error - progressed), `<span>` (bad_any_cast → min() resolution error - progressed).
-
-### Recent Fixes (2026-02-08, PR #3)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **`explicit constexpr` constructor ordering in member function templates**: The constructor detection lookahead in `parse_member_function_template()` now calls `parse_declaration_specifiers()` after consuming the `explicit` keyword, allowing `explicit constexpr` (not just `constexpr explicit`). This matches the C++20 standard that permits these specifiers in any order. Unblocks `<optional>`.
-
-2. **Deduction guide parameter pack expansion (`_Up...`)**: The deduction guide parameter parsing in `parse_template_declaration()` now handles `...` (pack expansion) after type specifiers. Previously, `array(_Tp, _Up...) -> array<_Tp, 1 + sizeof...(_Up)>;` would fail because `...` was not consumed. Unblocks `<array>`, `<span>`.
-
-3. **Relative include resolution for quoted includes**: The preprocessor `#include "file.h"` directive now searches the directory of the including file first, per C++ standard [cpp.include]. Previously, `pstl/execution_defs.h` including `"algorithm_fwd.h"` (in the same `pstl/` directory) would fail because only the main file's directory was searched. Unblocks `<memory>`, `<algorithm>`.
-
-4. **Ref-qualifier token type bug in `skip_function_trailing_specifiers()`**: Fixed `&` and `&&` ref-qualifier detection which was checking for `Token::Type::Punctuator` but these tokens are actually `Token::Type::Operator` (token kind `BitwiseAnd`/`LogicalAnd`). Now uses `peek() == "&"_tok` pattern for correct matching. Unblocks template member functions with `const&` and `&&` ref-qualifiers, critical for `<optional>`.
-
-5. **`[[__deprecated__]]` C++ attributes on `using` type aliases**: Added `skip_cpp_attributes()` after the alias name in both member type alias and regular type alias parsing. This handles patterns like `using result_type [[__deprecated__]] = size_t;` in `<optional>` and `<functional>`.
-
-**Headers newly compiling:** `<optional>` (was blocked by ref-qualifier, explicit constexpr, and attribute issues), `<any>` (was blocked by out-of-line template member issues), `<chrono>` (previously crashed with malloc assertion failure; fixes to ref-qualifier and attribute handling may have resolved the underlying memory corruption path).
-
-### Recent Fixes (2026-02-05)
-
-The following parser issues were fixed to unblock standard header compilation:
-
-1. **`__typeof(function_name)`**: `get_expression_type()` now handles `FunctionDeclarationNode` identifiers, returning the function's return type. This unblocks `c++locale.h` which uses `extern "C" __typeof(uselocale) __uselocale;`.
-
-2. **`__builtin_va_list` / `__gnuc_va_list`**: Registered as built-in types in `initialize_native_types()` and handled in `parse_type_specifier()`. This unblocks `c++locale.h` and any code using variadic argument types directly.
-
-3. **Unnamed bitfields (`int :32;`)**: `parse_type_and_name()` now recognizes `:` and `;` as valid terminators for unnamed declarations, and struct member parsing consumes the bitfield width expression. This unblocks `bits/timex.h` (included via `<time.h>` → `<pthread.h>`).
-
-4. **Function pointer params with pointer return types**: Added a second function pointer detection check in `parse_type_and_name()` after pointer levels are consumed. The pattern `void *(*callback)(void *)` was previously not detected because the `(` check happened before `*` was consumed. This unblocks `<pthread.h>` function declarations.
-
-5. **C-style `(void)` parameter lists**: `parse_parameter_list()` now treats `(void)` as equivalent to `()` (no parameters). This unblocks many C library function declarations like `pthread_self(void)`.
-
-**Remaining blocker for `<iostream>`, `<atomic>`, `<barrier>`**: The `pthread_self()` function call in `gthr-default.h:700` fails with "No matching function" — the function is declared and found in the symbol table, but call resolution doesn't match the `(void)` signature. This is now fixed by the `(void)` parameter list change above.
-
-### C Library Wrappers (Also Working)
-
-| Header | Test File | Notes |
-|--------|-----------|-------|
-| `<cstddef>` | `test_cstddef.cpp` | `size_t`, `ptrdiff_t`, `nullptr_t` (~0.13s) |
-| `<cstdlib>` | `test_cstdlib.cpp` | `malloc`, `free`, etc. (~0.05s) |
-| `<cstdio>` | `test_cstdio_puts.cpp` | `printf`, `puts`, etc. (~0.12s) |
-| `<cstdint>` | N/A | `int32_t`, `uint64_t`, etc. (~0.04s) |
-| `<cstring>` | N/A | `memcpy`, `strlen`, etc. (~0.12s) |
-| `<ctime>` | N/A | `time_t`, `clock`, etc. (~0.08s) |
-| `<climits>` | N/A | `INT_MAX`, `LONG_MAX`, etc. (~0.03s) |
-| `<cfloat>` | N/A | `FLT_MAX`, `DBL_MIN`, etc. (~0.04s) |
-| `<cassert>` | N/A | `assert` macro (~0.04s) |
-| `<cerrno>` | N/A | `errno` (~0.03s) |
-| `<clocale>` | N/A | `setlocale`, `localeconv` (~0.04s) |
-| `<cstdarg>` | N/A | `va_list`, `va_start`, etc. (~0.03s) |
-| `<cfenv>` | N/A | `fenv_t`, `fegetenv`, etc. (~0.03s) |
-| `<cinttypes>` | N/A | `imaxabs`, `imaxdiv`, etc. (~0.04s) |
-| `<cctype>` | N/A | `isalpha`, `isdigit`, etc. (~0.05s) |
-| `<cuchar>` | N/A | `char16_t`, `char32_t` conversions (~0.13s) |
-| `<cwchar>` | N/A | `wchar_t` functions (~0.56s) |
-| `<cwctype>` | N/A | `iswupper`, `iswlower`, etc. (~0.78s) (2026-01-16: Fixed parenthesized identifier followed by `<`) |
-| `<cstdbool>` | N/A | C99 `bool` compatibility (~0.13s) |
-| `<cstdalign>` | N/A | C11 alignment specifiers (~0.13s) |
-| `<ciso646>` | N/A | Alternative operator spellings (~0.03s) |
-
-## Running the Tests
-
-```bash
-cd tests/std
-./test_std_headers_comprehensive.sh
-```
-
-## Viewing Parser Progress
-
-To see progress logging during compilation, build with Info level logging enabled:
-
-```bash
-# Build release with progress logging
-clang++ -std=c++20 -DFLASHCPP_LOG_LEVEL=2 -O3 -I src -o x64/InfoRelease/FlashCpp \
-    src/AstNodeTypes.cpp src/ChunkedAnyVector.cpp src/Parser.cpp \
-    src/CodeViewDebug.cpp src/ExpressionSubstitutor.cpp src/main.cpp
-
-# Run with progress output
-./x64/InfoRelease/FlashCpp tests/std/test_std_type_traits.cpp
-# Output: [Progress] 100 template instantiations in 1 ms (cache hit rate: 44.4%)
-#         [Progress] 200 template instantiations in 4 ms (cache hit rate: 55.3%)
-#         [Progress] Parsing complete: 7 top-level nodes, 58 AST nodes in 9 ms
-```
-
-### Template Profiling Statistics
-
-For detailed template instantiation statistics, use the `--perf-stats` flag:
-
-```bash
-./x64/Release/FlashCpp test.cpp --perf-stats
-# Shows:
-#   - Template instantiation counts and timing
-#   - Cache hit/miss rates
-#   - Top 10 most instantiated templates
-#   - Top 10 slowest templates
-```
-
-## Disabling Logging
-
-Logging can be controlled at runtime and compile-time.
-
-### Runtime Log Level Control
-
-```bash
-# Set global log level
-./x64/Debug/FlashCpp file.cpp --log-level=warning
-
-# Set log level for specific category
-./x64/Debug/FlashCpp file.cpp --log-level=Parser:debug
-
-# Available levels: error (0), warning (1), info (2), debug (3), trace (4)
-# Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen, Scope, Mangling, All
-```
-
-### Compile-time Log Level Control
-
-```bash
-# Build with specific log level (0=error, 1=warning, 2=info, 3=debug, 4=trace)
-# Note: Default release build uses level 1 (warning only)
-# Use level 2 to include Info messages (including progress logging)
-clang++ -DFLASHCPP_LOG_LEVEL=2 -O3 ...
-```
-
-## Adding New Standard Header Tests
-
-1. Create `test_std_<header>.cpp`:
-   ```cpp
-   #include <header>
-   int main() { return 0; }
-   ```
-
-2. Verify valid C++20: `clang++ -std=c++20 -c test_std_<header>.cpp`
-
-3. Test: `./test_std_headers_comprehensive.sh`
-
-4. If it fails, add to `EXPECTED_FAIL` in `../run_all_tests.sh`
-
-## See Also
-
-- [`STANDARD_HEADERS_MISSING_FEATURES.md`](./STANDARD_HEADERS_MISSING_FEATURES.md) - Detailed analysis of missing features and implementation history
+5. **Codegen assert hang**: `assert(false)` in `generateIdentifierIr` replaced with `throw std::runtime_error()` per existing convention, preventing SIGABRT hangs.
 

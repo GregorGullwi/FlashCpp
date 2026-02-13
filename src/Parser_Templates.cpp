@@ -2657,6 +2657,7 @@ ParseResult Parser::parse_template_declaration() {
 				}
 			}
 
+
 			// Check for forward declaration: template<typename T> struct Name<T*>;
 			if (peek() == ";"_tok) {
 				advance(); // consume ';'
@@ -3592,6 +3593,9 @@ if (struct_type_info.getStructInfo()) {
 					delayed.struct_node,
 					nullptr  // local_struct_info - not needed for delayed function bodies
 				});
+				
+				// Register member functions in symbol table so member-to-member calls resolve correctly
+				register_member_functions_in_scope(delayed.struct_node, delayed.struct_type_index);
 				
 				// Add 'this' pointer to symbol table
 				auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
@@ -11872,7 +11876,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 														if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 															bool val = std::get<BoolLiteralNode>(init_expr).value();
-															TemplateTypeArg arg(val ? 1LL : 0LL);
+															TemplateTypeArg arg(val ? 1LL : 0LL, Type::Bool);
 															filled_args_for_pattern_match.push_back(arg);
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
@@ -11900,7 +11904,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 					} else if (std::holds_alternative<SizeofExprNode>(expr)) {
 						// Handle sizeof(T) as a default value
 						const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr);
@@ -13431,7 +13435,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 													if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 														bool val = std::get<BoolLiteralNode>(init_expr).value();
-														filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+														filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 														FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 													} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 														const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
@@ -13464,7 +13468,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 					// Handle boolean literals
 					const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 				} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 					// Handle dependent expressions like is_arithmetic<T>::value
 					const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
@@ -13515,7 +13519,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 														if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 															bool val = std::get<BoolLiteralNode>(init_expr).value();
-															filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+															filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 															const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);

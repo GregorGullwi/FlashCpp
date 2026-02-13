@@ -3073,15 +3073,32 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Build qualified template name (e.g., "std::move")
 					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 					
-					// Apply lvalue reference for forwarding deduction on arg_types
-					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-					
-					// Try to instantiate the qualified template function
-					if (!arg_types.empty()) {
-						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+					// Try explicit template instantiation first if template arguments were provided
+					// (e.g., ns::func<true>(args) should use try_instantiate_template_explicit)
+					if (template_args.has_value()) {
+						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
+						if (!template_inst.has_value()) {
+							// Also try without namespace prefix
+							template_inst = try_instantiate_template_explicit(final_identifier.value(), *template_args);
+						}
 						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
 							decl_ptr = &template_inst->as<FunctionDeclarationNode>().decl_node();
-							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template with explicit args: ", qualified_name);
+						}
+					}
+					
+					// Fall back to argument-type-based deduction
+					if (!decl_ptr) {
+						// Apply lvalue reference for forwarding deduction on arg_types
+						std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
+						
+						// Try to instantiate the qualified template function
+						if (!arg_types.empty()) {
+							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+								decl_ptr = &template_inst->as<FunctionDeclarationNode>().decl_node();
+								FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+							}
 						}
 					}
 				}
@@ -4880,7 +4897,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																		if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 																			bool val = std::get<BoolLiteralNode>(init_expr).value();
-																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 																		} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 																			const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
 																			const auto& val = lit.value();
@@ -4907,7 +4924,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										}
 									} else if (std::holds_alternative<BoolLiteralNode>(expr_default)) {
 										const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr_default);
-										filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+										filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 									}
 								}
 							}
@@ -5135,13 +5152,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// If still not found and no explicit template arguments, try deducing from function arguments
 				// Apply lvalue reference for forwarding deduction on arg_types
-				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-				
-				// Try to instantiate the qualified template function
-				if (!arg_types.empty()) {
-					std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
-					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-						identifierType = *template_inst;
+				if (!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) {
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
+					
+					// Try to instantiate the qualified template function
+					if (!arg_types.empty()) {
+						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+							identifierType = *template_inst;
+						}
 					}
 				}
 			}
@@ -6482,8 +6501,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// Not a constructor - check if this is a template function that needs instantiation
+				// Skip template lookup if we already found this as a member function in the class context
+				// to avoid namespace-scope template functions shadowing class member function overloads
 				std::optional<ASTNode> template_func_inst;
-				if (gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
+				if (!found_member_function_in_context && gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
 					// Parse arguments to deduce template parameters
 					if (peek().is_eof())
 						return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
@@ -6790,7 +6811,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																				const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																				if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 																					bool val = std::get<BoolLiteralNode>(init_expr).value();
-																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 																				} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 																					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
 																					const auto& val = lit.value();
@@ -6817,7 +6838,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												}
 											} else if (std::holds_alternative<BoolLiteralNode>(expr_default)) {
 												const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr_default);
-												filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+												filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 											}
 										}
 									}
