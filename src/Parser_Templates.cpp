@@ -2117,6 +2117,15 @@ ParseResult Parser::parse_template_declaration() {
 					const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
 					const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
 
+					// Handle bitfield declarations: int x : 5;
+					if (peek() == ":"_tok) {
+						advance(); // consume ':'
+						auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (width_result.is_error()) {
+							return width_result;
+						}
+					}
+
 					// Check for member initialization with '=' (C++11 feature)
 					if (peek() == "="_tok) {
 						advance(); // consume '='
@@ -2141,6 +2150,15 @@ ParseResult Parser::parse_template_declaration() {
 						auto next_member_name = advance();
 						if (next_member_name.type() != Token::Type::Identifier) {
 							return ParseResult::error("Expected member name after comma", peek_info());
+						}
+
+						// Handle bitfield declarations: int x, y : 3;
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (width_result.is_error()) {
+								return width_result;
+							}
 						}
 
 						// Check for optional initialization
@@ -3394,6 +3412,15 @@ ParseResult Parser::parse_template_declaration() {
 						const DeclarationNode& decl_node = member_node.as<DeclarationNode>();
 						const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
 
+						// Handle bitfield declarations: int x : 5;
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (width_result.is_error()) {
+								return width_result;
+							}
+						}
+
 						// Check for default initializer
 						std::optional<ASTNode> default_initializer;
 						if (peek() == "="_tok) {
@@ -3426,6 +3453,15 @@ ParseResult Parser::parse_template_declaration() {
 							auto next_member_name = advance();
 							if (next_member_name.type() != Token::Type::Identifier) {
 								return ParseResult::error("Expected member name after comma", peek_info());
+							}
+
+							// Handle bitfield declarations: int x, y : 3;
+							if (peek() == ":"_tok) {
+								advance(); // consume ':'
+								auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (width_result.is_error()) {
+									return width_result;
+								}
 							}
 
 							// Check for optional initialization
@@ -6425,8 +6461,30 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				return ParseResult::error("Expected member declaration", peek_info());
 			}
 			
-			// Check if this is a member function (has '(') or data member (has ';' or '=')
-			if (peek() == ";"_tok) {
+			// Check if this is a member function (has '(') or data member (has ';', ':', or '=')
+			if (peek() == ":"_tok) {
+				// Bitfield data member
+				advance(); // consume ':'
+				auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (width_result.is_error()) {
+					return width_result;
+				}
+
+				std::optional<ASTNode> init;
+				if (peek() == "="_tok) {
+					advance(); // consume '='
+					auto init_result = parse_expression(2, ExpressionContext::Normal);
+					if (init_result.is_error()) {
+						return init_result;
+					}
+					init = init_result.node();
+				}
+
+				if (!consume(";"_tok)) {
+					return ParseResult::error("Expected ';' after bitfield member", current_token_);
+				}
+				member_struct_ref.add_member(*member_result.node(), current_access, init);
+			} else if (peek() == ";"_tok) {
 				// Simple data member
 				advance(); // consume ';'
 				member_struct_ref.add_member(*member_result.node(), current_access, std::nullopt);
@@ -6773,6 +6831,17 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			
 			// Add member function to struct
 			member_struct_ref.add_member_function(member_func_node, current_access);
+		} else if (peek() == ":"_tok) {
+			// Bitfield data member
+			advance(); // consume ':'
+			auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (width_result.is_error()) {
+				return width_result;
+			}
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after bitfield member", peek_info());
+			}
+			member_struct_ref.add_member(*member_result.node(), current_access, std::nullopt);
 		} else if (peek() == ";"_tok) {
 			// Data member
 			advance(); // consume ';'
