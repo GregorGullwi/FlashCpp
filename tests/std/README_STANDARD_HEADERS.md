@@ -46,11 +46,45 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<print>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<expected>` | N/A | ✅ Compiled | ~18ms (C++23) |
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
-| `<barrier>` | N/A | ❌ Parse Error | `__cmpexch_failure_order2` overload resolution at `atomic_base.h:128` (enum bitwise ops) |
+| `<barrier>` | N/A | ❌ Timeout | Hangs during template instantiation (depends on `<atomic>`) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ❌ Parse Error | Qualified static member brace init fixed; now hangs during template instantiation (infinite loop) |
+| `<coroutine>` | N/A | ❌ Timeout | Hangs during template instantiation (infinite loop) |
+| `<numeric>` | N/A | ✅ Compiled | ~911ms (2026-02-13: Compiles successfully) |
+| `<latch>` | N/A | ❌ Codegen Error | Parsing completes ~382ms; fails on `_Size` symbol (non-type template param not substituted) |
+| `<shared_mutex>` | N/A | ❌ Codegen Error | Parsing completes ~574ms; fails on `_S_epoch_diff` symbol |
+| `<cstdlib>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstdio>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstring>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cctype>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cwchar>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cwctype>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cerrno>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cassert>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstdarg>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstddef>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cstdint>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cinttypes>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cuchar>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cfenv>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<clocale>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<ctime>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<climits>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cfloat>` | N/A | ✅ Compiled | (2026-02-13) |
+| `<cmath>` | N/A | ❌ Parse Error | `__attribute__` after function declaration in system headers (`mathcalls-helper-functions.h`) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
+
+### Recent Fixes (2026-02-13)
+
+1. **Member function call shadowed by template function lookup**: When parsing a member function body inside a template struct, a call like `compare_exchange_weak(expected, desired, order, order)` would find the name in the template registry even though it was already resolved as a class member function. Fix: skip template registry lookup when `found_member_function_in_context` is already true. Unblocks `<atomic>` parsing.
+
+2. **`using Base::operator Type;` not parsed**: Using-declarations for conversion operators and assignment operators (e.g., `using __base_type::operator __integral_type;`) hit the `else { break; }` branch because `operator` is a keyword. Fix: handle `operator` keyword after `::` and build the full operator name.
+
+3. **Bool/Int type mismatch in partial specialization pattern matching**: Default bool template arguments (`template<typename T, bool = false>`) were stored as `Type::Int` during fill-in but `Type::Bool` in patterns, causing pattern matching to fail silently. Fix: use `Type::Bool` for bool defaults, and allow `Bool`/`Int` interchangeability in pattern matching for non-type value parameters. This fix enables partial specialization member function codegen.
+
+4. **Overload resolution ambiguity**: When multiple overloads tie on conversion rank (e.g., `f(T*)` vs `f(volatile T*)`), the resolver now picks the first match instead of returning ambiguous.
+
+5. **Codegen assert hang**: `assert(false)` in `generateIdentifierIr` replaced with `throw std::runtime_error()` per existing convention, preventing SIGABRT hangs.
 
 ### Recent Fixes (2026-02-06)
 
