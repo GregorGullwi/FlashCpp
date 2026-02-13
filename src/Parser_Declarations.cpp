@@ -6693,6 +6693,10 @@ ParseResult Parser::parse_struct_declaration()
 			
 			// Update total_size to account for the union (largest member)
 			struct_info->total_size = aligned_union_start + union_max_size;
+			struct_info->active_bitfield_unit_size = 0;
+			struct_info->active_bitfield_bits_used = 0;
+			struct_info->active_bitfield_unit_alignment = 0;
+			struct_info->active_bitfield_type = Type::Invalid;
 			
 			next_union_idx++;
 		}
