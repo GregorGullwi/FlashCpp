@@ -14,7 +14,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~183ms (2026-02-11: Fixed with self-referential template handling and dependent type detection) |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Progressed past enum overload issue (2026-02-12); now fails further in `vector.tcc:1224` (hash specialization out-of-line definition pattern) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Timeout | Preprocessing completes (~248ms, 42567 lines); hangs during template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Timeout | Hangs during template instantiation |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~759ms (2026-02-08: Fixed with ref-qualifier, explicit constexpr, and attribute fixes) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed from line 499→1137; 5 separate fixes: func template call disambiguation, member variable template partial spec, nested templates in member struct bodies, func pointer pack expansion in type aliases. Now fails at `variant:1137` (struct body boundary tracking issue) |
@@ -33,7 +33,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~500ms (2026-02-11: Parsing completes; object file generated) |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Parse Error | Fails at `bits/chrono.h:54` (`namespace filesystem { struct __file_clock; };` forward declaration in namespace block) |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Timeout | Preprocessing and parsing complete; hangs during template instantiation (no longer fails at forward declaration) |
 | `<atomic>` | N/A | ❌ Codegen Error | ~492ms (2026-02-13: Parsing completes after member function call shadowing fix; codegen fails on `_Size` symbol) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
@@ -70,9 +70,17 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ctime>` | N/A | ✅ Compiled | (2026-02-13) |
 | `<climits>` | N/A | ✅ Compiled | (2026-02-13) |
 | `<cfloat>` | N/A | ✅ Compiled | (2026-02-13) |
-| `<cmath>` | N/A | ❌ Parse Error | `__attribute__` after function declaration in system headers (`mathcalls-helper-functions.h`) |
+| `<cmath>` | `test_std_cmath.cpp` | ❌ Codegen Error | Parsing completes after preprocessor fix (empty trailing macro args + ## token-pasting order + arg pre-expansion); codegen fails on `int` symbol in `__ellint_rf` |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
+
+### Recent Fixes (2026-02-13, preprocessor)
+
+1. **Empty trailing macro arguments not captured**: `splitArgs("a, ")` returned `["a"]` instead of `["a", ""]`. Fixed to correctly push an empty trailing argument when the arg string ends after a comma. This is critical for glibc's `__MATHDECL_ALIAS` pattern which passes empty suffix arguments.
+
+2. **## token-pasting processed after rescanning instead of before**: Per C standard 6.10.3.3, `##` must be processed after argument substitution but before rescanning. FlashCpp was doing it after rescanning, causing `__CONCAT` expansions to corrupt identifiers in nested macro chains.
+
+3. **Macro arguments not pre-expanded before substitution**: Per C standard 6.10.3.1, arguments not adjacent to `#` or `##` must be fully expanded before being substituted into the replacement list. Without this, nested macro chains like `__SIMD_DECL(__MATH_PRECNAME(func, suffix))` would paste unexpanded macro names instead of their results.
 
 ### Recent Fixes (2026-02-13)
 
