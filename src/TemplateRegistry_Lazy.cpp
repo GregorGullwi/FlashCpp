@@ -39,6 +39,7 @@ public:
 	
 	// Check if a member function needs lazy instantiation
 	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name) const {
+		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(instantiated_class_name)
@@ -52,6 +53,7 @@ public:
 	
 	// Get lazy member info for instantiation
 	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(instantiated_class_name)
@@ -69,6 +71,7 @@ public:
 	
 	// Mark a member function as instantiated (remove from lazy registry)
 	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(instantiated_class_name)
@@ -92,6 +95,14 @@ public:
 
 private:
 	LazyMemberInstantiationRegistry() = default;
+
+	static StringHandle normalizeClassName(StringHandle handle) {
+		std::string_view name = StringTable::getStringView(handle);
+		if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
+			return StringTable::getOrInternStringHandle(name.substr(pos + 2));
+		}
+		return handle;
+	}
 	
 	// Map from "instantiated_class::member_function" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyMemberFunctionInfo, TransparentStringHash, std::equal_to<>> lazy_members_;
@@ -180,6 +191,7 @@ private:
 	// Helper to generate registry key from class name and member name
 	// Key format: "instantiated_class_name::member_name"
 	static StringHandle makeKey(StringHandle class_name, StringHandle member_name) {
+		class_name = normalizeClassName(class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(class_name)
@@ -187,6 +199,14 @@ private:
 			.append(member_name)
 			.commit();
 		return StringTable::getOrInternStringHandle(key);
+	}
+
+	static StringHandle normalizeClassName(StringHandle handle) {
+		std::string_view name = StringTable::getStringView(handle);
+		if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
+			return StringTable::getOrInternStringHandle(name.substr(pos + 2));
+		}
+		return handle;
 	}
 	
 	// Map from "instantiated_class::static_member" to lazy instantiation info

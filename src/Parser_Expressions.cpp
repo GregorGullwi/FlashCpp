@@ -5048,6 +5048,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 							}
 						}
+						if (member_lookup.has_value() && member_lookup->is<FunctionDeclarationNode>()) {
+							const FunctionDeclarationNode& func_decl = member_lookup->as<FunctionDeclarationNode>();
+							if (!func_decl.get_definition().has_value() && instantiated_name.find('$') != std::string_view::npos) {
+								StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+								StringHandle member_name_handle = member_token.handle();
+								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
+									auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
+									if (lazy_info_opt.has_value()) {
+										auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
+										if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+											member_lookup = instantiated_func;
+											decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
+											LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle);
+										}
+									}
+								}
+							}
+						}
 						if (!decl_ptr) {
 							// Create a forward declaration
 							auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());

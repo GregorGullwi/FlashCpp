@@ -10504,9 +10504,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 // Get the mangled name for an instantiated class template using hash-based naming
 // Example: Container<int> -> Container$a1b2c3d4 (hash-based, unambiguous)
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
-	// Use hash-based naming to avoid underscore ambiguity
-	// Old: "is_arithmetic_int" - could be is_arithmetic<int> or is_arithmetic + "_int" type!
-	// New: "is_arithmetic$a1b2c3d4" - unambiguous hash-based name
+	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
+		template_name = template_name.substr(last_colon + 2);
+	}
 	return FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
 }
 
@@ -11661,7 +11661,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	
 	// V2 Cache: Check TypeIndex-based instantiation cache for O(1) lookup
 	// This uses TypeIndex instead of string keys to avoid ambiguity with type names containing underscores
-	StringHandle template_name_handle = StringTable::getOrInternStringHandle(template_name);
+	std::string_view normalized_template_name = template_name;
+	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
+		normalized_template_name = template_name.substr(last_colon + 2);
+	}
+	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
 	auto v2_key = FlashCpp::makeInstantiationKeyV2(template_name_handle, template_args);
 	auto v2_cached = gTemplateRegistry.getInstantiationV2(v2_key);
 	if (v2_cached.has_value()) {
@@ -15995,36 +15999,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						);
 						new_func_ref.set_definition(substituted_body);
 						FLASH_LOG(Templates, Debug, "Successfully substituted function body");
-						
-						// If this is a namespace-qualified instantiation (e.g., "custom_ns::Holder$hash"),
-						// also update the non-namespaced version's function body (e.g., "Holder$hash")
-						// so that codegen can generate the function regardless of which version it finds.
-						std::string_view inst_name_sv = instantiated_name.view();
-						size_t last_scope = inst_name_sv.rfind("::");
-						if (last_scope != std::string_view::npos) {
-							std::string_view base_name = inst_name_sv.substr(last_scope + 2);
-							auto base_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_name));
-							if (base_it != gTypesByName.end() && base_it->second->isStruct()) {
-								// Use const_cast because gTypesByName stores const TypeInfo* but we need
-								// to update the function body on the struct's member function declarations.
-								// This is safe because we own the TypeInfo objects in gTypeInfo.
-								StructTypeInfo* base_struct = const_cast<TypeInfo*>(base_it->second)->getStructInfo();
-								if (base_struct) {
-									std::string_view func_name_sv = decl.identifier_token().value();
-									for (auto& base_mf : base_struct->member_functions) {
-										if (base_mf.function_decl.is<FunctionDeclarationNode>()) {
-											FunctionDeclarationNode& base_func = base_mf.function_decl.as<FunctionDeclarationNode>();
-											if (base_func.decl_node().identifier_token().value() == func_name_sv &&
-											    !base_func.get_definition().has_value()) {
-												base_func.set_definition(substituted_body);
-												FLASH_LOG(Templates, Debug, "Also updated non-namespaced version '", base_name, 
-												          "::", func_name_sv, "' with substituted body");
-											}
-										}
-									}
-								}
-							}
-						}
 					} catch (const std::exception& e) {
 						struct_parsing_context_stack_.pop_back();  // Clean up on error
 						FLASH_LOG(Templates, Error, "Exception during template parameter substitution for function ", 
