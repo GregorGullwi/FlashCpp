@@ -450,6 +450,15 @@ int main_impl(int argc, char *argv[]) {
                 }
                 FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
                 ir_conversion_had_errors = true;
+            } catch (const std::runtime_error& e) {
+                // Log and skip nodes that cause runtime errors during IR conversion
+                // This handles codegen errors that were previously assert(false)
+                std::string node_desc = node_handle.type_name();
+                if (node_handle.is<FunctionDeclarationNode>()) {
+                    node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+                }
+                FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+                ir_conversion_had_errors = true;
             }
         }
     }

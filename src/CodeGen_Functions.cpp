@@ -1490,7 +1490,7 @@
 
 		// The object must be an ExpressionNode for regular member function calls
 		if (!object_node.is<ExpressionNode>()) {
-			assert(false && "Member function call object must be an ExpressionNode");
+			throw std::runtime_error("Member function call object must be an ExpressionNode");
 			return {};
 		}
 
@@ -1805,7 +1805,7 @@
 							if (object_name.empty()) {
 								// Use temp var
 								// TODO: Need to handle object expression properly
-								assert(false && "Function pointer member call on expression not yet supported");
+								throw std::runtime_error("Function pointer member call on expression not yet supported");
 							} else {
 								member_load.object = StringTable::getOrInternStringHandle(object_name);
 							}
@@ -2045,7 +2045,7 @@
 				std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
 				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(), 
 				          "' of '", struct_info->getName(), "'", context_str);
-				assert(false && "Access control violation");
+				throw std::runtime_error("Access control violation");
 				return { Type::Int, 32, TempVar{0} };
 			}
 		}
@@ -4071,7 +4071,7 @@
 			// sizeof(type)
 			const ASTNode& type_node = sizeofNode.type_or_expr();
 			if (!type_node.is<TypeSpecifierNode>()) {
-				assert(false && "sizeof type argument must be TypeSpecifierNode");
+				throw std::runtime_error("sizeof type argument must be TypeSpecifierNode");
 				return {};
 			}
 
@@ -4134,14 +4134,14 @@
 			else if (type == Type::Struct) {
 				size_t type_index = type_spec.type_index();
 				if (type_index >= gTypeInfo.size()) {
-					assert(false && "Invalid type index for struct");
+					throw std::runtime_error("Invalid type index for struct");
 					return {};
 				}
 
 				const TypeInfo& type_info = gTypeInfo[type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (!struct_info) {
-					assert(false && "Struct type info not found");
+					throw std::runtime_error("Struct type info not found");
 					return {};
 				}
 
@@ -4156,7 +4156,7 @@
 			// sizeof(expression) - evaluate the type of the expression
 			const ASTNode& expr_node = sizeofNode.type_or_expr();
 			if (!expr_node.is<ExpressionNode>()) {
-				assert(false && "sizeof expression argument must be ExpressionNode");
+				throw std::runtime_error("sizeof expression argument must be ExpressionNode");
 				return {};
 			}
 
@@ -4410,7 +4410,7 @@
 			if (expr_type == Type::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
-				assert(false && "sizeof(struct_expression) not fully implemented yet");
+				throw std::runtime_error("sizeof(struct_expression) not fully implemented yet");
 				return {};
 			}
 			else {
@@ -4436,7 +4436,7 @@
 			// alignof(type)
 			const ASTNode& type_node = alignofNode.type_or_expr();
 			if (!type_node.is<TypeSpecifierNode>()) {
-				assert(false && "alignof type argument must be TypeSpecifierNode");
+				throw std::runtime_error("alignof type argument must be TypeSpecifierNode");
 				return {};
 			}
 
@@ -4447,14 +4447,14 @@
 			if (type == Type::Struct) {
 				size_t type_index = type_spec.type_index();
 				if (type_index >= gTypeInfo.size()) {
-					assert(false && "Invalid type index for struct");
+					throw std::runtime_error("Invalid type index for struct");
 					return {};
 				}
 
 				const TypeInfo& type_info = gTypeInfo[type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (!struct_info) {
-					assert(false && "Struct type info not found");
+					throw std::runtime_error("Struct type info not found");
 					return {};
 				}
 
@@ -4470,7 +4470,7 @@
 			// alignof(expression) - determine the alignment of the expression's type
 			const ASTNode& expr_node = alignofNode.type_or_expr();
 			if (!expr_node.is<ExpressionNode>()) {
-				assert(false && "alignof expression argument must be ExpressionNode");
+				throw std::runtime_error("alignof expression argument must be ExpressionNode");
 				return {};
 			}
 
@@ -4528,7 +4528,7 @@
 			if (expr_type == Type::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
-				assert(false && "alignof(struct_expression) not fully implemented yet");
+				throw std::runtime_error("alignof(struct_expression) not fully implemented yet");
 				return {};
 			}
 			else {
@@ -4550,20 +4550,20 @@
 		// offsetof(struct_type, member)
 		const ASTNode& type_node = offsetofNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
-			assert(false && "offsetof type argument must be TypeSpecifierNode");
+			throw std::runtime_error("offsetof type argument must be TypeSpecifierNode");
 			return {};
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 		if (type_spec.type() != Type::Struct) {
-			assert(false && "offsetof requires a struct type");
+			throw std::runtime_error("offsetof requires a struct type");
 			return {};
 		}
 
 		// Get the struct type info
 		size_t type_index = type_spec.type_index();
 		if (type_index >= gTypeInfo.size()) {
-			assert(false && "Invalid type index for struct");
+			throw std::runtime_error("Invalid type index for struct");
 			return {};
 		}
 
@@ -4573,7 +4573,7 @@
 			static_cast<TypeIndex>(type_index),
 			StringTable::getOrInternStringHandle(std::string(member_name)));
 		if (!member_result) {
-			assert(false && "Member not found in struct");
+			throw std::runtime_error("Member not found in struct");
 			return {};
 		}
 
@@ -4634,7 +4634,7 @@
 		// For traits that require type arguments, extract the type information
 		const ASTNode& type_node = traitNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
-			assert(false && "Type trait argument must be TypeSpecifierNode");
+			throw std::runtime_error("Type trait argument must be TypeSpecifierNode");
 			return {};
 		}
 
@@ -5813,7 +5813,7 @@
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
 							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
-							assert(false && "Cannot instantiate abstract class");
+							throw std::runtime_error("Cannot instantiate abstract class");
 						}
 
 						if (type_info.struct_info_->hasAnyConstructor()) {
@@ -5860,7 +5860,7 @@
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
 							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
-							assert(false && "Cannot instantiate abstract class");
+							throw std::runtime_error("Cannot instantiate abstract class");
 						}
 
 						if (type_info.struct_info_->hasAnyConstructor()) {
@@ -6134,7 +6134,7 @@
 					return arg;
 				} else {
 					// This shouldn't happen for expression values, but default to 0
-					assert(false && "Couldn't match IrValue to a known type");
+					throw std::runtime_error("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);
@@ -6158,7 +6158,7 @@
 				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
-					assert(false && "Couldn't match IrValue to a known type");
+					throw std::runtime_error("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);
@@ -6182,7 +6182,7 @@
 				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
-					assert(false && "Couldn't match IrValue to a known type");
+					throw std::runtime_error("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);

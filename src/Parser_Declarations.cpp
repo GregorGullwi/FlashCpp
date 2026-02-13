@@ -3708,6 +3708,15 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), member_name_token);
 				struct_ref_inner.add_member(member_decl_node, member_access, std::nullopt);
 				
+				// Handle bitfield declarations: unsigned int field:8;
+				if (peek() == ":"_tok) {
+					advance(); // consume ':'
+					auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (width_result.is_error()) {
+						return width_result;
+					}
+				}
+				
 				// Handle comma-separated declarations
 				while (peek() == ","_tok) {
 					advance(); // consume ','
@@ -8793,6 +8802,16 @@ ParseResult Parser::parse_typedef_declaration()
 			}
 			members.push_back({member_decl_node, current_access, std::nullopt});
 			struct_ref.add_member(member_decl_node, current_access, std::nullopt);
+
+			// Handle bitfield declarations: unsigned int field:8;
+			// Parse and skip the bitfield width - treat as regular member for struct layout
+			if (peek() == ":"_tok) {
+				advance(); // consume ':'
+				auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (width_result.is_error()) {
+					return width_result;
+				}
+			}
 
 			// Handle comma-separated declarations (e.g., int x, y, z;)
 			while (peek() == ","_tok) {
