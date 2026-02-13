@@ -951,6 +951,10 @@
 		end_sb.append("__try_end_").append(current_try_id);
 		std::string_view end_label = end_sb.commit();
 
+		StringBuilder handlers_end_sb;
+		handlers_end_sb.append("__try_handlers_end_").append(current_try_id);
+		std::string_view handlers_end_label = handlers_end_sb.commit();
+
 		// Emit TryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
 
@@ -960,8 +964,14 @@
 		// Emit TryEnd marker
 		ir_.addInstruction(IrOpcode::TryEnd, {}, node.try_token());
 
-		// Jump to end after successful try block execution
+		// Jump to parent continuation on successful try block execution
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
+
+		// Parent continuation label must remain in the parent runtime range.
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
+
+		// Skip over out-of-line catch handlers during normal execution.
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(handlers_end_label)}, node.try_token()));
 
 		// Emit label for exception handlers
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
@@ -1067,8 +1077,8 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(catch_end_label)}, catch_clause.catch_token()));
 		}
 
-		// Emit end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
+		// End of out-of-line catch handlers; resume normal flow after try/catch.
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_end_label)}, node.try_token()));
 	}
 
 	void visitThrowStatementNode(const ThrowStatementNode& node) {
