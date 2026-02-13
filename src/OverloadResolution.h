@@ -586,7 +586,8 @@ inline OverloadResolutionResult resolve_overload(
 				// If base types and pointer depths match, they differ only in cv-qualification
 				if (bp.type() != cp.type() || bp.type_index() != cp.type_index() ||
 				    bp.pointer_depth() != cp.pointer_depth() ||
-				    bp.is_reference() != cp.is_reference()) {
+				    bp.is_reference() != cp.is_reference() ||
+				    bp.is_rvalue_reference() != cp.is_rvalue_reference()) {
 					differs_only_in_cv = false;
 					break;
 				}
