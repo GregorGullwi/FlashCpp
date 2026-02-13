@@ -616,7 +616,8 @@ struct StructTypeInfo {
 	               int pointer_depth = 0,
 	               std::optional<size_t> bitfield_width = std::nullopt) {
 		// Apply pack alignment if specified
-		// Pack alignment limits the maximum alignment of members
+		// Pack alignment limits the maximum alignment of members.
+		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
 		size_t effective_alignment = member_alignment ? member_alignment : 1;
 		if (pack_alignment > 0 && pack_alignment < member_alignment) {
 			effective_alignment = pack_alignment;
@@ -626,6 +627,7 @@ struct StructTypeInfo {
 		// For unions, all members are at offset 0
 		size_t offset = is_union ? 0 : ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
 
+		bool placed_in_active_bitfield_unit = false;
 		if (!is_union && bitfield_width.has_value()) {
 			size_t width = *bitfield_width;
 			size_t storage_bits = member_size * 8;
@@ -662,7 +664,6 @@ struct StructTypeInfo {
 				active_bitfield_bits_used += width;
 			}
 		} else if (!is_union) {
-			bool placed_in_active_bitfield_unit = false;
 			if (active_bitfield_unit_size > 0) {
 				size_t unit_end = active_bitfield_unit_offset + active_bitfield_unit_size;
 				size_t candidate_offset = active_bitfield_unit_offset + ((active_bitfield_bits_used + 7) / 8);
@@ -693,7 +694,11 @@ struct StructTypeInfo {
 		if (is_union) {
 			total_size = std::max(total_size, member_size);
 		} else if (!bitfield_width.has_value()) {
-			total_size = std::max(total_size, offset + member_size);
+			if (placed_in_active_bitfield_unit) {
+				total_size = std::max(total_size, offset + member_size);
+			} else {
+				total_size = offset + member_size;
+			}
 		}
 		alignment = std::max(alignment, effective_alignment);
 	}
