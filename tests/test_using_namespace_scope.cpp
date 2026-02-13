@@ -1,7 +1,8 @@
 // Test using declarations with namespace scope operator
 
-#include <cstddef>
-#include <cstdio>
+typedef unsigned long size_t;
+struct __flashcpp_file;
+typedef __flashcpp_file FILE;
 
 namespace std {
     using ::size_t;
@@ -9,5 +10,7 @@ namespace std {
 }
 
 int main() {
-    return 0;
+    FILE* f = nullptr;
+    size_t n = 0;
+    return (f == nullptr && n == 0) ? 0 : 1;
 }
