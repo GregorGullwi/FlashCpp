@@ -236,7 +236,17 @@ struct TemplateTypeArg {
 		// from a pack expansion ns::sum<Args...> where Args=int, the lookup arg
 		// has is_pack=true but should still match the specialization which has is_pack=false.
 		
-		return base_type == other.base_type &&
+		// For non-type value parameters, Bool and Int are interchangeable (C++ allows bool as non-type template parameter)
+		bool base_type_match = (base_type == other.base_type);
+		if (!base_type_match && is_value && other.is_value) {
+			bool this_is_bool_or_int = (base_type == Type::Bool || base_type == Type::Int);
+			bool other_is_bool_or_int = (other.base_type == Type::Bool || other.base_type == Type::Int);
+			if (this_is_bool_or_int && other_is_bool_or_int) {
+				base_type_match = true;
+			}
+		}
+		
+		return base_type_match &&
 		       type_index_match &&
 		       is_reference == other.is_reference &&
 		       is_rvalue_reference == other.is_rvalue_reference &&

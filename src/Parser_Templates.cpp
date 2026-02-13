@@ -3594,6 +3594,9 @@ if (struct_type_info.getStructInfo()) {
 					nullptr  // local_struct_info - not needed for delayed function bodies
 				});
 				
+				// Register member functions in symbol table so member-to-member calls resolve correctly
+				register_member_functions_in_scope(delayed.struct_node, delayed.struct_type_index);
+				
 				// Add 'this' pointer to symbol table
 				auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
 					Type::Struct, delayed.struct_type_index,

@@ -752,7 +752,7 @@ inline FlashCpp::FunctionSignatureKey makeFunctionSignatureKey(
  */
 inline std::unordered_map<FlashCpp::FunctionSignatureKey, const ASTNode*, 
                           FlashCpp::FunctionSignatureKeyHash>& getFunctionResolutionCache() {
-	static std::unordered_map<FlashCpp::FunctionSignatureKey, const ASTNode*,
+	static std::unordered_map<FlashCpp::FunctionSignatureKey, OverloadResolutionResult,
 	                          FlashCpp::FunctionSignatureKeyHash> cache;
 	return cache;
 }
@@ -790,18 +790,15 @@ inline OverloadResolutionResult resolve_overload_cached(
 	auto& cache = getFunctionResolutionCache();
 	auto it = cache.find(key);
 	if (it != cache.end()) {
-		// Cache hit
-		if (it->second == nullptr) {
-			return OverloadResolutionResult::no_match();
-		}
-		return OverloadResolutionResult(it->second);
+		// Cache hit - return the cached result directly (preserves ambiguous/no_match/match states)
+		return it->second;
 	}
 	
 	// Cache miss - perform full overload resolution
 	auto result = resolve_overload(overloads, argument_types);
 	
 	// Cache the result
-	cache[key] = result.selected_overload;
+	cache[key] = result;
 	
 	return result;
 }
