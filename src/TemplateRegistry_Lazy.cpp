@@ -1,3 +1,13 @@
+// Strip namespace prefix from a class name handle (e.g., "ns::Foo$hash" -> "Foo$hash").
+// Used by lazy registries so lookups match regardless of qualification.
+static StringHandle normalizeClassName(StringHandle handle) {
+	std::string_view name = StringTable::getStringView(handle);
+	if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
+		return StringTable::getOrInternStringHandle(name.substr(pos + 2));
+	}
+	return handle;
+}
+
 struct LazyMemberFunctionInfo {
 	StringHandle class_template_name;          // Original template name (e.g., "vector")
 	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "vector_int")
@@ -95,14 +105,6 @@ public:
 
 private:
 	LazyMemberInstantiationRegistry() = default;
-
-	static StringHandle normalizeClassName(StringHandle handle) {
-		std::string_view name = StringTable::getStringView(handle);
-		if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
-			return StringTable::getOrInternStringHandle(name.substr(pos + 2));
-		}
-		return handle;
-	}
 	
 	// Map from "instantiated_class::member_function" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyMemberFunctionInfo, TransparentStringHash, std::equal_to<>> lazy_members_;
@@ -201,13 +203,6 @@ private:
 		return StringTable::getOrInternStringHandle(key);
 	}
 
-	static StringHandle normalizeClassName(StringHandle handle) {
-		std::string_view name = StringTable::getStringView(handle);
-		if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
-			return StringTable::getOrInternStringHandle(name.substr(pos + 2));
-		}
-		return handle;
-	}
 	
 	// Map from "instantiated_class::static_member" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyStaticMemberInfo, TransparentStringHash, std::equal_to<>> lazy_static_members_;
