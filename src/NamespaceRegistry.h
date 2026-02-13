@@ -7,6 +7,7 @@
 #include <span>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include "ChunkedString.h"
@@ -105,6 +106,16 @@ public:
 		}
 
 		return new_handle;
+	}
+
+	// Look up a namespace without creating it. Returns invalid handle if not found.
+	NamespaceHandle lookupNamespace(NamespaceHandle parent_handle, StringHandle name) const {
+		auto key = std::make_pair(parent_handle, name);
+		auto it = namespace_map_.find(key);
+		if (it != namespace_map_.end()) {
+			return it->second;
+		}
+		return NamespaceHandle{NamespaceHandle::INVALID_HANDLE};
 	}
 
 	NamespaceHandle getOrCreatePath(NamespaceHandle start, std::span<const std::string_view> components) {
@@ -248,11 +259,33 @@ public:
 		return getName(root);
 	}
 
+	// Mark a namespace as explicitly declared (via namespace { } block)
+	void markDeclared(NamespaceHandle handle) {
+		if (handle.isValid() && !handle.isGlobal()) {
+			declared_namespaces_.insert(handle);
+		}
+	}
+
+	// Check if a namespace was explicitly declared (not just auto-created during qualified name resolution)
+	bool isDeclared(NamespaceHandle handle) const {
+		if (!handle.isValid()) return false;
+		if (handle.isGlobal()) return true;
+		return declared_namespaces_.count(handle) > 0;
+	}
+
+	void clear() {
+		entries_.resize(1); // Keep global namespace
+		namespace_map_.clear();
+		declared_namespaces_.clear();
+		max_size_reached_ = 1;
+	}
+
 private:
 	std::vector<NamespaceEntry> entries_;
 	size_t max_size_reached_ = 0;
 	std::unordered_map<std::pair<NamespaceHandle, StringHandle>, NamespaceHandle,
 		PairHash<NamespaceHandle, StringHandle>> namespace_map_;
+	std::unordered_set<NamespaceHandle> declared_namespaces_;
 };
 
 extern NamespaceRegistry gNamespaceRegistry;

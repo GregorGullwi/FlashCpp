@@ -509,7 +509,9 @@ public:
 		Scope scope(ScopeType::Namespace, symbol_table_stack_.size());
 		scope.namespace_handle = ns_handle;
 		if (ns_handle.isValid() && !ns_handle.isGlobal()) {
+			gNamespaceRegistry.markDeclared(ns_handle);
 			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(ns_handle);
+			scope.namespace_name = entry.name;
 			scope.namespace_name = entry.name;
 			// Preload existing namespace symbols so unqualified lookup works when re-entering
 			auto ns_it = namespace_symbols_.find(ns_handle);
@@ -964,6 +966,29 @@ inline std::string_view buildQualifiedNameFromHandle(NamespaceHandle ns_handle, 
 	StringHandle name_handle = StringTable::getOrInternStringHandle(name);
 	StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, name_handle);
 	return StringTable::getStringView(qualified_handle);
+}
+
+/**
+ * @brief Validate that a namespace handle refers to a known scope (declared namespace or class name).
+ * Returns true if the namespace is valid (global, declared as namespace, or known as a class/struct type),
+ * false if the identifier is completely unknown.
+ */
+inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused]] const Token& error_token) {
+	if (!ns_handle.isValid() || ns_handle.isGlobal()) {
+		return true;
+	}
+	// Check if the root namespace was explicitly declared
+	NamespaceHandle root = gNamespaceRegistry.getRootNamespace(ns_handle);
+	if (gNamespaceRegistry.isDeclared(root)) {
+		return true;
+	}
+	// Also accept if the root name refers to a known type (struct/class with static members)
+	std::string_view root_name = gNamespaceRegistry.getName(root);
+	StringHandle root_handle = StringTable::getOrInternStringHandle(root_name);
+	if (gTypesByName.find(root_handle) != gTypesByName.end()) {
+		return true;
+	}
+	return false;
 }
 
 /**

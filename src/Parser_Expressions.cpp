@@ -3132,7 +3132,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				}
 				
 				if (!decl_ptr) {
-					// Create forward declaration
+					// Validate that the namespace path actually exists before creating a forward declaration.
+					// This catches errors like f2::func() when only namespace f exists.
+					NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+					if (!validateQualifiedNamespace(ns_handle, final_identifier)) {
+						return ParseResult::error(
+							std::string(StringBuilder().append("Use of undeclared identifier '")
+								.append(buildQualifiedNameFromStrings(namespaces, final_identifier.value()))
+								.append("'").commit()),
+							final_identifier);
+					}
+					// Namespace exists — create forward declaration for external functions (e.g., std::print)
 					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, final_identifier);
 					auto forward_decl = emplace_node<DeclarationNode>(type_node, final_identifier);
 					decl_ptr = &forward_decl.as<DeclarationNode>();
@@ -4476,6 +4486,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// If still not found, create a forward declaration
 			if (!identifierType) {
+				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
+				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token())) {
+					return ParseResult::error(
+						std::string(StringBuilder().append("Use of undeclared identifier '")
+							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
+							.append("'").commit()),
+						qual_id.identifier_token());
+				}
 				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
 				identifierType = forward_decl;
@@ -5213,6 +5231,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// If still not found, create a forward declaration
 			if (!identifierType) {
+				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
+				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token())) {
+					return ParseResult::error(
+						std::string(StringBuilder().append("Use of undeclared identifier '")
+							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
+							.append("'").commit()),
+						qual_id.identifier_token());
+				}
 				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
 				identifierType = forward_decl;
