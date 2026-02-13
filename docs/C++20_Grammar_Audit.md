@@ -1,53 +1,44 @@
 # C++20 Grammar Audit: Declaration Parsing & Feature Coverage
 
 ## Overview
-This audit covers structural issues within the parser, specifically regarding declaration parsing, operator precedence, and C++20 feature coverage. It was originally written to document dispatch-routing bugs and has been updated (Feb 2026) with current status and broader feature analysis.
+This audit covers structural issues within the parser, specifically regarding declaration parsing and C++20 feature coverage. Updated Feb 2026.
 
 ---
 
-## Original Findings (Status Updated)
+## Mitigated: Declaration Dispatch Routing
 
-### 1. Unified vs. Split Declaration Parsing — MITIGATED
-
-The parser maintains two separate declaration parsing paths:
+The parser has two separate declaration parsing paths:
 *   `parse_declaration_or_function_definition`: Handles both functions and variables with full specifier support.
-*   `parse_variable_declaration`: Originally a variable-only parser.
+*   `parse_variable_declaration`: Originally a variable-only parser, now contains a fallback (Parser_Statements.cpp:531-627) that detects function declarations via `looks_like_function_parameters()` and delegates to `parse_function_declaration`.
 
-**Current status:** `parse_variable_declaration` now contains a fallback (Parser_Statements.cpp:531-627) that detects function declarations via `looks_like_function_parameters()` and delegates to `parse_function_declaration`. This means the two-path architecture still exists, but both paths produce correct results.
+The dispatch table in `parse_statement_or_declaration` (Parser_Statements.cpp:78-138) routes all type keywords (`int`, `float`, `char`, `bool`, storage class specifiers, etc.) to `parse_variable_declaration`, with only `void` going to `parse_declaration_or_function_definition`. The fallback means both paths produce correct results, but function declarations like `int main() {}` take an indirect path through variable parsing before being redirected.
 
-**Remaining concern:** The dispatch table in `parse_statement_or_declaration` (Parser_Statements.cpp:78-138) still routes type keywords like `int`, `float`, `char`, `bool` to `parse_variable_declaration`, while only `void` goes to `parse_declaration_or_function_definition`. The code is **functionally correct** but **architecturally suboptimal** — function declarations like `int main() {}` take an indirect path through variable parsing before being redirected.
+### Long-Term Resolution Plan
 
-### 2. The "Double Parse" / Misrouting Issue — MITIGATED
+**Goal:** Eliminate the indirect dispatch path so all declarations route through `parse_declaration_or_function_definition`.
 
-The dispatch asymmetry (`void` -> `parse_declaration_or_function_definition`, everything else -> `parse_variable_declaration`) still exists in the dispatch table. However, the fallback logic in `parse_variable_declaration` now correctly handles function declarations:
-1.  Parses `int main`
-2.  Sees `(`, calls `looks_like_function_parameters()`
-3.  If true, delegates to `parse_function_declaration()` with full body support
+**Phase 1 — Reroute the dispatch table:**
+1. In `parse_statement_or_declaration` (Parser_Statements.cpp:98-128), change all entries currently pointing to `parse_variable_declaration` to point to `parse_declaration_or_function_definition` instead. This covers ~30 keyword entries (`static`, `extern`, `int`, `float`, `char`, `bool`, `const`, `auto`, `decltype`, `__int64`, etc.).
+2. Verify `parse_declaration_or_function_definition` already handles all cases these keywords can introduce (it should, since `parse_variable_declaration` delegates to it for functions and `parse_declaration_or_function_definition` already falls back to variable parsing).
+3. Run the full test suite via `tests/run_all_tests.sh` to catch regressions.
 
-**Result:** `int main() { ... }` and `static int func() { ... }` parse correctly. The original catastrophic misparse no longer occurs.
+**Phase 2 — Demote `parse_variable_declaration` to internal helper:**
+1. Remove `parse_variable_declaration` from the dispatch table entirely (no keyword should map to it directly).
+2. Keep `parse_variable_declaration` as a helper called only from within `parse_declaration_or_function_definition` as its variable-declaration fallback path.
+3. Remove the function-detection fallback (`looks_like_function_parameters()` branch at lines 531-627) from `parse_variable_declaration`, since it will no longer be reached directly for function declarations.
+4. Audit the other call sites in `parse_statement_or_declaration` (lines 271, 338, 348, 382) that call `parse_variable_declaration` directly for identifier-led declarations — these may need to route through `parse_declaration_or_function_definition` instead.
 
-### 3. Redundant / Conflicting Keyword Parsing — FIXED
+**Phase 3 — Cleanup:**
+1. Remove the `void` special case from the dispatch table (it will follow the same path as all other types).
+2. Verify no external callers remain for `parse_variable_declaration` besides `parse_declaration_or_function_definition`.
 
-Both `parse_variable_declaration` and `parse_declaration_or_function_definition` now call the shared `parse_declaration_specifiers()` helper (Parser_Declarations.cpp:1579-1632) instead of maintaining their own inline loops. The helper returns a `DeclarationSpecifiers` struct (ParserTypes.h:135-152) with storage class, constexpr/consteval/constinit flags, inline, linkage, and calling convention.
-
-A separate `parse_member_leading_specifiers()` handles struct/class member-specific specifiers (virtual, explicit, etc.) — this is intentionally different, not duplicative.
-
-### 4. Operator Precedence (`<=>`) — FIXED
-
-The spaceship operator `<=>` is now assigned precedence **14** in `get_operator_precedence` (Parser_Expressions.cpp:1665), correctly placed between shift operators (15) and relational operators (13). A comment on line 1656 confirms the standard order: `Shift > Three-Way (<=>)  > Relational`.
-
-### 5. Range-based For Loops (Init-statement) — FIXED
-
-`parse_for_loop` (Parser_Expressions.cpp:8823-9058) correctly handles all three forms:
-*   Regular: `for (init; cond; inc)`
-*   Range-based: `for (decl : expr)`
-*   C++20 range-for with init: `for (init; decl : expr)` — uses save/restore position for lookahead
+**Risk:** Low. The fallback already works correctly, so this is a code-quality refactor. Each phase can be tested independently. If Phase 1 introduces regressions, the entries can be reverted individually.
 
 ---
 
-## New Findings (Feb 2026)
+## Open Issues
 
-### 6. Template Lambdas — Parsed but Discarded (Medium Severity)
+### 1. Template Lambdas — Parsed but Discarded (Medium Severity)
 
 The parser recognizes the C++20 `[]<typename T>(T x) {}` syntax (Parser_Expressions.cpp:9446-9483) and parses the template parameter names. However, the parsed `template_param_names` vector is **never stored in the AST**. `LambdaExpressionNode` (AstNodeTypes.h:3529-3569) has no field for template parameters, and the node constructor doesn't accept them.
 
@@ -58,7 +49,7 @@ Simple cases work incidentally via auto-parameter deduction, but explicit templa
 *   `constexpr`/`consteval` on lambdas — not parsed
 *   `requires` clause on lambdas — not parsed
 
-### 7. Aggregate Parenthesized Initialization — Not Properly Implemented (Medium Severity)
+### 2. Aggregate Parenthesized Initialization — Not Properly Implemented (Medium Severity)
 
 C++20 (P0960) allows aggregate types to be initialized with parentheses: `Point p(1, 2)` where `Point` has no constructors.
 
@@ -66,7 +57,7 @@ The feature macro `__cpp_aggregate_paren_init` is defined as `201902L` (FileRead
 
 **Impact:** Aggregate paren init will fail or produce incorrect results for types without user-defined constructors.
 
-### 8. `[[likely]]`/`[[unlikely]]` in switch/case — Partial (Medium Severity)
+### 3. `[[likely]]`/`[[unlikely]]` in switch/case — Partial (Medium Severity)
 
 These attributes are correctly skipped in `if`/`else` contexts (Parser_Expressions.cpp:10131-10157). However, `parse_switch_statement()` (Parser_Expressions.cpp:10280-10409) does **not** call `skip_cpp_attributes()` after `case VALUE:` or `default:` labels.
 
@@ -80,7 +71,7 @@ switch (x) {
 
 This will fail to parse because `[[likely]]` is treated as an unexpected token after the colon.
 
-### 9. Misleading Feature Macros (Low Severity)
+### 4. Misleading Feature Macros (Low Severity)
 
 Several `__cpp_*` feature-test macros advertise support for features that are not (fully) implemented:
 
@@ -97,15 +88,11 @@ These can cause user code to take codepaths that the compiler cannot handle, pro
 
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
-| 1 | Split declaration parsing paths | Low | Mitigated — fallback works, routing still indirect |
-| 2 | Dispatch misrouting (`int` vs `void`) | Low | Mitigated — fallback handles it correctly |
-| 3 | Redundant specifier parsing | — | **Fixed** (shared `parse_declaration_specifiers`) |
-| 4 | `<=>` operator precedence | — | **Fixed** (precedence 14, between shift and relational) |
-| 5 | Range-for with init-statement | — | **Fixed** (full C++20 support) |
-| 6 | Template lambda params discarded | **Medium** | Parsed but not stored in AST |
-| 7 | Aggregate parenthesized init | **Medium** | Feature macro set but not implemented for `()` form |
-| 8 | `[[likely]]`/`[[unlikely]]` in switch/case | **Medium** | Only if/else handled, not switch/case |
-| 9 | Misleading feature-test macros | Low | `__cpp_impl_coroutine`, `__cpp_aggregate_paren_init` |
+| — | Declaration dispatch routing | Low | Mitigated — plan above |
+| 1 | Template lambda params discarded | **Medium** | Parsed but not stored in AST |
+| 2 | Aggregate parenthesized init | **Medium** | Feature macro set but not implemented for `()` form |
+| 3 | `[[likely]]`/`[[unlikely]]` in switch/case | **Medium** | Only if/else handled, not switch/case |
+| 4 | Misleading feature-test macros | Low | `__cpp_impl_coroutine`, `__cpp_aggregate_paren_init` |
 
 ---
 
@@ -125,7 +112,7 @@ These C++20 features are intentionally out of scope for FlashCpp.
 
 ## Recommended Actions
 
-1.  **Dispatch cleanup (low priority):** Route all declaration-starting keywords to `parse_declaration_or_function_definition` to eliminate the indirect path through `parse_variable_declaration`. This is cleanup, not a correctness fix.
+1.  **Dispatch refactor:** Follow the phased plan above to unify declaration routing.
 
 2.  **Template lambda storage:** Add a `template_params_` field to `LambdaExpressionNode` and wire it through construction.
 
