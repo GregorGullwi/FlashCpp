@@ -5950,11 +5950,11 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	);
 
 	// Register the alias template with qualified name (ClassName::AliasName)
-	StringBuilder sb;
-	std::string_view qualified_name = sb.append(struct_node.name()).append("::").append(alias_name).commit();
+	StringHandle qualified_name = StringTable::getOrInternStringHandle(
+		StringBuilder().append(struct_node.name()).append("::").append(alias_name));
 	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
 
-	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", qualified_name);
+	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", StringTable::getStringView(qualified_name));
 
 	// Restore template parameter context
 	current_template_param_names_ = saved_template_param_names;
@@ -6997,18 +6997,15 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	);
 	
 	// Build qualified name for registration
-	std::string_view parent_name = StringTable::getStringView(struct_node.name());
-	std::string_view qualified_name = StringBuilder()
-		.append(parent_name)
-		.append("::"sv)
-		.append(var_name)
-		.commit();
+	StringHandle qualified_name = StringTable::getOrInternStringHandle(
+		StringBuilder().append(StringTable::getStringView(struct_node.name()))
+		               .append("::"sv).append(var_name));
 	
 	// Register in template registry
-	gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+	gTemplateRegistry.registerVariableTemplate(var_name_token.handle(), template_var_node);
 	gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
 	
-	FLASH_LOG_FORMAT(Parser, Info, "Registered member variable template: {}", qualified_name);
+	FLASH_LOG_FORMAT(Parser, Info, "Registered member variable template: {}", StringTable::getStringView(qualified_name));
 	
 	return saved_position.success();
 }

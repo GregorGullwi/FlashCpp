@@ -1198,12 +1198,19 @@ public:
 
 	// Register a deduction guide: template<typename T> ClassName(T) -> ClassName<T>;
 	void register_deduction_guide(std::string_view class_name, ASTNode guide_node) {
-		std::string key(class_name);
-		deduction_guides_[key].push_back(guide_node);
+		register_deduction_guide(StringTable::getOrInternStringHandle(class_name), guide_node);
+	}
+
+	void register_deduction_guide(StringHandle class_name, ASTNode guide_node) {
+		deduction_guides_[class_name].push_back(guide_node);
 	}
 
 	// Look up deduction guides for a class template
 	std::vector<ASTNode> lookup_deduction_guides(std::string_view class_name) const {
+		return lookup_deduction_guides(StringTable::getOrInternStringHandle(class_name));
+	}
+
+	std::vector<ASTNode> lookup_deduction_guides(StringHandle class_name) const {
 		auto it = deduction_guides_.find(class_name);
 		if (it != deduction_guides_.end()) {
 			return it->second;
@@ -1716,8 +1723,8 @@ private:
 	// Map from variable template name to TemplateVariableDeclarationNode (StringHandle key for efficient lookup)
 	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, std::equal_to<>> variable_templates_;
 
-	// Map from class template name to deduction guides (supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> deduction_guides_;
+	// Map from class template name to deduction guides (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> deduction_guides_;
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
