@@ -906,10 +906,13 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 	if (type_info.isTemplateInstantiation()) {
 		std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
 		if (base_name == "initializer_list") {
-			// Verify this is from the std namespace by checking the full type name
-			std::string_view full_name = StringTable::getStringView(type_info.name_);
-			if (full_name.starts_with("std::initializer_list")) {
-				// This is an initializer_list type from the std namespace
+			// Verify this template was declared in the std namespace.
+			// Templates are dual-registered under both their simple name and their
+			// namespace-qualified name. We check that "std::initializer_list" exists
+			// in the registry. A future refactoring (see docs/2026-02-13-qualified-
+			// identifier-plan.md) will store source namespace on TypeInfo directly.
+			auto tmpl = gTemplateRegistry.lookupTemplate("std::initializer_list");
+			if (tmpl.has_value()) {
 				FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected as initializer_list type");
 				return type_index;
 			}

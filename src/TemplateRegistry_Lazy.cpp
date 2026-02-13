@@ -1,3 +1,13 @@
+// Strip namespace prefix from a class name handle (e.g., "ns::Foo$hash" -> "Foo$hash").
+// Used by lazy registries so lookups match regardless of qualification.
+static StringHandle normalizeClassName(StringHandle handle) {
+	std::string_view name = StringTable::getStringView(handle);
+	if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
+		return StringTable::getOrInternStringHandle(name.substr(pos + 2));
+	}
+	return handle;
+}
+
 struct LazyMemberFunctionInfo {
 	StringHandle class_template_name;          // Original template name (e.g., "vector")
 	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "vector_int")
@@ -27,9 +37,10 @@ public:
 	// Register a member function for lazy instantiation
 	// Key format: "instantiated_class_name::member_function_name"
 	void registerLazyMember(LazyMemberFunctionInfo info) {
+		StringHandle normalized_class = normalizeClassName(info.instantiated_class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
-			.append(info.instantiated_class_name)
+			.append(normalized_class)
 			.append("::")
 			.append(info.member_function_name)
 			.commit();
@@ -39,6 +50,7 @@ public:
 	
 	// Check if a member function needs lazy instantiation
 	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name) const {
+		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(instantiated_class_name)
@@ -52,6 +64,7 @@ public:
 	
 	// Get lazy member info for instantiation
 	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(instantiated_class_name)
@@ -69,6 +82,7 @@ public:
 	
 	// Mark a member function as instantiated (remove from lazy registry)
 	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(instantiated_class_name)
@@ -180,6 +194,7 @@ private:
 	// Helper to generate registry key from class name and member name
 	// Key format: "instantiated_class_name::member_name"
 	static StringHandle makeKey(StringHandle class_name, StringHandle member_name) {
+		class_name = normalizeClassName(class_name);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(class_name)
@@ -188,6 +203,7 @@ private:
 			.commit();
 		return StringTable::getOrInternStringHandle(key);
 	}
+
 	
 	// Map from "instantiated_class::static_member" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyStaticMemberInfo, TransparentStringHash, std::equal_to<>> lazy_static_members_;
