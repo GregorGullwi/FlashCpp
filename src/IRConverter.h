@@ -7,6 +7,7 @@
 #include <variant>
 #include <string_view>
 #include <span>
+#include <stdexcept>
 #include <assert.h>
 #include <unordered_map>
 #include <type_traits>
@@ -3524,7 +3525,7 @@ public:
 				handleRethrow(instruction);
 				break;
 			default:
-				assert(false && "Not implemented yet");
+				throw std::runtime_error("Not implemented yet");
 				break;
 			}
 
@@ -4014,7 +4015,7 @@ private:
 
 		// Support integer, boolean, and floating-point operations
 		if (!is_integer_type(ctx.result_value.type) && !is_bool_type(ctx.result_value.type) && !is_floating_point_type(ctx.result_value.type)) {
-			assert(false && (std::string("Only integer/boolean/floating-point ") + operation_name + " is supported").c_str());
+			throw std::runtime_error(std::string("Only integer/boolean/floating-point ") + operation_name + " is supported");
 		}
 
 		ctx.result_physical_reg = X64Register::Count;
@@ -4065,7 +4066,7 @@ private:
 				ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, operand_type, ctx.operand_size_in_bits);
 				
 				if (ctx.result_physical_reg == X64Register::Count) {
-					assert(false && "Missing variable name"); // TODO: Error handling
+					throw std::runtime_error("Missing variable name"); // TODO: Error handling
 				}
 			}
 		}
@@ -4287,7 +4288,7 @@ private:
 				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits, ctx.result_physical_reg);
 				
 				if (ctx.rhs_physical_reg == X64Register::Count) {
-					assert(false && "Missing variable name"); // TODO: Error handling
+					throw std::runtime_error("Missing variable name"); // TODO: Error handling
 				}
 			}
 		}
@@ -4630,7 +4631,7 @@ private:
 							// For float types, use SSE mov instructions for register-to-register moves
 							// TODO: Implement SSE register-to-register moves if needed
 							// For now, assert false since we shouldn't hit this path with current code
-							assert(false && "Float register-to-register move not yet implemented");
+							throw std::runtime_error("Float register-to-register move not yet implemented");
 						} else {
 							auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits / 8);
 							textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
@@ -4680,7 +4681,7 @@ private:
 
 		}
 		else {
-			assert(false && "Unhandled destination type");
+			throw std::runtime_error("Unhandled destination type");
 		}
 
 		if (source_reg != X64Register::Count && should_release_source) {
@@ -6950,7 +6951,7 @@ private:
 		
 		// All function calls should use typed payload (CallOp)
 		// Legacy operand-based path has been removed for better maintainability
-		assert(false && "Function call without typed payload - should not happen");
+		throw std::runtime_error("Function call without typed payload - should not happen");
 	}
 
 	void handleConstructorCall(const IrInstruction& instruction) {
@@ -7838,7 +7839,7 @@ private:
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(count_name_handle);
 			if (it == current_scope.variables.end()) {
-				assert(false && "Array size variable not found in scope");
+				throw std::runtime_error("Array size variable not found in scope");
 				return;
 			}
 			int count_offset = it->second.offset;
@@ -7857,7 +7858,7 @@ private:
 				textSectionData.push_back(static_cast<uint8_t>((count_value >> (i * 8)) & 0xFF));
 			}
 		} else {
-			assert(false && "Count must be TempVar, std::string_view, or unsigned long long");
+			throw std::runtime_error("Count must be TempVar, std::string_view, or unsigned long long");
 		}
 
 		// Multiply count by element_size: IMUL RAX, element_size
@@ -7907,12 +7908,12 @@ private:
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it == current_scope.variables.end()) {
-				assert(false && "Variable not found in scope");
+				throw std::runtime_error("Variable not found in scope");
 				return;
 			}
 			ptr_offset = it->second.offset;
 		} else {
-			assert(false && "HeapFree pointer must be TempVar or std::string_view");
+			throw std::runtime_error("HeapFree pointer must be TempVar or std::string_view");
 			return;
 		}
 
@@ -7951,12 +7952,12 @@ private:
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it == current_scope.variables.end()) {
-				assert(false && "Variable not found in scope");
+				throw std::runtime_error("Variable not found in scope");
 				return;
 			}
 			ptr_offset = it->second.offset;
 		} else {
-			assert(false && "HeapFreeArray pointer must be TempVar or std::string_view");
+			throw std::runtime_error("HeapFreeArray pointer must be TempVar or std::string_view");
 			return;
 		}
 
@@ -7994,7 +7995,7 @@ private:
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(address_name_handle);
 			if (it == current_scope.variables.end()) {
-				assert(false && "Placement address variable not found in scope");
+				throw std::runtime_error("Placement address variable not found in scope");
 				return;
 			}
 			int address_offset = it->second.offset;
@@ -8010,7 +8011,7 @@ private:
 			uint64_t address_value = std::get<unsigned long long>(op.address);
 			emitMovImm64(X64Register::RAX, address_value);
 		} else {
-			assert(false && "Placement address must be TempVar, identifier, or unsigned long long");
+			throw std::runtime_error("Placement address must be TempVar, identifier, or unsigned long long");
 			return;
 		}
 
@@ -8385,7 +8386,7 @@ private:
 		
 		if (!global_info) {
 			FLASH_LOG(Codegen, Error, "Global variable not found: ", global_name);
-			assert(false && "Global variable not found during GlobalStore");
+			throw std::runtime_error("Global variable not found during GlobalStore");
 			return;
 		}
 
@@ -8931,7 +8932,7 @@ private:
 			case X64Register::XMM13: return 167; // CV_AMD64_XMM13
 			case X64Register::XMM14: return 168; // CV_AMD64_XMM14
 			case X64Register::XMM15: return 169; // CV_AMD64_XMM15
-			default: assert(false && "Unsupported X64Register"); return 0;
+			default: throw std::runtime_error("Unsupported X64Register"); return 0;
 		}
 	}
 
@@ -11314,7 +11315,7 @@ private:
 			return UnaryOperandLocation::global(StringTable::getOrInternStringHandle(instruction.getOperandAs<std::string>(operand_index)));
 		}
 
-		assert(false && "Unsupported operand type for unary operation");
+		throw std::runtime_error("Unsupported operand type for unary operation");
 		return UnaryOperandLocation::stack(0);
 	}
 
@@ -11622,7 +11623,7 @@ private:
 				loadValueFromGlobal(location.global_name, size_in_bits, target_reg);
 				break;
 			default:
-				assert(false && "Unhandled UnaryOperandLocation kind in loadUnaryOperandValue");
+				throw std::runtime_error("Unhandled UnaryOperandLocation kind in loadUnaryOperandValue");
 				break;
 		}
 	}
@@ -11636,7 +11637,7 @@ private:
 				storeValueToGlobal(location.global_name, size_in_bits, source_reg);
 				break;
 			default:
-				assert(false && "Unhandled UnaryOperandLocation kind in storeUnaryOperandValue");
+				throw std::runtime_error("Unhandled UnaryOperandLocation kind in storeUnaryOperandValue");
 				break;
 		}
 	}
@@ -11663,7 +11664,7 @@ private:
 
 		// IrValue can also contain immediate values (unsigned long long, double)
 		// For inc/dec operations, these should not occur
-		assert(false && "Unsupported typed value for unary operand location (immediate values not allowed)");
+		throw std::runtime_error("Unsupported typed value for unary operand location (immediate values not allowed)");
 		return UnaryOperandLocation::stack(0);
 	}
 
@@ -11780,11 +11781,11 @@ private:
 			} else {
 				// It's a global variable - this shouldn't happen for unary ops on locals
 				// but we need to handle it for completeness
-				assert(false && "Global variables not yet supported in unary operations");
+				throw std::runtime_error("Global variables not yet supported in unary operations");
 			}
 			regAlloc.flushSingleDirtyRegister(result_physical_reg);
 		} else {
-			assert(false && "Unsupported operand type for unary operation");
+			throw std::runtime_error("Unsupported operand type for unary operation");
 			result_physical_reg = X64Register::RAX;
 		}
 		
@@ -12399,7 +12400,7 @@ private:
 				int32_t ptr_offset = getStackOffsetFromTempVar(ptr_var);
 				emitMovFromFrame(ptr_reg, ptr_offset);
 			} else {
-				assert(false && "Pointer store LHS must be a TempVar");
+				throw std::runtime_error("Pointer store LHS must be a TempVar");
 				return;
 			}
 			
@@ -12427,7 +12428,7 @@ private:
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 				emitMovFromFrameBySize(value_reg, rhs_offset, op.rhs.size_in_bits);
 			} else {
-				assert(false && "Unsupported RHS type for pointer store");
+				throw std::runtime_error("Unsupported RHS type for pointer store");
 				return;
 			}
 			
@@ -12457,7 +12458,7 @@ private:
 			}
 
 			if (lhs_offset == -1) {
-				assert(false && "LHS variable not found in function pointer assignment");
+				throw std::runtime_error("LHS variable not found in function pointer assignment");
 				return;
 			}
 
@@ -12511,7 +12512,7 @@ private:
 			}
 
 			if (lhs_offset == -1) {
-				assert(false && "LHS variable not found in struct assignment");
+				throw std::runtime_error("LHS variable not found in struct assignment");
 				return;
 			}
 
@@ -12530,7 +12531,7 @@ private:
 			}
 
 			if (rhs_offset == -1) {
-				assert(false && "RHS variable not found in struct assignment");
+				throw std::runtime_error("RHS variable not found in struct assignment");
 				return;
 			}
 
@@ -13422,7 +13423,7 @@ private:
 				StringHandle index_var_name = std::get<StringHandle>(op.index.value);
 				auto it = variable_scopes.back().variables.find(index_var_name);
 				if (it == variable_scopes.back().variables.end()) {
-					assert(false && "Index variable not found in scope");
+					throw std::runtime_error("Index variable not found in scope");
 					return;
 				}
 				int64_t index_offset = it->second.offset;
@@ -13459,7 +13460,7 @@ private:
 		
 		// Legacy operand-based format
 		// All array element address now uses typed payload - no legacy code path
-		assert(false && "ArrayElementAddress without typed payload - should not happen");
+		throw std::runtime_error("ArrayElementAddress without typed payload - should not happen");
 	}
 
 
@@ -13752,7 +13753,7 @@ private:
 				StringHandle index_handle = std::get<StringHandle>(op.index.value);
 				auto it = variable_scopes.back().variables.find(index_handle);
 				if (it == variable_scopes.back().variables.end()) {
-					assert(false && "Index variable not found in scope");
+					throw std::runtime_error("Index variable not found in scope");
 					return;
 				}
 				int64_t index_var_offset = it->second.offset;
@@ -13801,13 +13802,13 @@ private:
 					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 				}
 			} else {
-				assert(false && "ArrayStore index must be constant, TempVar, or StringHandle");
+				throw std::runtime_error("ArrayStore index must be constant, TempVar, or StringHandle");
 			}
 			return;
 		}
 		
 		// All array store now uses typed payload - no legacy code path
-		assert(false && "ArrayStore without typed payload - should not happen");
+		throw std::runtime_error("ArrayStore without typed payload - should not happen");
 	}
 
 
@@ -13858,7 +13859,7 @@ private:
 				}
 				if (!found_global) {
 					FLASH_LOG(Codegen, Error, "MemberAccess missing object: ", StringTable::getStringView(object_name_handle), "\n");
-					assert(false && "Struct object not found in scope or globals");
+					throw std::runtime_error("Struct object not found in scope or globals");
 					return;
 				}
 			} else {
@@ -14097,7 +14098,7 @@ private:
 				StringHandle object_name_handle = std::get<StringHandle>(op.object);
 				auto it = current_scope.variables.find(object_name_handle);
 				if (it == current_scope.variables.end()) {
-					assert(false && "Struct object not found in scope");
+					throw std::runtime_error("Struct object not found in scope");
 					return;
 				}
 				object_base_offset = it->second.offset;
@@ -14144,7 +14145,7 @@ private:
 			is_variable = true;
 			variable_name = std::get<StringHandle>(op.value.value);
 		} else {
-			assert(false && "Value must be TempVar, unsigned long long, double, or StringHandle");
+			throw std::runtime_error("Value must be TempVar, unsigned long long, double, or StringHandle");
 			return;
 		}
 
@@ -14182,7 +14183,7 @@ private:
 				} else if (is_variable) {
 					auto it = current_scope.variables.find(variable_name);
 					if (it == current_scope.variables.end()) {
-						assert(false && "Variable not found in scope");
+						throw std::runtime_error("Variable not found in scope");
 						return;
 					}
 					int32_t value_offset = it->second.offset;
@@ -14264,7 +14265,7 @@ private:
 			// Not a global - look in local scope
 			auto it = current_scope.variables.find(object_name_handle);
 			if (it == current_scope.variables.end()) {
-				assert(false && "Struct object not found in scope");
+				throw std::runtime_error("Struct object not found in scope");
 				return;
 			}
 			object_base_offset = it->second.offset;
@@ -14352,7 +14353,7 @@ private:
 			// This will be handled separately below
 			auto it = current_scope.variables.find(variable_name);
 			if (it == current_scope.variables.end()) {
-				assert(false && "Variable not found in scope");
+				throw std::runtime_error("Variable not found in scope");
 				return;
 			}
 			int32_t value_offset = it->second.offset;
@@ -14514,7 +14515,7 @@ private:
 				const StackVariableScope& current_scope = variable_scopes.back();
 				auto it = current_scope.variables.find(global_name_handle);
 				if (it == current_scope.variables.end()) {
-					assert(false && "Variable not found in scope");
+					throw std::runtime_error("Variable not found in scope");
 					return;
 				}
 				var_offset = it->second.offset;
@@ -14553,7 +14554,7 @@ private:
 		const StackVariableScope& current_scope = variable_scopes.back();
 		auto it = current_scope.variables.find(op.base_object);
 		if (it == current_scope.variables.end()) {
-			assert(false && "Base object not found in scope for AddressOfMember");
+			throw std::runtime_error("Base object not found in scope for AddressOfMember");
 			return;
 		}
 		
@@ -14595,7 +14596,7 @@ private:
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(base_name);
 			if (it == current_scope.variables.end()) {
-				assert(false && "Base variable not found in scope for ComputeAddress");
+				throw std::runtime_error("Base variable not found in scope for ComputeAddress");
 				return;
 			}
 			base_offset = it->second.offset;
@@ -14666,7 +14667,7 @@ private:
 				const StackVariableScope& current_scope = variable_scopes.back();
 				auto it = current_scope.variables.find(index_var_name);
 				if (it == current_scope.variables.end()) {
-					assert(false && "Index variable not found in scope");
+					throw std::runtime_error("Index variable not found in scope");
 					return;
 				}
 				int64_t index_offset = it->second.offset;
@@ -14737,7 +14738,7 @@ private:
 				StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
 				auto it = current_scope.variables.find(var_name_handle);
 				if (it == current_scope.variables.end()) {
-					assert(false && "Pointer variable not found");
+					throw std::runtime_error("Pointer variable not found");
 					return;
 				}
 				
@@ -14921,7 +14922,7 @@ private:
 			StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it == current_scope.variables.end()) {
-				assert(false && "Pointer variable not found in DereferenceStore");
+				throw std::runtime_error("Pointer variable not found in DereferenceStore");
 				return;
 			}
 			emitMovFromFrame(ptr_reg, it->second.offset);

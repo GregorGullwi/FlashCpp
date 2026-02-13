@@ -18,6 +18,7 @@
 #include <queue>
 #include <unordered_set>
 #include <assert.h>
+#include <stdexcept>
 #include <cstdint>
 #include <typeinfo>
 #include <limits>

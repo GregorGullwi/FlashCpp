@@ -340,7 +340,7 @@
 			return {};
 		}
 		else {
-			assert(false && "Not implemented yet");
+			throw std::runtime_error("Not implemented yet");
 		}
 		return {};
 	}
@@ -1054,13 +1054,13 @@
 		if (symbol->is<TemplateVariableDeclarationNode>()) {
 			// Variable template without instantiation - should not reach codegen
 			// The parser should have instantiated it already
-			assert(false && "Uninstantiated variable template in codegen");
+			throw std::runtime_error("Uninstantiated variable template in codegen");
 			return {};
 		}
 
 		// If we get here, the symbol is not a known type
 		FLASH_LOG(Codegen, Error, "Unknown symbol type for identifier '", identifierNode.name(), "'");
-		assert(false && "Identifier is not a DeclarationNode");
+		throw std::runtime_error("Identifier is not a DeclarationNode");
 		return {};
 	}
 
@@ -1385,7 +1385,7 @@
 		}
 
 		// If we get here, the symbol is not a supported type
-		assert(false && "Qualified identifier is not a supported type");
+		throw std::runtime_error("Qualified identifier is not a supported type");
 		return {};
 	}
 
@@ -2652,7 +2652,7 @@
 							type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
 						} else {
 							FLASH_LOG(Codegen, Error, "Could not type for identifier ", identifier.name());
-							assert(false && "Invalid type node");
+							throw std::runtime_error("Invalid type node");
 						}
 						
 						if (type_node->pointer_depth() > 0) {
@@ -2861,7 +2861,7 @@
 			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
 				op.operand.value = std::get<TempVar>(operandIrOperands[2]);
 			} else {
-				assert(false && "AddressOf operand must be StringHandle or TempVar");
+				throw std::runtime_error("AddressOf operand must be StringHandle or TempVar");
 			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
@@ -3019,7 +3019,7 @@
 			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
 				op.pointer.value = std::get<TempVar>(operandIrOperands[2]);
 			} else {
-				assert(false && "Dereference pointer must be StringHandle or TempVar");
+				throw std::runtime_error("Dereference pointer must be StringHandle or TempVar");
 			}
 		
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
@@ -3045,7 +3045,7 @@
 			return { operandType, element_size, result_var, result_ptr_depth };
 		}
 		else {
-			assert(false && "Unary operator not implemented yet");
+			throw std::runtime_error("Unary operator not implemented yet");
 		}
 
 		// Return the result
@@ -4222,7 +4222,7 @@
 				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
 			} else {
 				// LHS is an immediate value - this shouldn't happen for valid assignments
-				assert(false && "Assignment LHS cannot be an immediate value");
+				throw std::runtime_error("Assignment LHS cannot be an immediate value");
 				return {};
 			}
 			assign_op.lhs = toTypedValue(lhsIrOperands);
@@ -4482,7 +4482,7 @@
 				else if (op == "*") float_opcode = IrOpcode::FloatMultiply;
 				else if (op == "/") float_opcode = IrOpcode::FloatDivide;
 				else {
-					assert(false && "Unsupported float operator");
+					throw std::runtime_error("Unsupported float operator");
 					return {};
 				}
 
@@ -4508,7 +4508,7 @@
 				else if (op == ">") float_cmp_opcode = IrOpcode::FloatGreaterThan;
 				else if (op == ">=") float_cmp_opcode = IrOpcode::FloatGreaterEqual;
 				else {
-					assert(false && "Unsupported float comparison operator");
+					throw std::runtime_error("Unsupported float comparison operator");
 					return {};
 				}
 
@@ -4526,7 +4526,7 @@
 			}
 			else {
 				// Unsupported floating-point operator
-				assert(false && "Unsupported floating-point binary operator");
+				throw std::runtime_error("Unsupported floating-point binary operator");
 				return {};
 			}
 		}

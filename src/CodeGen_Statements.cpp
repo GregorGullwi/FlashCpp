@@ -329,7 +329,7 @@
 		// Process the switch body to collect case labels
 		auto body = node.get_body();
 		if (!body.is<BlockNode>()) {
-			assert(false && "Switch body must be a BlockNode");
+			throw std::runtime_error("Switch body must be a BlockNode");
 			return;
 		}
 
@@ -855,7 +855,7 @@
 		
 		// Create the loop variable declaration with initialization
 		if (!loop_var_decl.is<VariableDeclarationNode>()) {
-			assert(false && "loop_var_decl must be a VariableDeclarationNode");
+			throw std::runtime_error("loop_var_decl must be a VariableDeclarationNode");
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
@@ -1431,7 +1431,7 @@
 				if (eval_result.success()) {
 					// Insert into symbol table first
 					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						assert(false && "Expected identifier to be unique");
+						throw std::runtime_error("Expected identifier to be unique");
 					}
 					
 					// Generate variable declaration with compile-time value
@@ -1553,7 +1553,7 @@
 					
 					// Add to symbol table
 					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						assert(false && "Expected identifier to be unique");
+						throw std::runtime_error("Expected identifier to be unique");
 					}
 
 					// Generate VariableDecl with initializer
@@ -1576,7 +1576,7 @@
 					
 					// Add to symbol table first
 					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						assert(false && "Expected identifier to be unique");
+						throw std::runtime_error("Expected identifier to be unique");
 					}
 
 					// Add the variable declaration without initializer
@@ -1842,10 +1842,10 @@
 											
 											ctor_op.arguments.push_back(std::move(tv));
 										} else {
-											assert(false && "Invalid initializer operands - expected [type, size, value]");
+											throw std::runtime_error("Invalid initializer operands - expected [type, size, value]");
 										}
 									} else {
-										assert(false && "Initializer must be an ExpressionNode");
+										throw std::runtime_error("Initializer must be an ExpressionNode");
 									}
 									arg_index++;
 								}
@@ -1938,7 +1938,7 @@
 										if (init_expr.is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										} else {
-											assert(false && "Initializer must be an ExpressionNode or InitializerListNode");
+											throw std::runtime_error("Initializer must be an ExpressionNode or InitializerListNode");
 										}
 
 										if (init_operands.size() >= 3) {
@@ -1955,7 +1955,7 @@
 												member_value = 0ULL;  // fallback
 											}
 										} else {
-											assert(false && "Invalid initializer operands");
+											throw std::runtime_error("Invalid initializer operands");
 										}
 									} else {
 										// Use default member initializer if available, otherwise zero-initialize
@@ -2025,7 +2025,7 @@
 				}
 				// Lambda expression already emitted VariableDecl, so return early
 				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-					assert(false && "Expected identifier to be unique");
+					throw std::runtime_error("Expected identifier to be unique");
 				}
 				return;
 			} else if (init_node.is<ExpressionNode>() && 
@@ -2045,7 +2045,7 @@
 				}
 				// Lambda expression already emitted VariableDecl, so return early
 				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-					assert(false && "Expected identifier to be unique");
+					throw std::runtime_error("Expected identifier to be unique");
 				}
 				return;
 			} else {
@@ -2230,7 +2230,7 @@
 		}
 
 		if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-			assert(false && "Expected identifier to be unique");
+			throw std::runtime_error("Expected identifier to be unique");
 		}
 
 		VariableDeclOp decl_op;
