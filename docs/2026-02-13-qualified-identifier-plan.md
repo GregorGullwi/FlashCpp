@@ -73,6 +73,8 @@ Update `TemplateRegistry` to use `QualifiedIdentifier` for registration and look
 - ✅ `registerVariableTemplate(QualifiedIdentifier, ASTNode)` — same dual-registration pattern
 - ✅ `register_alias_template(QualifiedIdentifier, ASTNode)` — same dual-registration pattern
 - ✅ `lookupTemplate(QualifiedIdentifier)` — tries qualified name first, falls back to unqualified
+- ✅ `StringHandle` overloads added for `register_alias_template`, `registerVariableTemplate`, `lookupVariableTemplate`, `lookupTemplate`
+- ✅ `alias_templates_` and `variable_templates_` maps changed from `std::string` to `StringHandle` keys for efficient lookup
 - ✅ 4 namespace dual-registration sites in `Parser_Templates.cpp` converted to single `QualifiedIdentifier` calls
 - Note: 5 class-member dual-registration sites use `ClassName::method` qualification (not namespace scope) — left as-is since they serve a different purpose (class-scoped member resolution, not namespace scoping)
 
@@ -83,7 +85,6 @@ Extend `SymbolTable` to use `QualifiedIdentifier`:
 - ✅ `insert(QualifiedIdentifier, ASTNode)` — inserts under unqualified name in current scope
 - ✅ `lookup_qualified(QualifiedIdentifier)` — namespace-aware lookup, falls back to unqualified
 - ✅ `QualifiedIdentifierNode::qualifiedIdentifier()` — bridge method to convert AST node to `QualifiedIdentifier`
-- Remaining: Convert existing call sites to use `QualifiedIdentifier` overloads
 
 ### Phase 4: Specialization Registration/Lookup (Medium) ✅ DONE
 
@@ -92,19 +93,23 @@ Update specialization handling to use `QualifiedIdentifier`:
 - ✅ `registerSpecialization(QualifiedIdentifier, ...)` — dual registration under simple + qualified names
 - ✅ `registerSpecializationPattern(QualifiedIdentifier, ...)` — dual registration for patterns
 - ✅ `lookupSpecialization(QualifiedIdentifier, ...)` — tries qualified then unqualified
-- Remaining: Convert existing call sites to use `QualifiedIdentifier` overloads
 
-### Phase 5: Codegen (Medium) — FUTURE
+### Phase 5: Codegen & Parser Call Site Migration (Medium) ✅ DONE
 
-Update codegen to use `QualifiedIdentifier` for:
+Convert codegen and parser qualified identifier lookups to use `QualifiedIdentifier`:
 
-- Function lookup in `generateFunctionCallIr`
-- Struct member access resolution
+- ✅ `generateQualifiedIdentifierIr` — uses `qualifiedIdentifier()` bridge for symbol table lookups
+- ✅ `ConstExprEvaluator` — uses `qualifiedIdentifier()` bridge for constexpr qualified identifier evaluation
+- ✅ `Parser_Expressions` — qualified identifier lookups use `qualifiedIdentifier()` bridge
+- ✅ `fromQualifiedName(StringHandle, NamespaceHandle)` overload added for shorter calling code
+
+### Phase 6: Remaining Call Site Migration (Large) — FUTURE
+
+Incrementally convert remaining call sites across the compiler to use the new `QualifiedIdentifier` overloads instead of manually building qualified strings. Key areas:
+
+- `generateFunctionCallIr` function lookup patterns
+- Template instantiation pipeline (already partially done via Phase 1)
 - Mangled name generation
-
-### Phase 6: Call Site Migration (Large) — FUTURE
-
-Incrementally convert existing call sites across the parser and codegen to use the new `QualifiedIdentifier` overloads instead of manually building qualified strings.
 
 ## Known Limitations (Current State)
 
@@ -129,10 +134,11 @@ These are pre-existing issues that this refactoring would address:
 ## Recommended Order
 
 1. **Phase 1** ✅ — highest value, smallest scope, fixes the `is_initializer_list_type` issue properly
-2. **Phase 2** ✅ — simplifies template registry with dual-registration overloads
+2. **Phase 2** ✅ — simplifies template registry with dual-registration overloads + StringHandle keys
 3. **Phase 3** ✅ — SymbolTable and AST node integration
 4. **Phase 4** ✅ — specialization registration/lookup overloads
-5. **Phases 5–6** — codegen integration and call-site migration, can be done incrementally as needed
+5. **Phase 5** ✅ — codegen and parser call-site migration using `qualifiedIdentifier()` bridge
+6. **Phase 6** — remaining call-site migration, can be done incrementally as needed
 
 ## Key Code Locations
 

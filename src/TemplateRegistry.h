@@ -1155,6 +1155,8 @@ public:
 	}
 
 	// Look up a variable template by name
+	// Note: getOrInternStringHandle is efficient (returns existing handle if interned),
+	// and all template names are pre-interned by the parser, so this is effectively O(1).
 	std::optional<ASTNode> lookupVariableTemplate(std::string_view name) const {
 		StringHandle key = StringTable::getOrInternStringHandle(name);
 		auto it = variable_templates_.find(key);
@@ -1173,6 +1175,8 @@ public:
 	}
 
 	// Look up an alias template by name
+	// Note: getOrInternStringHandle is efficient (returns existing handle if interned),
+	// and all template names are pre-interned by the parser, so this is effectively O(1).
 	std::optional<ASTNode> lookup_alias_template(std::string_view name) const {
 		StringHandle key = StringTable::getOrInternStringHandle(name);
 		auto it = alias_templates_.find(key);
