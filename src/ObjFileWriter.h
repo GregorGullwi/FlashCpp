@@ -1927,15 +1927,52 @@ public:
 			}
 		}
 
-		for (const auto& parent_range : parent_ranges) {
+		// For C++ EH, the first parent range starts at function entry so it uses the
+		// main UNWIND_INFO (with correct SizeOfProlog matching the actual prologue).
+		// Subsequent parent ranges (post-catch code) need their own UNWIND_INFO with
+		// SizeOfProlog=0, because the unwinder calculates (IP - range_start) and compares
+		// to SizeOfProlog. If we reuse the parent's UNWIND_INFO (SizeOfProlog=11), the
+		// unwinder thinks the post-catch code is mid-prologue and applies zero unwind codes,
+		// which prevents proper stack unwinding and causes crashes.
+		uint32_t post_catch_xdata_offset = 0;
+		bool has_post_catch_xdata = false;
+		for (size_t ri = 0; ri < parent_ranges.size(); ++ri) {
+			const auto& parent_range = parent_ranges[ri];
 			if (parent_range.end <= parent_range.start) {
 				continue;
 			}
-			pending_pdata_entries.push_back({
-				function_start + parent_range.start,
-				function_start + parent_range.end,
-				xdata_offset
-			});
+			if (ri == 0 || !is_cpp) {
+				// First parent range (or non-C++ EH): use the main UNWIND_INFO
+				pending_pdata_entries.push_back({
+					function_start + parent_range.start,
+					function_start + parent_range.end,
+					xdata_offset
+				});
+			} else {
+				// Post-catch parent ranges: need UNWIND_INFO with SizeOfProlog=0
+				if (!has_post_catch_xdata) {
+					// Create a new UNWIND_INFO: same unwind codes and frame register,
+					// but SizeOfProlog=0 and Flags=0 (no handler needed for post-catch code)
+					std::vector<char> post_catch_xdata = {
+						static_cast<char>(0x01),              // Version 1, Flags=0 (no handler)
+						static_cast<char>(0x00),              // SizeOfProlog = 0
+						static_cast<char>(count_of_codes),    // Same count of unwind codes
+						static_cast<char>(0x05)               // Frame register = RBP (register 5), offset = 0
+					};
+					for (auto b : unwind_codes) {
+						post_catch_xdata.push_back(static_cast<char>(b));
+					}
+					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+					post_catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
+					add_data(post_catch_xdata, SectionType::XDATA);
+					has_post_catch_xdata = true;
+				}
+				pending_pdata_entries.push_back({
+					function_start + parent_range.start,
+					function_start + parent_range.end,
+					post_catch_xdata_offset
+				});
+			}
 		}
 
 		// Emit PDATA/XDATA for C++ catch funclets.
