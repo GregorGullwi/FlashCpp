@@ -750,7 +750,7 @@ inline FlashCpp::FunctionSignatureKey makeFunctionSignatureKey(
  * Key: FunctionSignatureKey (function name + TypeIndex-based parameter types)
  * Value: Pointer to the selected function declaration ASTNode (or nullptr if no match)
  */
-inline std::unordered_map<FlashCpp::FunctionSignatureKey, const ASTNode*, 
+inline std::unordered_map<FlashCpp::FunctionSignatureKey, OverloadResolutionResult, 
                           FlashCpp::FunctionSignatureKeyHash>& getFunctionResolutionCache() {
 	static std::unordered_map<FlashCpp::FunctionSignatureKey, OverloadResolutionResult,
 	                          FlashCpp::FunctionSignatureKeyHash> cache;
