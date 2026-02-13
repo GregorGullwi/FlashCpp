@@ -1447,7 +1447,7 @@ ParseResult Parser::parse_type_specifier()
 									}
 								} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 									const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-									filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+									filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 								}
 							}
 						}
@@ -1995,7 +1995,7 @@ ParseResult Parser::parse_type_specifier()
 								}
 							} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 								const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-								filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+								filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 							}
 						}
 					}

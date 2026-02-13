@@ -13465,7 +13465,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 					// Handle boolean literals
 					const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 				} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 					// Handle dependent expressions like is_arithmetic<T>::value
 					const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);

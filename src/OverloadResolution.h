@@ -461,6 +461,8 @@ inline OverloadResolutionResult resolve_overload(
 	// Track the best match found so far
 	const ASTNode* best_match = nullptr;
 	std::vector<ConversionRank> best_ranks;
+	int num_best_matches = 0;
+	std::vector<const ASTNode*> tied_candidates;  // All candidates with best rank
 	
 	// Evaluate each overload
 	for (const auto& overload : overloads) {
@@ -526,6 +528,9 @@ inline OverloadResolutionResult resolve_overload(
 			// First valid match
 			best_match = &overload;
 			best_ranks = conversion_ranks;
+			num_best_matches = 1;
+			tied_candidates.clear();
+			tied_candidates.push_back(&overload);
 		} else {
 			// Compare conversion ranks
 			bool this_is_better = false;
@@ -543,8 +548,15 @@ inline OverloadResolutionResult resolve_overload(
 				// This overload is strictly better
 				best_match = &overload;
 				best_ranks = conversion_ranks;
+				num_best_matches = 1;
+				tied_candidates.clear();
+				tied_candidates.push_back(&overload);
+			} else if (!this_is_better && !this_is_worse) {
+				// This overload is equally good - ambiguous
+				num_best_matches++;
+				tied_candidates.push_back(&overload);
 			}
-			// If equally good or worse, keep the first match.
+			// If this_is_worse, ignore this overload
 		}
 	}
 	
@@ -552,10 +564,43 @@ inline OverloadResolutionResult resolve_overload(
 		return OverloadResolutionResult::no_match();
 	}
 	
-	// When multiple overloads have identical conversion ranks, prefer the first match.
-	// This handles cases where FlashCpp's type system doesn't distinguish between
-	// volatile/non-volatile or other cv-qualified overloads (e.g., f(T*) vs f(volatile T*)).
-	// The first declared overload is typically the non-volatile/non-const version.
+	if (num_best_matches > 1) {
+		// Check if all tied candidates differ only in cv-qualification (const/volatile)
+		// on their parameters. FlashCpp doesn't fully track volatile qualifiers, so
+		// overloads like f(T*) vs f(volatile T*) score identically. In that case,
+		// prefer the first declared overload rather than reporting ambiguity.
+		bool differs_only_in_cv = true;
+		const FunctionDeclarationNode* best_func = &best_match->as<FunctionDeclarationNode>();
+		for (const auto* candidate : tied_candidates) {
+			if (candidate == best_match) continue;
+			const FunctionDeclarationNode* cand_func = &candidate->as<FunctionDeclarationNode>();
+			const auto& best_params = best_func->parameter_nodes();
+			const auto& cand_params = cand_func->parameter_nodes();
+			if (best_params.size() != cand_params.size()) {
+				differs_only_in_cv = false;
+				break;
+			}
+			for (size_t i = 0; i < best_params.size(); ++i) {
+				const auto& bp = best_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				const auto& cp = cand_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				// If base types and pointer depths match, they differ only in cv-qualification
+				if (bp.type() != cp.type() || bp.type_index() != cp.type_index() ||
+				    bp.pointer_depth() != cp.pointer_depth() ||
+				    bp.is_reference() != cp.is_reference()) {
+					differs_only_in_cv = false;
+					break;
+				}
+			}
+			if (!differs_only_in_cv) break;
+		}
+		
+		if (differs_only_in_cv) {
+			// Candidates differ only in cv-qualification — prefer the first match
+			return OverloadResolutionResult(best_match);
+		}
+		return OverloadResolutionResult::ambiguous();
+	}
+	
 	return OverloadResolutionResult(best_match);
 }
 
