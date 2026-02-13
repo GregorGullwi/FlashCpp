@@ -1100,8 +1100,11 @@ class TemplateRegistry {
 public:
 	// Register a template function declaration
 	void registerTemplate(std::string_view name, ASTNode template_node) {
-		std::string key(name);
-		templates_[key].push_back(template_node);
+		registerTemplate(StringTable::getOrInternStringHandle(name), template_node);
+	}
+
+	void registerTemplate(StringHandle name, ASTNode template_node) {
+		templates_[name].push_back(template_node);
 	}
 
 	// Register a template using QualifiedIdentifier (Phase 2).
@@ -1155,15 +1158,8 @@ public:
 	}
 
 	// Look up a variable template by name
-	// Note: getOrInternStringHandle is efficient (returns existing handle if interned),
-	// and all template names are pre-interned by the parser, so this is effectively O(1).
 	std::optional<ASTNode> lookupVariableTemplate(std::string_view name) const {
-		StringHandle key = StringTable::getOrInternStringHandle(name);
-		auto it = variable_templates_.find(key);
-		if (it != variable_templates_.end()) {
-			return it->second;
-		}
-		return std::nullopt;
+		return lookupVariableTemplate(StringTable::getOrInternStringHandle(name));
 	}
 
 	std::optional<ASTNode> lookupVariableTemplate(StringHandle name) const {
@@ -1175,15 +1171,8 @@ public:
 	}
 
 	// Look up an alias template by name
-	// Note: getOrInternStringHandle is efficient (returns existing handle if interned),
-	// and all template names are pre-interned by the parser, so this is effectively O(1).
 	std::optional<ASTNode> lookup_alias_template(std::string_view name) const {
-		StringHandle key = StringTable::getOrInternStringHandle(name);
-		auto it = alias_templates_.find(key);
-		if (it != alias_templates_.end()) {
-			return it->second;
-		}
-		return std::nullopt;
+		return lookup_alias_template(StringTable::getOrInternStringHandle(name));
 	}
 
 	std::optional<ASTNode> lookup_alias_template(StringHandle name) const {
@@ -1233,20 +1222,18 @@ public:
 	}
 	
 	// Look up a template by name
-	// Look up a template by name
 	// If multiple overloads exist, returns the first one registered
 	// For all overloads, use lookupAllTemplates()
 	std::optional<ASTNode> lookupTemplate(std::string_view name) const {
-		// Heterogeneous lookup - string_view accepted directly
-		auto it = templates_.find(name);
-		if (it != templates_.end() && !it->second.empty()) {
-			return it->second.front();  // Return first overload
-		}
-		return std::nullopt;
+		return lookupTemplate(StringTable::getOrInternStringHandle(name));
 	}
 	
 	std::optional<ASTNode> lookupTemplate(StringHandle name) const {
-		return lookupTemplate(StringTable::getStringView(name));
+		auto it = templates_.find(name);
+		if (it != templates_.end() && !it->second.empty()) {
+			return it->second.front();
+		}
+		return std::nullopt;
 	}
 
 	// Look up a template using QualifiedIdentifier (Phase 2).
@@ -1262,8 +1249,11 @@ public:
 	}
 
 	// Look up all template overloads for a given name
-	// Returns a reference to the internal vector for efficiency
 	const std::vector<ASTNode>* lookupAllTemplates(std::string_view name) const {
+		return lookupAllTemplates(StringTable::getOrInternStringHandle(name));
+	}
+
+	const std::vector<ASTNode>* lookupAllTemplates(StringHandle name) const {
 		auto it = templates_.find(name);
 		if (it != templates_.end()) {
 			return &it->second;
@@ -1275,8 +1265,8 @@ public:
 	std::vector<std::string_view> getAllTemplateNames() const {
 		std::vector<std::string_view> result;
 		result.reserve(templates_.size());
-		for (const auto& [name, _] : templates_) {
-			result.push_back(name);
+		for (const auto& [name_handle, _] : templates_) {
+			result.push_back(StringTable::getStringView(name_handle));
 		}
 		return result;
 	}
@@ -1714,8 +1704,8 @@ private:
 		}
 	}
 
-	// Map from template name to template declaration nodes - supports multiple overloads (supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
+	// Map from template name to template declaration nodes (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
 
 	// Map from template name to template parameter names (supports heterogeneous lookup)
 	std::unordered_map<StringHandle, std::vector<StringHandle>, TransparentStringHash, std::equal_to<>> template_parameters_;

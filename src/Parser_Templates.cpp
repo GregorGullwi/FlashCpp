@@ -4193,17 +4193,9 @@ if (struct_type_info.getStructInfo()) {
 		gTemplateRegistry.registerTemplate(
 			QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
 			template_func_node);
-		
-		if (simple_name == "__call_is_nt") {
-			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Successfully registered __call_is_nt");
-		}
 
 		// Add the template function to the symbol table so it can be found during overload resolution
 		gSymbolTable.insert(simple_name, template_func_node);
-		
-		if (simple_name == "__call_is_nt") {
-			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Completed all registration for __call_is_nt");
-		}
 
 		return saved_position.success(template_func_node);
 	}
