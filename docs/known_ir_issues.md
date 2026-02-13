@@ -104,3 +104,76 @@ None needed - the generated code is functionally correct and efficient enough. T
 - C++ Standard: Assignment expressions return lvalue reference to LHS
 - Clang IR: More optimized direct store through reference
 - Test results: All 706 tests pass with current implementation
+
+---
+
+## Issue: Windows C++ EH still fails at runtime (missing catch funclet model)
+
+### Status: OPEN - ARCHITECTURAL WORK REQUIRED
+
+### Symptoms
+
+- `tests/test_exceptions_basic_ret0.cpp` crashes at runtime on Windows.
+- `tests/test_noexcept_ret0.cpp` returns mismatch (`99`) due failed C++ EH flow.
+
+### What was improved already
+
+- Added generic throw-info lookup path for `_CxxThrowException` metadata wiring.
+- Fixed multiple C++ EH RVA relocations in emitted exception metadata.
+- Corrected `UNWIND_INFO` C++ language-specific payload to include a FuncInfo RVA pointer.
+- Emitted a basic `IPToStateMap` and moved FuncInfo toward modern layout (`0x19930522` + `EHFlags`).
+- Added catch handler begin/end tracking and emitted dedicated catch-range `.pdata/.xdata` entries.
+- Updated `HandlerType.addressOfHandler` relocations to dedicated catch symbols (`$catch$...`) rather than generic `.text` offsets.
+- Tried neutral `dispCatchObj` (`0`) to avoid invalid establisher-frame writes; crash persisted.
+- Aligned `FuncInfo` to 10 DWORD layout (`dispUnwindHelp`, `pESTypeList`, `EHFlags`) and added broader IP-to-state transitions; runtime crash persisted.
+- Tried non-zero `dispUnwindHelp` derived from frame size; crash signature changed but failure persisted.
+- Mirrored `FuncInfo` into `.rdata` (`$cppxdata$...`) and repointed the UNWIND language-specific pointer there with map relocations; runtime failure persisted.
+
+### Root cause (current hypothesis)
+
+`__CxxFrameHandler3` expects a catch-funclet oriented model (separate catch entry points with matching unwind/pdata/xdata semantics). FlashCpp currently records catch handlers as inline offsets in the parent function body, which appears insufficient and leads to runtime fail-fast during dispatch/unwind.
+
+### Required next steps
+
+1. Implement Windows catch funclet emission (separate symbols/regions for each catch).
+2. Emit matching `.pdata/.xdata` for catch funclets.
+3. Update TryBlock/Handler metadata to reference true catch funclet entry points (not inline parent-function labels).
+4. Align `IPToStateMap` transitions with funclet boundaries and post-catch states.
+5. Re-validate with:
+    - `tests/test_exceptions_basic_ret0.cpp`
+    - `tests/test_noexcept_ret0.cpp`
+    - existing SEH regressions (must remain green).
+
+### Update (2026-02-13)
+
+Implemented first catch-funclet slice for MSVC EH:
+- `CatchEnd` now carries continuation label payload.
+- Windows `handleCatchBegin` emits funclet prologue (`push rbp; sub rsp, 32; mov rbp, rdx`).
+- Windows `handleCatchEnd` now returns continuation address in `RAX` and emits funclet epilogue.
+- Catch funclet `.pdata/.xdata` emission is enabled with explicit unwind codes (`UWOP_ALLOC_SMALL`, `UWOP_PUSH_NONVOL`).
+
+Current behavior after this slice:
+- ✅ `tests/test_eh_throw_catchall_ret0.cpp` passes
+- ✅ `tests/test_eh_throw_catch_int_ret0.cpp` passes
+- ❌ Two-function EH cases still fail fast (`0x40000409`):
+    - `tests/test_eh_twofunc_throw_ret0.cpp`
+    - `tests/test_eh_twofunc_mixed_ret0.cpp`
+    - `tests/test_eh_twofunc_throw_with_main_eh_ret0.cpp`
+
+Refined hypothesis:
+- Catch funclet conversion is partially correct, but FH3 metadata/state transitions for EH in non-entry functions remain inconsistent (likely TryMap/IP-state coordination across caller/callee function boundaries).
+
+### Update (2026-02-13, later)
+
+Additional stabilization work and outcomes:
+
+- Reworked return-from-catch path in Windows `handleReturn` to use a direct catch-funclet trampoline strategy (`RAX` continuation target + funclet epilogue), removing continuation-bridge stack flag/slot plumbing.
+- Tried parent/catch pdata range separation to reduce overlapping RUNTIME_FUNCTION coverage.
+
+Current behavior after this pass:
+- ❌ `tests/test_eh_throw_catchall_ret0.cpp` still crashes (fast-fail signatures vary with range shaping)
+- ❌ `tests/test_eh_throw_catch_int_ret0.cpp` still crashes (`0x40000409`)
+- ⚠️ `tests/test_eh_twofunc_throw_ret0.cpp` improved from fail-fast crash to deterministic mismatch (`99`), indicating progress in control-flow but still incorrect EH dispatch/continuation semantics
+
+Refined hypothesis:
+- Remaining blocker is now concentrated in Windows runtime-function range modeling and continuation target validity for FH3/FH dispatch, not the basic catch-funclet prologue/epilogue emission itself.
