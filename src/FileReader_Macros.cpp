@@ -286,6 +286,49 @@
 								while (wb > 0 && std::isspace(static_cast<unsigned char>(replace_str[wb - 1]))) --wb;
 								size_t wa = pp + 2;
 								while (wa < replace_str.size() && std::isspace(static_cast<unsigned char>(replace_str[wa]))) ++wa;
+								
+								// Before concatenating, expand predefined macros (FunctionDirectives like
+								// __COUNTER__, __LINE__, etc.) on either side of ##. These are not macro
+								// arguments, so the "don't expand adjacent to ##" rule doesn't apply to them.
+								// Extract the right-side token (identifier) and expand if it's a FunctionDirective
+								if (wa < replace_str.size() && (std::isalpha(static_cast<unsigned char>(replace_str[wa])) || replace_str[wa] == '_')) {
+									size_t token_end = wa;
+									while (token_end < replace_str.size() && (std::isalnum(static_cast<unsigned char>(replace_str[token_end])) || replace_str[token_end] == '_'))
+										++token_end;
+									std::string right_token = replace_str.substr(wa, token_end - wa);
+									auto it_r = defines_.find(right_token);
+									if (it_r != defines_.end()) {
+										if (auto* func_dir = it_r->second.get_if<FunctionDirective>()) {
+											std::string expanded = func_dir->getBody();
+											replace_str = replace_str.substr(0, wa) + expanded + replace_str.substr(token_end);
+											// wa stays the same, but the token is now the expanded value
+										}
+									}
+								}
+								// Extract the left-side token (identifier) and expand if it's a FunctionDirective
+								if (wb > 0) {
+									size_t token_start = wb;
+									while (token_start > 0 && (std::isalnum(static_cast<unsigned char>(replace_str[token_start - 1])) || replace_str[token_start - 1] == '_'))
+										--token_start;
+									if (token_start < wb) {
+										std::string left_token = replace_str.substr(token_start, wb - token_start);
+										auto it_l = defines_.find(left_token);
+										if (it_l != defines_.end()) {
+											if (auto* func_dir = it_l->second.get_if<FunctionDirective>()) {
+												std::string expanded = func_dir->getBody();
+												// Replace the left token with its expansion, adjusting positions
+												size_t old_len = wb - token_start;
+												replace_str = replace_str.substr(0, token_start) + expanded + replace_str.substr(wb);
+												// Adjust pp and wa for the length change
+												int delta = static_cast<int>(expanded.size()) - static_cast<int>(old_len);
+												pp += delta;
+												wb = token_start + expanded.size();
+												wa += delta;
+											}
+										}
+									}
+								}
+								
 								replace_str = replace_str.substr(0, wb) + replace_str.substr(wa);
 								pp = wb;  // Continue scanning from the paste point
 							}

@@ -2748,7 +2748,13 @@ ParseResult Parser::parse_template_declaration() {
 			// BUGFIX: Pass local_struct_info for static member visibility in template partial specializations
 			// This fixes the issue where static constexpr members (e.g., __g, __d2) are not visible
 			// when used as template arguments in typedef declarations within the same struct body
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get(), {}});
+			struct_parsing_context_stack_.push_back({
+				StringTable::getStringView(instantiated_name),
+				&struct_ref,
+				struct_info.get(),
+				gSymbolTable.get_current_namespace_handle(),
+				{}
+			});
 			
 			// Parse class body (same as full specialization)
 			while (!peek().is_eof() && peek() != "}"_tok) {
@@ -15486,7 +15492,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const DeclarationNode& decl = func_decl.decl_node();
 
 			// For lazy instantiation, register function for later instantiation instead of instantiating now
-			if (use_lazy_instantiation && (func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
+			if (use_lazy_instantiation &&
+			    instantiated_name.view().find("::") == std::string_view::npos &&
+			    StringTable::getStringView(class_decl.name()).find("::") == std::string_view::npos &&
+			    (func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
 				// Register this member function for lazy instantiation
 				LazyMemberFunctionInfo lazy_info;
 				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
@@ -15785,10 +15794,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				if (func_decl.get_definition().has_value()) {
 					// Use the already-parsed definition
+					FLASH_LOG(Templates, Debug, "Function has definition, using parsed body");
 					body_to_substitute = func_decl.get_definition();
 				} else if (func_decl.has_template_body_position()) {
 					// Re-parse the function body from saved position
 					// This is needed for member struct templates where body parsing is deferred
+					FLASH_LOG(Templates, Debug, "Function has template body position, re-parsing");
 					
 					// Set up template parameter types in the type system for body parsing
 					FlashCpp::TemplateParameterScope template_scope;
@@ -15861,6 +15872,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
+					FLASH_LOG(Templates, Debug, "About to substitute template parameters in function body for struct: ", StringTable::getStringView(instantiated_name));
+					
+					// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
+					// This is needed for sizeof...(Pack) to work in eager member function body substitution
+					StructParsingContext struct_ctx;
+					struct_ctx.struct_name = StringTable::getStringView(instantiated_name);
+					struct_ctx.struct_node = nullptr;
+					struct_ctx.local_struct_info = nullptr;
+					struct_parsing_context_stack_.push_back(struct_ctx);
+					
+					FLASH_LOG(Templates, Debug, "Pushed struct context: ", struct_ctx.struct_name);
+
 					try {
 						ASTNode substituted_body = substituteTemplateParameters(
 							*body_to_substitute,
@@ -15868,15 +15891,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							converted_template_args
 						);
 						new_func_ref.set_definition(substituted_body);
+						FLASH_LOG(Templates, Debug, "Successfully substituted function body");
+						
+						// If this is a namespace-qualified instantiation (e.g., "custom_ns::Holder$hash"),
+						// also update the non-namespaced version's function body (e.g., "Holder$hash")
+						// so that codegen can generate the function regardless of which version it finds.
+						std::string_view inst_name_sv = instantiated_name.view();
+						size_t last_scope = inst_name_sv.rfind("::");
+						if (last_scope != std::string_view::npos) {
+							std::string_view base_name = inst_name_sv.substr(last_scope + 2);
+							auto base_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_name));
+							if (base_it != gTypesByName.end() && base_it->second->isStruct()) {
+								// Use const_cast because gTypesByName stores const TypeInfo* but we need
+								// to update the function body on the struct's member function declarations.
+								// This is safe because we own the TypeInfo objects in gTypeInfo.
+								StructTypeInfo* base_struct = const_cast<TypeInfo*>(base_it->second)->getStructInfo();
+								if (base_struct) {
+									std::string_view func_name_sv = decl.identifier_token().value();
+									for (auto& base_mf : base_struct->member_functions) {
+										if (base_mf.function_decl.is<FunctionDeclarationNode>()) {
+											FunctionDeclarationNode& base_func = base_mf.function_decl.as<FunctionDeclarationNode>();
+											if (base_func.decl_node().identifier_token().value() == func_name_sv &&
+											    !base_func.get_definition().has_value()) {
+												base_func.set_definition(substituted_body);
+												FLASH_LOG(Templates, Debug, "Also updated non-namespaced version '", base_name, 
+												          "::", func_name_sv, "' with substituted body");
+											}
+										}
+									}
+								}
+							}
+						}
 					} catch (const std::exception& e) {
+						struct_parsing_context_stack_.pop_back();  // Clean up on error
 						FLASH_LOG(Templates, Error, "Exception during template parameter substitution for function ", 
 						          decl.identifier_token().value(), ": ", e.what());
 						throw;
 					} catch (...) {
+						struct_parsing_context_stack_.pop_back();  // Clean up on error
 						FLASH_LOG(Templates, Error, "Unknown exception during template parameter substitution for function ", 
 						          decl.identifier_token().value());
 						throw;
 					}
+					
+					// Pop struct parsing context
+					struct_parsing_context_stack_.pop_back();
+					FLASH_LOG(Templates, Debug, "Popped struct context");
 				}
 
 				// Add the substituted function to the instantiated struct
@@ -15893,6 +15953,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
 					StringHandle func_name_handle = decl.identifier_token().handle();
+					FLASH_LOG(Templates, Debug, "Adding member function '", StringTable::getStringView(func_name_handle), 
+					          "' to struct_info for ", instantiated_name, ", parent_struct_name='", new_func_ref.parent_struct_name(), "'");
 					struct_info_ptr->addMemberFunction(
 						func_name_handle,
 						new_func_node,
@@ -17862,6 +17924,14 @@ if (param_decl.has_default_value()) {
 			}
 		}
 
+		// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
+		// This is needed for sizeof...(Pack) to work in lazy member function bodies
+		StructParsingContext struct_ctx;
+		struct_ctx.struct_name = StringTable::getStringView(lazy_info.instantiated_class_name);
+		struct_ctx.struct_node = nullptr;
+		struct_ctx.local_struct_info = nullptr;
+		struct_parsing_context_stack_.push_back(struct_ctx);
+		
 		try {
 			ASTNode substituted_body = substituteTemplateParameters(
 				*body_to_substitute,
@@ -17870,14 +17940,19 @@ if (param_decl.has_default_value()) {
 			);
 			new_func_ref.set_definition(substituted_body);
 		} catch (const std::exception& e) {
+			struct_parsing_context_stack_.pop_back();  // Clean up on error
 			FLASH_LOG(Templates, Error, "Exception during lazy template parameter substitution for function ", 
 			          decl.identifier_token().value(), ": ", e.what());
 			throw;
 		} catch (...) {
+			struct_parsing_context_stack_.pop_back();  // Clean up on error
 			FLASH_LOG(Templates, Error, "Unknown exception during lazy template parameter substitution for function ", 
 			          decl.identifier_token().value());
 			throw;
 		}
+		
+		// Pop struct parsing context
+		struct_parsing_context_stack_.pop_back();
 	}
 
 	// Copy function properties
@@ -19494,6 +19569,7 @@ ASTNode Parser::substituteTemplateParameters(
 			// sizeof... operator - replace with the pack size as a constant
 			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
 			std::string_view pack_name = sizeof_pack.pack_name();
+			FLASH_LOG(Templates, Debug, "*** SizeofPackNode handler entered for pack: '", pack_name, "'");
 			
 			// Count pack elements using the helper function (works when symbol table scope is active)
 			size_t num_pack_elements = count_pack_elements(pack_name);
@@ -19540,10 +19616,14 @@ ASTNode Parser::substituteTemplateParameters(
 			// This handles sizeof...(_Elements) in member function templates of class templates
 			// where _Elements is the class template's parameter pack
 			if (!found_variadic) {
+				FLASH_LOG(Templates, Debug, "Trying to find pack '", pack_name, "' in class template pack context");
 				auto class_pack_size = get_class_template_pack_size(pack_name);
 				if (class_pack_size.has_value()) {
+					FLASH_LOG(Templates, Debug, "Found pack '", pack_name, "' with size ", *class_pack_size);
 					found_variadic = true;
 					num_pack_elements = *class_pack_size;
+				} else {
+					FLASH_LOG(Templates, Debug, "Pack '", pack_name, "' not found in class template pack context");
 				}
 			}
 			
@@ -19579,20 +19659,56 @@ ASTNode Parser::substituteTemplateParameters(
 				if (!is_known_template_param && !struct_parsing_context_stack_.empty()) {
 					for (auto sit = struct_parsing_context_stack_.rbegin(); sit != struct_parsing_context_stack_.rend() && !is_known_template_param; ++sit) {
 						std::string_view struct_name = sit->struct_name;
-						// Try multiple name variations: direct, with namespace prefix
-						std::array<std::string_view, 3> names_to_try = {struct_name, {}, {}};
-						size_t num_names = 1;
-						NamespaceHandle ns = gSymbolTable.get_current_namespace_handle();
-						if (!ns.isGlobal()) {
-							StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns, StringTable::getOrInternStringHandle(struct_name));
-							names_to_try[num_names++] = StringTable::getStringView(qualified);
+						// Try multiple lookup candidates following unqualified lookup rules:
+						// direct name, template base name for instantiated classes, and each enclosing namespace.
+						std::vector<std::string_view> base_names_to_try;
+						base_names_to_try.reserve(2);
+						std::vector<std::string_view> names_to_try;
+						names_to_try.reserve(8);
+						auto add_name_to_try = [&names_to_try](std::string_view name) {
+							if (name.empty()) {
+								return;
+							}
+							for (const auto existing : names_to_try) {
+								if (existing == name) {
+									return;
+								}
+							}
+							names_to_try.push_back(name);
+						};
+						auto add_base_name_to_try = [&base_names_to_try](std::string_view name) {
+							if (name.empty()) {
+								return;
+							}
+							for (const auto existing : base_names_to_try) {
+								if (existing == name) {
+									return;
+								}
+							}
+							base_names_to_try.push_back(name);
+						};
+
+						add_base_name_to_try(struct_name);
+						size_t hash_pos = struct_name.find('$');
+						if (hash_pos != std::string_view::npos) {
+							add_base_name_to_try(struct_name.substr(0, hash_pos));
 						}
-						// Also try "std::" + name as a common case
-						StringBuilder ns_builder;
-						ns_builder.append("std::").append(struct_name);
-						names_to_try[num_names++] = ns_builder.commit();
+						for (std::string_view base_name : base_names_to_try) {
+							add_name_to_try(base_name);
+						}
+
+						NamespaceHandle ns = sit->namespace_handle.isValid() ? sit->namespace_handle : gSymbolTable.get_current_namespace_handle();
+						NamespaceHandle walk_ns = ns;
+						while (walk_ns.isValid() && !walk_ns.isGlobal()) {
+							for (std::string_view base_name : base_names_to_try) {
+								StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+									walk_ns, StringTable::getOrInternStringHandle(base_name));
+								add_name_to_try(StringTable::getStringView(qualified));
+							}
+							walk_ns = gNamespaceRegistry.getParent(walk_ns);
+						}
 						
-						for (size_t ni = 0; ni < num_names && !is_known_template_param; ++ni) {
+						for (size_t ni = 0; ni < names_to_try.size() && !is_known_template_param; ++ni) {
 							// Check ALL overloads, not just the first one
 							const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(names_to_try[ni]);
 							if (all_tmpls) {
@@ -19628,14 +19744,17 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 			
 			// Create an integer literal with the pack size
+			FLASH_LOG(Templates, Debug, "*** Replacing sizeof...(", pack_name, ") with literal: ", num_pack_elements);
 			StringBuilder pack_size_builder;
 			std::string_view pack_size_str = pack_size_builder.append(num_pack_elements).commit();
 			Token literal_token(Token::Type::Literal, pack_size_str, 
 			                   sizeof_pack.sizeof_token().line(), sizeof_pack.sizeof_token().column(), 
 			                   sizeof_pack.sizeof_token().file_index());
-			return emplace_node<ExpressionNode>(
+			ASTNode result = emplace_node<ExpressionNode>(
 				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements), 
 				                  Type::Int, TypeQualifier::None, 32));
+			FLASH_LOG(Templates, Debug, "*** Created NumericLiteralNode, returning");
+			return result;
 		} else if (std::holds_alternative<StaticCastNode>(expr)) {
 			// static_cast<Type>(expr) - recursively substitute in both target type and expression
 			const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);

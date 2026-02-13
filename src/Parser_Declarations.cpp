@@ -4311,7 +4311,13 @@ ParseResult Parser::parse_struct_declaration()
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 
 	// Push struct parsing context for nested class support
-	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref, nullptr, {}});
+	struct_parsing_context_stack_.push_back({
+		StringTable::getStringView(struct_name),
+		&struct_ref,
+		nullptr,
+		gSymbolTable.get_current_namespace_handle(),
+		{}
+	});
 	
 	// RAII guard to ensure stack is always popped, even on early returns
 	auto pop_stack_guard = [this](void*) { 
@@ -8393,7 +8399,13 @@ ParseResult Parser::parse_typedef_declaration()
 		auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name_for_typedef, false);
 
 		// Push struct parsing context
-		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref, nullptr, {}});
+		struct_parsing_context_stack_.push_back({
+			StringTable::getStringView(struct_name_for_typedef),
+			&struct_ref,
+			nullptr,
+			gSymbolTable.get_current_namespace_handle(),
+			{}
+		});
 
 		// Create StructTypeInfo
 		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public);
