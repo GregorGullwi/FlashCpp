@@ -8932,7 +8932,7 @@ private:
 			case X64Register::XMM13: return 167; // CV_AMD64_XMM13
 			case X64Register::XMM14: return 168; // CV_AMD64_XMM14
 			case X64Register::XMM15: return 169; // CV_AMD64_XMM15
-			default: throw std::runtime_error("Unsupported X64Register"); return 0;
+			default: throw std::runtime_error("Unsupported X64Register");
 		}
 	}
 
