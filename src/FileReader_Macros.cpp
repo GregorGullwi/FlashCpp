@@ -277,7 +277,7 @@
 							replace_str = function_directive->getBody();
 						}
 						
-						// Per C++ standard 15.6.3: Process ## token-pasting BEFORE rescanning
+						// Per C standard 6.10.3.3: Process ## token-pasting BEFORE rescanning
 						// This must happen after argument substitution but before macro expansion
 						{
 							size_t pp = 0;
