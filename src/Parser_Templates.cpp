@@ -13849,7 +13849,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Unqualified template_name — derive namespace from the class declaration name
 			std::string_view decl_name = StringTable::getStringView(class_decl.name());
 			if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
-				fallback_ns = QualifiedIdentifier::fromQualifiedName(decl_name, fallback_ns).namespace_handle;
+				// decl_name is qualified (e.g. "std::vector"), resolve from global scope
+				fallback_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
 			}
 		}
 		struct_type_info.setTemplateInstantiationInfo(
