@@ -16157,15 +16157,25 @@ private:
 			//
 			// Windows x64 calling convention: RCX, RDX, R8, R9
 
-			// IMPORTANT:
-			// Do not adjust RSP here. Windows unwind metadata only describes prologue/epilogue
-			// stack moves; a throw from a dynamically adjusted frame can break EH dispatch/unwind.
-			// Use a temporary spill area above home space instead.
-			
-			// Copy exception object to spill area at [RSP+32]
+			// Allocate a frame-relative slot for the exception object.
+			// Using [RSP+32] is unsafe because it can overlap with the saved RBP
+			// when the stack frame is small (e.g., a function that only throws).
+			// Instead, allocate a proper slot via the temp var mechanism.
+			int32_t throw_temp_size = static_cast<int32_t>((aligned_exception_size + 7) & ~7);
+			next_temp_var_offset_ += throw_temp_size;
+			int32_t throw_slot_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+			// Extend scope_stack_space to account for this allocation
+			if (!variable_scopes.empty()) {
+				auto& scope = variable_scopes.back();
+				int32_t required = -(throw_slot_offset);
+				if (required > -scope.scope_stack_space) {
+					scope.scope_stack_space = -required;
+				}
+			}
+
+			// Copy exception object to frame slot at [RBP+throw_slot_offset]
 			if (exception_size <= 8) {
 				// Small object: load into RAX and store
-				// Use IrValue variant to handle TempVar or immediate
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					TempVar temp = std::get<TempVar>(throw_op.exception_value);
 					if (temp.var_number != 0) {
@@ -16190,7 +16200,7 @@ private:
 				} else {
 					emitMovImm64(X64Register::RAX, 0);
 				}
-				emitMovToRSPDisp8(X64Register::RAX, 32);
+				emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
 			} else {
 				// Large object: use memory-to-memory copy (must be TempVar)
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
@@ -16202,17 +16212,16 @@ private:
 						emitXorRegReg(X64Register::RSI);
 					}
 				} else {
-					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 					emitXorRegReg(X64Register::RSI);
 				}
-				emitLeaFromRSPDisp8(X64Register::RDI, 32);
+				emitLeaFromFrame(X64Register::RDI, throw_slot_offset);
 				emitMovImm64(X64Register::RCX, exception_size);
 				emitRepMovsb();
 			}
-			
+
 			// Set up arguments for _CxxThrowException
-			// RCX (first argument) = pointer to exception object = RSP+32
-			emitLeaFromRSPDisp8(X64Register::RCX, 32);
+			// RCX (first argument) = pointer to exception object on the frame
+			emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
 			// RDX (second argument) = pointer to _ThrowInfo metadata
 			std::string throw_type_name;
 			if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
