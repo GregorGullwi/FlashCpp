@@ -9,7 +9,7 @@ on:
 
 jobs:
   ubuntu-build-test:
-    name: Ubuntu - Clang - Build & Test
+    name: Ubuntu - Clang - ASAN test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,9 +22,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang
 
-      - name: Build FlashCpp with Make
+      - name: Build FlashCpp with Make (ASAN)
         run: |
-          make main CXX=clang++
+          make asan CXX=clang++
 
       - name: Run All Tests
         run: |
