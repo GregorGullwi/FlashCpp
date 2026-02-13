@@ -1697,8 +1697,8 @@ ParseResult Parser::parse_type_specifier()
 					
 					// Check if this is a member class template (e.g., Outer<int>::Inner<int>)
 					if (has_template_args) {
-						std::string member_template_name{qualified_type_name};
-						auto member_template_opt = gTemplateRegistry.lookupTemplate(member_template_name);
+						StringHandle member_template_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
+						auto member_template_opt = gTemplateRegistry.lookupTemplate(StringTable::getStringView(member_template_name_handle));
 						
 						// Member templates are registered on the primary class template name (e.g., Outer::Inner),
 						// while lookups here use the instantiated name (e.g., Outer$hash::Inner).
@@ -1707,11 +1707,12 @@ ParseResult Parser::parse_type_specifier()
 							auto parent_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
 							if (parent_type_it != gTypesByName.end() && parent_type_it->second->isTemplateInstantiation()) {
 								StringBuilder template_member_builder;
-								template_member_builder.append(StringTable::getStringView(parent_type_it->second->baseTemplateName()))
+								std::string_view template_member_name = template_member_builder.append(StringTable::getStringView(parent_type_it->second->baseTemplateName()))
 									.append("::")
-									.append(member_name);
-								member_template_name.assign(template_member_builder.commit());
-								member_template_opt = gTemplateRegistry.lookupTemplate(member_template_name);
+									.append(member_name)
+									.commit();
+								member_template_name_handle = StringTable::getOrInternStringHandle(template_member_name);
+								member_template_opt = gTemplateRegistry.lookupTemplate(StringTable::getStringView(member_template_name_handle));
 							}
 						}
 						
@@ -1721,12 +1722,12 @@ ParseResult Parser::parse_type_specifier()
 								return ParseResult::error("Failed to parse template arguments for member class template", type_name_token);
 							}
 							
-							auto member_instantiated = try_instantiate_class_template(member_template_name, *member_template_args);
+							auto member_instantiated = try_instantiate_class_template(StringTable::getStringView(member_template_name_handle), *member_template_args);
 							if (member_instantiated.has_value() && member_instantiated->is<StructDeclarationNode>()) {
 								ast_nodes_.push_back(*member_instantiated);
 							}
 							
-							std::string_view member_instantiated_name = get_instantiated_class_name(member_template_name, *member_template_args);
+							std::string_view member_instantiated_name = get_instantiated_class_name(StringTable::getStringView(member_template_name_handle), *member_template_args);
 							auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(member_instantiated_name));
 							if (member_type_it != gTypesByName.end()) {
 								const TypeInfo* member_type_info = member_type_it->second;
@@ -1739,6 +1740,7 @@ ParseResult Parser::parse_type_specifier()
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									member_type_info->type_, member_type_info->type_index_, member_type_size, type_name_token, cv_qualifier));
 							}
+							return ParseResult::error("Failed to resolve instantiated member class template type", type_name_token);
 						}
 					}
 					
