@@ -3248,11 +3248,18 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						// using Base::operator Type; (conversion operator)
 						// using Base::operator=; (assignment operator)
 						advance(); // consume 'operator'
-						member_name = "operator";
-						// Skip the operator target (type name, =, ==, etc.)
+						// Build the full operator name: "operator=", "operator<<", "operator __integral_type", etc.
+						StringBuilder op_name_builder;
+						op_name_builder.append("operator");
 						while (!peek().is_eof() && peek() != ";"_tok && peek() != "..."_tok) {
+							// Add space before type names but not before operator symbols
+							if (peek().is_identifier() || peek().is_keyword()) {
+								op_name_builder.append(" ");
+							}
+							op_name_builder.append(peek_info().value());
 							advance();
 						}
+						member_name = op_name_builder.commit();
 						break;
 					} else {
 						break;

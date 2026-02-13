@@ -34,13 +34,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | Parsing completes; fails during IR conversion (`bad_any_cast` in template member body) |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Parse Error | Fails at `bits/chrono.h:54` (`namespace filesystem { struct __file_clock; };` forward declaration in namespace block) |
-| `<atomic>` | N/A | ❌ Parse Error | Conversion operator in partial specialization fixed; now fails at `atomic_base.h:1562` (`compare_exchange_weak` template instantiation) |
+| `<atomic>` | N/A | ❌ Codegen Error | ~492ms (2026-02-13: Parsing completes after member function call shadowing fix; codegen fails on `_Size` symbol) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<typeindex>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
-| `<csignal>` | N/A | ❌ Parse Error | `__attribute_deprecated_msg__` at `signal.h:368` (pre-existing, depends on system headers) |
+| `<csignal>` | N/A | ✅ Compiled | ~133ms (2026-02-13: Now compiles successfully) |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
 | `<spanstream>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<print>` | N/A | ✅ Compiled | ~17ms (C++23) |

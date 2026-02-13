@@ -461,7 +461,6 @@ inline OverloadResolutionResult resolve_overload(
 	// Track the best match found so far
 	const ASTNode* best_match = nullptr;
 	std::vector<ConversionRank> best_ranks;
-	int num_best_matches = 0;
 	
 	// Evaluate each overload
 	for (const auto& overload : overloads) {
@@ -527,7 +526,6 @@ inline OverloadResolutionResult resolve_overload(
 			// First valid match
 			best_match = &overload;
 			best_ranks = conversion_ranks;
-			num_best_matches = 1;
 		} else {
 			// Compare conversion ranks
 			bool this_is_better = false;
@@ -545,12 +543,8 @@ inline OverloadResolutionResult resolve_overload(
 				// This overload is strictly better
 				best_match = &overload;
 				best_ranks = conversion_ranks;
-				num_best_matches = 1;
-			} else if (!this_is_better && !this_is_worse) {
-				// This overload is equally good - ambiguous
-				num_best_matches++;
 			}
-			// If this_is_worse, ignore this overload
+			// If equally good or worse, keep the first match.
 		}
 	}
 	
@@ -558,14 +552,10 @@ inline OverloadResolutionResult resolve_overload(
 		return OverloadResolutionResult::no_match();
 	}
 	
-	if (num_best_matches > 1) {
-		// When multiple overloads have identical conversion ranks, prefer the first match.
-		// This handles cases where FlashCpp's type system doesn't distinguish between
-		// volatile/non-volatile or other cv-qualified overloads (e.g., f(T*) vs f(volatile T*)).
-		// The first declared overload is typically the non-volatile/non-const version.
-		return OverloadResolutionResult(best_match);
-	}
-	
+	// When multiple overloads have identical conversion ranks, prefer the first match.
+	// This handles cases where FlashCpp's type system doesn't distinguish between
+	// volatile/non-volatile or other cv-qualified overloads (e.g., f(T*) vs f(volatile T*)).
+	// The first declared overload is typically the non-volatile/non-const version.
 	return OverloadResolutionResult(best_match);
 }
 

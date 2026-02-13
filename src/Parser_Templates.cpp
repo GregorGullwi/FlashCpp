@@ -11873,7 +11873,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 														if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 															bool val = std::get<BoolLiteralNode>(init_expr).value();
-															TemplateTypeArg arg(val ? 1LL : 0LL);
+															TemplateTypeArg arg(val ? 1LL : 0LL, Type::Bool);
 															filled_args_for_pattern_match.push_back(arg);
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
@@ -11901,7 +11901,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 					} else if (std::holds_alternative<SizeofExprNode>(expr)) {
 						// Handle sizeof(T) as a default value
 						const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr);

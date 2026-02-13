@@ -904,8 +904,15 @@ struct TemplatePattern {
 					          " concrete_arg.value=", concrete_arg.value);
 				}
 				if (pattern_arg.base_type != concrete_arg.base_type) {
-					FLASH_LOG(Templates, Trace, "    FAILED: base types don't match");
-					return false;
+					// For non-type value parameters, Bool and Int are interchangeable
+					// (e.g., template<bool B> with default false stored as Bool vs Int)
+					bool compatible_value_types = pattern_arg.is_value && concrete_arg.is_value &&
+						((pattern_arg.base_type == Type::Bool && concrete_arg.base_type == Type::Int) ||
+						 (pattern_arg.base_type == Type::Int && concrete_arg.base_type == Type::Bool));
+					if (!compatible_value_types) {
+						FLASH_LOG(Templates, Trace, "    FAILED: base types don't match");
+						return false;
+					}
 				}
 				// For non-type template parameters, also check the value matches
 				if (pattern_arg.is_value && concrete_arg.is_value) {
