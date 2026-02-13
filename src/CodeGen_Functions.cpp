@@ -473,7 +473,7 @@
 					// Look for any struct with the same namespace prefix and a $ suffix
 					for (const auto& [other_name_handle, other_type_ptr] : gTypesByName) {
 						std::string_view other_name = StringTable::getStringView(other_name_handle);
-						if (other_name.starts_with(struct_type_name) && other_name.find('$') != std::string_view::npos) {
+						if (other_name.starts_with(struct_type_name) && other_name.size() > struct_type_name.size() && other_name[struct_type_name.size()] == '$') {
 							has_instantiation = true;
 							break;
 						}
