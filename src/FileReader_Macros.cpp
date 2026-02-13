@@ -264,7 +264,7 @@
 									// Arguments adjacent to ## are substituted unexpanded (token pasting operates on raw tokens)
 									std::string_view arg_value = args[i];
 									std::string expanded_arg;
-									if (!paramAdjacentToHashHash(defineDirective->args[i], replace_str)) {
+									if (!paramAdjacentToHashHash(defineDirective->args[i], defineDirective->body)) {
 										expanded_arg = expandMacros(std::string(arg_value), expanding_macros);
 										arg_value = expanded_arg;
 									}
