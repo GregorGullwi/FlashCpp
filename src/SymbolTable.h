@@ -100,8 +100,8 @@ public:
 
 	// Insert using QualifiedIdentifier (Phase 3).
 	// Inserts under the unqualified name in the current scope.
-	// If the identifier has a non-global namespace, also inserts into namespace_symbols_
-	// so that qualified lookups (ns::name) find the symbol.
+	// Note: namespace_symbols_ insertion is handled by the existing insert(string_view)
+	// pathway when the scope type is Namespace or Global.
 	bool insert(QualifiedIdentifier qi, ASTNode node) {
 		return insert(StringTable::getStringView(qi.identifier_handle), node);
 	}

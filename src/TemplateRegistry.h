@@ -1110,19 +1110,9 @@ public:
 	// fully-qualified name (e.g. "std::vector") so that namespace-qualified
 	// lookups work without manual dual registration by the caller.
 	void registerTemplate(QualifiedIdentifier qi, ASTNode template_node) {
-		// Always register under the unqualified identifier
-		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
-		registerTemplate(simple, template_node);
-
-		// If there is a non-global namespace, also register under qualified name
-		if (qi.hasNamespace()) {
-			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
-				qi.namespace_handle, qi.identifier_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified);
-			if (qualified_name != simple) {
-				registerTemplate(qualified_name, template_node);
-			}
-		}
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerTemplate(name, template_node);
+		});
 	}
 
 	// Register template parameter names for a template
@@ -1137,18 +1127,10 @@ public:
 	}
 
 	// Register an alias template using QualifiedIdentifier (Phase 2).
-	// Registers under both unqualified and qualified names.
 	void register_alias_template(QualifiedIdentifier qi, ASTNode alias_node) {
-		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
-		register_alias_template(simple, alias_node);
-		if (qi.hasNamespace()) {
-			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
-				qi.namespace_handle, qi.identifier_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified);
-			if (qualified_name != simple) {
-				register_alias_template(qualified_name, alias_node);
-			}
-		}
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			register_alias_template(name, alias_node);
+		});
 	}
 
 	// Register a variable template: template<typename T> constexpr T pi = T(3.14159...);
@@ -1158,18 +1140,10 @@ public:
 	}
 
 	// Register a variable template using QualifiedIdentifier (Phase 2).
-	// Registers under both unqualified and qualified names.
 	void registerVariableTemplate(QualifiedIdentifier qi, ASTNode variable_template_node) {
-		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
-		registerVariableTemplate(simple, variable_template_node);
-		if (qi.hasNamespace()) {
-			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
-				qi.namespace_handle, qi.identifier_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified);
-			if (qualified_name != simple) {
-				registerVariableTemplate(qualified_name, variable_template_node);
-			}
-		}
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerVariableTemplate(name, variable_template_node);
+		});
 	}
 
 	// Look up a variable template by name
@@ -1548,22 +1522,14 @@ public:
 	}
 
 	// Register a template specialization pattern using QualifiedIdentifier (Phase 4).
-	// Registers under both unqualified and qualified names.
 	void registerSpecializationPattern(QualifiedIdentifier qi,
 	                                   const std::vector<ASTNode>& template_params,
 	                                   const std::vector<TemplateTypeArg>& pattern_args,
 	                                   ASTNode specialized_node,
 	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
-		registerSpecializationPattern(simple, template_params, pattern_args, specialized_node, sfinae_cond);
-		if (qi.hasNamespace()) {
-			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
-				qi.namespace_handle, qi.identifier_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified);
-			if (qualified_name != simple) {
-				registerSpecializationPattern(qualified_name, template_params, pattern_args, specialized_node, sfinae_cond);
-			}
-		}
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerSpecializationPattern(name, template_params, pattern_args, specialized_node, sfinae_cond);
+		});
 	}
 
 	// Register a template specialization (exact match)
@@ -1574,18 +1540,10 @@ public:
 	}
 
 	// Register a template specialization using QualifiedIdentifier (Phase 4).
-	// Registers under both unqualified and qualified names for consistent lookup.
 	void registerSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
-		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
-		registerSpecialization(simple, template_args, specialized_node);
-		if (qi.hasNamespace()) {
-			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
-				qi.namespace_handle, qi.identifier_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified);
-			if (qualified_name != simple) {
-				registerSpecialization(qualified_name, template_args, specialized_node);
-			}
-		}
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerSpecialization(name, template_args, specialized_node);
+		});
 	}
 
 	// Look up an exact template specialization (no pattern matching)
@@ -1713,6 +1671,23 @@ public:
 	}
 
 private:
+	// Helper: Given a QualifiedIdentifier, call `fn` with both the unqualified name
+	// and (if the identifier has a non-global namespace) the fully-qualified name.
+	// Used by all QualifiedIdentifier registration overloads to eliminate duplication.
+	template<typename Fn>
+	void forEachQualifiedName(QualifiedIdentifier qi, Fn&& fn) {
+		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
+		fn(simple);
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified);
+			if (qualified_name != simple) {
+				fn(qualified_name);
+			}
+		}
+	}
+
 	// Map from template name to template declaration nodes - supports multiple overloads (supports heterogeneous lookup)
 	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
 

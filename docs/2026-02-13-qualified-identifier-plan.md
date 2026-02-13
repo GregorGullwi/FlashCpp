@@ -65,38 +65,46 @@ Replace `StringHandle base_template_name_` on `TypeInfo` with a `QualifiedIdenti
 
 **Files affected:** `AstNodeTypes.h`, `Parser_Templates.cpp` (7 call sites), `Parser_Types.cpp` (1 call site), `Parser_Statements.cpp`
 
-### Phase 2: Template Registry Keys (Medium) — IN PROGRESS
+### Phase 2: Template Registry Keys (Medium) ✅ DONE
 
 Update `TemplateRegistry` to use `QualifiedIdentifier` for registration and lookup:
 
-- ✅ `registerTemplate(QualifiedIdentifier, ASTNode)` added — internally handles dual registration (simple + qualified names)
-- ✅ 2 namespace dual-registration sites in `Parser_Templates.cpp` converted to single `QualifiedIdentifier` call
-- Remaining: 5 class-member dual-registration sites use `ClassName::method` qualification (not namespace scope) — need a different approach or extended `QualifiedIdentifier`
-- Remaining: Lookup by `QualifiedIdentifier` for namespace-aware filtering
+- ✅ `registerTemplate(QualifiedIdentifier, ASTNode)` — internally handles dual registration (simple + qualified names)
+- ✅ `registerVariableTemplate(QualifiedIdentifier, ASTNode)` — same dual-registration pattern
+- ✅ `register_alias_template(QualifiedIdentifier, ASTNode)` — same dual-registration pattern
+- ✅ `lookupTemplate(QualifiedIdentifier)` — tries qualified name first, falls back to unqualified
+- ✅ 4 namespace dual-registration sites in `Parser_Templates.cpp` converted to single `QualifiedIdentifier` calls
+- Note: 5 class-member dual-registration sites use `ClassName::method` qualification (not namespace scope) — left as-is since they serve a different purpose (class-scoped member resolution, not namespace scoping)
 
-### Phase 3: Symbol Table Integration (Large)
+### Phase 3: Symbol Table Integration (Medium) ✅ DONE
 
 Extend `SymbolTable` to use `QualifiedIdentifier`:
 
-- `insert(QualifiedIdentifier, ASTNode)` stores namespace context
-- `lookup_qualified(namespace_handle, identifier)` already exists — unify with `QualifiedIdentifier`
-- Using declarations (`using std::vector`) create aliases that map `QualifiedIdentifier{global, "vector"}` → `QualifiedIdentifier{"std", "vector"}`
+- ✅ `insert(QualifiedIdentifier, ASTNode)` — inserts under unqualified name in current scope
+- ✅ `lookup_qualified(QualifiedIdentifier)` — namespace-aware lookup, falls back to unqualified
+- ✅ `QualifiedIdentifierNode::qualifiedIdentifier()` — bridge method to convert AST node to `QualifiedIdentifier`
+- Remaining: Convert existing call sites to use `QualifiedIdentifier` overloads
 
-### Phase 4: Parser Call Sites (Large)
+### Phase 4: Specialization Registration/Lookup (Medium) ✅ DONE
 
-Update identifier parsing throughout the parser:
+Update specialization handling to use `QualifiedIdentifier`:
 
-- `parse_qualified_identifier()` returns `QualifiedIdentifier` instead of building strings
-- Template instantiation passes `QualifiedIdentifier` through the full pipeline
-- Specialization matching uses `QualifiedIdentifier` for consistent lookup
+- ✅ `registerSpecialization(QualifiedIdentifier, ...)` — dual registration under simple + qualified names
+- ✅ `registerSpecializationPattern(QualifiedIdentifier, ...)` — dual registration for patterns
+- ✅ `lookupSpecialization(QualifiedIdentifier, ...)` — tries qualified then unqualified
+- Remaining: Convert existing call sites to use `QualifiedIdentifier` overloads
 
-### Phase 5: Codegen (Medium)
+### Phase 5: Codegen (Medium) — FUTURE
 
 Update codegen to use `QualifiedIdentifier` for:
 
 - Function lookup in `generateFunctionCallIr`
 - Struct member access resolution
 - Mangled name generation
+
+### Phase 6: Call Site Migration (Large) — FUTURE
+
+Incrementally convert existing call sites across the parser and codegen to use the new `QualifiedIdentifier` overloads instead of manually building qualified strings.
 
 ## Known Limitations (Current State)
 
@@ -120,9 +128,11 @@ These are pre-existing issues that this refactoring would address:
 
 ## Recommended Order
 
-1. **Phase 1** — highest value, smallest scope, fixes the `is_initializer_list_type` issue properly
-2. **Phase 2** — natural next step, simplifies template registry
-3. **Phases 3–5** — can be done incrementally as needed
+1. **Phase 1** ✅ — highest value, smallest scope, fixes the `is_initializer_list_type` issue properly
+2. **Phase 2** ✅ — simplifies template registry with dual-registration overloads
+3. **Phase 3** ✅ — SymbolTable and AST node integration
+4. **Phase 4** ✅ — specialization registration/lookup overloads
+5. **Phases 5–6** — codegen integration and call-site migration, can be done incrementally as needed
 
 ## Key Code Locations
 
