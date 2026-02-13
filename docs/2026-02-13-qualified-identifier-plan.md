@@ -52,27 +52,27 @@ struct QualifiedIdentifier {
 
 This is a **large refactoring** that touches many subsystems. It should be done incrementally.
 
-### Phase 1: TypeInfo Template Metadata (Small, High Impact)
+### Phase 1: TypeInfo Template Metadata (Small, High Impact) ✅ DONE
 
 Replace `StringHandle base_template_name_` on `TypeInfo` with a `QualifiedIdentifier base_template_`:
 
-- `baseTemplateName()` continues to return the unqualified `identifier_handle` (no changes to ~20 readers)
-- New `sourceNamespace()` returns the `namespace_handle`
-- `setTemplateInstantiationInfo()` accepts a `QualifiedIdentifier` instead of `StringHandle`
-- All 7 call sites of `setTemplateInstantiationInfo` construct a `QualifiedIdentifier` from `template_name`
-- For the main `try_instantiate_class_template` path, when `template_name` is unqualified, derive the namespace from `class_decl.name()` (the template declaration's struct, which stores the full qualified name)
-- `is_initializer_list_type()` checks `sourceNamespace() == "std"` instead of a static registry lookup
+- ✅ `baseTemplateName()` continues to return the unqualified `identifier_handle` (no changes to ~20 readers)
+- ✅ New `sourceNamespace()` returns the `namespace_handle`
+- ✅ `setTemplateInstantiationInfo()` accepts a `QualifiedIdentifier` instead of `StringHandle`
+- ✅ All 7 call sites of `setTemplateInstantiationInfo` construct a `QualifiedIdentifier` from `template_name`
+- ✅ For the main `try_instantiate_class_template` path, when `template_name` is unqualified, derive the namespace from `class_decl.name()` (the template declaration's struct, which stores the full qualified name)
+- ✅ `is_initializer_list_type()` checks `sourceNamespace() == "std"` instead of a static registry lookup
 
 **Files affected:** `AstNodeTypes.h`, `Parser_Templates.cpp` (7 call sites), `Parser_Types.cpp` (1 call site), `Parser_Statements.cpp`
 
-### Phase 2: Template Registry Keys (Medium)
+### Phase 2: Template Registry Keys (Medium) — IN PROGRESS
 
 Update `TemplateRegistry` to use `QualifiedIdentifier` for registration and lookup:
 
-- `registerTemplate(QualifiedIdentifier, ASTNode)` instead of `registerTemplate(string_view, ASTNode)`
-- Dual registration (simple + qualified) becomes a single registration with the full `QualifiedIdentifier`
-- Lookup by unqualified name searches entries with matching `identifier_handle`
-- Lookup by qualified name matches both fields
+- ✅ `registerTemplate(QualifiedIdentifier, ASTNode)` added — internally handles dual registration (simple + qualified names)
+- ✅ 2 namespace dual-registration sites in `Parser_Templates.cpp` converted to single `QualifiedIdentifier` call
+- Remaining: 5 class-member dual-registration sites use `ClassName::method` qualification (not namespace scope) — need a different approach or extended `QualifiedIdentifier`
+- Remaining: Lookup by `QualifiedIdentifier` for namespace-aware filtering
 
 ### Phase 3: Symbol Table Integration (Large)
 
@@ -104,7 +104,7 @@ These are pre-existing issues that this refactoring would address:
 
 1. **Cross-namespace function calls not rejected** — `f2::func()` compiles even when `func` is only defined in namespace `f`, not `f2`. FlashCpp doesn't validate that the function exists in the specified namespace.
 
-2. **`is_initializer_list_type` uses static registry lookup** — checks that `"std::initializer_list"` exists in the template registry, rather than checking the specific type's source namespace. If a user defines `my_ns::initializer_list`, it could theoretically be misidentified (though unlikely in practice since only `std::initializer_list` triggers special compiler behavior).
+2. ~~**`is_initializer_list_type` uses static registry lookup**~~ — **Fixed in Phase 1.** Now uses `TypeInfo::sourceNamespace()` to verify the type came from `namespace std`.
 
 ## Call Sites for `setTemplateInstantiationInfo`
 
