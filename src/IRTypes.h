@@ -1448,6 +1448,7 @@ struct CatchBeginOp {
 	TypeIndex type_index;         // Type index for user-defined types
 	Type exception_type;          // Type enum for built-in types (Int, Double, etc.)
 	std::string_view catch_end_label;  // Label to jump to if not matched
+	std::string_view continuation_label;  // Parent-function continuation label after catch completes
 	bool is_const;                // True if caught by const
 	bool is_reference;            // True if caught by lvalue reference  
 	bool is_rvalue_reference;     // True if caught by rvalue reference

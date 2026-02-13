@@ -9262,7 +9262,11 @@ private:
 			current_seh_filter_funclet_offset_ = 0;
 			in_catch_funclet_ = false;
 			catch_funclet_return_slot_offset_ = 0;
+			catch_funclet_return_flag_slot_offset_ = 0;
 			catch_funclet_return_label_counter_ = 0;
+			catch_funclet_terminated_by_return_ = false;
+			current_catch_continuation_label_ = StringHandle();
+			catch_return_bridges_.clear();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				current_function_cfi_.clear();  // Clear CFI tracking for next function
 			}
@@ -10597,9 +10601,73 @@ private:
 			}
 		}
 
-		(void)has_return_value;
-		(void)return_is_float;
-		(void)return_size_bits;
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (g_enable_exceptions && in_catch_funclet_) {
+				flushAllDirtyRegisters();
+				if (!current_catch_continuation_label_.isValid()) {
+					in_catch_funclet_ = false;
+					catch_funclet_terminated_by_return_ = false;
+					return;
+				}
+
+				StringHandle continuation_handle = current_catch_continuation_label_;
+				auto bridge_it = catch_return_bridges_.find(continuation_handle);
+				if (bridge_it == catch_return_bridges_.end()) {
+					StackVariableScope& current_scope = variable_scopes.back();
+					current_scope.scope_stack_space -= 8;
+					int32_t return_slot_offset = current_scope.scope_stack_space;
+					current_scope.scope_stack_space -= 8;
+					int32_t flag_slot_offset = current_scope.scope_stack_space;
+
+					int bridge_return_size_bits = 64;
+					if (return_size_bits > 0 && return_size_bits <= 64) {
+						bridge_return_size_bits = return_size_bits;
+					}
+
+					CatchReturnBridge bridge{
+						.return_slot_offset = return_slot_offset,
+						.flag_slot_offset = flag_slot_offset,
+						.return_size_bits = bridge_return_size_bits,
+						.is_float = return_is_float
+					};
+					bridge_it = catch_return_bridges_.emplace(continuation_handle, bridge).first;
+				}
+
+				catch_funclet_return_slot_offset_ = bridge_it->second.return_slot_offset;
+				catch_funclet_return_flag_slot_offset_ = bridge_it->second.flag_slot_offset;
+
+				if (has_return_value && !return_is_float) {
+					emitMovToFrame(X64Register::RAX, catch_funclet_return_slot_offset_, 64);
+				}
+				emitMovImm64(X64Register::RCX, 1);
+				emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+
+				uint32_t catch_return_entry_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x8D);
+				textSectionData.push_back(0x05);
+				uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_branches_.push_back({continuation_handle, lea_patch});
+
+				emitAddRSP(32);
+				emitPopReg(X64Register::RBP);
+				textSectionData.push_back(0xC3);
+
+				if (current_catch_handler_) {
+					current_catch_handler_->handler_end_offset = catch_return_entry_offset;
+					current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+				}
+				catch_funclet_terminated_by_return_ = true;
+
+				in_catch_funclet_ = false;
+				return;
+			}
+		}
 
 		// MSVC-style epilogue
 		//int32_t total_stack_space = variable_scopes.back().scope_stack_space;
@@ -13181,6 +13249,42 @@ private:
 		std::string label_name_str(label_name);
 		if (label_positions_.find(StringTable::getOrInternStringHandle(label_name_str)) == label_positions_.end()) {
 			label_positions_[StringTable::getOrInternStringHandle(label_name_str)] = label_offset;
+		}
+
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			StringHandle label_handle = StringTable::getOrInternStringHandle(label_name_str);
+			auto bridge_it = catch_return_bridges_.find(label_handle);
+			if (bridge_it != catch_return_bridges_.end()) {
+				const CatchReturnBridge& bridge = bridge_it->second;
+				emitMovFromFrameBySize(X64Register::RCX, bridge.flag_slot_offset, 64);
+				emitTestRegReg(X64Register::RCX);
+
+				textSectionData.push_back(0x0F);
+				textSectionData.push_back(0x84);
+				uint32_t skip_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+
+				emitXorRegReg(X64Register::RCX);
+				emitMovToFrame(X64Register::RCX, bridge.flag_slot_offset, 64);
+				if (!bridge.is_float) {
+					emitMovFromFrameBySize(X64Register::RAX, bridge.return_slot_offset, bridge.return_size_bits);
+				}
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x89);
+				textSectionData.push_back(0xEC);
+				textSectionData.push_back(0x5D);
+				textSectionData.push_back(0xC3);
+
+				uint32_t skip_target = static_cast<uint32_t>(textSectionData.size());
+				int32_t rel = static_cast<int32_t>(skip_target) - static_cast<int32_t>(skip_patch + 4);
+				textSectionData[skip_patch + 0] = static_cast<uint8_t>(rel & 0xFF);
+				textSectionData[skip_patch + 1] = static_cast<uint8_t>((rel >> 8) & 0xFF);
+				textSectionData[skip_patch + 2] = static_cast<uint8_t>((rel >> 16) & 0xFF);
+				textSectionData[skip_patch + 3] = static_cast<uint8_t>((rel >> 24) & 0xFF);
+			}
 		}
 
 		// Flush all dirty registers at label boundaries to ensure correct state
@@ -15833,10 +15937,13 @@ private:
 			// Catch handler is a real FH3 funclet entered with establisher-frame in RDX.
 			// Emit a funclet prologue so the runtime can unwind it as an independent
 			// range and all frame-relative accesses resolve against the parent frame.
+			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
 			emitPushReg(X64Register::RBP);
 			emitSubRSP(32);
 			emitMovRegReg(X64Register::RBP, X64Register::RDX);
 			in_catch_funclet_ = true;
+			catch_funclet_terminated_by_return_ = false;
+			current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
 		}
 	}
 
@@ -15846,6 +15953,16 @@ private:
 			return;
 		}
 		
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (catch_funclet_terminated_by_return_) {
+				catch_funclet_terminated_by_return_ = false;
+				in_catch_funclet_ = false;
+				current_catch_continuation_label_ = StringHandle();
+				current_catch_handler_ = nullptr;
+				return;
+			}
+		}
+
 		// CatchEnd marks the end of a catch handler
 		if (current_catch_handler_) {
 			current_catch_handler_->handler_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
@@ -15886,6 +16003,8 @@ private:
 			emitPopReg(X64Register::RBP);
 			textSectionData.push_back(0xC3);
 			in_catch_funclet_ = false;
+			catch_funclet_terminated_by_return_ = false;
+			current_catch_continuation_label_ = StringHandle();
 		}
 
 		if (current_catch_handler_) {
@@ -16479,7 +16598,11 @@ private:
 			current_catch_handler_ = nullptr;
 			in_catch_funclet_ = false;
 			catch_funclet_return_slot_offset_ = 0;
+			catch_funclet_return_flag_slot_offset_ = 0;
 			catch_funclet_return_label_counter_ = 0;
+			catch_funclet_terminated_by_return_ = false;
+			current_catch_continuation_label_ = StringHandle();
+			catch_return_bridges_.clear();
 		}
 
 		writer.add_data(textSectionData, SectionType::TEXT);
@@ -16970,7 +17093,17 @@ private:
 	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF).
 	bool in_catch_funclet_ = false;  // Tracks whether codegen is currently inside a Windows catch funclet.
 	int32_t catch_funclet_return_slot_offset_ = 0;  // Parent-frame spill slot used to preserve return value across catch funclet continuation setup.
+	int32_t catch_funclet_return_flag_slot_offset_ = 0;  // Parent-frame flag slot indicating continuation should return using saved catch return value.
 	uint32_t catch_funclet_return_label_counter_ = 0;  // Monotonic counter for synthetic catch return trampoline labels.
+	bool catch_funclet_terminated_by_return_ = false;  // True after a return statement emits a terminating catch-funclet return path.
+	StringHandle current_catch_continuation_label_;  // Current catch continuation label in parent function.
+	struct CatchReturnBridge {
+		int32_t return_slot_offset;
+		int32_t flag_slot_offset;
+		int return_size_bits;
+		bool is_float;
+	};
+	std::unordered_map<StringHandle, CatchReturnBridge> catch_return_bridges_;
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number

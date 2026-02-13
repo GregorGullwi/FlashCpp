@@ -1647,8 +1647,8 @@ public:
 				}
 			}
 
-			// Build a conservative IP-to-state map for FH3 state lookup.
-			// Use try-range transitions only (no catch-funclet state transitions yet).
+			// Build IP-to-state map for FH3 state lookup.
+			// Include both try body state ranges and catch funclet state ranges.
 			struct IpStateEntry {
 				uint32_t ip_rva;
 				int32_t state;
@@ -1667,6 +1667,16 @@ public:
 					try_end_ip += 1;
 				}
 				ip_to_state_entries.push_back({function_start + try_end_ip, -1});
+
+				for (const auto& catch_binding : layout.catches) {
+					const auto* handler = catch_binding.handler;
+					uint32_t catch_start = handler->funclet_entry_offset != 0 ? handler->funclet_entry_offset : handler->handler_offset;
+					uint32_t catch_end = handler->funclet_end_offset != 0 ? handler->funclet_end_offset : handler->handler_end_offset;
+					ip_to_state_entries.push_back({function_start + catch_start, catch_binding.catch_state});
+					if (catch_end <= function_size) {
+						ip_to_state_entries.push_back({function_start + catch_end, -1});
+					}
+				}
 			}
 
 			ip_to_state_entries.push_back({function_start + function_size, -1});
