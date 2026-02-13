@@ -4704,7 +4704,15 @@
 		// __builtin_strlen - maps to libc strlen function, not an inline intrinsic
 		// Return std::nullopt to fall through to regular function call handling,
 		// but the function name will be remapped in generateFunctionCallIr
-		
+
+		// SEH exception intrinsics
+		if (func_name == "GetExceptionCode" || func_name == "_exception_code") {
+			return generateGetExceptionCodeIntrinsic(functionCallNode);
+		}
+		if (func_name == "GetExceptionInformation" || func_name == "_exception_info") {
+			return generateGetExceptionInformationIntrinsic(functionCallNode);
+		}
+
 		return std::nullopt;  // Not an intrinsic
 	}
 	
@@ -5793,4 +5801,26 @@
 		// Return the pointer unchanged (but optimization barrier is implied)
 		return ptr_ir;
 	}
-	
+
+	// GetExceptionCode() - SEH intrinsic
+	// In a filter funclet: RCX = EXCEPTION_POINTERS*, reads ExceptionRecord->ExceptionCode
+	// Returns unsigned int (DWORD)
+	std::vector<IrOperand> generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
+		TempVar result = var_counter.next();
+		SehExceptionIntrinsicOp op;
+		op.result = result;
+		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
+		return {Type::UnsignedInt, 32, result, 0ULL};
+	}
+
+	// GetExceptionInformation() - SEH intrinsic
+	// In a filter funclet: RCX = EXCEPTION_POINTERS*, returns the pointer directly
+	// Returns EXCEPTION_POINTERS* (pointer)
+	std::vector<IrOperand> generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
+		TempVar result = var_counter.next();
+		SehExceptionIntrinsicOp op;
+		op.result = result;
+		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionInfo, std::move(op), functionCallNode.called_from()));
+		return {Type::UnsignedLongLong, 64, result, 0ULL};
+	}
+

@@ -3556,6 +3556,12 @@ public:
 			case IrOpcode::SehLeave:
 				handleSehLeave(instruction);
 				break;
+			case IrOpcode::SehGetExceptionCode:
+				handleSehGetExceptionCode(instruction);
+				break;
+			case IrOpcode::SehGetExceptionInfo:
+				handleSehGetExceptionInfo(instruction);
+				break;
 			default:
 				throw std::runtime_error("Not implemented yet");
 				break;
@@ -16344,6 +16350,46 @@ private:
 
 		// Record this jump for later patching (convert string_view to StringHandle)
 		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
+	}
+
+	void handleSehGetExceptionCode(const IrInstruction& instruction) {
+		// GetExceptionCode() intrinsic - called inside a filter funclet
+		// RCX = EXCEPTION_POINTERS* (set by __C_specific_handler)
+		// EXCEPTION_POINTERS->ExceptionRecord is at offset +0 (pointer)
+		// EXCEPTION_RECORD->ExceptionCode is at offset +0 (DWORD)
+		// So: GetExceptionCode() = *(DWORD*)(*(void**)RCX)
+		const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
+
+		FLASH_LOG(Codegen, Debug, "SEH GetExceptionCode() intrinsic");
+
+		// mov rax, [rcx]    ; load ExceptionRecord pointer from EXCEPTION_POINTERS
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		textSectionData.push_back(0x01); // ModR/M: [RCX] -> RAX
+
+		// mov eax, [rax]    ; load ExceptionCode (DWORD) from ExceptionRecord
+		textSectionData.push_back(0x8B); // MOV r32, r/m32
+		textSectionData.push_back(0x00); // ModR/M: [RAX] -> EAX
+
+		// Store result to temp var's stack slot
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
+	}
+
+	void handleSehGetExceptionInfo(const IrInstruction& instruction) {
+		// GetExceptionInformation() intrinsic - called inside a filter funclet
+		// RCX = EXCEPTION_POINTERS* (set by __C_specific_handler)
+		// Just return RCX directly
+		const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
+
+		FLASH_LOG(Codegen, Debug, "SEH GetExceptionInformation() intrinsic");
+
+		// mov rax, rcx    ; copy EXCEPTION_POINTERS* to RAX
+		emitMovRegReg(X64Register::RAX, X64Register::RCX);
+
+		// Store result to temp var's stack slot
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 64);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
 	}
 
 	void finalizeSections() {

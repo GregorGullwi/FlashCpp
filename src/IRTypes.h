@@ -153,6 +153,8 @@ enum class IrOpcode : int_fast16_t {
 	SehFilterBegin,      // Begin filter funclet (RCX=EXCEPTION_POINTERS*, RDX=EstablisherFrame)
 	SehFilterEnd,        // End filter funclet (return filter result in EAX)
 	SehLeave,            // __leave statement: jump to end of __try block
+	SehGetExceptionCode, // GetExceptionCode() intrinsic - reads ExceptionCode from RCX in filter funclet
+	SehGetExceptionInfo, // GetExceptionInformation() intrinsic - returns EXCEPTION_POINTERS* (RCX) in filter funclet
 };
 
 // ============================================================================
@@ -1487,6 +1489,11 @@ struct SehFilterEndOp {
 // SEH __leave operation - jumps to end of current __try block
 struct SehLeaveOp {
 	std::string_view target_label;  // Label to jump to (end of __try block or __finally)
+};
+
+// SEH GetExceptionCode() / GetExceptionInformation() intrinsic result
+struct SehExceptionIntrinsicOp {
+	TempVar result;  // Temporary to store the result
 };
 
 // Helper function to format conversion operations for IR output
@@ -2901,6 +2908,20 @@ public:
 		{
 			const auto& op = getTypedPayload<SehLeaveOp>();
 			oss << "seh_leave @" << op.target_label;
+		}
+		break;
+
+		case IrOpcode::SehGetExceptionCode:
+		{
+			const auto& op = getTypedPayload<SehExceptionIntrinsicOp>();
+			oss << "%" << op.result.var_number << " = seh_get_exception_code";
+		}
+		break;
+
+		case IrOpcode::SehGetExceptionInfo:
+		{
+			const auto& op = getTypedPayload<SehExceptionIntrinsicOp>();
+			oss << "%" << op.result.var_number << " = seh_get_exception_info";
 		}
 		break;
 
