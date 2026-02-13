@@ -334,6 +334,7 @@ struct StructMember {
 	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.)
 	size_t offset;          // Offset in bytes from start of struct
 	size_t size;            // Size in bytes
+	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
 	size_t referenced_size_bits; // Size of the referenced value in bits (for references)
 	size_t alignment;       // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
@@ -352,9 +353,10 @@ struct StructMember {
 	            size_t ref_size_bits = 0,
 	            bool is_arr = false,
 	            std::vector<size_t> arr_dims = {},
-	            int ptr_depth = 0)
+	            int ptr_depth = 0,
+	            std::optional<size_t> bf_width = std::nullopt)
 		: name(n), type(t), type_index(tidx), offset(off), size(sz),
-		  referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
+		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
 		  pointer_depth(ptr_depth) {}
@@ -554,6 +556,11 @@ struct StructTypeInfo {
 	size_t alignment = 1;       // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
 	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
+	size_t active_bitfield_unit_offset = 0;
+	size_t active_bitfield_unit_size = 0;
+	size_t active_bitfield_unit_alignment = 0;
+	size_t active_bitfield_bits_used = 0;
+	Type active_bitfield_type = Type::Invalid;
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
 	bool is_union = false;      // True if this is a union (all members at offset 0)
 	bool is_final = false;      // True if this class/struct is declared with 'final' keyword
@@ -606,10 +613,12 @@ struct StructTypeInfo {
 	               size_t referenced_size_bits,
 	               bool is_array = false,
 	               std::vector<size_t> array_dimensions = {},
-	               int pointer_depth = 0) {
+	               int pointer_depth = 0,
+	               std::optional<size_t> bitfield_width = std::nullopt) {
 		// Apply pack alignment if specified
-		// Pack alignment limits the maximum alignment of members
-		size_t effective_alignment = member_alignment;
+		// Pack alignment limits the maximum alignment of members.
+		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
+		size_t effective_alignment = member_alignment ? member_alignment : 1;
 		if (pack_alignment > 0 && pack_alignment < member_alignment) {
 			effective_alignment = pack_alignment;
 		}
@@ -618,15 +627,79 @@ struct StructTypeInfo {
 		// For unions, all members are at offset 0
 		size_t offset = is_union ? 0 : ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
 
+		bool placed_in_active_bitfield_unit = false;
+		if (!is_union && bitfield_width.has_value()) {
+			size_t width = *bitfield_width;
+			size_t storage_bits = member_size * 8;
+			if (width > storage_bits) {
+				width = storage_bits;
+			}
+
+			if (width == 0) {
+				// Zero-width bitfield forces alignment to next allocation unit boundary
+				total_size = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
+				active_bitfield_unit_size = 0;
+				active_bitfield_bits_used = 0;
+				active_bitfield_unit_alignment = 0;
+				active_bitfield_type = Type::Invalid;
+				offset = total_size;
+			} else {
+				bool can_pack_into_active_unit =
+					active_bitfield_unit_size == member_size &&
+					active_bitfield_unit_alignment == effective_alignment &&
+					active_bitfield_type == member_type &&
+					(active_bitfield_bits_used + width) <= storage_bits;
+
+				if (!can_pack_into_active_unit) {
+					total_size = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
+					active_bitfield_unit_offset = total_size;
+					active_bitfield_unit_size = member_size;
+					active_bitfield_unit_alignment = effective_alignment;
+					active_bitfield_bits_used = 0;
+					active_bitfield_type = member_type;
+					total_size += member_size;
+				}
+
+				offset = active_bitfield_unit_offset;
+				active_bitfield_bits_used += width;
+			}
+		} else if (!is_union) {
+			if (active_bitfield_unit_size > 0) {
+				size_t unit_end = active_bitfield_unit_offset + active_bitfield_unit_size;
+				size_t raw_candidate_offset = active_bitfield_unit_offset + ((active_bitfield_bits_used + 7) / 8);
+				size_t candidate_offset = ((raw_candidate_offset + effective_alignment - 1) / effective_alignment) * effective_alignment;
+				if ((candidate_offset + member_size) <= unit_end) {
+					offset = candidate_offset;
+					placed_in_active_bitfield_unit = true;
+				}
+			}
+
+			active_bitfield_unit_size = 0;
+			active_bitfield_bits_used = 0;
+			active_bitfield_unit_alignment = 0;
+			active_bitfield_type = Type::Invalid;
+			if (!placed_in_active_bitfield_unit) {
+				offset = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
+			}
+		}
+
 		if (!referenced_size_bits) {
 			referenced_size_bits = member_size * 8;
 		}
 		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
 			              access, std::move(default_initializer), is_reference, is_rvalue_reference,
-			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth);
+			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 
 		// Update struct size and alignment
-		total_size = offset + member_size;
+		if (is_union) {
+			total_size = std::max(total_size, member_size);
+		} else if (!bitfield_width.has_value()) {
+			if (placed_in_active_bitfield_unit) {
+				total_size = std::max(total_size, offset + member_size);
+			} else {
+				total_size = offset + member_size;
+			}
+		}
 		alignment = std::max(alignment, effective_alignment);
 	}
 
@@ -2422,18 +2495,24 @@ struct AnonymousUnionMemberInfo {
 	TypeIndex type_index;                // Type index for struct types
 	size_t member_size;                  // Size in bytes (including array size if applicable)
 	size_t member_alignment;             // Alignment requirement in bytes
+	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
 	size_t referenced_size_bits;         // Size in bits of referenced type (for references)
 	bool is_reference;                   // True if member is a reference
 	bool is_rvalue_reference;            // True if member is an rvalue reference
 	bool is_array;                       // True if member is an array
 	std::vector<size_t> array_dimensions; // Dimension sizes for multidimensional arrays (e.g., {3, 3} for int[3][3])
+	int pointer_depth;                   // Pointer indirection level
 	
 	AnonymousUnionMemberInfo(StringHandle name, Type type, TypeIndex tidx, size_t size, size_t align,
-	                         size_t ref_size_bits, bool is_ref, bool is_rvalue_ref, bool is_arr,
+	                         std::optional<size_t> bitfield_w,
+	                         size_t ref_size_bits, bool is_ref, bool is_rvalue_ref,
+	                         bool is_arr,
+	                         int ptr_depth,
 	                         std::vector<size_t> arr_dims)
 		: member_name(name), member_type(type), type_index(tidx), member_size(size),
-		  member_alignment(align), referenced_size_bits(ref_size_bits), is_reference(is_ref),
-		  is_rvalue_reference(is_rvalue_ref), is_array(is_arr), array_dimensions(std::move(arr_dims)) {}
+		  member_alignment(align), bitfield_width(bitfield_w), referenced_size_bits(ref_size_bits), is_reference(is_ref),
+		  is_rvalue_reference(is_rvalue_ref), is_array(is_arr), array_dimensions(std::move(arr_dims)),
+		  pointer_depth(ptr_depth) {}
 };
 
 // Anonymous union information - groups all members that should share the same offset
@@ -2450,9 +2529,11 @@ struct StructMemberDecl {
 	ASTNode declaration;
 	AccessSpecifier access;
 	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
+	std::optional<size_t> bitfield_width;
 
-	StructMemberDecl(ASTNode decl, AccessSpecifier acc, std::optional<ASTNode> init = std::nullopt)
-		: declaration(decl), access(acc), default_initializer(init) {}
+	StructMemberDecl(ASTNode decl, AccessSpecifier acc, std::optional<ASTNode> init = std::nullopt,
+	                 std::optional<size_t> width = std::nullopt)
+		: declaration(decl), access(acc), default_initializer(init), bitfield_width(width) {}
 };
 
 // Struct member function with access specifier
@@ -2554,8 +2635,9 @@ public:
 		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
 	}
 
-	void add_member(const ASTNode& member, AccessSpecifier access, std::optional<ASTNode> default_initializer = std::nullopt) {
-		members_.emplace_back(member, access, std::move(default_initializer));
+	void add_member(const ASTNode& member, AccessSpecifier access, std::optional<ASTNode> default_initializer = std::nullopt,
+	               std::optional<size_t> bitfield_width = std::nullopt) {
+		members_.emplace_back(member, access, std::move(default_initializer), bitfield_width);
 	}
 
 	void add_base_class(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false, bool is_deferred = false) {
@@ -2654,14 +2736,17 @@ public:
 	// Add a member to the most recently created anonymous union
 	// Must be called after add_anonymous_union_marker()
 	void add_anonymous_union_member(StringHandle member_name, Type member_type, TypeIndex type_index,
-	                                 size_t member_size, size_t member_alignment, size_t referenced_size_bits,
-	                                 bool is_reference, bool is_rvalue_reference, bool is_array,
+	                                 size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
+	                                 size_t referenced_size_bits, bool is_reference, bool is_rvalue_reference,
+	                                 bool is_array,
+	                                 int pointer_depth,
 	                                 std::vector<size_t> array_dimensions) {
 		// Add to the last anonymous union that was created
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
 				member_name, member_type, type_index, member_size, member_alignment,
-				referenced_size_bits, is_reference, is_rvalue_reference, is_array,
+				bitfield_width, referenced_size_bits, is_reference, is_rvalue_reference, is_array,
+				pointer_depth,
 				std::move(array_dimensions)
 			);
 		}

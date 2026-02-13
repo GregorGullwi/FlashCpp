@@ -2116,6 +2116,24 @@ ParseResult Parser::parse_template_declaration() {
 					}
 					const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
 					const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+					std::optional<size_t> bitfield_width;
+
+					// Handle bitfield declarations: int x : 5;
+					if (peek() == ":"_tok) {
+						advance(); // consume ':'
+						auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (width_result.is_error()) {
+							return width_result;
+						}
+						if (width_result.node().has_value()) {
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+							if (!eval_result.success() || eval_result.as_int() < 0) {
+								return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
+							}
+							bitfield_width = static_cast<size_t>(eval_result.as_int());
+						}
+					}
 
 					// Check for member initialization with '=' (C++11 feature)
 					if (peek() == "="_tok) {
@@ -2131,7 +2149,7 @@ ParseResult Parser::parse_template_declaration() {
 						}
 					}
 
-					struct_ref.add_member(*member_result.node(), current_access, default_initializer);
+					struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width);
 
 					// Handle comma-separated declarations (e.g., int x, y, z;)
 					while (peek() == ","_tok) {
@@ -2141,6 +2159,24 @@ ParseResult Parser::parse_template_declaration() {
 						auto next_member_name = advance();
 						if (next_member_name.type() != Token::Type::Identifier) {
 							return ParseResult::error("Expected member name after comma", peek_info());
+						}
+
+						std::optional<size_t> additional_bitfield_width;
+						// Handle bitfield declarations: int x, y : 3;
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (width_result.is_error()) {
+								return width_result;
+							}
+							if (width_result.node().has_value()) {
+								ConstExpr::EvaluationContext ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+								if (!eval_result.success() || eval_result.as_int() < 0) {
+									return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
+								}
+								additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
+							}
 						}
 
 						// Check for optional initialization
@@ -2161,7 +2197,7 @@ ParseResult Parser::parse_template_declaration() {
 							emplace_node<TypeSpecifierNode>(type_spec),
 							next_member_name
 						);
-						struct_ref.add_member(next_member_decl, current_access, additional_init);
+						struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width);
 					}
 
 					// Consume semicolon
@@ -2255,7 +2291,8 @@ ParseResult Parser::parse_template_declaration() {
 					referenced_size_bits,
 					false,
 					{},
-					static_cast<int>(type_spec.pointer_depth())
+					static_cast<int>(type_spec.pointer_depth()),
+					member_decl.bitfield_width
 				);
 			}
 
@@ -3399,6 +3436,24 @@ ParseResult Parser::parse_template_declaration() {
 					if (member_node.is<DeclarationNode>()) {
 						const DeclarationNode& decl_node = member_node.as<DeclarationNode>();
 						const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+						std::optional<size_t> bitfield_width;
+
+						// Handle bitfield declarations: int x : 5;
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (width_result.is_error()) {
+								return width_result;
+							}
+							if (width_result.node().has_value()) {
+								ConstExpr::EvaluationContext ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+								if (!eval_result.success() || eval_result.as_int() < 0) {
+									return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
+								}
+								bitfield_width = static_cast<size_t>(eval_result.as_int());
+							}
+						}
 
 						// Check for default initializer
 						std::optional<ASTNode> default_initializer;
@@ -3422,7 +3477,7 @@ ParseResult Parser::parse_template_declaration() {
 								default_initializer = *init_result.node();
 							}
 						}
-						struct_ref.add_member(member_node, current_access, default_initializer);
+						struct_ref.add_member(member_node, current_access, default_initializer, bitfield_width);
 
 						// Handle comma-separated declarations (e.g., int x, y, z;)
 						while (peek() == ","_tok) {
@@ -3432,6 +3487,24 @@ ParseResult Parser::parse_template_declaration() {
 							auto next_member_name = advance();
 							if (next_member_name.type() != Token::Type::Identifier) {
 								return ParseResult::error("Expected member name after comma", peek_info());
+							}
+
+							std::optional<size_t> additional_bitfield_width;
+							// Handle bitfield declarations: int x, y : 3;
+							if (peek() == ":"_tok) {
+								advance(); // consume ':'
+								auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (width_result.is_error()) {
+									return width_result;
+								}
+								if (width_result.node().has_value()) {
+									ConstExpr::EvaluationContext ctx(gSymbolTable);
+									auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+									if (!eval_result.success() || eval_result.as_int() < 0) {
+										return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
+									}
+									additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
+								}
 							}
 
 							// Check for optional initialization
@@ -3452,7 +3525,7 @@ ParseResult Parser::parse_template_declaration() {
 								emplace_node<TypeSpecifierNode>(type_spec),
 								next_member_name
 							);
-							struct_ref.add_member(next_member_decl, current_access, additional_init);
+							struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width);
 						}
 					}
 					// Consume semicolon after data member
@@ -3508,7 +3581,8 @@ ParseResult Parser::parse_template_declaration() {
 					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0,
 					false,
 					{},
-					static_cast<int>(type_spec.pointer_depth())
+					static_cast<int>(type_spec.pointer_depth()),
+					member_decl.bitfield_width
 				);
 			}
 			
@@ -6431,8 +6505,39 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				return ParseResult::error("Expected member declaration", peek_info());
 			}
 			
-			// Check if this is a member function (has '(') or data member (has ';' or '=')
-			if (peek() == ";"_tok) {
+			// Check if this is a member function (has '(') or data member (has ';', ':', or '=')
+			if (peek() == ":"_tok) {
+				// Bitfield data member
+				std::optional<size_t> bitfield_width;
+				advance(); // consume ':'
+				auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (width_result.is_error()) {
+					return width_result;
+				}
+				if (width_result.node().has_value()) {
+					ConstExpr::EvaluationContext ctx(gSymbolTable);
+					auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+					if (!eval_result.success() || eval_result.as_int() < 0) {
+						return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
+					}
+					bitfield_width = static_cast<size_t>(eval_result.as_int());
+				}
+
+				std::optional<ASTNode> init;
+				if (peek() == "="_tok) {
+					advance(); // consume '='
+					auto init_result = parse_expression(2, ExpressionContext::Normal);
+					if (init_result.is_error()) {
+						return init_result;
+					}
+					init = init_result.node();
+				}
+
+				if (!consume(";"_tok)) {
+					return ParseResult::error("Expected ';' after bitfield member", current_token_);
+				}
+				member_struct_ref.add_member(*member_result.node(), current_access, init, bitfield_width);
+			} else if (peek() == ";"_tok) {
 				// Simple data member
 				advance(); // consume ';'
 				member_struct_ref.add_member(*member_result.node(), current_access, std::nullopt);
@@ -6779,10 +6884,51 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			
 			// Add member function to struct
 			member_struct_ref.add_member_function(member_func_node, current_access);
+		} else if (peek() == ":"_tok) {
+			// Bitfield data member
+			std::optional<size_t> bitfield_width;
+			advance(); // consume ':'
+			auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (width_result.is_error()) {
+				return width_result;
+			}
+			if (width_result.node().has_value()) {
+				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+				if (!eval_result.success() || eval_result.as_int() < 0) {
+					return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
+				}
+				bitfield_width = static_cast<size_t>(eval_result.as_int());
+			}
+			std::optional<ASTNode> init;
+			if (peek() == "="_tok) {
+				advance(); // consume '='
+				auto init_result = parse_expression(2, ExpressionContext::Normal);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				init = init_result.node();
+			}
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after bitfield member", peek_info());
+			}
+			member_struct_ref.add_member(*member_result.node(), current_access, init, bitfield_width);
+
 		} else if (peek() == ";"_tok) {
 			// Data member
 			advance(); // consume ';'
 			member_struct_ref.add_member(*member_result.node(), current_access, std::nullopt);
+		} else if (peek() == "="_tok) {
+			// Data member with initializer
+			advance(); // consume '='
+			auto init_result = parse_expression(2, ExpressionContext::Normal);
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after member initializer", peek_info());
+			}
+			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
 		} else {
 			return ParseResult::error("Expected '(' or ';' after member declaration", peek_info());
 		}
@@ -11346,7 +11492,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			(type_spec.is_reference() || type_spec.is_rvalue_reference()) ? get_type_size_bits(member_type) : 0,
 			false,
 			{},
-			static_cast<int>(type_spec.pointer_depth())
+			static_cast<int>(type_spec.pointer_depth()),
+			member_decl.bitfield_width
 		);
 	}
 	
@@ -12345,7 +12492,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0,
 				false,
 				{},
-				static_cast<int>(ptr_depth)
+				static_cast<int>(ptr_depth),
+				member_decl.bitfield_width
 			);
 		}
 		
@@ -14633,7 +14781,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			referenced_size_bits,
 			false,
 			{},
-			static_cast<int>(type_spec.pointer_depth())
+			static_cast<int>(type_spec.pointer_depth()),
+			member_decl.bitfield_width
 		);
 	}
 
@@ -15212,7 +15361,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0,
 					false,
 					{},
-					static_cast<int>(substituted_type_spec.pointer_depth())
+					static_cast<int>(substituted_type_spec.pointer_depth()),
+					member_decl.bitfield_width
 				);
 			}
 			
@@ -18446,7 +18596,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			referenced_size_bits,
 			false,  // is_array
 			{},     // array_dimensions
-			static_cast<int>(type_spec.pointer_depth())
+			static_cast<int>(type_spec.pointer_depth()),
+			member_decl.bitfield_width
 		);
 	}
 	
