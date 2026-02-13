@@ -2140,9 +2140,8 @@ ParseResult Parser::parse_template_declaration() {
 					std::optional<size_t> bitfield_width;
 
 					// Handle bitfield declarations: int x : 5;
-					auto bitfield_width_result = parse_bitfield_width(bitfield_width);
-					if (bitfield_width_result.is_error()) {
-						return bitfield_width_result;
+					if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+						return width_result;
 					}
 
 					// Check for member initialization with '=' (C++11 feature)
@@ -2173,9 +2172,8 @@ ParseResult Parser::parse_template_declaration() {
 
 						std::optional<size_t> additional_bitfield_width;
 						// Handle bitfield declarations: int x, y : 3;
-						auto additional_width_result = parse_bitfield_width(additional_bitfield_width);
-						if (additional_width_result.is_error()) {
-							return additional_width_result;
+						if (auto width_result = parse_bitfield_width(additional_bitfield_width); width_result.is_error()) {
+							return width_result;
 						}
 
 						// Check for optional initialization
@@ -3438,9 +3436,8 @@ ParseResult Parser::parse_template_declaration() {
 						std::optional<size_t> bitfield_width;
 
 						// Handle bitfield declarations: int x : 5;
-						auto bitfield_width_result = parse_bitfield_width(bitfield_width);
-						if (bitfield_width_result.is_error()) {
-							return bitfield_width_result;
+						if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+							return width_result;
 						}
 
 						// Check for default initializer
@@ -3479,9 +3476,8 @@ ParseResult Parser::parse_template_declaration() {
 
 							std::optional<size_t> additional_bitfield_width;
 							// Handle bitfield declarations: int x, y : 3;
-							auto additional_width_result = parse_bitfield_width(additional_bitfield_width);
-							if (additional_width_result.is_error()) {
-								return additional_width_result;
+							if (auto width_result = parse_bitfield_width(additional_bitfield_width); width_result.is_error()) {
+								return width_result;
 							}
 
 							// Check for optional initialization
@@ -6486,9 +6482,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			if (peek() == ":"_tok) {
 				// Bitfield data member
 				std::optional<size_t> bitfield_width;
-				auto bitfield_width_result = parse_bitfield_width(bitfield_width);
-				if (bitfield_width_result.is_error()) {
-					return bitfield_width_result;
+				if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+					return width_result;
 				}
 
 				std::optional<ASTNode> init;
@@ -6855,9 +6850,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		} else if (peek() == ":"_tok) {
 			// Bitfield data member
 			std::optional<size_t> bitfield_width;
-			auto bitfield_width_result = parse_bitfield_width(bitfield_width);
-			if (bitfield_width_result.is_error()) {
-				return bitfield_width_result;
+			if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+				return width_result;
 			}
 			std::optional<ASTNode> init;
 			if (peek() == "="_tok) {
