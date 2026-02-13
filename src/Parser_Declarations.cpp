@@ -10241,47 +10241,6 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		std::string_view(identifier_token.value())
 	);
 
-	// Helper function to add standard members to C library div_t-style structs
-	auto add_div_struct_members = [](StructTypeInfo* struct_info, std::string_view type_name) {
-		if (type_name == "div_t") {
-			// div_t has two int members: quot and rem
-			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-			struct_info->addMember(quot_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
-			struct_info->addMember(rem_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
-		} else if (type_name == "ldiv_t") {
-			// ldiv_t has two long members: quot and rem
-			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-			struct_info->addMember(quot_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-			struct_info->addMember(rem_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-		} else if (type_name == "lldiv_t") {
-			// lldiv_t has two long long members: quot and rem
-			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-			struct_info->addMember(quot_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-			struct_info->addMember(rem_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-		}
-	};
-
-	// Check if the identifier is a known type from the global namespace or __gnu_cxx namespace (C library types)
-	// and register it in gTypesByName so it can be used as a type
-	// Common C library types that need to be registered as opaque types
-	static const std::unordered_map<std::string_view, size_t> c_library_types = {
-		{"div_t"sv, 64},      // struct with two ints
-		{"ldiv_t"sv, 128},    // struct with two longs
-		{"lldiv_t"sv, 128},   // struct with two long longs
-		{"size_t"sv, 64},     // typically unsigned long
-		{"ptrdiff_t"sv, 64},  // typically long
-		{"wchar_t"sv, 32},    // typically int
-		{"mbstate_t"sv, 64},  // opaque type
-		{"fpos_t"sv, 128},    // opaque type
-		{"FILE"sv, 128},      // opaque struct
-		{"time_t"sv, 64},     // typically long
-		{"clock_t"sv, 64},    // typically long
-		{"tm"sv, 256}         // struct with multiple fields
-	};
-	
 	// Check if the identifier refers to an existing type in the source namespace
 	// Build the source type name (either global or qualified with namespace_path)
 	StringHandle source_type_name;
@@ -10346,77 +10305,6 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
 					                 StringTable::getStringView(unqualified_name));
 				}
-			} else {
-				// Type not found in source namespace - check if it's a known C library type
-				auto type_it = c_library_types.find(identifier_token.value());
-				bool is_from_global = namespace_path.empty();
-				bool is_from_gnu_cxx = (namespace_path.size() == 1 && namespace_path[0] == "__gnu_cxx");
-				
-				if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
-					// Create opaque C library type
-					auto& type_info = gTypeInfo.emplace_back(target_type_name, Type::Struct, gTypeInfo.size(), static_cast<int>(type_it->second));
-					
-					auto struct_info = std::make_unique<StructTypeInfo>(target_type_name, AccessSpecifier::Public);
-					struct_info->total_size = type_it->second / 8;
-					
-					// Add members for div_t, ldiv_t, and lldiv_t
-					add_div_struct_members(struct_info.get(), identifier_token.value());
-					
-					// Finalize the struct layout
-					if (!struct_info->finalize()) {
-						return ParseResult::error(struct_info->getFinalizationError(), Token());
-					}
-					
-					type_info.setStructInfo(std::move(struct_info));
-					if (type_info.getStructInfo()) {
-						type_info.type_size_ = type_info.getStructInfo()->total_size;
-					}
-					
-					gTypesByName.emplace(target_type_name, &type_info);
-					FLASH_LOG_FORMAT(Parser, Debug, "Registered opaque C library type from using declaration: {} (size {} bits)", 
-					                 StringTable::getStringView(target_type_name), type_it->second);
-					
-					// Also register with the unqualified name within the current namespace scope
-					StringHandle unqualified_name = identifier_token.handle();
-					if (gTypesByName.find(unqualified_name) == gTypesByName.end()) {
-						gTypesByName.emplace(unqualified_name, &type_info);
-						FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
-						                 StringTable::getStringView(unqualified_name));
-					}
-				}
-			}
-		}
-	} else {
-		// We're in global namespace - check if we need to register a C library type
-		auto type_it = c_library_types.find(identifier_token.value());
-		bool is_from_global = namespace_path.empty();
-		bool is_from_gnu_cxx = (namespace_path.size() == 1 && namespace_path[0] == "__gnu_cxx");
-		
-		if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
-			StringHandle type_name = identifier_token.handle();
-			if (gTypesByName.find(type_name) == gTypesByName.end()) {
-				// Create opaque C library type in global namespace
-				auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size(), static_cast<int>(type_it->second));
-				
-				auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
-				struct_info->total_size = type_it->second / 8;
-				
-				// Add members for div_t, ldiv_t, and lldiv_t
-				add_div_struct_members(struct_info.get(), identifier_token.value());
-				
-				// Finalize the struct layout
-				if (!struct_info->finalize()) {
-					return ParseResult::error(struct_info->getFinalizationError(), Token());
-				}
-				
-				type_info.setStructInfo(std::move(struct_info));
-				if (type_info.getStructInfo()) {
-					type_info.type_size_ = type_info.getStructInfo()->total_size;
-				}
-				
-				gTypesByName.emplace(type_name, &type_info);
-				FLASH_LOG_FORMAT(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", 
-				                 StringTable::getStringView(type_name), type_it->second);
 			}
 		}
 	}
@@ -10424,4 +10312,3 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	auto decl_node = emplace_node<UsingDeclarationNode>(namespace_handle, identifier_token, using_token);
 	return saved_position.success(decl_node);
 }
-
