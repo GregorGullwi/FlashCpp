@@ -684,7 +684,7 @@ public:
 	// If the QualifiedIdentifier has a namespace, uses lookup_qualified.
 	// Otherwise, falls back to regular unqualified lookup.
 	std::optional<ASTNode> lookup_qualified(QualifiedIdentifier qi) const {
-		if (qi.hasNamespace()) {
+		if (qi.namespace_handle.isValid()) {
 			return lookup_qualified(qi.namespace_handle, qi.identifier_handle);
 		}
 		return lookup(StringTable::getStringView(qi.identifier_handle), get_current_scope_handle());
