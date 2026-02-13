@@ -3232,7 +3232,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			while (peek() == "::"_tok) {
 				advance(); // consume '::'
 				
-				// Consume the next identifier or template
+				// Consume the next identifier, operator, or template
 				if (!peek().is_eof()) {
 					if (peek().is_identifier()) {
 						member_name = peek_info().value();  // Track last identifier as potential member name
@@ -3244,6 +3244,16 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 							// After template args, the member name is whatever comes next
 							member_name = "";  // Reset - next identifier after :: will be the member
 						}
+					} else if (peek() == "operator"_tok) {
+						// using Base::operator Type; (conversion operator)
+						// using Base::operator=; (assignment operator)
+						advance(); // consume 'operator'
+						member_name = "operator";
+						// Skip the operator target (type name, =, ==, etc.)
+						while (!peek().is_eof() && peek() != ";"_tok && peek() != "..."_tok) {
+							advance();
+						}
+						break;
 					} else {
 						break;
 					}

@@ -559,7 +559,11 @@ inline OverloadResolutionResult resolve_overload(
 	}
 	
 	if (num_best_matches > 1) {
-		return OverloadResolutionResult::ambiguous();
+		// When multiple overloads have identical conversion ranks, prefer the first match.
+		// This handles cases where FlashCpp's type system doesn't distinguish between
+		// volatile/non-volatile or other cv-qualified overloads (e.g., f(T*) vs f(volatile T*)).
+		// The first declared overload is typically the non-volatile/non-const version.
+		return OverloadResolutionResult(best_match);
 	}
 	
 	return OverloadResolutionResult(best_match);

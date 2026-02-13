@@ -6482,8 +6482,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// Not a constructor - check if this is a template function that needs instantiation
+				// Skip template lookup if we already found this as a member function in the class context
+				// to avoid namespace-scope template functions shadowing class member function overloads
 				std::optional<ASTNode> template_func_inst;
-				if (gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
+				if (!found_member_function_in_context && gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
 					// Parse arguments to deduce template parameters
 					if (peek().is_eof())
 						return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
