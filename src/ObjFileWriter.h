@@ -1135,7 +1135,7 @@ public:
 		// a 32-bit image-relative pointer to FuncInfo.
 		uint32_t cpp_funcinfo_rva_field_offset = 0;
 		bool has_cpp_funcinfo_rva_field = false;
-		if (is_cpp) {
+		if (is_cpp && mangled_name.find("main") == std::string_view::npos) {
 			cpp_funcinfo_rva_field_offset = static_cast<uint32_t>(xdata.size());
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
@@ -1667,14 +1667,18 @@ public:
 					try_end_ip += 1;
 				}
 				ip_to_state_entries.push_back({function_start + try_end_ip, -1});
-
+				
+				// Add catch funclet state ranges
 				for (const auto& catch_binding : layout.catches) {
-					const auto* handler = catch_binding.handler;
-					uint32_t catch_start = handler->funclet_entry_offset != 0 ? handler->funclet_entry_offset : handler->handler_offset;
-					uint32_t catch_end = handler->funclet_end_offset != 0 ? handler->funclet_end_offset : handler->handler_end_offset;
-					ip_to_state_entries.push_back({function_start + catch_start, catch_binding.catch_state});
-					if (catch_end <= function_size) {
-						ip_to_state_entries.push_back({function_start + catch_end, -1});
+					const auto& handler = *catch_binding.handler;
+					uint32_t handler_start_rel = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+					uint32_t handler_end_rel = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
+					
+						if (handler_start_rel < function_size && handler_end_rel > handler_start_rel) {
+						ip_to_state_entries.push_back({function_start + handler_start_rel, catch_binding.catch_state});
+						if (handler_end_rel <= function_size) {
+							ip_to_state_entries.push_back({function_start + handler_end_rel, -1});
+						}
 					}
 				}
 			}
@@ -1837,47 +1841,107 @@ public:
 			}
 		}
 
-		// Get current PDATA section size to calculate relocation offsets
-		auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
-		uint32_t pdata_offset = static_cast<uint32_t>(pdata_section->get_data_size());
+		auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
+			return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+		};
 
-		// Add PDATA (procedure data) for this specific function
-		// PDATA entry: [function_start, function_end, unwind_info_address]
-		std::vector<char> pdata(12);
-		*reinterpret_cast<uint32_t*>(&pdata[0]) = function_start;      // Function start RVA (will be relocated)
-		*reinterpret_cast<uint32_t*>(&pdata[4]) = function_start + function_size; // Function end RVA (will be relocated)
-		*reinterpret_cast<uint32_t*>(&pdata[8]) = xdata_offset;        // Unwind info RVA (will be relocated)
-		add_data(pdata, SectionType::PDATA);
+		auto resolve_funclet_end = [function_size, &resolve_funclet_start](
+			const CatchHandlerInfo& handler,
+			const CatchHandlerInfo* next_handler) -> uint32_t {
+			uint32_t start = resolve_funclet_start(handler);
+			uint32_t end = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
+			if (end == 0 && next_handler != nullptr) {
+				end = resolve_funclet_start(*next_handler);
+			}
+			if (end == 0 || end > function_size) {
+				end = function_size;
+			}
+			if (end <= start) {
+				return start;
+			}
+			return end;
+		};
 
-		// Add relocations for PDATA section
-		// These relocations are critical for the linker to resolve addresses correctly
-		add_pdata_relocations(pdata_offset, mangled_name, xdata_offset);
+		// Build catch funclet ranges for C++ EH so parent ranges can avoid overlap.
+		struct RelativeRange {
+			uint32_t start;
+			uint32_t end;
+		};
+		std::vector<RelativeRange> catch_funclet_ranges;
+		struct PendingPdataEntry {
+			uint32_t begin_rva;
+			uint32_t end_rva;
+			uint32_t unwind_rva;
+		};
+		std::vector<PendingPdataEntry> pending_pdata_entries;
+		if (is_cpp) {
+			for (const auto& tb : try_blocks) {
+				for (size_t i = 0; i < tb.catch_handlers.size(); ++i) {
+					const auto& handler = tb.catch_handlers[i];
+					const CatchHandlerInfo* next_handler = (i + 1 < tb.catch_handlers.size()) ? &tb.catch_handlers[i + 1] : nullptr;
+					uint32_t handler_start_rel = resolve_funclet_start(handler);
+					uint32_t handler_end_rel = resolve_funclet_end(handler, next_handler);
+					if (handler_end_rel > handler_start_rel && handler_end_rel <= function_size) {
+						catch_funclet_ranges.push_back({handler_start_rel, handler_end_rel});
+					}
+				}
+			}
+
+			std::sort(catch_funclet_ranges.begin(), catch_funclet_ranges.end(), [](const RelativeRange& a, const RelativeRange& b) {
+				if (a.start != b.start) {
+					return a.start < b.start;
+				}
+				return a.end < b.end;
+			});
+
+			std::vector<RelativeRange> merged_ranges;
+			for (const auto& range : catch_funclet_ranges) {
+				if (merged_ranges.empty() || range.start > merged_ranges.back().end) {
+					merged_ranges.push_back(range);
+				} else if (range.end > merged_ranges.back().end) {
+					merged_ranges.back().end = range.end;
+				}
+			}
+			catch_funclet_ranges = std::move(merged_ranges);
+		}
+
+		// Emit parent PDATA ranges. For C++ EH, carve out catch funclet ranges to avoid overlap.
+		std::vector<RelativeRange> parent_ranges;
+		if (!is_cpp || catch_funclet_ranges.empty()) {
+			parent_ranges.push_back({0, function_size});
+		} else {
+			uint32_t cursor = 0;
+			for (const auto& catch_range : catch_funclet_ranges) {
+				if (cursor < catch_range.start) {
+					parent_ranges.push_back({cursor, catch_range.start});
+				}
+				if (catch_range.end > cursor) {
+					cursor = catch_range.end;
+				}
+			}
+			if (cursor < function_size) {
+				parent_ranges.push_back({cursor, function_size});
+			}
+			if (parent_ranges.empty()) {
+				parent_ranges.push_back({0, function_size});
+			}
+		}
+
+		for (const auto& parent_range : parent_ranges) {
+			if (parent_range.end <= parent_range.start) {
+				continue;
+			}
+			pending_pdata_entries.push_back({
+				function_start + parent_range.start,
+				function_start + parent_range.end,
+				xdata_offset
+			});
+		}
 
 		// Emit PDATA/XDATA for C++ catch funclets.
 		// Catch handlers are emitted as real funclets with prologue:
 		//   push rbp; sub rsp, 32; mov rbp, rdx
 		if (is_cpp) {
-			auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
-				return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
-			};
-
-			auto resolve_funclet_end = [function_size, &resolve_funclet_start](
-				const CatchHandlerInfo& handler,
-				const CatchHandlerInfo* next_handler) -> uint32_t {
-				uint32_t start = resolve_funclet_start(handler);
-				uint32_t end = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
-				if (end == 0 && next_handler != nullptr) {
-					end = resolve_funclet_start(*next_handler);
-				}
-				if (end == 0 || end > function_size) {
-					end = function_size;
-				}
-				if (end <= start) {
-					return start;
-				}
-				return end;
-			};
-
 			for (const auto& tb : try_blocks) {
 				for (size_t i = 0; i < tb.catch_handlers.size(); ++i) {
 					const auto& handler = tb.catch_handlers[i];
@@ -1910,18 +1974,32 @@ public:
 					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 					uint32_t catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 					add_data(catch_xdata, SectionType::XDATA);
-					auto pdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
-					uint32_t catch_pdata_offset = static_cast<uint32_t>(pdata_section_curr->get_data_size());
 
-					std::vector<char> catch_pdata(12);
-					*reinterpret_cast<uint32_t*>(&catch_pdata[0]) = function_start + handler_start_rel;
-					*reinterpret_cast<uint32_t*>(&catch_pdata[4]) = function_start + handler_end_rel;
-					*reinterpret_cast<uint32_t*>(&catch_pdata[8]) = catch_xdata_offset;
-					add_data(catch_pdata, SectionType::PDATA);
-
-					add_pdata_relocations(catch_pdata_offset, mangled_name, catch_xdata_offset);
+					pending_pdata_entries.push_back({
+						function_start + handler_start_rel,
+						function_start + handler_end_rel,
+						catch_xdata_offset
+					});
 				}
 			}
+		}
+
+		std::sort(pending_pdata_entries.begin(), pending_pdata_entries.end(), [](const PendingPdataEntry& a, const PendingPdataEntry& b) {
+			if (a.begin_rva != b.begin_rva) {
+				return a.begin_rva < b.begin_rva;
+			}
+			return a.end_rva < b.end_rva;
+		});
+
+		for (const auto& entry : pending_pdata_entries) {
+			auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
+			uint32_t pdata_offset = static_cast<uint32_t>(pdata_section->get_data_size());
+			std::vector<char> pdata(12);
+			*reinterpret_cast<uint32_t*>(&pdata[0]) = entry.begin_rva;
+			*reinterpret_cast<uint32_t*>(&pdata[4]) = entry.end_rva;
+			*reinterpret_cast<uint32_t*>(&pdata[8]) = entry.unwind_rva;
+			add_data(pdata, SectionType::PDATA);
+			add_pdata_relocations(pdata_offset, mangled_name, entry.unwind_rva);
 		}
 	}
 

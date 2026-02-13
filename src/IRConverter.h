@@ -10020,11 +10020,25 @@ private:
 		return default_size;
 	}
 
+	int32_t ensureCatchFuncletReturnSlot() {
+		if (catch_funclet_return_slot_offset_ != 0) {
+			return catch_funclet_return_slot_offset_;
+		}
+
+		if (variable_scopes.empty()) {
+			catch_funclet_return_slot_offset_ = -8;
+			return catch_funclet_return_slot_offset_;
+		}
+
+		StackVariableScope& current_scope = variable_scopes.back();
+		int32_t reserved_slot = static_cast<int32_t>(current_scope.scope_stack_space - 8);
+		current_scope.scope_stack_space = reserved_slot;
+		catch_funclet_return_slot_offset_ = reserved_slot;
+		return catch_funclet_return_slot_offset_;
+	}
+
 	void handleReturn(const IrInstruction& instruction) {
 		FLASH_LOG(Codegen, Debug, "handleReturn called");
-		bool has_return_value = false;
-		bool return_is_float = false;
-		int return_size_bits = 0;
 		
 		if (variable_scopes.empty()) {
 			FLASH_LOG(Codegen, Error, "FATAL [handleReturn]: variable_scopes is EMPTY!");
@@ -10047,9 +10061,6 @@ private:
 		// Check for typed payload first
 		if (instruction.hasTypedPayload()) {
 			const auto& ret_op = instruction.getTypedPayload<ReturnOp>();
-			has_return_value = ret_op.return_value.has_value();
-			return_size_bits = ret_op.return_size;
-			return_is_float = ret_op.return_type.has_value() && is_floating_point_type(ret_op.return_type.value());
 			
 			// Void return - no value to return
 			if (!ret_op.return_value.has_value()) {
@@ -10603,44 +10614,25 @@ private:
 
 		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (g_enable_exceptions && in_catch_funclet_) {
+				bool has_float_return = false;
+				bool has_return_value = false;
+				if (instruction.hasTypedPayload()) {
+					const auto& catch_return_op = instruction.getTypedPayload<ReturnOp>();
+					has_return_value = catch_return_op.return_value.has_value();
+					has_float_return = catch_return_op.return_type.has_value() &&
+						is_floating_point_type(catch_return_op.return_type.value());
+				}
+				int32_t catch_return_slot = 0;
+				if (!has_float_return && has_return_value) {
+					catch_return_slot = ensureCatchFuncletReturnSlot();
+					emitMovToFrame(X64Register::RAX, catch_return_slot, 64);
+				}
+
 				flushAllDirtyRegisters();
-				if (!current_catch_continuation_label_.isValid()) {
-					in_catch_funclet_ = false;
-					catch_funclet_terminated_by_return_ = false;
-					return;
-				}
 
-				StringHandle continuation_handle = current_catch_continuation_label_;
-				auto bridge_it = catch_return_bridges_.find(continuation_handle);
-				if (bridge_it == catch_return_bridges_.end()) {
-					StackVariableScope& current_scope = variable_scopes.back();
-					current_scope.scope_stack_space -= 8;
-					int32_t return_slot_offset = current_scope.scope_stack_space;
-					current_scope.scope_stack_space -= 8;
-					int32_t flag_slot_offset = current_scope.scope_stack_space;
-
-					int bridge_return_size_bits = 64;
-					if (return_size_bits > 0 && return_size_bits <= 64) {
-						bridge_return_size_bits = return_size_bits;
-					}
-
-					CatchReturnBridge bridge{
-						.return_slot_offset = return_slot_offset,
-						.flag_slot_offset = flag_slot_offset,
-						.return_size_bits = bridge_return_size_bits,
-						.is_float = return_is_float
-					};
-					bridge_it = catch_return_bridges_.emplace(continuation_handle, bridge).first;
-				}
-
-				catch_funclet_return_slot_offset_ = bridge_it->second.return_slot_offset;
-				catch_funclet_return_flag_slot_offset_ = bridge_it->second.flag_slot_offset;
-
-				if (has_return_value && !return_is_float) {
-					emitMovToFrame(X64Register::RAX, catch_funclet_return_slot_offset_, 64);
-				}
-				emitMovImm64(X64Register::RCX, 1);
-				emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+				StringBuilder return_trampoline_sb;
+				return_trampoline_sb.append("__catch_return_trampoline_").append(static_cast<unsigned long long>(catch_funclet_return_label_counter_++));
+				StringHandle return_trampoline_handle = StringTable::getOrInternStringHandle(return_trampoline_sb.commit());
 
 				uint32_t catch_return_entry_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
@@ -10652,16 +10644,30 @@ private:
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
-				pending_branches_.push_back({continuation_handle, lea_patch});
+				pending_branches_.push_back({return_trampoline_handle, lea_patch});
 
 				emitAddRSP(32);
 				emitPopReg(X64Register::RBP);
 				textSectionData.push_back(0xC3);
 
+				uint32_t catch_funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 				if (current_catch_handler_) {
-					current_catch_handler_->handler_end_offset = catch_return_entry_offset;
-					current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+					current_catch_handler_->handler_end_offset = catch_funclet_end_offset;
+					current_catch_handler_->funclet_end_offset = catch_funclet_end_offset;
 				}
+
+				label_positions_[return_trampoline_handle] = static_cast<uint32_t>(textSectionData.size());
+
+				if (catch_return_slot != 0) {
+					emitMovFromFrame(X64Register::RAX, catch_return_slot);
+				}
+
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x89);
+				textSectionData.push_back(0xEC);
+				textSectionData.push_back(0x5D);
+				textSectionData.push_back(0xC3);
+
 				catch_funclet_terminated_by_return_ = true;
 
 				in_catch_funclet_ = false;
