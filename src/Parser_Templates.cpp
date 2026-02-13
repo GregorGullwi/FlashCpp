@@ -16376,9 +16376,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 				outer_binding.param_args = template_args_to_use;
-				std::string_view qualified_name = StringTable::getStringView(qualified_name_handle);
-				gTemplateRegistry.registerOuterTemplateBinding(qualified_name, std::move(outer_binding));
-				FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", qualified_name);
+				gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+				FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 			}
 		} else {
 			FLASH_LOG(Templates, Error, "Unknown member function type in template instantiation: ", 

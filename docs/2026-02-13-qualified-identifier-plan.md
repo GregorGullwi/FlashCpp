@@ -74,9 +74,9 @@ Update `TemplateRegistry` to use `QualifiedIdentifier` for registration and look
 - ✅ `register_alias_template(QualifiedIdentifier, ASTNode)` — same dual-registration pattern
 - ✅ `lookupTemplate(QualifiedIdentifier)` — tries qualified name first, falls back to unqualified
 - ✅ `StringHandle` overloads added for `register_alias_template`, `registerVariableTemplate`, `lookupVariableTemplate`, `lookupTemplate`
-- ✅ `alias_templates_` and `variable_templates_` maps changed from `std::string` to `StringHandle` keys for efficient lookup
+- ✅ All TemplateRegistry maps (`templates_`, `alias_templates_`, `variable_templates_`, `deduction_guides_`, `outer_template_bindings_`) changed from `std::string` to `StringHandle` keys
 - ✅ 4 namespace dual-registration sites in `Parser_Templates.cpp` converted to single `QualifiedIdentifier` calls
-- Note: 5 class-member dual-registration sites use `ClassName::method` qualification (not namespace scope) — left as-is since they serve a different purpose (class-scoped member resolution, not namespace scoping)
+- ✅ 5 class-member dual-registration sites converted to use `StringHandle` directly (Phase 6)
 
 ### Phase 3: Symbol Table Integration (Medium) ✅ DONE
 
@@ -103,13 +103,17 @@ Convert codegen and parser qualified identifier lookups to use `QualifiedIdentif
 - ✅ `Parser_Expressions` — qualified identifier lookups use `qualifiedIdentifier()` bridge
 - ✅ `fromQualifiedName(StringHandle, NamespaceHandle)` overload added for shorter calling code
 
-### Phase 6: Remaining Call Site Migration (Large) — FUTURE
+### Phase 6: StringHandle Migration & Call Site Cleanup (Large) ✅ DONE
 
-Incrementally convert remaining call sites across the compiler to use the new `QualifiedIdentifier` overloads instead of manually building qualified strings. Key areas:
+Converted all TemplateRegistry maps and call sites to use `StringHandle` keys:
 
-- `generateFunctionCallIr` function lookup patterns
-- Template instantiation pipeline (already partially done via Phase 1)
-- Mangled name generation
+- ✅ `templates_` map changed from `std::string` to `StringHandle` key
+- ✅ `deduction_guides_` map changed from `std::string` to `StringHandle` key
+- ✅ Added `registerTemplate(StringHandle)`, `lookupAllTemplates(StringHandle)`, `register_deduction_guide(StringHandle)`, `lookup_deduction_guides(StringHandle)` overloads
+- ✅ All `string_view` overloads now delegate to `StringHandle` overloads (no duplicate logic)
+- ✅ All class-member dual-registration sites converted to use `StringHandle` directly
+- ✅ All `registerTemplate` call sites migrated from `std::string_view` to `StringHandle`
+- ✅ Removed debug logging block from Parser_Templates.cpp
 
 ## Known Limitations (Current State)
 
@@ -138,7 +142,7 @@ These are pre-existing issues that this refactoring would address:
 3. **Phase 3** ✅ — SymbolTable and AST node integration
 4. **Phase 4** ✅ — specialization registration/lookup overloads
 5. **Phase 5** ✅ — codegen and parser call-site migration using `qualifiedIdentifier()` bridge
-6. **Phase 6** — remaining call-site migration, can be done incrementally as needed
+6. **Phase 6** ✅ — StringHandle migration for all remaining maps and call sites
 
 ## Key Code Locations
 

@@ -1438,11 +1438,19 @@ public:
 	// Register outer template parameter bindings for a member function template
 	// of an instantiated class template (e.g., Container<int>::convert has T→int)
 	void registerOuterTemplateBinding(std::string_view qualified_name, OuterTemplateBinding binding) {
-		outer_template_bindings_[std::string(qualified_name)] = std::move(binding);
+		registerOuterTemplateBinding(StringTable::getOrInternStringHandle(qualified_name), std::move(binding));
+	}
+
+	void registerOuterTemplateBinding(StringHandle qualified_name, OuterTemplateBinding binding) {
+		outer_template_bindings_[qualified_name] = std::move(binding);
 	}
 
 	// Get outer template parameter bindings for a member function template
 	const OuterTemplateBinding* getOuterTemplateBinding(std::string_view qualified_name) const {
+		return getOuterTemplateBinding(StringTable::getOrInternStringHandle(qualified_name));
+	}
+
+	const OuterTemplateBinding* getOuterTemplateBinding(StringHandle qualified_name) const {
 		auto it = outer_template_bindings_.find(qualified_name);
 		if (it != outer_template_bindings_.end()) {
 			return &it->second;
@@ -1742,7 +1750,7 @@ private:
 
 	// Map from qualified member function template name (e.g., "Container$hash::convert") to
 	// outer template parameter bindings (e.g., T→int). Used during nested template instantiation.
-	std::unordered_map<std::string, OuterTemplateBinding, TransparentStringHash, std::equal_to<>> outer_template_bindings_;
+	std::unordered_map<StringHandle, OuterTemplateBinding, TransparentStringHash, std::equal_to<>> outer_template_bindings_;
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
