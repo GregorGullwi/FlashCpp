@@ -994,6 +994,7 @@
 				catch_op.type_index = type_index;
 				catch_op.exception_type = type_node.type();  // Store the Type enum for built-in types
 				catch_op.catch_end_label = catch_end_label;
+				catch_op.continuation_label = end_label;
 				catch_op.is_const = type_node.is_const();
 				catch_op.is_reference = type_node.is_lvalue_reference();
 				catch_op.is_rvalue_reference = type_node.is_rvalue_reference();
@@ -1041,6 +1042,7 @@
 				catch_op.type_index = TypeIndex(0);
 				catch_op.exception_type = Type::Void;  // No specific type for catch(...)
 				catch_op.catch_end_label = catch_end_label;
+				catch_op.continuation_label = end_label;
 				catch_op.is_const = false;
 				catch_op.is_reference = false;
 				catch_op.is_rvalue_reference = false;
