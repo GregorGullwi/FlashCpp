@@ -2510,7 +2510,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				);
 				
 				// Register the template in the template registry
-				gTemplateRegistry.registerTemplate(func_name.view(), template_func_node);
+				gTemplateRegistry.registerTemplate(func_name, template_func_node);
 				
 				// Also register the template parameter names for lookup
 				gTemplateRegistry.registerTemplateParameters(func_name, template_param_names);

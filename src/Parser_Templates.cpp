@@ -5767,8 +5767,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 						auto qualified_name = StringTable::getOrInternStringHandle(
 							StringBuilder().append(struct_node.name()).append("::"sv).append(operator_name));
-						gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_func_node);
-						gTemplateRegistry.registerTemplate(operator_name, template_func_node);
+						gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
+						gTemplateRegistry.registerTemplate(StringTable::getOrInternStringHandle(operator_name), template_func_node);
 
 						current_template_param_names_ = std::move(saved_template_param_names);
 						return saved_position.success();
@@ -5807,10 +5807,10 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	
 	// Register the template in the global registry with qualified name (ClassName::functionName)
 	auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_node.name()).append("::"sv).append(decl_node.identifier_token().value()));
-	gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_func_node);
+	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 	
 	// Also register with simple name for unqualified lookups (needed for inherited member template function calls)
-	gTemplateRegistry.registerTemplate(decl_node.identifier_token().value(), template_func_node);
+	gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), template_func_node);
 
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
@@ -6078,8 +6078,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		);
 		
 		// Register the template
-		gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_struct_node);
-		gTemplateRegistry.registerTemplate(struct_name, template_struct_node);
+		gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
+		gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
 		
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template forward declaration: {}", 
 			StringTable::getStringView(qualified_name));
@@ -6854,10 +6854,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	);
 
 	// Register the template in the global registry with qualified name
-	gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_struct_node);
+	gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
 	
 	// Also register with simple name for lookups within the parent struct
-	gTemplateRegistry.registerTemplate(struct_name, template_struct_node);
+	gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template: {}", StringTable::getStringView(qualified_name));
 
@@ -16362,12 +16362,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			qualified_name_builder.append(StringTable::getStringView(instantiated_name))
 			                     .append("::")
 			                     .append(decl_node.identifier_token().value());
-			std::string_view qualified_name = qualified_name_builder.commit();
+			StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 			
-			gTemplateRegistry.registerTemplate(qualified_name, mem_func.function_declaration);
+			gTemplateRegistry.registerTemplate(qualified_name_handle, mem_func.function_declaration);
 			
 			// Also register with simple name for unqualified lookups
-			gTemplateRegistry.registerTemplate(decl_node.identifier_token().value(), mem_func.function_declaration);
+			gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), mem_func.function_declaration);
 
 			// Register outer template parameter bindings so that when the inner template
 			// is instantiated, outer params (e.g., T→int) can be resolved in the body
@@ -16379,6 +16379,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 				outer_binding.param_args = template_args_to_use;
+				std::string_view qualified_name = StringTable::getStringView(qualified_name_handle);
 				gTemplateRegistry.registerOuterTemplateBinding(qualified_name, std::move(outer_binding));
 				FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", qualified_name);
 			}
