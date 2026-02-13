@@ -9224,6 +9224,18 @@ private:
 				}
 			}
 			
+			// For C++ EH functions with the establisher-frame model (FrameOffset>0),
+			// ensure 32 bytes of shadow/home space at the bottom of the frame.
+			// The CRT's exception processing may clobber the first 32 bytes of the
+			// establisher frame (shadow space for callee use), so all meaningful
+			// variables must be allocated above that region.
+			if (current_function_has_cpp_eh_) {
+				size_t vars_used = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+				if (total_stack < vars_used + 32) {
+					total_stack = vars_used + 32;
+				}
+			}
+
 			// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
 			// System V AMD64 / MS x64: after `push rbp`, RSP is misaligned by 8 bytes.
 			// Subtracting a 16-byte-aligned stack size keeps RSP % 16 == 8 at call sites,
@@ -9249,6 +9261,29 @@ private:
 				}
 			}
 			catch_continuation_sub_rsp_patches_.clear();
+
+			// Patch C++ EH prologue LEA RBP, [RSP + total_stack]
+			// The LEA instruction is: 48 8D AC 24 XX XX XX XX
+			// The imm32 starts at eh_prologue_lea_rbp_offset_ + 4
+			if (eh_prologue_lea_rbp_offset_ > 0) {
+				uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[lea_patch_offset + i] = bytes[i];
+				}
+			}
+
+			// Patch catch funclet LEA RBP, [RDX + total_stack] instructions
+			// The LEA instruction is: 48 8D AA XX XX XX XX
+			// The imm32 starts at offset + 3
+			for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
+				uint32_t lea_patch_offset = funclet_lea_offset + 3;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[lea_patch_offset + i] = bytes[i];
+				}
+			}
+			catch_funclet_lea_rbp_patches_.clear();
 			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
@@ -9290,6 +9325,8 @@ private:
 			catch_return_bridges_.clear();
 			catch_continuation_fixup_map_.clear();
 			catch_continuation_sub_rsp_patches_.clear();
+			eh_prologue_lea_rbp_offset_ = 0;
+			catch_funclet_lea_rbp_patches_.clear();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				current_function_cfi_.clear();  // Clear CFI tracking for next function
 			}
@@ -9521,7 +9558,11 @@ private:
 		// Create a new function scope
 		regAlloc.reset();
 
-		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
+		// MSVC-style prologue.
+		// For C++ EH functions (Windows): push rbp; sub rsp, N; lea rbp, [rsp+N]
+		//   This makes establisher_frame = RBP - FrameOffset*16 = RSP_after_prologue,
+		//   so _JumpToContinuation restores RSP to the fully-allocated frame level.
+		// For non-EH functions: push rbp; mov rbp, rsp; sub rsp, N (traditional style).
 		// Always generate prologue - even if total_stack_space is 0, we need RBP for parameter access
 		textSectionData.push_back(0x55); // push rbp
 		
@@ -9533,35 +9574,69 @@ private:
 				0
 			});
 		}
-		
-		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
-		
-		// Track CFI: After mov rbp, rsp, CFA = RBP+16
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			current_function_cfi_.push_back({
-				ElfFileWriter::CFIInstruction::MOV_RSP_RBP,
-				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
-				0
-			});
+
+		bool use_eh_prologue_style = false;
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			use_eh_prologue_style = current_function_has_cpp_eh_;
 		}
 
-		// Always emit SUB RSP with 32-bit immediate (7 bytes total) for patching flexibility
-		// We'll patch the actual value at function end after we know max_temp_var_index
-		current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
-		textSectionData.push_back(0x48); // REX.W
-		textSectionData.push_back(0x81); // SUB with 32-bit immediate
-		textSectionData.push_back(0xEC); // RSP
-		// Placeholder - will be patched with actual stack size
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
+		if (use_eh_prologue_style) {
+			// C++ EH prologue: push rbp(1); sub rsp, N(7); lea rbp, [rsp+N](8)
+			// Total: 16 bytes. RBP = RSP_after_push + N_sub - N_sub + N_lea = S-8.
+			// FrameOffset = N/16 in UNWIND_INFO, establisher = RBP - N = RSP after sub.
+
+			// SUB RSP, imm32 (7 bytes) - placeholder, patched at function end
+			current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x81); // SUB with 32-bit immediate
+			textSectionData.push_back(0xEC); // RSP
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+
+			// LEA RBP, [RSP + imm32] (8 bytes) - placeholder, patched at function end
+			// Encoding: 48 8D AC 24 XX XX XX XX (REX.W LEA RBP, [RSP+disp32])
+			eh_prologue_lea_rbp_offset_ = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8D); // LEA
+			textSectionData.push_back(0xAC); // ModR/M: RBP, [SIB+disp32]
+			textSectionData.push_back(0x24); // SIB: base=RSP, index=none
+			textSectionData.push_back(0x00); // disp32 placeholder
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+		} else {
+			// Traditional prologue: push rbp(1); mov rbp, rsp(3); sub rsp, N(7)
+			textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
+			
+			// Track CFI: After mov rbp, rsp, CFA = RBP+16
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				current_function_cfi_.push_back({
+					ElfFileWriter::CFIInstruction::MOV_RSP_RBP,
+					static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
+					0
+				});
+			}
+
+			// SUB RSP, imm32 (7 bytes) - placeholder, patched at function end
+			current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x81); // SUB with 32-bit immediate
+			textSectionData.push_back(0xEC); // RSP
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+
+			eh_prologue_lea_rbp_offset_ = 0; // Not used for non-EH functions
+		}
 
 		// For C++ EH functions on Windows, initialize the FH3 unwind help state variable at [rbp-8] to -2.
 		// FH3 reads this via dispUnwindHelp; value -2 means "use IP-to-state map" for lookup.
 		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (current_function_has_cpp_eh_) {
-				// mov qword [rbp-8], -2  (11 bytes: 48 C7 45 F8 FE FF FF FF)
+				// mov qword [rbp-8], -2  (8 bytes: 48 C7 45 F8 FE FF FF FF)
 				textSectionData.push_back(0x48); // REX.W
 				textSectionData.push_back(0xC7); // MOV r/m64, imm32
 				textSectionData.push_back(0x45); // [rbp + disp8]
@@ -10697,10 +10772,23 @@ private:
 
 				label_positions_[return_trampoline_handle] = static_cast<uint32_t>(textSectionData.size());
 
+				// After _JumpToContinuation: RSP = establisher = S-8-N (correct frame level)
+				// RBP is corrupted by CRT. Restore it via LEA RBP, [RSP + N].
+				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()) + 4);
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8D); // LEA
+				textSectionData.push_back(0xAC); // ModR/M: mod=10, reg=101(RBP), r/m=100(SIB)
+				textSectionData.push_back(0x24); // SIB: base=RSP, index=none
+				textSectionData.push_back(0x00); // disp32 placeholder (patched with total_stack)
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+
 				if (catch_return_slot != 0) {
 					emitMovFromFrame(X64Register::RAX, catch_return_slot);
 				}
 
+				// Standard epilogue: mov rsp, rbp; pop rbp; ret
 				textSectionData.push_back(0x48);
 				textSectionData.push_back(0x89);
 				textSectionData.push_back(0xEC);
@@ -15983,9 +16071,28 @@ private:
 			// Emit a funclet prologue so the runtime can unwind it as an independent
 			// range and all frame-relative accesses resolve against the parent frame.
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+			// Save establisher frame (RDX) to caller's shadow space before push.
+			// Clang emits this and the CRT may rely on it during unwinding.
+			// mov [rsp+10h], rdx  (48 89 54 24 10)
+			textSectionData.push_back(0x48);
+			textSectionData.push_back(0x89);
+			textSectionData.push_back(0x54);
+			textSectionData.push_back(0x24);
+			textSectionData.push_back(0x10);
 			emitPushReg(X64Register::RBP);
 			emitSubRSP(32);
-			emitMovRegReg(X64Register::RBP, X64Register::RDX);
+			// LEA RBP, [RDX + imm32] — RDX is the establisher frame (RSP after parent prologue)
+			// Adding total_stack gives RBP = establisher + N = RSP_after_sub + N = S-8.
+			// This matches the parent function's RBP so frame-relative accesses work.
+			// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
+			catch_funclet_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8D); // LEA
+			textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
+			textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
 			in_catch_funclet_ = true;
 			catch_funclet_terminated_by_return_ = false;
 			current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
@@ -16037,11 +16144,11 @@ private:
 				continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
 				has_continuation = true;
 
-				// Create a unique fixup label for the catch continuation fixup stub.
+				// Create a unique fixup label for the catch continuation entry point.
 				std::string fixup_name = "__catch_fixup_" + std::to_string(textSectionData.size());
 				fixup_handle = StringTable::getOrInternStringHandle(fixup_name);
 
-				// LEA RAX, [fixup_label] — return fixup stub address to the CRT
+				// LEA RAX, [fixup_label] — return fixup entry address to the CRT
 				textSectionData.push_back(0x48);
 				textSectionData.push_back(0x8D);
 				textSectionData.push_back(0x05);
@@ -16065,28 +16172,23 @@ private:
 				current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			}
 
-			// Emit catch continuation fixup stub (in parent function code space).
-			// When the CRT's _JumpToContinuation transfers control after a caught exception:
-			//   RSP = establisher_frame (= parent's original RBP value)
-			//   RBP = NOT restored (corrupted by CRT internals)
-			// The fixup restores both registers, then jumps to the real continuation.
-			// Normal execution paths (try body without exception) jump directly to the
-			// continuation label and never execute this fixup.
+			// Emit catch continuation entry point (in parent function code space).
+			// With the clang-style EH prologue (push rbp; sub rsp, N; lea rbp, [rsp+N]),
+			// the establisher frame = RSP_after_prologue = S-8-N.
+			// After _JumpToContinuation: RSP = S-8-N (fully allocated frame).
+			// We just need to restore RBP (corrupted by CRT) and jump to normal code.
 			if (has_continuation) {
 				// Define the fixup label position
 				label_positions_[fixup_handle] = static_cast<uint32_t>(textSectionData.size());
 
-				// mov rbp, rsp  (48 8B EC) — restore frame pointer from establisher frame
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x8B);
-				textSectionData.push_back(0xEC);
-
-				// sub rsp, imm32  (48 81 EC xx xx xx xx) — re-allocate stack frame (patched later)
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x81);
-				textSectionData.push_back(0xEC);
-				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
-				textSectionData.push_back(0x00);
+				// LEA RBP, [RSP + total_stack] — restore frame pointer
+				// Encoding: 48 8D AC 24 XX XX XX XX (patched at function end with total_stack)
+				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()) + 4);
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8D); // LEA
+				textSectionData.push_back(0xAC); // ModR/M: mod=10, reg=101(RBP), r/m=100(SIB)
+				textSectionData.push_back(0x24); // SIB: base=RSP, index=none
+				textSectionData.push_back(0x00); // disp32 placeholder
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
@@ -16671,6 +16773,15 @@ private:
 				}
 			}
 			
+			// For C++ EH functions with the establisher-frame model (FrameOffset>0),
+			// ensure 32 bytes of shadow/home space at the bottom of the frame.
+			if (current_function_has_cpp_eh_) {
+				size_t vars_used = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+				if (total_stack < vars_used + 32) {
+					total_stack = vars_used + 32;
+				}
+			}
+
 			// Stack alignment: After PUSH RBP, RSP is 16-aligned.
 			// SUB RSP, N must keep it 16-aligned for subsequent CALLs.
 			// Both Linux and Windows: Align total_stack to 16n (multiple of 16)
@@ -16686,6 +16797,34 @@ private:
 					textSectionData[patch_offset + i] = bytes[i];
 				}
 			}
+
+			// Patch catch continuation LEA RBP instructions (reuses sub_rsp_patches for LEA)
+			for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[fixup_patch_offset + i] = bytes[i];
+				}
+			}
+			catch_continuation_sub_rsp_patches_.clear();
+
+			// Patch C++ EH prologue LEA RBP, [RSP + total_stack]
+			if (eh_prologue_lea_rbp_offset_ > 0) {
+				uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[lea_patch_offset + i] = bytes[i];
+				}
+			}
+
+			// Patch catch funclet LEA RBP, [RDX + total_stack] instructions
+			for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
+				uint32_t lea_patch_offset = funclet_lea_offset + 3;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[lea_patch_offset + i] = bytes[i];
+				}
+			}
+			catch_funclet_lea_rbp_patches_.clear();
 			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
@@ -17219,6 +17358,8 @@ private:
 	std::unordered_map<StringHandle, CatchReturnBridge> catch_return_bridges_;
 	std::unordered_map<StringHandle, StringHandle> catch_continuation_fixup_map_;  // continuation_label → fixup_label for catch path stack restoration
 	std::vector<uint32_t> catch_continuation_sub_rsp_patches_;  // Offsets of SUB RSP IMM32 in fixup code, patched with total_stack at function end
+	uint32_t eh_prologue_lea_rbp_offset_ = 0;  // Offset of LEA RBP,[RSP+N] in C++ EH prologue, patched with total_stack
+	std::vector<uint32_t> catch_funclet_lea_rbp_patches_;  // Offsets of LEA RBP,[RDX+N] in catch funclets, patched with total_stack
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number

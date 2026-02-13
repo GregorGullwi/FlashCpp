@@ -1052,42 +1052,84 @@ public:
 			unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
 		}
 
-		// Build unwind codes array dynamically based on actual prologue:
+		// Build unwind codes array dynamically based on actual prologue.
+		// For C++ EH functions (clang-style prologue):
+		//   Offset 0:  push rbp              (1 byte)
+		//   Offset 1:  sub rsp, imm32        (7 bytes)
+		//   Offset 8:  lea rbp, [rsp+imm32]  (8 bytes)
+		//   Total prologue size: 16 bytes
+		//   FrameOffset = stack_frame_size / 16
+		//
+		// For non-EH functions (traditional prologue):
 		//   Offset 0:  push rbp           (1 byte)
 		//   Offset 1:  mov rbp, rsp       (3 bytes)
 		//   Offset 4:  sub rsp, imm32     (7 bytes)
-		// Total prologue size: 11 bytes
+		//   Total prologue size: 11 bytes
+		//   FrameOffset = 0
 		//
 		// Unwind codes are listed in REVERSE order of prologue operations:
 		// Each UNWIND_CODE is 2 bytes: [offset_in_prolog, (info << 4) | operation]
 		//   UWOP_PUSH_NONVOL = 0, UWOP_ALLOC_LARGE = 1, UWOP_ALLOC_SMALL = 2, UWOP_SET_FPREG = 3
 
 		std::vector<uint8_t> unwind_codes;
-		uint8_t prolog_size = 11;  // push rbp(1) + mov rbp,rsp(3) + sub rsp,imm32(7)
+		uint8_t prolog_size;
+		uint8_t frame_reg_and_offset;
 
-		if (stack_frame_size > 0) {
-			if (stack_frame_size <= 128) {
-				// UWOP_ALLOC_SMALL: allocation size = (info + 1) * 8, info = size/8 - 1
-				uint8_t info = static_cast<uint8_t>(stack_frame_size / 8 - 1);
-				unwind_codes.push_back(prolog_size);  // offset at end of sub rsp instruction
-				unwind_codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));  // UWOP_ALLOC_SMALL
-			} else {
-				// UWOP_ALLOC_LARGE with 16-bit operand (info=0): size/8 in next slot
-				unwind_codes.push_back(prolog_size);
-				unwind_codes.push_back(0x01);  // UWOP_ALLOC_LARGE, info=0
-				uint16_t size_in_8bytes = static_cast<uint16_t>(stack_frame_size / 8);
-				unwind_codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
-				unwind_codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
+		if (is_cpp) {
+			// C++ EH prologue: push rbp(1) + sub rsp(7) + lea rbp(8) = 16
+			prolog_size = 16;
+			uint8_t frame_offset = static_cast<uint8_t>(std::min(stack_frame_size / 16, uint32_t(15)));
+			frame_reg_and_offset = static_cast<uint8_t>((frame_offset << 4) | 0x05); // RBP=5
+
+			// UWOP_SET_FPREG at offset 16 (after lea rbp, [rsp+N])
+			unwind_codes.push_back(0x10);  // offset 16
+			unwind_codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
+
+			// UWOP_ALLOC at offset 8 (after sub rsp, N)
+			if (stack_frame_size > 0) {
+				if (stack_frame_size <= 128) {
+					uint8_t info = static_cast<uint8_t>(stack_frame_size / 8 - 1);
+					unwind_codes.push_back(0x08);  // offset 8
+					unwind_codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));  // UWOP_ALLOC_SMALL
+				} else {
+					unwind_codes.push_back(0x08);  // offset 8
+					unwind_codes.push_back(0x01);  // UWOP_ALLOC_LARGE, info=0
+					uint16_t size_in_8bytes = static_cast<uint16_t>(stack_frame_size / 8);
+					unwind_codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
+					unwind_codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
+				}
 			}
+
+			// UWOP_PUSH_NONVOL(RBP) at offset 1
+			unwind_codes.push_back(0x01);
+			unwind_codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));
+		} else {
+			// Traditional prologue: push rbp(1) + mov rbp,rsp(3) + sub rsp(7) = 11
+			prolog_size = 11;
+			frame_reg_and_offset = 0x05; // RBP=5, FrameOffset=0
+
+			if (stack_frame_size > 0) {
+				if (stack_frame_size <= 128) {
+					uint8_t info = static_cast<uint8_t>(stack_frame_size / 8 - 1);
+					unwind_codes.push_back(prolog_size);  // offset at end of sub rsp instruction
+					unwind_codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));  // UWOP_ALLOC_SMALL
+				} else {
+					unwind_codes.push_back(prolog_size);
+					unwind_codes.push_back(0x01);  // UWOP_ALLOC_LARGE, info=0
+					uint16_t size_in_8bytes = static_cast<uint16_t>(stack_frame_size / 8);
+					unwind_codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
+					unwind_codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
+				}
+			}
+
+			// UWOP_SET_FPREG at offset 4 (after mov rbp, rsp)
+			unwind_codes.push_back(0x04);
+			unwind_codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
+
+			// UWOP_PUSH_NONVOL(RBP) at offset 1 (after push rbp)
+			unwind_codes.push_back(0x01);
+			unwind_codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));
 		}
-
-		// UWOP_SET_FPREG at offset 4 (after mov rbp, rsp)
-		unwind_codes.push_back(0x04);  // offset in prolog
-		unwind_codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
-
-		// UWOP_PUSH_NONVOL(RBP) at offset 1 (after push rbp)
-		unwind_codes.push_back(0x01);  // offset in prolog
-		unwind_codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));  // info=5 (RBP), UWOP_PUSH_NONVOL
 
 		// Pad to DWORD alignment (even number of unwind code slots)
 		if (unwind_codes.size() % 4 != 0) {
@@ -1098,22 +1140,26 @@ public:
 
 		uint8_t count_of_codes = static_cast<uint8_t>(unwind_codes.size() / 2);
 		// Adjust count_of_codes to actual number of UNWIND_CODE entries (excluding padding)
-		// For UWOP_ALLOC_SMALL: 1 slot; UWOP_ALLOC_LARGE(info=0): 2 slots; SET_FPREG: 1 slot; PUSH_NONVOL: 1 slot
-		if (stack_frame_size > 0) {
-			if (stack_frame_size <= 128) {
-				count_of_codes = 3;  // ALLOC_SMALL(1) + SET_FPREG(1) + PUSH_NONVOL(1)
+		if (is_cpp) {
+			// SET_FPREG(1) + ALLOC(1 or 2) + PUSH_NONVOL(1)
+			if (stack_frame_size > 0) {
+				count_of_codes = (stack_frame_size <= 128) ? 3 : 4;
 			} else {
-				count_of_codes = 4;  // ALLOC_LARGE(2) + SET_FPREG(1) + PUSH_NONVOL(1)
+				count_of_codes = 2;  // SET_FPREG(1) + PUSH_NONVOL(1)
 			}
 		} else {
-			count_of_codes = 2;  // SET_FPREG(1) + PUSH_NONVOL(1)
+			if (stack_frame_size > 0) {
+				count_of_codes = (stack_frame_size <= 128) ? 3 : 4;
+			} else {
+				count_of_codes = 2;
+			}
 		}
 
 		std::vector<char> xdata = {
 			static_cast<char>(0x01 | (unwind_flags << 3)),  // Version 1, Flags
 			static_cast<char>(prolog_size),                  // Size of prolog
 			static_cast<char>(count_of_codes),               // Count of unwind codes
-			static_cast<char>(0x05)                          // Frame register = RBP (register 5), offset = 0
+			static_cast<char>(frame_reg_and_offset)          // Frame register and offset
 		};
 		for (auto b : unwind_codes) {
 			xdata.push_back(static_cast<char>(b));
@@ -1311,7 +1357,9 @@ public:
 			// 0x19930522 = FuncInfo with 10 fields (40 bytes) including dispUnwindHelp,
 			// pESTypeList, and EHFlags. Requires a stack-based state variable at
 			// [establisher_frame + dispUnwindHelp], initialized to -2 by the prologue.
+			// 0x19930520 = FuncInfo with 7 fields (28 bytes), basic FH3.
 			uint32_t magic = 0x19930522;
+			bool use_disp_unwind_help = (magic >= 0x19930521);
 			xdata.push_back(static_cast<char>(magic & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
@@ -1372,26 +1420,36 @@ public:
 			xdata.push_back(0x00);
 
 			// dispUnwindHelp - displacement from establisher frame to the state variable.
-			// Our establisher frame = RBP (FrameOffset=0), state variable at [rbp-8].
-			// So dispUnwindHelp = -8 (0xFFFFFFF8).
-			int32_t disp_unwind_help = -8;
-			xdata.push_back(static_cast<char>(disp_unwind_help & 0xFF));
-			xdata.push_back(static_cast<char>((disp_unwind_help >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((disp_unwind_help >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((disp_unwind_help >> 24) & 0xFF));
+			// With clang-style EH prologue: establisher = RBP - FrameOffset*16 = RSP_after_prologue.
+			// State variable at [rbp-8]. RBP = S-8, establisher = S-8-N.
+			// So dispUnwindHelp = (S-16) - (S-8-N) = N - 8 = stack_frame_size - 8.
+			// Only present when magic >= 0x19930521.
+			if (use_disp_unwind_help) {
+				int32_t disp_unwind_help = static_cast<int32_t>(stack_frame_size) - 8;
+				xdata.push_back(static_cast<char>(disp_unwind_help & 0xFF));
+				xdata.push_back(static_cast<char>((disp_unwind_help >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((disp_unwind_help >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((disp_unwind_help >> 24) & 0xFF));
+			}
 
 			// pESTypeList - dynamic exception specification type list (unused)
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
+			// Only present when magic >= 0x19930522.
+			if (magic >= 0x19930522) {
+				xdata.push_back(0x00);
+				xdata.push_back(0x00);
+				xdata.push_back(0x00);
+				xdata.push_back(0x00);
+			}
 
 			// EHFlags (bit 0 set for /EHs semantics)
-			uint32_t eh_flags = 0x1;
-			xdata.push_back(static_cast<char>(eh_flags & 0xFF));
-			xdata.push_back(static_cast<char>((eh_flags >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((eh_flags >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((eh_flags >> 24) & 0xFF));
+			// Only present when magic >= 0x19930522.
+			if (magic >= 0x19930522) {
+				uint32_t eh_flags = 0x1;
+				xdata.push_back(static_cast<char>(eh_flags & 0xFF));
+				xdata.push_back(static_cast<char>((eh_flags >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((eh_flags >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((eh_flags >> 24) & 0xFF));
+			}
 
 			auto patch_u32 = [&xdata](uint32_t field_offset, uint32_t value) {
 				xdata[field_offset + 0] = static_cast<char>(value & 0xFF);
@@ -1492,7 +1550,7 @@ public:
 				xdata.push_back(static_cast<char>((handler_array_offset >> 24) & 0xFF));
 				cpp_xdata_rva_field_offsets.push_back(p_handler_array_field_offset);
 				
-				handler_array_base += num_catches * 16; // 16 bytes per HandlerType entry
+				handler_array_base += num_catches * 20; // 20 bytes per HandlerType entry (x64 FH3 includes dispFrame)
 			}
 			
 			// Now add HandlerType arrays for each try block
@@ -1637,8 +1695,15 @@ public:
 					// For catch(...), pType remains 0 (no relocation needed)
 					
 					// catchObjOffset (dispCatchObj).
-					// Use the catch object stack slot computed by codegen.
+					// The CRT copies the exception object to [EstablisherFrame + dispCatchObj].
+					// With FrameOffset=N/16, EstablisherFrame = RBP - N (= RSP after prologue).
+					// The catch variable is at [rbp + catch_obj_offset] (catch_obj_offset is negative).
+					// So: (RBP - N) + dispCatchObj = RBP + catch_obj_offset
+					//     dispCatchObj = catch_obj_offset + N = catch_obj_offset + stack_frame_size
 					int32_t catch_offset = handler.catch_obj_offset;
+					if (is_cpp && catch_offset != 0) {
+						catch_offset += static_cast<int32_t>(stack_frame_size);
+					}
 					xdata.push_back(static_cast<char>(catch_offset & 0xFF));
 					xdata.push_back(static_cast<char>((catch_offset >> 8) & 0xFF));
 					xdata.push_back(static_cast<char>((catch_offset >> 16) & 0xFF));
@@ -1654,6 +1719,19 @@ public:
 					xdata.push_back(0x00);
 					xdata.push_back(0x00);
 					add_xdata_relocation(xdata_offset + address_of_handler_field_offset, catch_symbol_name);
+
+					// dispFrame - displacement from establisher frame to the catch funclet's
+					// frame pointer. On x64 FH3 (magic >= 0x19930522), HandlerType has 5 fields
+					// (20 bytes). The CRT computes frame_ptr = EstablisherFrame + dispFrame and
+					// passes it as RDX to the catch funclet.
+					// With FrameOffset=N/16: EstablisherFrame = RBP - N.
+					// The funclet does: lea rbp, [rdx + N], so rbp = (RBP-N) + dispFrame + N.
+					// For rbp to equal parent's RBP, dispFrame must be 0.
+					int32_t disp_frame = 0;
+					xdata.push_back(static_cast<char>(disp_frame & 0xFF));
+					xdata.push_back(static_cast<char>((disp_frame >> 8) & 0xFF));
+					xdata.push_back(static_cast<char>((disp_frame >> 16) & 0xFF));
+					xdata.push_back(static_cast<char>((disp_frame >> 24) & 0xFF));
 					
 					handler_index++;
 				}
@@ -1969,7 +2047,7 @@ public:
 						static_cast<char>(0x01),              // Version 1, Flags=0 (no handler)
 						static_cast<char>(0x00),              // SizeOfProlog = 0
 						static_cast<char>(count_of_codes),    // Same count of unwind codes
-						static_cast<char>(0x05)               // Frame register = RBP (register 5), offset = 0
+						static_cast<char>(frame_reg_and_offset) // Same frame register and offset
 					};
 					for (auto b : unwind_codes) {
 						post_catch_xdata.push_back(static_cast<char>(b));
@@ -2003,26 +2081,60 @@ public:
 						continue;
 					}
 
-					// Catch funclet UNWIND_INFO: plain unwind record (no language handler).
-					// Prologue layout:
-					//   0: push rbp            (1 byte)   -> UWOP_PUSH_NONVOL @ offset 1
-					//   1: sub rsp, 32         (4 bytes)  -> UWOP_ALLOC_SMALL @ offset 5, info=3
-					//   5: mov rbp, rdx        (3 bytes)  -> no unwind opcode
-					// Prolog size = 8 bytes, frame register = 0 (none)
+					// Catch funclet UNWIND_INFO with EHANDLER|UHANDLER flags,
+					// referencing __CxxFrameHandler3 and parent FuncInfo.
+					// Prologue layout (matching clang's catch funclet):
+					//   0: mov [rsp+10h], rdx  (5 bytes)  -> no unwind opcode (saves establisher)
+					//   5: push rbp            (1 byte)   -> UWOP_PUSH_NONVOL @ offset 6
+					//   6: sub rsp, 32         (4 bytes)  -> UWOP_ALLOC_SMALL @ offset 10, info=3
+					//  10: lea rbp, [rdx+N]    (7 bytes)  -> no unwind opcode
+					// Prolog size = 17 bytes, frame register = 0 (none)
 					std::vector<char> catch_xdata = {
-						static_cast<char>(0x01), // Version=1, Flags=0 (no EH/UH handler)
-						static_cast<char>(0x08), // SizeOfProlog = 8
+						static_cast<char>(0x19), // Version=1, Flags=3 (EHANDLER | UHANDLER)
+						static_cast<char>(0x11), // SizeOfProlog = 17
 						static_cast<char>(0x02), // CountOfCodes = 2
 						static_cast<char>(0x00), // FrameRegister=0, FrameOffset=0
-						static_cast<char>(0x05), // CodeOffset for UWOP_ALLOC_SMALL
-						static_cast<char>(0x32), // info=3, UWOP_ALLOC_SMALL (2)
-						static_cast<char>(0x01), // CodeOffset for UWOP_PUSH_NONVOL
+						static_cast<char>(0x0A), // CodeOffset for UWOP_ALLOC_SMALL (after sub rsp)
+						static_cast<char>(0x32), // info=3, UWOP_ALLOC_SMALL (2) -> 32 bytes
+						static_cast<char>(0x06), // CodeOffset for UWOP_PUSH_NONVOL (after push rbp)
 						static_cast<char>(0x50)  // info=5 (RBP), UWOP_PUSH_NONVOL (0)
 					};
+
+					// Append handler RVA (relocation to __CxxFrameHandler3) + language data RVA
+					// (relocation to parent FuncInfo in .xdata)
+					// Handler RVA placeholder (4 bytes)
+					uint32_t catch_handler_rva_local = static_cast<uint32_t>(catch_xdata.size());
+					catch_xdata.push_back(0x00);
+					catch_xdata.push_back(0x00);
+					catch_xdata.push_back(0x00);
+					catch_xdata.push_back(0x00);
+					// Language-specific data RVA placeholder (points to FuncInfo)
+					uint32_t catch_funcinfo_rva_local = static_cast<uint32_t>(catch_xdata.size());
+					// Pre-fill with FuncInfo RVA (will be relocated)
+					uint32_t funcinfo_rva = xdata_offset + cpp_funcinfo_local_offset;
+					catch_xdata.push_back(static_cast<char>(funcinfo_rva & 0xFF));
+					catch_xdata.push_back(static_cast<char>((funcinfo_rva >> 8) & 0xFF));
+					catch_xdata.push_back(static_cast<char>((funcinfo_rva >> 16) & 0xFF));
+					catch_xdata.push_back(static_cast<char>((funcinfo_rva >> 24) & 0xFF));
 
 					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 					uint32_t catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 					add_data(catch_xdata, SectionType::XDATA);
+
+					// Add relocations for handler and FuncInfo references
+					add_xdata_relocation(catch_xdata_offset + catch_handler_rva_local, "__CxxFrameHandler3");
+					{
+						// Relocation for FuncInfo pointer: point to .xdata section
+						auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+						auto* xdata_sym = coffi_.get_symbol(".xdata");
+						if (xdata_sym) {
+							COFFI::rel_entry_generic reloc;
+							reloc.virtual_address = catch_xdata_offset + catch_funcinfo_rva_local;
+							reloc.symbol_table_index = xdata_sym->get_index();
+							reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+							xdata_sec->add_relocation_entry(&reloc);
+						}
+					}
 
 					pending_pdata_entries.push_back({
 						function_start + handler_start_rel,
