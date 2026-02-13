@@ -6,6 +6,57 @@ The 8 C++ EH test files (`test_eh_throw_catchall_ret0.cpp`, `test_eh_twofunc_thr
 
 The SEH `__finally` funclet pattern (already working) provides the exact model to follow. The Linux/ELF path (Itanium ABI with `__cxa_*` functions) must remain unchanged.
 
+## Current Status (Re-Review: 2026-02-13)
+
+The repository already contains most of the originally planned catch-funclet slice:
+
+- `CatchEndOp` continuation payload exists in IR (`CodeGen_Statements.cpp` + `IRTypes.h` wiring).
+- Windows `handleCatchBegin()` emits catch funclet prologue (`push rbp; sub rsp, 32; mov rbp, rdx`).
+- Windows `handleCatchEnd()` emits funclet epilogue and returns continuation in `RAX`.
+- Catch funclet `.pdata/.xdata` generation is enabled in `ObjFileWriter` with explicit unwind codes.
+
+So this plan is now a **phase-2 stabilization plan**, not a phase-1 implementation plan.
+
+### Execution log (2026-02-13)
+
+- Reproduced failures on current tree:
+  - `test_eh_throw_catchall_ret0.cpp` -> runtime crash (`0x40000005` / later `0x40000409` depending on metadata tweak)
+  - `test_eh_throw_catch_int_ret0.cpp` -> runtime crash (`0x40000409`)
+  - `test_eh_twofunc_throw_ret0.cpp` -> runtime crash (`0x40000409`) then mismatch (`99`) after control-flow change
+- Implemented return-from-catch simplification in `IRConverter.h`:
+  - Replaced continuation-bridge flag/stack-slot mechanism with direct trampoline return path from catch funclet (`LEA RAX, trampoline; add rsp,32; pop rbp; ret`).
+  - This reduces moving parts and aligns better with the original funclet intent.
+- Added a trial metadata tweak in `ObjFileWriter.h` to avoid parent/catch RUNTIME_FUNCTION overlap by truncating parent pdata range to first catch-funclet start.
+  - This changed behavior but did not fully stabilize single-function catches.
+- **Added catch funclet state ranges to IP-to-state map (2026-02-13 later session)**:
+  - Previously only try body states were included in the IP-to-state map
+  - Now catch funclets properly register their state ranges so FH3 can track execution inside catch handlers
+  - PDATA ranges remain correctly carved out to separate parent and catch funclet ranges
+  - Test `test_eh_try_no_throw_ret0.cpp` (no throw, just try-catch structure) passes successfully
+  - Tests with actual throws still crash with 0x40000005, indicating deeper FH3 metadata or unwinding issues remain
+
+## Revised Next Steps (Required)
+
+1. **Finalize correct parent/catch runtime ranges**
+  - Current trial shows range shape materially affects FH behavior.
+  - Implement a stable layout where continuation/trampoline IPs remain valid for FH expectations while catch funclets remain unwindable as independent ranges.
+
+2. **Validate continuation target semantics for FH3**
+  - Confirm whether continuation returned from catch funclet must be inside parent function runtime range.
+  - Ensure generated continuation/trampoline labels satisfy that constraint.
+
+3. **Re-check IP-to-state transitions against the final range model**
+  - Keep catch state ranges consistent with actual emitted funclet boundaries.
+  - Verify map transitions at try end, catch entry, catch exit, and post-catch continuation.
+
+4. **Then re-run focused tests**
+  - `test_eh_throw_catchall_ret0.cpp`
+  - `test_eh_throw_catch_int_ret0.cpp`
+  - `test_eh_twofunc_throw_ret0.cpp`
+  - `test_eh_twofunc_mixed_ret0.cpp`
+
+Only after these pass should full-suite EH validation proceed.
+
 ## Plan (Reviewed/Updated)
 
 The direction is correct. A few sequencing details are critical:
@@ -114,17 +165,66 @@ Execution order for fastest validation:
 3. Remaining `test_eh_*` files
 4. Full `tests/run_all_tests.ps1`
 
-## Files to Modify
+## Bugs Found and Fixed (Session 2, 2026-02-13)
 
-1. **`src/IRTypes.h`** — Add `CatchEndOp` struct
-2. **`src/CodeGen_Statements.cpp`** — Pass continuation label in CatchEnd
-3. **`src/IRConverter.h`** — Funclet prologue/epilogue in handleCatchBegin/End, return-from-catch in handleReturn, new member variables
-4. **`src/ObjFileWriter.h`** — Enable + fix catch funclet PDATA/XDATA with proper UNWIND_INFO
+**Bug 1: FuncInfo only emitted for main** (fixed, committed earlier)
+- `add_function_exception_info` only wrote C++ EH FuncInfo metadata for functions whose mangled name contained "main". Changed to emit for all C++ functions with try/catch.
+
+**Bug 2: Throw temp overlapping saved RBP** (fixed, committed earlier)
+- Throw temporary stored at `[RSP+32]` overlapped the saved RBP in the stack frame. Fixed slot allocation to avoid conflict.
+
+**Bug 3: Post-catch PDATA sharing parent's UNWIND_INFO** (fixed this session)
+- Post-catch parent code ranges reused the parent's UNWIND_INFO with SizeOfProlog=11, but the post-catch code starts well past the prologue. The unwinder treated all post-catch code as mid-prologue, applying zero unwind codes.
+- Fix: Create separate UNWIND_INFO with SizeOfProlog=0 for post-catch parent PDATA ranges (`ObjFileWriter.h`).
+
+**Bug 4: Catch continuation RBP corruption** (fixed this session)
+- `_JumpToContinuation` sets RSP=establisher_frame but does NOT restore RBP. Our parent epilogue `mov rsp, rbp; pop rbp; ret` used the corrupted (unreliable) RBP value.
+- Fix: Emit fixup stub after funclet ret: `mov rbp, rsp; sub rsp, N; jmp continuation_label`. The catch funclet's LEA RAX returns the fixup_label instead of the continuation_label directly. The SUB RSP immediate is patched at function end with the final stack size (`IRConverter.h handleCatchEnd`).
+
+**Bug 5: FuncInfo missing dispUnwindHelp field** (fixed this session)
+- Magic `0x19930522` tells FH3 to expect 10 fields (40 bytes): `magicNumber, maxState, pUnwindMap, nTryBlocks, pTryBlockMap, nIPMapEntries, pIPtoStateMap, dispUnwindHelp, pESTypeList, EHFlags`. Our code wrote 9 fields — it jumped from `pIPtoStateMap` directly to `pESTypeList`, omitting `dispUnwindHelp`. This caused a 4-byte shift: FH3 read `pESTypeList(0)` as `dispUnwindHelp`, `EHFlags(1)` as `pESTypeList` (invalid RVA pointer!).
+- Fix: Added `dispUnwindHelp = -8` field in the correct position (`ObjFileWriter.h`).
+
+**Bug 6: No FH3 state variable** (fixed this session)
+- Clang initializes a state variable at `[rbp-8]` to -2 in the prologue. FH3 with magic `0x19930522` reads this via `dispUnwindHelp`; value -2 means "use IP-to-state map for lookup".
+- Fix: Pre-scan function IR for `TryBegin` opcodes; if found, reserve `[rbp-8]` by shifting parameter home space down 8 bytes, emit `mov qword [rbp-8], -2` right after the prologue sub rsp (`IRConverter.h`).
+
+### Current status after all fixes
+
+- ✅ `test_eh_throw_catchall_ret0.cpp` — passes (throw+catch in main)
+- ✅ `test_eh_throw_catch_int_ret0.cpp` — passes (typed throw+catch in main)
+- ✅ `test_eh_try_no_throw_ret0.cpp` — passes (try/catch structure, no throw)
+- ✅ `temp_eh_throw_across_ret0.cpp` — passes (throw in f(), catch in main)
+- ❌ `temp_eh_nonmain_empty_catch_ret0.cpp` — crashes `0x40000409` (throw+catch in non-main function)
+
+### Analysis of remaining crash
+
+All FuncInfo metadata now matches clang's FH3 format (magic 0x19930522, 10-field layout, state variable, proper PDATA/XDATA). The crash ONLY affects functions where throw AND catch happen in the same non-main function.
+
+Key remaining differences vs clang output:
+1. **Prologue style**: We use `push rbp; mov rbp, rsp; sub rsp, N` with `FrameOffset=0`. Clang uses `push rbp; sub rsp, N; lea rbp, [rsp+N]` with `FrameOffset=N/16`. Both compute the same establisher frame but the FrameOffset approach gives a positive `dispUnwindHelp`.
+2. **dispUnwindHelp sign**: Ours is -8 (negative), clang's is +40 (positive). Mathematically equivalent, but negative may be unusual/untested in FH3.
+3. **Catch funclet RDX save**: Clang emits `mov [rsp+0x10], rdx` before `push rbp` in the catch funclet. We don't. This stores the establisher frame in the caller's shadow space.
+4. **IP-to-state map**: We include entries for funclet ranges and main() in f()'s map (6 entries). Clang has 4 entries (parent + funclet only).
+
+### Next steps to try
+
+1. Add `mov [rsp+0x10], rdx` to catch funclet prologue (matching clang)
+2. Try positive `dispUnwindHelp` with `FrameOffset` approach (major prologue change)
+3. Remove extraneous IP-to-state map entries (main's entry in f()'s map)
+4. Link test exe and debug under WinDbg to find exact crash location in FH3
+
+## Files Modified
+
+1. **`src/IRTypes.h`** — `CatchEndOp` struct (done earlier)
+2. **`src/CodeGen_Statements.cpp`** — Continuation label in CatchEnd (done earlier)
+3. **`src/IRConverter.h`** — Funclet prologue/epilogue, catch continuation fixup stubs, FH3 state variable init, `current_function_has_cpp_eh_` flag
+4. **`src/ObjFileWriter.h`** — FuncInfo magic 0x19930522 with all 10 fields including dispUnwindHelp, post-catch PDATA UNWIND_INFO with SizeOfProlog=0
 
 ## Verification
 
 1. Build with MSBuild (Debug/x64)
 2. Copy FlashCppMSVC.exe to FlashCpp.exe
-3. Run specific failing tests first: `test_eh_throw_catchall_ret0.cpp`, `test_eh_twofunc_throw_ret0.cpp`
+3. Run specific failing tests first: `test_eh_throw_catchall_ret0.cpp`, `temp_eh_nonmain_empty_catch_ret0.cpp`
 4. Run full test suite: `tests/run_all_tests.ps1`
 5. Verify no new mismatches or crashes
