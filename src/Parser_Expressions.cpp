@@ -5099,7 +5099,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 
 		// Try to look up the qualified identifier
-		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespace_handle(), qual_id.name());
+		auto identifierType = gSymbolTable.lookup_qualified(qual_id.qualifiedIdentifier());
 		
 		// Check if this is a brace initialization: ns::Template<Args>{}
 		if (template_args.has_value() && current_token_.value() == "{") {
@@ -5832,7 +5832,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			} else {
 				// No template arguments, lookup as regular qualified identifier
-				identifierType = gSymbolTable.lookup_qualified(qual_id.namespace_handle(), qual_id.identifier_token().value());
+				identifierType = gSymbolTable.lookup_qualified(qual_id.qualifiedIdentifier());
 			}
 			
 			FLASH_LOG(Parser, Debug, "Qualified lookup result: {}", identifierType.has_value() ? "found" : "not found");
