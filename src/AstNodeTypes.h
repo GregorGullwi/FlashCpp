@@ -1149,6 +1149,46 @@ struct EnumTypeInfo {
 	}
 };
 
+// Bundles a namespace and identifier so they always travel together.
+// Used by TypeInfo to track the source namespace of template instantiations.
+struct QualifiedIdentifier {
+	NamespaceHandle namespace_handle;  // hierarchical namespace, GLOBAL_NAMESPACE for global
+	StringHandle identifier_handle;    // unqualified name, e.g. "vector"
+
+	bool valid() const { return identifier_handle.handle != 0; }
+	bool hasNamespace() const { return namespace_handle.isValid() && !namespace_handle.isGlobal(); }
+
+	// Construct from a possibly-qualified name like "std::vector".
+	// current_ns is the namespace the code is being parsed in — used to resolve
+	// unqualified names so the namespace context is never lost.
+	static QualifiedIdentifier fromQualifiedName(
+			std::string_view name,
+			NamespaceHandle current_ns) {
+		QualifiedIdentifier result;
+		size_t pos = name.rfind("::");
+		if (pos != std::string_view::npos) {
+			std::string_view ns_part = name.substr(0, pos);
+			// Walk namespace path components (supports nested like "std::chrono")
+			NamespaceHandle ns = NamespaceRegistry::GLOBAL_NAMESPACE;
+			size_t start = 0;
+			while (start < ns_part.size()) {
+				size_t sep = ns_part.find("::", start);
+				std::string_view component = (sep == std::string_view::npos)
+					? ns_part.substr(start) : ns_part.substr(start, sep - start);
+				ns = gNamespaceRegistry.getOrCreateNamespace(ns,
+					StringTable::getOrInternStringHandle(component));
+				start = (sep == std::string_view::npos) ? ns_part.size() : sep + 2;
+			}
+			result.namespace_handle = ns;
+			result.identifier_handle = StringTable::getOrInternStringHandle(name.substr(pos + 2));
+		} else {
+			result.namespace_handle = current_ns;
+			result.identifier_handle = StringTable::getOrInternStringHandle(name);
+		}
+		return result;
+	}
+};
+
 struct TypeInfo
 {
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
@@ -1178,8 +1218,8 @@ struct TypeInfo
 	std::optional<FunctionSignature> function_signature_;
 	
 	// For template instantiations: store metadata to avoid name parsing
-	// If base_template_name_ is valid, this type is a template instantiation
-	StringHandle base_template_name_;  // e.g., "vector" for vector<int>
+	// If base_template_ is valid, this type is a template instantiation
+	QualifiedIdentifier base_template_;  // e.g., {std, "vector"} for std::vector<int>
 	
 	// Lightweight storage for template argument type indices (avoids TemplateTypeArg dependency)
 	// For type arguments: stores TypeIndex (index into gTypeInfo)
@@ -1208,12 +1248,13 @@ struct TypeInfo
 	};
 	
 	// Helper methods for template instantiations
-	bool isTemplateInstantiation() const { return base_template_name_.handle != 0; }
-	StringHandle baseTemplateName() const { return base_template_name_; }
+	bool isTemplateInstantiation() const { return base_template_.valid(); }
+	StringHandle baseTemplateName() const { return base_template_.identifier_handle; }
+	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
 	const InlineVector<TemplateArgInfo, 4>& templateArgs() const { return template_args_; }
 	
-	void setTemplateInstantiationInfo(StringHandle base_template, InlineVector<TemplateArgInfo, 4> args) {
-		base_template_name_ = base_template;
+	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args) {
+		base_template_ = base_template;
 		template_args_ = std::move(args);
 	}
 

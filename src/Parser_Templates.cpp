@@ -1265,7 +1265,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Store template instantiation metadata for O(1) lookup (Phase 6)
 				struct_type_info.setTemplateInstantiationInfo(
-					StringTable::getOrInternStringHandle(template_name),
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 					convertToTemplateArgInfo(template_args)
 				);
 				
@@ -1302,7 +1302,7 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Store template instantiation metadata for O(1) lookup (Phase 6)
 			struct_type_info.setTemplateInstantiationInfo(
-				StringTable::getOrInternStringHandle(template_name),
+				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 				convertToTemplateArgInfo(template_args)
 			);
 
@@ -2549,7 +2549,7 @@ ParseResult Parser::parse_template_declaration() {
 			// This allows constructor detection (e.g., template<typename U> allocator(const allocator<U>&))
 			// to find the base template name and match it against the constructor name
 			struct_type_info.setTemplateInstantiationInfo(
-				StringTable::getOrInternStringHandle(template_name), {});
+				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()), {});
 			
 			// Create StructTypeInfo for this specialization
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
@@ -11406,7 +11406,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	struct_type_info.setTemplateInstantiationInfo(
-		StringTable::getOrInternStringHandle(template_name),
+		QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 		convertToTemplateArgInfo(template_args)
 	);
 	
@@ -12236,7 +12236,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Store template instantiation metadata for O(1) lookup (Phase 6)
 		struct_type_info.setTemplateInstantiationInfo(
-			StringTable::getOrInternStringHandle(template_name),
+			QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 			convertToTemplateArgInfo(template_args)
 		);
 		
@@ -13840,15 +13840,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
-	// IMPORTANT: Use base template name without namespace prefix
-	std::string_view unqualified_template_name = template_name;
-	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
-		unqualified_template_name = template_name.substr(last_colon + 2);
+	// QualifiedIdentifier captures both the namespace and unqualified name.
+	// When template_name is unqualified, derive namespace from class_decl.name()
+	// (the template declaration's struct, which stores the full qualified name).
+	{
+		NamespaceHandle fallback_ns = gSymbolTable.get_current_namespace_handle();
+		if (template_name.find("::") == std::string_view::npos) {
+			// Unqualified template_name — derive namespace from the class declaration name
+			std::string_view decl_name = StringTable::getStringView(class_decl.name());
+			if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
+				fallback_ns = QualifiedIdentifier::fromQualifiedName(decl_name, fallback_ns).namespace_handle;
+			}
+		}
+		struct_type_info.setTemplateInstantiationInfo(
+			QualifiedIdentifier::fromQualifiedName(template_name, fallback_ns),
+			convertToTemplateArgInfo(template_args_to_use)
+		);
 	}
-	struct_type_info.setTemplateInstantiationInfo(
-		StringTable::getOrInternStringHandle(unqualified_template_name),
-		convertToTemplateArgInfo(template_args_to_use)
-	);
 	
 	// Register class template pack sizes in persistent registry for member function template lookup
 	if (has_parameter_pack) {
