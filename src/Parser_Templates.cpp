@@ -2657,6 +2657,7 @@ ParseResult Parser::parse_template_declaration() {
 				}
 			}
 
+
 			// Check for forward declaration: template<typename T> struct Name<T*>;
 			if (peek() == ";"_tok) {
 				advance(); // consume ';'
