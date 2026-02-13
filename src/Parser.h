@@ -726,6 +726,7 @@ private:
         ParseResult parse_member_struct_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member struct/class templates
         ParseResult parse_member_variable_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member variable templates
         ParseResult parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access);  // Helper: Detect and parse member template alias or function
+        ParseResult parse_bitfield_width(std::optional<size_t>& out_width);  // Helper: Parse ': <const-expr>' for bitfields
         // Phase 6: Shared helper for template function declaration parsing
         // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
         // Returns the TemplateFunctionDeclarationNode in out_template_node

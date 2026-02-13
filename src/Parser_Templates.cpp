@@ -1,3 +1,24 @@
+ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width) {
+	if (peek() != ":"_tok) {
+		return ParseResult::success();
+	}
+
+	advance(); // consume ':'
+	auto width_result = parse_expression(4, ExpressionContext::Normal); // Stop before assignment operators.
+	if (width_result.is_error()) {
+		return width_result;
+	}
+	if (width_result.node().has_value()) {
+		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+		if (!eval_result.success() || eval_result.as_int() < 0) {
+			return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
+		}
+		out_width = static_cast<size_t>(eval_result.as_int());
+	}
+	return ParseResult::success();
+}
+
 // Parse template declaration: template<typename T> ...
 // Also handles explicit template instantiation: template void Func<int>(); or template class Container<int>;
 ParseResult Parser::parse_template_declaration() {
@@ -2119,20 +2140,8 @@ ParseResult Parser::parse_template_declaration() {
 					std::optional<size_t> bitfield_width;
 
 					// Handle bitfield declarations: int x : 5;
-					if (peek() == ":"_tok) {
-						advance(); // consume ':'
-						auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (width_result.is_error()) {
-							return width_result;
-						}
-						if (width_result.node().has_value()) {
-							ConstExpr::EvaluationContext ctx(gSymbolTable);
-							auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
-							if (!eval_result.success() || eval_result.as_int() < 0) {
-								return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
-							}
-							bitfield_width = static_cast<size_t>(eval_result.as_int());
-						}
+					if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+						return width_result;
 					}
 
 					// Check for member initialization with '=' (C++11 feature)
@@ -2163,20 +2172,8 @@ ParseResult Parser::parse_template_declaration() {
 
 						std::optional<size_t> additional_bitfield_width;
 						// Handle bitfield declarations: int x, y : 3;
-						if (peek() == ":"_tok) {
-							advance(); // consume ':'
-							auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (width_result.is_error()) {
-								return width_result;
-							}
-							if (width_result.node().has_value()) {
-								ConstExpr::EvaluationContext ctx(gSymbolTable);
-								auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
-								if (!eval_result.success() || eval_result.as_int() < 0) {
-									return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
-								}
-								additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
-							}
+						if (auto width_result = parse_bitfield_width(additional_bitfield_width); width_result.is_error()) {
+							return width_result;
 						}
 
 						// Check for optional initialization
@@ -3439,20 +3436,8 @@ ParseResult Parser::parse_template_declaration() {
 						std::optional<size_t> bitfield_width;
 
 						// Handle bitfield declarations: int x : 5;
-						if (peek() == ":"_tok) {
-							advance(); // consume ':'
-							auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (width_result.is_error()) {
-								return width_result;
-							}
-							if (width_result.node().has_value()) {
-								ConstExpr::EvaluationContext ctx(gSymbolTable);
-								auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
-								if (!eval_result.success() || eval_result.as_int() < 0) {
-									return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
-								}
-								bitfield_width = static_cast<size_t>(eval_result.as_int());
-							}
+						if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+							return width_result;
 						}
 
 						// Check for default initializer
@@ -3491,20 +3476,8 @@ ParseResult Parser::parse_template_declaration() {
 
 							std::optional<size_t> additional_bitfield_width;
 							// Handle bitfield declarations: int x, y : 3;
-							if (peek() == ":"_tok) {
-								advance(); // consume ':'
-								auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-								if (width_result.is_error()) {
-									return width_result;
-								}
-								if (width_result.node().has_value()) {
-									ConstExpr::EvaluationContext ctx(gSymbolTable);
-									auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
-									if (!eval_result.success() || eval_result.as_int() < 0) {
-										return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
-									}
-									additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
-								}
+							if (auto width_result = parse_bitfield_width(additional_bitfield_width); width_result.is_error()) {
+								return width_result;
 							}
 
 							// Check for optional initialization
@@ -6509,18 +6482,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			if (peek() == ":"_tok) {
 				// Bitfield data member
 				std::optional<size_t> bitfield_width;
-				advance(); // consume ':'
-				auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (width_result.is_error()) {
+				if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
 					return width_result;
-				}
-				if (width_result.node().has_value()) {
-					ConstExpr::EvaluationContext ctx(gSymbolTable);
-					auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
-					if (!eval_result.success() || eval_result.as_int() < 0) {
-						return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
-					}
-					bitfield_width = static_cast<size_t>(eval_result.as_int());
 				}
 
 				std::optional<ASTNode> init;
@@ -6887,18 +6850,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		} else if (peek() == ":"_tok) {
 			// Bitfield data member
 			std::optional<size_t> bitfield_width;
-			advance(); // consume ':'
-			auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (width_result.is_error()) {
+			if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
 				return width_result;
-			}
-			if (width_result.node().has_value()) {
-				ConstExpr::EvaluationContext ctx(gSymbolTable);
-				auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
-				if (!eval_result.success() || eval_result.as_int() < 0) {
-					return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
-				}
-				bitfield_width = static_cast<size_t>(eval_result.as_int());
 			}
 			std::optional<ASTNode> init;
 			if (peek() == "="_tok) {
