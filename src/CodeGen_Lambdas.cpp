@@ -1126,6 +1126,37 @@
 		return &seh_context_stack_.back();
 	}
 
+	// Emit SehFinallyCall for all enclosing __try/__finally blocks before a return statement.
+	// Walks from innermost to outermost, calling each __finally funclet in order.
+	// Returns true if any finally calls were emitted.
+	bool emitSehFinallyCallsBeforeReturn(const Token& token) {
+		bool emitted = false;
+		// Walk from innermost (back) to outermost (front)
+		for (int i = static_cast<int>(seh_context_stack_.size()) - 1; i >= 0; --i) {
+			const SehContext& ctx = seh_context_stack_[i];
+			if (ctx.has_finally) {
+				// Generate a unique post-finally label for this return point
+				static size_t seh_return_finally_counter = 0;
+				size_t id = seh_return_finally_counter++;
+
+				StringBuilder post_sb;
+				post_sb.append("__seh_ret_finally_").append(id);
+				std::string_view post_label = post_sb.commit();
+
+				SehFinallyCallOp call_op;
+				call_op.funclet_label = ctx.finally_label;
+				call_op.end_label = post_label;
+				ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), token));
+
+				// Emit the post-finally label so execution continues here after the funclet returns
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(post_label)}, token));
+
+				emitted = true;
+			}
+		}
+		return emitted;
+	}
+
 	// Generate just the function declaration for a template instantiation (without body)
 	// This is called immediately when a template call is detected, so the IR converter
 	// knows the full function signature before the call is converted to object code
