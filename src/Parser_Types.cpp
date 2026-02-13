@@ -1707,7 +1707,7 @@ ParseResult Parser::parse_type_specifier()
 							auto parent_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
 							if (parent_type_it != gTypesByName.end() && parent_type_it->second->isTemplateInstantiation()) {
 								StringBuilder template_member_builder;
-								std::string_view template_member_name = template_member_builder.append(StringTable::getStringView(parent_type_it->second->baseTemplateName()))
+								std::string_view template_member_name = template_member_builder.append(parent_type_it->second->baseTemplateName())
 									.append("::")
 									.append(member_name)
 									.commit();
