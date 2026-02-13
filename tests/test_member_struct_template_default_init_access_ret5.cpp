@@ -7,6 +7,6 @@ struct Outer {
 };
 
 int main() {
-	Outer<int>::Inner<int> value;
+	Outer<int>::Inner<int> value{};
 	return value.x;
 }

@@ -1697,7 +1697,7 @@ ParseResult Parser::parse_type_specifier()
 					
 					// Check if this is a member class template (e.g., Outer<int>::Inner<int>)
 					if (has_template_args) {
-						std::string member_template_name = std::string(qualified_type_name);
+						std::string member_template_name{qualified_type_name};
 						auto member_template_opt = gTemplateRegistry.lookupTemplate(member_template_name);
 						
 						// Member templates are registered on the primary class template name (e.g., Outer::Inner),
@@ -1708,9 +1708,9 @@ ParseResult Parser::parse_type_specifier()
 							if (parent_type_it != gTypesByName.end() && parent_type_it->second->isTemplateInstantiation()) {
 								StringBuilder template_member_builder;
 								template_member_builder.append(StringTable::getStringView(parent_type_it->second->baseTemplateName()))
-								                      .append("::")
-								                      .append(member_name);
-								member_template_name = std::string(template_member_builder.commit());
+									.append("::")
+									.append(member_name);
+								member_template_name.assign(template_member_builder.commit());
 								member_template_opt = gTemplateRegistry.lookupTemplate(member_template_name);
 							}
 						}
@@ -3253,7 +3253,6 @@ ParseResult Parser::create_function_from_header(
 
 	return func_node;
 }
-
 
 // Phase 5: Unified function body parsing
 // This method handles all the common body parsing logic including:
