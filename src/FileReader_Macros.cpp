@@ -210,6 +210,36 @@
 									continue;
 								}
 								
+								// Per C++ standard 6.10.3.1: Determine which parameters are operands of # or ##
+								// Arguments for such parameters must NOT be pre-expanded
+								auto is_separator = [](char c) {
+									return !std::isalnum(static_cast<unsigned char>(c)) && c != '_';
+								};
+								auto paramAdjacentToHashHash = [&](const std::string& param_name, const std::string& body) -> bool {
+									size_t search_pos = 0;
+									while (search_pos < body.size()) {
+										size_t found = body.find(param_name, search_pos);
+										if (found == std::string::npos) break;
+										// Check if this is a whole-word match
+										bool start_ok = (found == 0) || is_separator(body[found - 1]);
+										bool end_ok = (found + param_name.size() >= body.size()) || is_separator(body[found + param_name.size()]);
+										if (start_ok && end_ok) {
+											// Check if preceded by ## (skip whitespace)
+											size_t before = found;
+											while (before > 0 && std::isspace(static_cast<unsigned char>(body[before - 1]))) --before;
+											if (before >= 2 && body[before - 2] == '#' && body[before - 1] == '#')
+												return true;
+											// Check if followed by ## (skip whitespace)
+											size_t after = found + param_name.size();
+											while (after < body.size() && std::isspace(static_cast<unsigned char>(body[after]))) ++after;
+											if (after + 1 < body.size() && body[after] == '#' && body[after + 1] == '#')
+												return true;
+										}
+										search_pos = found + 1;
+									}
+									return false;
+								};
+								
 								for (size_t i = 0; i < defineDirective->args.size(); ++i) {
 									// Handle stringification (#) - uses UNEXPANDED argument per C++ standard
 									size_t stringify_pos = 0;
@@ -230,9 +260,15 @@
 											std::format("\"{0}\"", args[i]));
 										stringify_pos += args[i].length() + 2;
 									}
-									// Replace argument - per C++ standard, arguments ARE expanded before substitution
-									// (except for # and ## which we handled above)
-									replaceAll(replace_str, defineDirective->args[i], args[i]);
+									// Per C++ standard: arguments NOT adjacent to # or ## are expanded before substitution
+									// Arguments adjacent to ## are substituted unexpanded (token pasting operates on raw tokens)
+									std::string_view arg_value = args[i];
+									std::string expanded_arg;
+									if (!paramAdjacentToHashHash(defineDirective->args[i], replace_str)) {
+										expanded_arg = expandMacros(std::string(arg_value), expanding_macros);
+										arg_value = expanded_arg;
+									}
+									replaceAll(replace_str, defineDirective->args[i], arg_value);
 								}
 								
 								pos = args_end + 1;  // Move past the closing paren
@@ -241,6 +277,20 @@
 							replace_str = function_directive->getBody();
 						}
 						
+						// Per C++ standard 15.6.3: Process ## token-pasting BEFORE rescanning
+						// This must happen after argument substitution but before macro expansion
+						{
+							size_t pp = 0;
+							while ((pp = replace_str.find("##", pp)) != std::string::npos) {
+								size_t wb = pp;
+								while (wb > 0 && std::isspace(static_cast<unsigned char>(replace_str[wb - 1]))) --wb;
+								size_t wa = pp + 2;
+								while (wa < replace_str.size() && std::isspace(static_cast<unsigned char>(replace_str[wa]))) ++wa;
+								replace_str = replace_str.substr(0, wb) + replace_str.substr(wa);
+								pp = wb;  // Continue scanning from the paste point
+							}
+						}
+
 						// Recursively expand the replacement (with this macro marked as expanding)
 						auto new_expanding = expanding_macros;
 						new_expanding.insert(ident_str);

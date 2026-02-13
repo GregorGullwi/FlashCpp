@@ -432,8 +432,11 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
                 while (i < n && is_whitespace(argsStr[i]))
                     i++;
 
-                if (i >= n)
+                if (i >= n) {
+                    // Empty trailing argument after comma (e.g., FOO(a, ) has args "a" and "")
+                    args.emplace_back(std::string_view{});
                     return args;
+                }
 
                 arg_start = i;
                 i--; // Decrement because the for loop will increment it
