@@ -4897,7 +4897,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																		if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 																			bool val = std::get<BoolLiteralNode>(init_expr).value();
-																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 																		} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 																			const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
 																			const auto& val = lit.value();
@@ -6811,7 +6811,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																				const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																				if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 																					bool val = std::get<BoolLiteralNode>(init_expr).value();
-																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 																				} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 																					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
 																					const auto& val = lit.value();
