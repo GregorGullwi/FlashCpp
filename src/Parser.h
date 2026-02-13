@@ -368,6 +368,7 @@ private:
                 std::string_view struct_name;  // Points directly into source text from lexer token
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
                 StructTypeInfo* local_struct_info = nullptr;  // Pointer to StructTypeInfo being built (for static member lookup)
+                NamespaceHandle namespace_handle = NamespaceHandle{0};  // Namespace where the struct is declared
                 std::vector<StringHandle> imported_members;  // Members imported via using-declarations
                 bool has_inherited_constructors = false;  // True if constructors are inherited from base class
         };

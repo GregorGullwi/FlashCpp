@@ -2748,7 +2748,13 @@ ParseResult Parser::parse_template_declaration() {
 			// BUGFIX: Pass local_struct_info for static member visibility in template partial specializations
 			// This fixes the issue where static constexpr members (e.g., __g, __d2) are not visible
 			// when used as template arguments in typedef declarations within the same struct body
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get(), {}});
+			struct_parsing_context_stack_.push_back({
+				StringTable::getStringView(instantiated_name),
+				&struct_ref,
+				struct_info.get(),
+				gSymbolTable.get_current_namespace_handle(),
+				{}
+			});
 			
 			// Parse class body (same as full specialization)
 			while (!peek().is_eof() && peek() != "}"_tok) {
@@ -19579,20 +19585,41 @@ ASTNode Parser::substituteTemplateParameters(
 				if (!is_known_template_param && !struct_parsing_context_stack_.empty()) {
 					for (auto sit = struct_parsing_context_stack_.rbegin(); sit != struct_parsing_context_stack_.rend() && !is_known_template_param; ++sit) {
 						std::string_view struct_name = sit->struct_name;
-						// Try multiple name variations: direct, with namespace prefix
-						std::array<std::string_view, 3> names_to_try = {struct_name, {}, {}};
-						size_t num_names = 1;
-						NamespaceHandle ns = gSymbolTable.get_current_namespace_handle();
-						if (!ns.isGlobal()) {
-							StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns, StringTable::getOrInternStringHandle(struct_name));
-							names_to_try[num_names++] = StringTable::getStringView(qualified);
+						// Try multiple lookup candidates following unqualified lookup rules:
+						// direct name, template base name for instantiated classes, and each enclosing namespace.
+						std::vector<std::string_view> names_to_try;
+						names_to_try.reserve(8);
+						auto add_name_to_try = [&names_to_try](std::string_view name) {
+							if (name.empty()) {
+								return;
+							}
+							for (const auto existing : names_to_try) {
+								if (existing == name) {
+									return;
+								}
+							}
+							names_to_try.push_back(name);
+						};
+
+						add_name_to_try(struct_name);
+						size_t hash_pos = struct_name.find('$');
+						if (hash_pos != std::string_view::npos) {
+							add_name_to_try(struct_name.substr(0, hash_pos));
 						}
-						// Also try "std::" + name as a common case
-						StringBuilder ns_builder;
-						ns_builder.append("std::").append(struct_name);
-						names_to_try[num_names++] = ns_builder.commit();
+
+						NamespaceHandle ns = sit->namespace_handle.isValid() ? sit->namespace_handle : gSymbolTable.get_current_namespace_handle();
+						NamespaceHandle walk_ns = ns;
+						while (walk_ns.isValid() && !walk_ns.isGlobal()) {
+							const size_t current_name_count = names_to_try.size();
+							for (size_t i = 0; i < current_name_count; ++i) {
+								StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+									walk_ns, StringTable::getOrInternStringHandle(names_to_try[i]));
+								add_name_to_try(StringTable::getStringView(qualified));
+							}
+							walk_ns = gNamespaceRegistry.getParent(walk_ns);
+						}
 						
-						for (size_t ni = 0; ni < num_names && !is_known_template_param; ++ni) {
+						for (size_t ni = 0; ni < names_to_try.size() && !is_known_template_param; ++ni) {
 							// Check ALL overloads, not just the first one
 							const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(names_to_try[ni]);
 							if (all_tmpls) {
