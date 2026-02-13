@@ -1,8 +1,8 @@
 // Test using declarations with namespace scope operator
 
-typedef unsigned long size_t;
-struct __flashcpp_file;
-typedef __flashcpp_file FILE;
+typedef unsigned long long size_t;
+struct flashcpp_file_tag;
+typedef flashcpp_file_tag FILE;
 
 namespace std {
     using ::size_t;
