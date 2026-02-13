@@ -1308,6 +1308,9 @@ public:
 			}
 			
 			// Magic number for x64 FH3 FuncInfo layout.
+			// 0x19930522 = FuncInfo with 10 fields (40 bytes) including dispUnwindHelp,
+			// pESTypeList, and EHFlags. Requires a stack-based state variable at
+			// [establisher_frame + dispUnwindHelp], initialized to -2 by the prologue.
 			uint32_t magic = 0x19930522;
 			xdata.push_back(static_cast<char>(magic & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 8) & 0xFF));
@@ -1367,6 +1370,15 @@ public:
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
+
+			// dispUnwindHelp - displacement from establisher frame to the state variable.
+			// Our establisher frame = RBP (FrameOffset=0), state variable at [rbp-8].
+			// So dispUnwindHelp = -8 (0xFFFFFFF8).
+			int32_t disp_unwind_help = -8;
+			xdata.push_back(static_cast<char>(disp_unwind_help & 0xFF));
+			xdata.push_back(static_cast<char>((disp_unwind_help >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((disp_unwind_help >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((disp_unwind_help >> 24) & 0xFF));
 
 			// pESTypeList - dynamic exception specification type list (unused)
 			xdata.push_back(0x00);

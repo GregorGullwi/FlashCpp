@@ -4899,7 +4899,16 @@ private:
 
 		// Clear temp_var_sizes for this function
 		temp_var_sizes_.clear();
-		
+
+		// Pre-scan: detect C++ exception handling (try/catch) in this function
+		current_function_has_cpp_eh_ = false;
+		for (const auto& instruction : it->second) {
+			if (instruction.getOpcode() == IrOpcode::TryBegin) {
+				current_function_has_cpp_eh_ = true;
+				break;
+			}
+		}
+
 		// Track maximum outgoing call argument space needed
 		size_t max_outgoing_arg_bytes = 0;
 
@@ -5085,7 +5094,10 @@ private:
 		// Additional parameters are passed on the stack at positive RBP offsets
 		// Local variables start AFTER the parameter home space
 		int param_home_space = std::max(static_cast<int>(param_count), 4) * 8;  // At least 32 bytes for register parameters
-		int_fast32_t stack_offset = -param_home_space;
+		// For C++ EH functions, reserve [rbp-8] for the FH3 unwind help state variable.
+		// Shift parameter home space down by 8 bytes so it starts at [rbp-16].
+		int eh_state_reserve = (current_function_has_cpp_eh_ && !std::is_same_v<TWriterClass, ElfFileWriter>) ? 8 : 0;
+		int_fast32_t stack_offset = -(param_home_space + eh_state_reserve);
 		
 		for (const VarDecl& local_var : local_vars) {
 			// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
@@ -9544,6 +9556,22 @@ private:
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
+
+		// For C++ EH functions on Windows, initialize the FH3 unwind help state variable at [rbp-8] to -2.
+		// FH3 reads this via dispUnwindHelp; value -2 means "use IP-to-state map" for lookup.
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (current_function_has_cpp_eh_) {
+				// mov qword [rbp-8], -2  (11 bytes: 48 C7 45 F8 FE FF FF FF)
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0xC7); // MOV r/m64, imm32
+				textSectionData.push_back(0x45); // [rbp + disp8]
+				textSectionData.push_back(0xF8); // disp8 = -8
+				textSectionData.push_back(0xFE); // imm32 = 0xFFFFFFFE = -2
+				textSectionData.push_back(0xFF);
+				textSectionData.push_back(0xFF);
+				textSectionData.push_back(0xFF);
+			}
+		}
 
 		// For RBP-relative addressing, we start with negative offset after total allocated space
 		if (variable_scopes.empty()) {
@@ -17176,6 +17204,7 @@ private:
 	CatchHandler* current_catch_handler_ = nullptr;  // Currently active catch handler being processed
 	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF).
 	bool in_catch_funclet_ = false;  // Tracks whether codegen is currently inside a Windows catch funclet.
+	bool current_function_has_cpp_eh_ = false;  // Pre-scanned: function has C++ try/catch blocks (needs FH3 state variable).
 	int32_t catch_funclet_return_slot_offset_ = 0;  // Parent-frame spill slot used to preserve return value across catch funclet continuation setup.
 	int32_t catch_funclet_return_flag_slot_offset_ = 0;  // Parent-frame flag slot indicating continuation should return using saved catch return value.
 	uint32_t catch_funclet_return_label_counter_ = 0;  // Monotonic counter for synthetic catch return trampoline labels.
