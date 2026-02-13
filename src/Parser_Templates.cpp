@@ -2121,7 +2121,7 @@ ParseResult Parser::parse_template_declaration() {
 					// Handle bitfield declarations: int x : 5;
 					if (peek() == ":"_tok) {
 						advance(); // consume ':'
-						auto width_result = parse_expression(4, ExpressionContext::Normal);
+						auto width_result = parse_expression(4, ExpressionContext::Normal); // Stop before assignment operators.
 						if (width_result.is_error()) {
 							return width_result;
 						}
@@ -2165,7 +2165,7 @@ ParseResult Parser::parse_template_declaration() {
 						// Handle bitfield declarations: int x, y : 3;
 						if (peek() == ":"_tok) {
 							advance(); // consume ':'
-							auto width_result = parse_expression(4, ExpressionContext::Normal);
+							auto width_result = parse_expression(4, ExpressionContext::Normal); // Stop before assignment operators.
 							if (width_result.is_error()) {
 								return width_result;
 							}
@@ -3441,7 +3441,7 @@ ParseResult Parser::parse_template_declaration() {
 						// Handle bitfield declarations: int x : 5;
 						if (peek() == ":"_tok) {
 							advance(); // consume ':'
-							auto width_result = parse_expression(4, ExpressionContext::Normal);
+							auto width_result = parse_expression(4, ExpressionContext::Normal); // Stop before assignment operators.
 							if (width_result.is_error()) {
 								return width_result;
 							}
@@ -3493,7 +3493,7 @@ ParseResult Parser::parse_template_declaration() {
 							// Handle bitfield declarations: int x, y : 3;
 							if (peek() == ":"_tok) {
 								advance(); // consume ':'
-								auto width_result = parse_expression(4, ExpressionContext::Normal);
+								auto width_result = parse_expression(4, ExpressionContext::Normal); // Stop before assignment operators.
 								if (width_result.is_error()) {
 									return width_result;
 								}
@@ -6510,7 +6510,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				// Bitfield data member
 				std::optional<size_t> bitfield_width;
 				advance(); // consume ':'
-				auto width_result = parse_expression(4, ExpressionContext::Normal);
+				auto width_result = parse_expression(4, ExpressionContext::Normal); // Stop before assignment operators.
 				if (width_result.is_error()) {
 					return width_result;
 				}
@@ -6888,7 +6888,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			// Bitfield data member
 			std::optional<size_t> bitfield_width;
 			advance(); // consume ':'
-			auto width_result = parse_expression(4, ExpressionContext::Normal);
+			auto width_result = parse_expression(4, ExpressionContext::Normal); // Stop before assignment operators.
 			if (width_result.is_error()) {
 				return width_result;
 			}
