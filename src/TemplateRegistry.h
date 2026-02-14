@@ -813,7 +813,7 @@ struct TemplatePattern {
 	// For example, pattern T& matches int&, float&, etc.
 	// Returns true if match succeeds, and fills param_substitutions with T->int mapping
 	bool matches(const std::vector<TemplateTypeArg>& concrete_args, 
-	             std::unordered_map<std::string, TemplateTypeArg>& param_substitutions) const
+	             std::unordered_map<StringHandle, TemplateTypeArg, TransparentStringHash, TransparentStringEqual>& param_substitutions) const
 	{
 		FLASH_LOG(Templates, Trace, "      matches(): pattern has ", pattern_args.size(), " args, concrete has ", concrete_args.size(), " args");
 		
@@ -987,14 +987,14 @@ struct TemplatePattern {
 			// Find the template parameter name for this pattern arg
 			// First, try to get the name from the pattern arg's type_index (for reused parameters)
 			// For is_same<T, T>, both pattern args point to the same TypeInfo for T
-			std::string param_name;
+			StringHandle param_name;
 			bool found_param = false;
 			
 			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
 				const TypeInfo& param_type_info = gTypeInfo[pattern_arg.type_index];
-				param_name = std::string(StringTable::getStringView(param_type_info.name()));
+				param_name = param_type_info.name();
 				found_param = true;
-				FLASH_LOG(Templates, Trace, "  Found parameter name '", param_name, "' from pattern_arg.type_index=", pattern_arg.type_index);
+				FLASH_LOG(Templates, Trace, "  Found parameter name '", StringTable::getStringView(param_name), "' from pattern_arg.type_index=", pattern_arg.type_index);
 			}
 			
 			if (!found_param) {
@@ -1007,7 +1007,7 @@ struct TemplatePattern {
 				
 				if (template_params[param_index].is<TemplateParameterNode>()) {
 					const TemplateParameterNode& template_param = template_params[param_index].as<TemplateParameterNode>();
-					param_name = std::string(template_param.name());
+					param_name = template_param.nameHandle();
 					found_param = true;
 				}
 			
@@ -1024,15 +1024,15 @@ struct TemplatePattern {
 			if (it != param_substitutions.end()) {
 				// Parameter already bound - check consistency of BASE TYPE only
 				if (it->second.base_type != concrete_arg.base_type) {
-					FLASH_LOG(Templates, Trace, "  FAILED: Inconsistent substitution for parameter ", param_name);
+					FLASH_LOG(Templates, Trace, "  FAILED: Inconsistent substitution for parameter ", StringTable::getStringView(param_name));
 					return false;  // Inconsistent substitution (different base types)
 				}
-				FLASH_LOG(Templates, Trace, "  SUCCESS: Reused parameter ", param_name, " - consistency check passed");
+				FLASH_LOG(Templates, Trace, "  SUCCESS: Reused parameter ", StringTable::getStringView(param_name), " - consistency check passed");
 				// Don't increment param_index - we reused an existing parameter binding
 			} else {
 				// Bind this parameter to the concrete type
 				param_substitutions[param_name] = concrete_arg;
-				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", param_name, " to concrete type");
+				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", StringTable::getStringView(param_name), " to concrete type");
 				// Increment param_index since we bound a new template parameter
 				++param_index;
 			}
@@ -1726,7 +1726,7 @@ public:
 		for (size_t i = 0; i < patterns.size(); ++i) {
 			const auto& pattern = patterns[i];
 			FLASH_LOG(Templates, Debug, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
-			std::unordered_map<std::string, TemplateTypeArg> substitutions;
+			std::unordered_map<StringHandle, TemplateTypeArg, TransparentStringHash, TransparentStringEqual> substitutions;
 			if (pattern.matches(concrete_args, substitutions)) {
 				FLASH_LOG(Templates, Debug, "      Pattern #", i, " MATCHES!");
 				int spec = pattern.specificity();
@@ -1769,7 +1769,7 @@ public:
 		for (size_t i = 0; i < patterns.size(); ++i) {
 			const auto& pattern = patterns[i];
 			FLASH_LOG(Templates, Debug, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
-			std::unordered_map<std::string, TemplateTypeArg> substitutions;
+			std::unordered_map<StringHandle, TemplateTypeArg, TransparentStringHash, TransparentStringEqual> substitutions;
 			if (pattern.matches(concrete_args, substitutions)) {
 				FLASH_LOG(Templates, Debug, "      Pattern #", i, " MATCHES!");
 				int spec = pattern.specificity();
