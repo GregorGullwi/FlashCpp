@@ -3587,14 +3587,22 @@ public:
 		ASTNode body,
 		std::optional<ASTNode> return_type = std::nullopt,
 		Token lambda_token = Token(),
-		bool is_mutable = false)
+		bool is_mutable = false,
+		std::vector<std::string_view> template_params = {},
+		bool is_noexcept = false,
+		bool is_constexpr = false,
+		bool is_consteval = false)
 		: captures_(std::move(captures)),
 		  parameters_(std::move(parameters)),
 		  body_(body),
 		  return_type_(return_type),
 		  lambda_token_(lambda_token),
 		  lambda_id_(next_lambda_id_++),
-		  is_mutable_(is_mutable) {}
+		  is_mutable_(is_mutable),
+		  template_params_(std::move(template_params)),
+		  is_noexcept_(is_noexcept),
+		  is_constexpr_(is_constexpr),
+		  is_consteval_(is_consteval) {}
 
 	const std::vector<LambdaCaptureNode>& captures() const { return captures_; }
 	const std::vector<ASTNode>& parameters() const { return parameters_; }
@@ -3603,6 +3611,11 @@ public:
 	const Token& lambda_token() const { return lambda_token_; }
 	size_t lambda_id() const { return lambda_id_; }
 	bool is_mutable() const { return is_mutable_; }
+	const std::vector<std::string_view>& template_params() const { return template_params_; }
+	bool has_template_params() const { return !template_params_.empty(); }
+	bool is_noexcept() const { return is_noexcept_; }
+	bool is_constexpr() const { return is_constexpr_; }
+	bool is_consteval() const { return is_consteval_; }
 
 	// Generate a unique name for the lambda's generated function
 	StringHandle generate_lambda_name() const {
@@ -3617,6 +3630,10 @@ private:
 	Token lambda_token_;  // For error reporting
 	size_t lambda_id_;    // Unique ID for this lambda
 	bool is_mutable_;     // Whether the lambda is marked as mutable
+	std::vector<std::string_view> template_params_;  // C++20 template lambda params
+	bool is_noexcept_;    // Whether the lambda is noexcept
+	bool is_constexpr_;   // Whether the lambda is constexpr
+	bool is_consteval_;   // Whether the lambda is consteval
 
 	static inline size_t next_lambda_id_ = 0;  // Counter for generating unique IDs
 };

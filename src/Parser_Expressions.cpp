@@ -9520,12 +9520,69 @@ ParseResult Parser::parse_lambda_expression() {
         // Note: params.is_variadic could be used for variadic lambdas (C++14+)
     }
 
-    // Parse optional mutable keyword
+    // Parse optional lambda specifiers (C++20): mutable, constexpr, consteval, noexcept
+    // Order per standard: mutable? constexpr? noexcept? -> type?
     bool is_mutable = false;
     if (peek() == "mutable"_tok) {
         advance(); // consume 'mutable'
         is_mutable = true;
     }
+
+    // Parse optional constexpr/consteval specifiers (C++17/C++20)
+    bool lambda_is_constexpr = false;
+    bool lambda_is_consteval = false;
+    if (peek() == "constexpr"_tok) {
+        advance(); // consume 'constexpr'
+        lambda_is_constexpr = true;
+    } else if (peek() == "consteval"_tok) {
+        advance(); // consume 'consteval'
+        lambda_is_consteval = true;
+    }
+
+    // Parse optional noexcept specifier (C++20)
+    bool lambda_is_noexcept = false;
+    if (peek() == "noexcept"_tok) {
+        advance(); // consume 'noexcept'
+        lambda_is_noexcept = true;
+        // Handle noexcept(expr) form
+        if (peek() == "("_tok) {
+            advance(); // consume '('
+            // Skip the noexcept expression
+            int paren_depth = 1;
+            while (!peek().is_eof() && paren_depth > 0) {
+                if (peek() == "("_tok) paren_depth++;
+                else if (peek() == ")"_tok) paren_depth--;
+                if (paren_depth > 0) advance();
+            }
+            consume(")"_tok);
+        }
+    }
+
+    // Skip optional requires clause (C++20)
+    if (peek() == "requires"_tok) {
+        advance(); // consume 'requires'
+        // Skip the requires expression/clause
+        if (peek() == "("_tok) {
+            // requires(expr) form
+            advance(); // consume '('
+            int paren_depth = 1;
+            while (!peek().is_eof() && paren_depth > 0) {
+                if (peek() == "("_tok) paren_depth++;
+                else if (peek() == ")"_tok) paren_depth--;
+                if (paren_depth > 0) advance();
+            }
+            consume(")"_tok);
+        } else {
+            // Simple requires constraint expression (e.g., requires SomeConcept<T>)
+            // Skip tokens until we reach '->' or '{'
+            while (!peek().is_eof() && peek() != "->"_tok && peek() != "{"_tok) {
+                advance();
+            }
+        }
+    }
+
+    // Skip C++20 attributes on lambda (e.g., [[nodiscard]])
+    skip_cpp_attributes();
 
     // Parse optional return type (-> type)
     std::optional<ASTNode> return_type;
@@ -9812,7 +9869,11 @@ ParseResult Parser::parse_lambda_expression() {
         *body_result.node(),
         return_type,
         lambda_token,
-        is_mutable
+        is_mutable,
+        std::move(template_param_names),
+        lambda_is_noexcept,
+        lambda_is_constexpr,
+        lambda_is_consteval
     );
 
     // Register the lambda closure type in the type system immediately
@@ -10348,6 +10409,9 @@ ParseResult Parser::parse_switch_statement() {
                 return ParseResult::error("Expected ':' after case value", current_token_);
             }
 
+            // Skip C++20 [[likely]]/[[unlikely]] attributes after case label
+            skip_cpp_attributes();
+
             // Parse statements until next case/default/closing brace
             // We collect all statements for this case into a sub-block
             auto [case_block_node, case_block_ref] = create_node_ref(BlockNode());
@@ -10382,6 +10446,9 @@ ParseResult Parser::parse_switch_statement() {
             if (!consume(":"_tok)) {
                 return ParseResult::error("Expected ':' after 'default'", current_token_);
             }
+
+            // Skip C++20 [[likely]]/[[unlikely]] attributes after default label
+            skip_cpp_attributes();
 
             // Parse statements until next case/default/closing brace
             auto [default_block_node, default_block_ref] = create_node_ref(BlockNode());

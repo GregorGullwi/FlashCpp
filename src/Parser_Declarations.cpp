@@ -1837,7 +1837,7 @@ ParseResult Parser::parse_declaration(FlashCpp::DeclarationContext context)
 		case FlashCpp::DeclarationContext::SwitchInit:
 			// Block scope uses parse_variable_declaration
 			// It handles: local variables, direct init, structured bindings, and now also
-			// function declarations (delegated via Phase 2's looks_like_function_parameters)
+			// function declarations (delegated via looks_like_function_parameters)
 			return parse_variable_declaration();
 			
 		case FlashCpp::DeclarationContext::ClassMember:
@@ -1949,6 +1949,22 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name succeeded. current_token={}, peek={}", 
 		std::string(current_token_.value()),
 		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+
+	// Handle structured bindings (e.g., auto [a, b] = expr;)
+	// parse_type_and_name may return a StructuredBindingNode instead of a DeclarationNode
+	if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<StructuredBindingNode>()) {
+		// Validate: structured bindings cannot have storage class specifiers
+		if (specs.storage_class != StorageClass::None) {
+			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", current_token_);
+		}
+		if (is_constexpr) {
+			return ParseResult::error("Structured bindings cannot be constexpr", current_token_);
+		}
+		if (is_constinit) {
+			return ParseResult::error("Structured bindings cannot be constinit", current_token_);
+		}
+		return saved_position.success(type_and_name_result.node().value());
+	}
 
 	// Check for out-of-line member function definition: ClassName::functionName(...)
 	// Pattern: ReturnType ClassName::functionName(...) { ... }
@@ -2653,46 +2669,42 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 			initializer = init_list_result.node();
 		} else if (peek() == "("_tok) {
-			// Constructor-style initialization: Type var(args)
-			// e.g., constexpr Point p1(10, 20);
-			// Note: For global scope, we create a ConstructorCallNode instead of InitializerListNode
-			// because the semantics are different (constructor call vs direct init)
-			Token paren_token = peek_info(); // Save '(' token for called_from location
-			
-			// Parse the argument list
-			advance(); // consume '('
-			ChunkedVector<ASTNode> arguments;
-			
-			while (!peek().is_eof() && peek() != ")"_tok) {
-				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (arg_result.is_error()) {
-					return arg_result;
+			// Direct initialization: Type var(args)
+			// At global scope with struct types, use ConstructorCallNode for constexpr evaluation.
+			// At block scope, use InitializerListNode consistent with parse_variable_declaration.
+			bool is_global_scope = (gSymbolTable.get_current_scope_type() == ScopeType::Global);
+			if (is_global_scope && type_specifier.type() == Type::Struct) {
+				Token paren_token = peek_info();
+				advance(); // consume '('
+				ChunkedVector<ASTNode> arguments;
+				while (!peek().is_eof() && peek() != ")"_tok) {
+					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					if (auto arg_node = arg_result.node()) {
+						arguments.push_back(*arg_node);
+					}
+					if (peek() == ","_tok) {
+						advance();
+					} else {
+						break;
+					}
 				}
-				if (auto arg_node = arg_result.node()) {
-					arguments.push_back(*arg_node);
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 				}
-				
-				if (peek() == ","_tok) {
-					advance(); // consume ','
+				ASTNode type_node_copy = decl_node.type_node();
+				initializer = ASTNode::emplace_node<ConstructorCallNode>(
+					type_node_copy, std::move(arguments), paren_token);
+			} else {
+				auto init_result = parse_direct_initialization();
+				if (init_result.has_value()) {
+					initializer = init_result;
 				} else {
-					break;
+					return ParseResult::error("Expected ')' after direct initialization arguments", current_token_);
 				}
 			}
-			
-			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after constructor arguments", current_token_);
-			}
-			
-			// Create a ConstructorCallNode representing the constructor call
-			// The type_node is the TypeSpecifierNode from the declaration
-			ASTNode type_node_copy = decl_node.type_node();
-			auto ctor_call_node = ASTNode::emplace_node<ConstructorCallNode>(
-				type_node_copy, 
-				std::move(arguments),
-				paren_token
-			);
-			
-			initializer = ctor_call_node;
 		}
 
 		// Create a global variable declaration node for the first variable
@@ -2799,42 +2811,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 						return ParseResult::error("Failed to parse initializer expression", current_token_);
 					}
 				} else if (peek() == "("_tok) {
-					// Constructor-style initialization for comma-separated declaration: Type var1, var2(args)
-					Token paren_token = peek_info(); // Save '(' token for called_from location
-					
-					// Parse the argument list
-					advance(); // consume '('
-					ChunkedVector<ASTNode> arguments;
-					
-					while (!peek().is_eof() && peek() != ")"_tok) {
-						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
-						if (auto arg_node = arg_result.node()) {
-							arguments.push_back(*arg_node);
-						}
-						
-						if (peek() == ","_tok) {
-							advance(); // consume ','
-						} else {
-							break;
-						}
+					// Direct initialization for comma-separated declaration: Type var1, var2(args)
+					auto init_result = parse_direct_initialization();
+					if (init_result.has_value()) {
+						next_initializer = init_result;
+					} else {
+						return ParseResult::error("Expected ')' after direct initialization arguments", current_token_);
 					}
-					
-					if (!consume(")"_tok)) {
-						return ParseResult::error("Expected ')' after constructor arguments", current_token_);
-					}
-					
-					// Create a ConstructorCallNode representing the constructor call
-					ASTNode type_node_copy = next_decl.type_node();
-					auto ctor_call_node = ASTNode::emplace_node<ConstructorCallNode>(
-						type_node_copy, 
-						std::move(arguments),
-						paren_token
-					);
-					
-					next_initializer = ctor_call_node;
 				} else if (peek() == "{"_tok) {
 					// Direct list initialization for comma-separated declaration: Type var1, var2{args}
 					ParseResult init_list_result = parse_brace_initializer(type_specifier);
