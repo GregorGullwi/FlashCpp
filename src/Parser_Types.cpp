@@ -1935,7 +1935,7 @@ ParseResult Parser::parse_type_specifier()
 					// Set template instantiation metadata so isTemplateInstantiation() returns true
 					// This is needed for deferred alias template detection
 					auto template_args_info = convertToTemplateArgInfo(template_args.value());
-					type_info.setTemplateInstantiationInfo(StringTable::getOrInternStringHandle(type_name), template_args_info);
+					type_info.setTemplateInstantiationInfo(QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()), template_args_info);
 					FLASH_LOG_FORMAT(Templates, Debug, "Set template instantiation metadata for dependent placeholder: base='{}', args={}",
 					                 type_name, template_args_info.size());
 

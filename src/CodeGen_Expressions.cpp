@@ -1306,12 +1306,12 @@
 		}
 
 		// Look up the qualified identifier in the symbol table
-		const std::optional<ASTNode> symbol = symbol_table.lookup_qualified(qualifiedIdNode.namespace_handle(), qualifiedIdNode.name());
+		const std::optional<ASTNode> symbol = symbol_table.lookup_qualified(qualifiedIdNode.qualifiedIdentifier());
 
 		// Also try global symbol table for namespace-qualified globals
 		std::optional<ASTNode> global_symbol;
 		if (!symbol.has_value() && global_symbol_table_) {
-			global_symbol = global_symbol_table_->lookup_qualified(qualifiedIdNode.namespace_handle(), qualifiedIdNode.name());
+			global_symbol = global_symbol_table_->lookup_qualified(qualifiedIdNode.qualifiedIdentifier());
 		}
 
 		const std::optional<ASTNode>& found_symbol = symbol.has_value() ? symbol : global_symbol;

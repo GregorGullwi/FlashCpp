@@ -860,18 +860,10 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Register the alias template in the template registry
 		// We'll handle instantiation later when the alias is used
-		// Register with simple name for unqualified lookups
-		gTemplateRegistry.register_alias_template(std::string(alias_name), alias_node);
-		
-		// If in a namespace, also register with qualified name for namespace-qualified lookups
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		if (!current_handle.isGlobal()) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(alias_name);
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			FLASH_LOG_FORMAT(Templates, Debug, "Registering alias template with qualified name: {}", qualified_name);
-			gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
-		}
+		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
+		gTemplateRegistry.register_alias_template(
+			QualifiedIdentifier::fromQualifiedName(alias_name, gSymbolTable.get_current_namespace_handle()),
+			alias_node);
 		
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
@@ -1142,30 +1134,14 @@ ParseResult Parser::parse_template_declaration() {
 				}
 			}
 			std::string_view pattern_key = pattern_name.commit();
-			gTemplateRegistry.registerVariableTemplate(pattern_key, template_var_node);
+			gTemplateRegistry.registerVariableTemplate(
+				QualifiedIdentifier::fromQualifiedName(pattern_key, gSymbolTable.get_current_namespace_handle()),
+				template_var_node);
 			FLASH_LOG(Parser, Debug, "Registered variable template partial specialization: ", pattern_key);
-			
-			// If in a namespace, also register with qualified pattern name
-			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-			if (!current_handle.isGlobal()) {
-				StringHandle pattern_handle = StringTable::getOrInternStringHandle(pattern_key);
-				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, pattern_handle);
-				std::string_view qualified_pattern_key = StringTable::getStringView(qualified_handle);
-				gTemplateRegistry.registerVariableTemplate(qualified_pattern_key, template_var_node);
-				FLASH_LOG(Parser, Debug, "Registered variable template partial specialization with qualified name: ", qualified_pattern_key);
-			}
 		} else {
-			gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
-			
-			// If in a namespace, also register with qualified name for namespace-qualified lookups
-			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-			if (!current_handle.isGlobal()) {
-				StringHandle var_handle = StringTable::getOrInternStringHandle(var_name);
-				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, var_handle);
-				std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-				FLASH_LOG_FORMAT(Templates, Debug, "Registering variable template with qualified name: {}", qualified_name);
-				gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
-			}
+			gTemplateRegistry.registerVariableTemplate(
+				QualifiedIdentifier::fromQualifiedName(var_name, gSymbolTable.get_current_namespace_handle()),
+				template_var_node);
 		}
 		
 		// Also add to symbol table so identifier lookup works
@@ -1265,7 +1241,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Store template instantiation metadata for O(1) lookup (Phase 6)
 				struct_type_info.setTemplateInstantiationInfo(
-					StringTable::getOrInternStringHandle(template_name),
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 					convertToTemplateArgInfo(template_args)
 				);
 				
@@ -1302,7 +1278,7 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Store template instantiation metadata for O(1) lookup (Phase 6)
 			struct_type_info.setTemplateInstantiationInfo(
-				StringTable::getOrInternStringHandle(template_name),
+				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 				convertToTemplateArgInfo(template_args)
 			);
 
@@ -2549,7 +2525,7 @@ ParseResult Parser::parse_template_declaration() {
 			// This allows constructor detection (e.g., template<typename U> allocator(const allocator<U>&))
 			// to find the base template name and match it against the constructor name
 			struct_type_info.setTemplateInstantiationInfo(
-				StringTable::getOrInternStringHandle(template_name), {});
+				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()), {});
 			
 			// Create StructTypeInfo for this specialization
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
@@ -4213,29 +4189,13 @@ if (struct_type_info.getStructInfo()) {
 			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Function has ", func_decl.parameter_nodes().size(), " parameters");
 		}
 		
-		// Register with simple name (for backward compatibility and unqualified lookups)
-		gTemplateRegistry.registerTemplate(simple_name, template_func_node);
-		
-		if (simple_name == "__call_is_nt") {
-			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Successfully registered __call_is_nt");
-		}
-		
-		// If in a namespace, also register with qualified name for namespace-qualified lookups
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		if (!current_handle.isGlobal()) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(simple_name);
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
-			gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
-		}
+		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
+		gTemplateRegistry.registerTemplate(
+			QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
+			template_func_node);
 
 		// Add the template function to the symbol table so it can be found during overload resolution
 		gSymbolTable.insert(simple_name, template_func_node);
-		
-		if (simple_name == "__call_is_nt") {
-			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Completed all registration for __call_is_nt");
-		}
 
 		return saved_position.success(template_func_node);
 	}
@@ -4280,30 +4240,13 @@ if (struct_type_info.getStructInfo()) {
 		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
 		std::string_view simple_name = StringTable::getStringView(struct_decl.name());
 		
-		// Register with simple name (for backward compatibility and unqualified lookups)
-		FLASH_LOG_FORMAT(Templates, Debug, "Registering template class with simple name: '{}'", simple_name);
-		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
-		
-		// If in a namespace, also register with qualified name for namespace-qualified lookups
-		// Note: struct_decl.name() may already be qualified (e.g., "std::numeric_limits")
-		// if parse_struct_declaration prepended the namespace. Extract the unqualified name
-		// to avoid double-prefixing (e.g., "std::std::numeric_limits").
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		if (!current_handle.isGlobal()) {
-			std::string_view unqualified_name = simple_name;
-			auto last_colon = simple_name.rfind("::");
-			if (last_colon != std::string_view::npos) {
-				unqualified_name = simple_name.substr(last_colon + 2);
-			}
-			StringHandle name_handle = StringTable::getOrInternStringHandle(unqualified_name);
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
-			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			// Only register if the qualified name is different from the simple name
-			if (qualified_name != simple_name) {
-				FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
-				gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
-			}
-		}
+		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
+		// Note: simple_name may already be qualified (e.g., "std::numeric_limits") if
+		// parse_struct_declaration prepended the namespace. fromQualifiedName() handles both cases.
+		FLASH_LOG_FORMAT(Templates, Debug, "Registering template class: '{}'", simple_name);
+		gTemplateRegistry.registerTemplate(
+			QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
+			template_class_node);
 
 		// Primary templates shouldn't be added to AST - only instantiations and specializations
 		// Return success with no node so the caller doesn't add it to ast_nodes_
@@ -5824,8 +5767,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 						auto qualified_name = StringTable::getOrInternStringHandle(
 							StringBuilder().append(struct_node.name()).append("::"sv).append(operator_name));
-						gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_func_node);
-						gTemplateRegistry.registerTemplate(operator_name, template_func_node);
+						gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
+						gTemplateRegistry.registerTemplate(StringTable::getOrInternStringHandle(operator_name), template_func_node);
 
 						current_template_param_names_ = std::move(saved_template_param_names);
 						return saved_position.success();
@@ -5864,10 +5807,10 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	
 	// Register the template in the global registry with qualified name (ClassName::functionName)
 	auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_node.name()).append("::"sv).append(decl_node.identifier_token().value()));
-	gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_func_node);
+	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 	
 	// Also register with simple name for unqualified lookups (needed for inherited member template function calls)
-	gTemplateRegistry.registerTemplate(decl_node.identifier_token().value(), template_func_node);
+	gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), template_func_node);
 
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
@@ -6007,11 +5950,11 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	);
 
 	// Register the alias template with qualified name (ClassName::AliasName)
-	StringBuilder sb;
-	std::string_view qualified_name = sb.append(struct_node.name()).append("::").append(alias_name).commit();
-	gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
+	StringHandle qualified_name = StringTable::getOrInternStringHandle(
+		StringBuilder().append(struct_node.name()).append("::").append(alias_name));
+	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
 
-	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", qualified_name);
+	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", StringTable::getStringView(qualified_name));
 
 	// Restore template parameter context
 	current_template_param_names_ = saved_template_param_names;
@@ -6135,8 +6078,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		);
 		
 		// Register the template
-		gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_struct_node);
-		gTemplateRegistry.registerTemplate(struct_name, template_struct_node);
+		gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
+		gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
 		
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template forward declaration: {}", 
 			StringTable::getStringView(qualified_name));
@@ -6911,10 +6854,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	);
 
 	// Register the template in the global registry with qualified name
-	gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_struct_node);
+	gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
 	
 	// Also register with simple name for lookups within the parent struct
-	gTemplateRegistry.registerTemplate(struct_name, template_struct_node);
+	gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template: {}", StringTable::getStringView(qualified_name));
 
@@ -7054,18 +6997,15 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	);
 	
 	// Build qualified name for registration
-	std::string_view parent_name = StringTable::getStringView(struct_node.name());
-	std::string_view qualified_name = StringBuilder()
-		.append(parent_name)
-		.append("::"sv)
-		.append(var_name)
-		.commit();
+	StringHandle qualified_name = StringTable::getOrInternStringHandle(
+		StringBuilder().append(StringTable::getStringView(struct_node.name()))
+		               .append("::"sv).append(var_name));
 	
 	// Register in template registry
-	gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+	gTemplateRegistry.registerVariableTemplate(var_name_token.handle(), template_var_node);
 	gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
 	
-	FLASH_LOG_FORMAT(Parser, Info, "Registered member variable template: {}", qualified_name);
+	FLASH_LOG_FORMAT(Parser, Info, "Registered member variable template: {}", StringTable::getStringView(qualified_name));
 	
 	return saved_position.success();
 }
@@ -11406,7 +11346,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	struct_type_info.setTemplateInstantiationInfo(
-		StringTable::getOrInternStringHandle(template_name),
+		QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 		convertToTemplateArgInfo(template_args)
 	);
 	
@@ -12236,7 +12176,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Store template instantiation metadata for O(1) lookup (Phase 6)
 		struct_type_info.setTemplateInstantiationInfo(
-			StringTable::getOrInternStringHandle(template_name),
+			QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 			convertToTemplateArgInfo(template_args)
 		);
 		
@@ -13840,15 +13780,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
-	// IMPORTANT: Use base template name without namespace prefix
-	std::string_view unqualified_template_name = template_name;
-	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
-		unqualified_template_name = template_name.substr(last_colon + 2);
+	// QualifiedIdentifier captures both the namespace and unqualified name.
+	// When template_name is unqualified, derive namespace from class_decl.name()
+	// (the template declaration's struct, which stores the full qualified name).
+	{
+		NamespaceHandle fallback_ns = gSymbolTable.get_current_namespace_handle();
+		if (template_name.find("::") == std::string_view::npos) {
+			// Unqualified template_name — derive namespace from the class declaration name
+			std::string_view decl_name = StringTable::getStringView(class_decl.name());
+			if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
+				// decl_name is qualified (e.g. "std::vector"), resolve from global scope
+				fallback_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+			}
+		}
+		struct_type_info.setTemplateInstantiationInfo(
+			QualifiedIdentifier::fromQualifiedName(template_name, fallback_ns),
+			convertToTemplateArgInfo(template_args_to_use)
+		);
 	}
-	struct_type_info.setTemplateInstantiationInfo(
-		StringTable::getOrInternStringHandle(unqualified_template_name),
-		convertToTemplateArgInfo(template_args_to_use)
-	);
 	
 	// Register class template pack sizes in persistent registry for member function template lookup
 	if (has_parameter_pack) {
@@ -15567,7 +15516,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto alias_opt = gTemplateRegistry.lookup_alias_template(base_alias_name);
 			if (alias_opt.has_value()) {
 				// Re-register with the instantiated name
-				gTemplateRegistry.register_alias_template(std::string(inst_alias_name), *alias_opt);
+				gTemplateRegistry.register_alias_template(inst_alias_name, *alias_opt);
 			}
 		}
 	}
@@ -16410,12 +16359,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			qualified_name_builder.append(StringTable::getStringView(instantiated_name))
 			                     .append("::")
 			                     .append(decl_node.identifier_token().value());
-			std::string_view qualified_name = qualified_name_builder.commit();
+			StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 			
-			gTemplateRegistry.registerTemplate(qualified_name, mem_func.function_declaration);
+			gTemplateRegistry.registerTemplate(qualified_name_handle, mem_func.function_declaration);
 			
 			// Also register with simple name for unqualified lookups
-			gTemplateRegistry.registerTemplate(decl_node.identifier_token().value(), mem_func.function_declaration);
+			gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), mem_func.function_declaration);
 
 			// Register outer template parameter bindings so that when the inner template
 			// is instantiated, outer params (e.g., T→int) can be resolved in the body
@@ -16427,8 +16376,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 				outer_binding.param_args = template_args_to_use;
-				gTemplateRegistry.registerOuterTemplateBinding(qualified_name, std::move(outer_binding));
-				FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", qualified_name);
+				gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+				FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 			}
 		} else {
 			FLASH_LOG(Templates, Error, "Unknown member function type in template instantiation: ", 

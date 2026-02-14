@@ -1100,8 +1100,22 @@ class TemplateRegistry {
 public:
 	// Register a template function declaration
 	void registerTemplate(std::string_view name, ASTNode template_node) {
-		std::string key(name);
-		templates_[key].push_back(template_node);
+		registerTemplate(StringTable::getOrInternStringHandle(name), template_node);
+	}
+
+	void registerTemplate(StringHandle name, ASTNode template_node) {
+		templates_[name].push_back(template_node);
+	}
+
+	// Register a template using QualifiedIdentifier (Phase 2).
+	// Stores under the unqualified name for backward-compatible lookups.
+	// If the identifier has a non-global namespace, also stores under the
+	// fully-qualified name (e.g. "std::vector") so that namespace-qualified
+	// lookups work without manual dual registration by the caller.
+	void registerTemplate(QualifiedIdentifier qi, ASTNode template_node) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerTemplate(name, template_node);
+		});
 	}
 
 	// Register template parameter names for a template
@@ -1111,18 +1125,44 @@ public:
 
 	// Register an alias template: template<typename T> using Ptr = T*;
 	void register_alias_template(std::string_view name, ASTNode alias_node) {
-		std::string key(name);
+		StringHandle key = StringTable::getOrInternStringHandle(name);
 		alias_templates_[key] = alias_node;
+	}
+
+	void register_alias_template(StringHandle name, ASTNode alias_node) {
+		alias_templates_[name] = alias_node;
+	}
+
+	// Register an alias template using QualifiedIdentifier (Phase 2).
+	void register_alias_template(QualifiedIdentifier qi, ASTNode alias_node) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			register_alias_template(name, alias_node);
+		});
 	}
 
 	// Register a variable template: template<typename T> constexpr T pi = T(3.14159...);
 	void registerVariableTemplate(std::string_view name, ASTNode variable_template_node) {
-		std::string key(name);
+		StringHandle key = StringTable::getOrInternStringHandle(name);
 		variable_templates_[key] = variable_template_node;
+	}
+
+	void registerVariableTemplate(StringHandle name, ASTNode variable_template_node) {
+		variable_templates_[name] = variable_template_node;
+	}
+
+	// Register a variable template using QualifiedIdentifier (Phase 2).
+	void registerVariableTemplate(QualifiedIdentifier qi, ASTNode variable_template_node) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerVariableTemplate(name, variable_template_node);
+		});
 	}
 
 	// Look up a variable template by name
 	std::optional<ASTNode> lookupVariableTemplate(std::string_view name) const {
+		return lookupVariableTemplate(StringTable::getOrInternStringHandle(name));
+	}
+
+	std::optional<ASTNode> lookupVariableTemplate(StringHandle name) const {
 		auto it = variable_templates_.find(name);
 		if (it != variable_templates_.end()) {
 			return it->second;
@@ -1132,7 +1172,10 @@ public:
 
 	// Look up an alias template by name
 	std::optional<ASTNode> lookup_alias_template(std::string_view name) const {
-		// Heterogeneous lookup - string_view accepted directly without temporary string allocation
+		return lookup_alias_template(StringTable::getOrInternStringHandle(name));
+	}
+
+	std::optional<ASTNode> lookup_alias_template(StringHandle name) const {
 		auto it = alias_templates_.find(name);
 		if (it != alias_templates_.end()) {
 			return it->second;
@@ -1140,15 +1183,12 @@ public:
 		return std::nullopt;
 	}
 
-	std::optional<ASTNode> lookup_alias_template(StringHandle name) const {
-		return lookup_alias_template(StringTable::getStringView(name));
-	}
-
 	// Get all alias template names with a given prefix (for template instantiation)
 	// Used to copy member template aliases from primary template to instantiated template
 	std::vector<std::string_view> get_alias_templates_with_prefix(std::string_view prefix) const {
 		std::vector<std::string_view> result;
-		for (const auto& [name, node] : alias_templates_) {
+		for (const auto& [name_handle, node] : alias_templates_) {
+			std::string_view name = StringTable::getStringView(name_handle);
 			if (name.starts_with(prefix)) {
 				result.push_back(name);
 			}
@@ -1158,12 +1198,19 @@ public:
 
 	// Register a deduction guide: template<typename T> ClassName(T) -> ClassName<T>;
 	void register_deduction_guide(std::string_view class_name, ASTNode guide_node) {
-		std::string key(class_name);
-		deduction_guides_[key].push_back(guide_node);
+		register_deduction_guide(StringTable::getOrInternStringHandle(class_name), guide_node);
+	}
+
+	void register_deduction_guide(StringHandle class_name, ASTNode guide_node) {
+		deduction_guides_[class_name].push_back(guide_node);
 	}
 
 	// Look up deduction guides for a class template
 	std::vector<ASTNode> lookup_deduction_guides(std::string_view class_name) const {
+		return lookup_deduction_guides(StringTable::getOrInternStringHandle(class_name));
+	}
+
+	std::vector<ASTNode> lookup_deduction_guides(StringHandle class_name) const {
 		auto it = deduction_guides_.find(class_name);
 		if (it != deduction_guides_.end()) {
 			return it->second;
@@ -1182,25 +1229,38 @@ public:
 	}
 	
 	// Look up a template by name
-	// Look up a template by name
 	// If multiple overloads exist, returns the first one registered
 	// For all overloads, use lookupAllTemplates()
 	std::optional<ASTNode> lookupTemplate(std::string_view name) const {
-		// Heterogeneous lookup - string_view accepted directly
-		auto it = templates_.find(name);
-		if (it != templates_.end() && !it->second.empty()) {
-			return it->second.front();  // Return first overload
-		}
-		return std::nullopt;
+		return lookupTemplate(StringTable::getOrInternStringHandle(name));
 	}
 	
 	std::optional<ASTNode> lookupTemplate(StringHandle name) const {
-		return lookupTemplate(StringTable::getStringView(name));
+		auto it = templates_.find(name);
+		if (it != templates_.end() && !it->second.empty()) {
+			return it->second.front();
+		}
+		return std::nullopt;
+	}
+
+	// Look up a template using QualifiedIdentifier (Phase 2).
+	// Tries the qualified name first, then falls back to unqualified.
+	std::optional<ASTNode> lookupTemplate(QualifiedIdentifier qi) const {
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			auto result = lookupTemplate(qualified);
+			if (result.has_value()) return result;
+		}
+		return lookupTemplate(qi.identifier_handle);
 	}
 
 	// Look up all template overloads for a given name
-	// Returns a reference to the internal vector for efficiency
 	const std::vector<ASTNode>* lookupAllTemplates(std::string_view name) const {
+		return lookupAllTemplates(StringTable::getOrInternStringHandle(name));
+	}
+
+	const std::vector<ASTNode>* lookupAllTemplates(StringHandle name) const {
 		auto it = templates_.find(name);
 		if (it != templates_.end()) {
 			return &it->second;
@@ -1212,8 +1272,8 @@ public:
 	std::vector<std::string_view> getAllTemplateNames() const {
 		std::vector<std::string_view> result;
 		result.reserve(templates_.size());
-		for (const auto& [name, _] : templates_) {
-			result.push_back(name);
+		for (const auto& [name_handle, _] : templates_) {
+			result.push_back(StringTable::getStringView(name_handle));
 		}
 		return result;
 	}
@@ -1378,11 +1438,19 @@ public:
 	// Register outer template parameter bindings for a member function template
 	// of an instantiated class template (e.g., Container<int>::convert has T→int)
 	void registerOuterTemplateBinding(std::string_view qualified_name, OuterTemplateBinding binding) {
-		outer_template_bindings_[std::string(qualified_name)] = std::move(binding);
+		registerOuterTemplateBinding(StringTable::getOrInternStringHandle(qualified_name), std::move(binding));
+	}
+
+	void registerOuterTemplateBinding(StringHandle qualified_name, OuterTemplateBinding binding) {
+		outer_template_bindings_[qualified_name] = std::move(binding);
 	}
 
 	// Get outer template parameter bindings for a member function template
 	const OuterTemplateBinding* getOuterTemplateBinding(std::string_view qualified_name) const {
+		return getOuterTemplateBinding(StringTable::getOrInternStringHandle(qualified_name));
+	}
+
+	const OuterTemplateBinding* getOuterTemplateBinding(StringHandle qualified_name) const {
 		auto it = outer_template_bindings_.find(qualified_name);
 		if (it != outer_template_bindings_.end()) {
 			return &it->second;
@@ -1484,11 +1552,29 @@ public:
 		}
 	}
 
+	// Register a template specialization pattern using QualifiedIdentifier (Phase 4).
+	void registerSpecializationPattern(QualifiedIdentifier qi,
+	                                   const std::vector<ASTNode>& template_params,
+	                                   const std::vector<TemplateTypeArg>& pattern_args,
+	                                   ASTNode specialized_node,
+	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerSpecializationPattern(name, template_params, pattern_args, specialized_node, sfinae_cond);
+		});
+	}
+
 	// Register a template specialization (exact match)
 	void registerSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
 		SpecializationKey key{std::string(template_name), template_args};
 		specializations_[key] = specialized_node;
 		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
+	}
+
+	// Register a template specialization using QualifiedIdentifier (Phase 4).
+	void registerSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerSpecialization(name, template_args, specialized_node);
+		});
 	}
 
 	// Look up an exact template specialization (no pattern matching)
@@ -1524,6 +1610,18 @@ public:
 			FLASH_LOG(Templates, Debug, "  No pattern match found");
 		}
 		return pattern_result;
+	}
+
+	// Look up a template specialization using QualifiedIdentifier (Phase 4).
+	// Tries qualified name first, then falls back to unqualified.
+	std::optional<ASTNode> lookupSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args) const {
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			auto result = lookupSpecialization(StringTable::getStringView(qualified), template_args);
+			if (result.has_value()) return result;
+		}
+		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args);
 	}
 	
 	// Find a matching specialization pattern
@@ -1604,20 +1702,37 @@ public:
 	}
 
 private:
-	// Map from template name to template declaration nodes - supports multiple overloads (supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
+	// Helper: Given a QualifiedIdentifier, call `fn` with both the unqualified name
+	// and (if the identifier has a non-global namespace) the fully-qualified name.
+	// Used by all QualifiedIdentifier registration overloads to eliminate duplication.
+	template<typename Fn>
+	void forEachQualifiedName(QualifiedIdentifier qi, Fn&& fn) {
+		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
+		fn(simple);
+		if (qi.hasNamespace()) {
+			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
+				qi.namespace_handle, qi.identifier_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified);
+			if (qualified_name != simple) {
+				fn(qualified_name);
+			}
+		}
+	}
+
+	// Map from template name to template declaration nodes (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
 
 	// Map from template name to template parameter names (supports heterogeneous lookup)
 	std::unordered_map<StringHandle, std::vector<StringHandle>, TransparentStringHash, std::equal_to<>> template_parameters_;
 
-	// Map from alias template name to TemplateAliasNode (supports heterogeneous lookup)
-	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
+	// Map from alias template name to TemplateAliasNode (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
 
-	// Map from variable template name to TemplateVariableDeclarationNode (supports heterogeneous lookup)
-	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> variable_templates_;
+	// Map from variable template name to TemplateVariableDeclarationNode (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, std::equal_to<>> variable_templates_;
 
-	// Map from class template name to deduction guides (supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> deduction_guides_;
+	// Map from class template name to deduction guides (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> deduction_guides_;
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
@@ -1635,7 +1750,7 @@ private:
 
 	// Map from qualified member function template name (e.g., "Container$hash::convert") to
 	// outer template parameter bindings (e.g., T→int). Used during nested template instantiation.
-	std::unordered_map<std::string, OuterTemplateBinding, TransparentStringHash, std::equal_to<>> outer_template_bindings_;
+	std::unordered_map<StringHandle, OuterTemplateBinding, TransparentStringHash, std::equal_to<>> outer_template_bindings_;
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;

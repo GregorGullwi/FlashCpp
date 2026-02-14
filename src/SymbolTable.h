@@ -98,6 +98,14 @@ public:
 		return insert(StringTable::getStringView(identifierHandle), node);	// This should probably be the other way around
 	}
 
+	// Insert using QualifiedIdentifier (Phase 3).
+	// Inserts under the unqualified name in the current scope.
+	// Note: namespace_symbols_ insertion is handled by the existing insert(string_view)
+	// pathway when the scope type is Namespace or Global.
+	bool insert(QualifiedIdentifier qi, ASTNode node) {
+		return insert(StringTable::getStringView(qi.identifier_handle), node);
+	}
+
 	bool insert(std::string_view identifier, ASTNode node) {
 		auto& current_scope = symbol_table_stack_.back();
 		// First, try to find the identifier without interning
@@ -501,6 +509,7 @@ public:
 		Scope scope(ScopeType::Namespace, symbol_table_stack_.size());
 		scope.namespace_handle = ns_handle;
 		if (ns_handle.isValid() && !ns_handle.isGlobal()) {
+			gNamespaceRegistry.markDeclared(ns_handle);
 			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(ns_handle);
 			scope.namespace_name = entry.name;
 			// Preload existing namespace symbols so unqualified lookup works when re-entering
@@ -669,6 +678,16 @@ public:
 
 	std::optional<ASTNode> lookup_qualified(NamespaceHandle namespace_handle, StringHandle identifier) const {
 		return lookup_qualified(namespace_handle, StringTable::getStringView(identifier));
+	}
+
+	// Look up a symbol using QualifiedIdentifier (Phase 3).
+	// If the QualifiedIdentifier has a namespace, uses lookup_qualified.
+	// Otherwise, falls back to regular unqualified lookup.
+	std::optional<ASTNode> lookup_qualified(QualifiedIdentifier qi) const {
+		if (qi.namespace_handle.isValid()) {
+			return lookup_qualified(qi.namespace_handle, qi.identifier_handle);
+		}
+		return lookup(StringTable::getStringView(qi.identifier_handle), get_current_scope_handle());
 	}
 
 	template<typename StringContainer>
@@ -946,6 +965,29 @@ inline std::string_view buildQualifiedNameFromHandle(NamespaceHandle ns_handle, 
 	StringHandle name_handle = StringTable::getOrInternStringHandle(name);
 	StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, name_handle);
 	return StringTable::getStringView(qualified_handle);
+}
+
+/**
+ * @brief Validate that a namespace handle refers to a known scope (declared namespace or class name).
+ * Returns true if the namespace is valid (global, declared as namespace, or known as a class/struct type),
+ * false if the identifier is completely unknown.
+ */
+inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused]] const Token& error_token) {
+	if (!ns_handle.isValid() || ns_handle.isGlobal()) {
+		return true;
+	}
+	// Check if the root namespace was explicitly declared
+	NamespaceHandle root = gNamespaceRegistry.getRootNamespace(ns_handle);
+	if (gNamespaceRegistry.isDeclared(root)) {
+		return true;
+	}
+	// Also accept if the root name refers to a known type (struct/class with static members)
+	std::string_view root_name = gNamespaceRegistry.getName(root);
+	StringHandle root_handle = StringTable::getOrInternStringHandle(root_name);
+	if (gTypesByName.find(root_handle) != gTypesByName.end()) {
+		return true;
+	}
+	return false;
 }
 
 /**

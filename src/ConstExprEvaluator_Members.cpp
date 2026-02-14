@@ -561,7 +561,7 @@ public:
 		}
 
 		// Try to look up the qualified name
-		auto symbol_opt = context.symbols->lookup_qualified(qualified_id.namespace_handle(), qualified_id.name());
+		auto symbol_opt = context.symbols->lookup_qualified(qualified_id.qualifiedIdentifier());
 		if (!symbol_opt.has_value()) {
 			// PHASE 3 FIX: If not found in symbol table, try looking up as struct static member
 			// This handles cases like is_pointer_impl<int*>::value where value is a static member
