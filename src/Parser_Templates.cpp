@@ -12086,7 +12086,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Get template parameters from the pattern (partial specialization), NOT the primary template
 		// The pattern stores its own template parameters (e.g., <typename First, typename... Rest>)
 		std::vector<ASTNode> pattern_template_params;
-		auto patterns_it = gTemplateRegistry.specialization_patterns_.find(std::string(template_name));
+		auto patterns_it = gTemplateRegistry.specialization_patterns_.find(template_name);
 		if (patterns_it != gTemplateRegistry.specialization_patterns_.end()) {
 			// Find the matching pattern to get its template params
 			for (const auto& pattern : patterns_it->second) {
@@ -12953,7 +12953,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Register type aliases from the pattern with qualified names
 		// We need the pattern_args to map template parameters to template arguments
 		std::vector<TemplateTypeArg> pattern_args;
-		auto patterns_it_for_alias = gTemplateRegistry.specialization_patterns_.find(std::string(template_name));
+		auto patterns_it_for_alias = gTemplateRegistry.specialization_patterns_.find(template_name);
 		if (patterns_it_for_alias != gTemplateRegistry.specialization_patterns_.end()) {
 			for (const auto& pattern : patterns_it_for_alias->second) {
 				// Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns

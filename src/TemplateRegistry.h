@@ -24,7 +24,53 @@ struct TransparentStringHash {
 	size_t operator()(const char* str) const { return hash_type{}(str); }
 	size_t operator()(std::string_view str) const { return hash_type{}(str); }
 	size_t operator()(const std::string& str) const { return hash_type{}(str); }
-	size_t operator()(StringHandle sh) const { return std::hash<uint32_t>{}(sh.handle); }
+	size_t operator()(StringHandle sh) const { 
+		// Hash the string content, not the handle value, to enable heterogeneous lookup
+		return hash_type{}(StringTable::getStringView(sh)); 
+	}
+};
+
+// Transparent string equality for heterogeneous lookup
+// Allows comparing StringHandle with string_view
+struct TransparentStringEqual {
+	using is_transparent = void;
+	
+	// StringHandle == StringHandle
+	bool operator()(StringHandle lhs, StringHandle rhs) const {
+		return lhs == rhs;
+	}
+	
+	// StringHandle == string_view
+	bool operator()(StringHandle lhs, std::string_view rhs) const {
+		return lhs == rhs;
+	}
+	
+	// string_view == StringHandle
+	bool operator()(std::string_view lhs, StringHandle rhs) const {
+		return rhs == lhs;
+	}
+	
+	// string_view == string_view
+	bool operator()(std::string_view lhs, std::string_view rhs) const {
+		return lhs == rhs;
+	}
+	
+	// std::string == anything
+	bool operator()(const std::string& lhs, std::string_view rhs) const {
+		return std::string_view(lhs) == rhs;
+	}
+	bool operator()(std::string_view lhs, const std::string& rhs) const {
+		return lhs == std::string_view(rhs);
+	}
+	bool operator()(const std::string& lhs, const std::string& rhs) const {
+		return lhs == rhs;
+	}
+	bool operator()(const std::string& lhs, StringHandle rhs) const {
+		return rhs == std::string_view(lhs);
+	}
+	bool operator()(StringHandle lhs, const std::string& rhs) const {
+		return lhs == std::string_view(rhs);
+	}
 };
 
 // Member pointer classification for template arguments
@@ -1403,13 +1449,27 @@ public:
 		return FlashCpp::generateInstantiatedNameFromArgs(base_name, type_args);
 	}
 
-	// Register an out-of-line template member function definition
-	void registerOutOfLineMember(std::string_view class_name, OutOfLineMemberFunction member_func) {
-		std::string key(class_name);
-		out_of_line_members_[key].push_back(std::move(member_func));
+	// Register an out-of-line template member function definition (StringHandle overload)
+	void registerOutOfLineMember(StringHandle class_name, OutOfLineMemberFunction member_func) {
+		out_of_line_members_[class_name].push_back(std::move(member_func));
 	}
 
-	// Get out-of-line member functions for a class
+	// Register an out-of-line template member function definition (string_view overload)
+	void registerOutOfLineMember(std::string_view class_name, OutOfLineMemberFunction member_func) {
+		StringHandle key = StringTable::getOrInternStringHandle(class_name);
+		registerOutOfLineMember(key, std::move(member_func));
+	}
+
+	// Get out-of-line member functions for a class (StringHandle overload)
+	std::vector<OutOfLineMemberFunction> getOutOfLineMemberFunctions(StringHandle class_name) const {
+		auto it = out_of_line_members_.find(class_name);
+		if (it != out_of_line_members_.end()) {
+			return it->second;
+		}
+		return {};
+	}
+
+	// Get out-of-line member functions for a class (string_view overload)
 	std::vector<OutOfLineMemberFunction> getOutOfLineMemberFunctions(std::string_view class_name) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = out_of_line_members_.find(class_name);
@@ -1419,13 +1479,27 @@ public:
 		return {};
 	}
 
-	// Register an out-of-line template static member variable definition
-	void registerOutOfLineMemberVariable(std::string_view class_name, OutOfLineMemberVariable member_var) {
-		std::string key(class_name);
-		out_of_line_variables_[key].push_back(std::move(member_var));
+	// Register an out-of-line template static member variable definition (StringHandle overload)
+	void registerOutOfLineMemberVariable(StringHandle class_name, OutOfLineMemberVariable member_var) {
+		out_of_line_variables_[class_name].push_back(std::move(member_var));
 	}
 
-	// Get out-of-line member variables for a class
+	// Register an out-of-line template static member variable definition (string_view overload)
+	void registerOutOfLineMemberVariable(std::string_view class_name, OutOfLineMemberVariable member_var) {
+		StringHandle key = StringTable::getOrInternStringHandle(class_name);
+		registerOutOfLineMemberVariable(key, std::move(member_var));
+	}
+
+	// Get out-of-line member variables for a class (StringHandle overload)
+	std::vector<OutOfLineMemberVariable> getOutOfLineMemberVariables(StringHandle class_name) const {
+		auto it = out_of_line_variables_.find(class_name);
+		if (it != out_of_line_variables_.end()) {
+			return it->second;
+		}
+		return {};
+	}
+
+	// Get out-of-line member variables for a class (string_view overload)
 	std::vector<OutOfLineMemberVariable> getOutOfLineMemberVariables(std::string_view class_name) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = out_of_line_variables_.find(class_name);
@@ -1458,14 +1532,13 @@ public:
 		return nullptr;
 	}
 
-	// Register a template specialization pattern
-	void registerSpecializationPattern(std::string_view template_name, 
+	// Register a template specialization pattern (StringHandle overload)
+	void registerSpecializationPattern(StringHandle template_name, 
 	                                   const std::vector<ASTNode>& template_params,
 	                                   const std::vector<TemplateTypeArg>& pattern_args, 
 	                                   ASTNode specialized_node,
 	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-		std::string key(template_name);
-		FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", template_name, 
+		FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name), 
 		          "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
 		
 		// Debug: log each pattern arg
@@ -1540,16 +1613,26 @@ public:
 			}
 		}
 		
-		specialization_patterns_[key].push_back(std::move(pattern));
-		FLASH_LOG(Templates, Debug, "  Total patterns for '", template_name, "': ", specialization_patterns_[key].size());
+		specialization_patterns_[template_name].push_back(std::move(pattern));
+		FLASH_LOG(Templates, Debug, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
 		if (pattern.sfinae_condition.has_value()) {
 			// Note: pattern has been moved, we need to access the stored one
-			const auto& stored_pattern = specialization_patterns_[key].back();
+			const auto& stored_pattern = specialization_patterns_[template_name].back();
 			if (stored_pattern.sfinae_condition.has_value()) {
 				FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index, 
 				          "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
 			}
 		}
+	}
+
+	// Register a template specialization pattern (string_view overload)
+	void registerSpecializationPattern(std::string_view template_name, 
+	                                   const std::vector<ASTNode>& template_params,
+	                                   const std::vector<TemplateTypeArg>& pattern_args, 
+	                                   ASTNode specialized_node,
+	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+		StringHandle key = StringTable::getOrInternStringHandle(template_name);
+		registerSpecializationPattern(key, template_params, pattern_args, specialized_node, sfinae_cond);
 	}
 
 	// Register a template specialization pattern using QualifiedIdentifier (Phase 4).
@@ -1624,7 +1707,49 @@ public:
 		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args);
 	}
 	
-	// Find a matching specialization pattern
+	// Find a matching specialization pattern (StringHandle overload)
+	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name, 
+	                                                  const std::vector<TemplateTypeArg>& concrete_args) const {
+		auto patterns_it = specialization_patterns_.find(template_name);
+		if (patterns_it == specialization_patterns_.end()) {
+			FLASH_LOG(Templates, Debug, "    No patterns registered for template '", StringTable::getStringView(template_name), "'");
+			return std::nullopt;  // No patterns for this template
+		}
+		
+		const std::vector<TemplatePattern>& patterns = patterns_it->second;
+		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", StringTable::getStringView(template_name), "'");
+		
+		const TemplatePattern* best_match = nullptr;
+		int best_specificity = -1;
+		
+		// Find the most specific matching pattern
+		for (size_t i = 0; i < patterns.size(); ++i) {
+			const auto& pattern = patterns[i];
+			FLASH_LOG(Templates, Debug, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
+			std::unordered_map<std::string, TemplateTypeArg> substitutions;
+			if (pattern.matches(concrete_args, substitutions)) {
+				FLASH_LOG(Templates, Debug, "      Pattern #", i, " MATCHES!");
+				int spec = pattern.specificity();
+				if (spec > best_specificity) {
+					best_match = &pattern;
+					best_specificity = spec;
+					FLASH_LOG(Templates, Debug, "      New best match (specificity=", spec, ")");
+				}
+			} else {
+				FLASH_LOG(Templates, Debug, "      Pattern #", i, " does not match");
+			}
+		}
+		
+		if (best_match) {
+			FLASH_LOG(Templates, Debug, "    Selected best pattern (specificity=", best_specificity, ")");
+			return best_match->specialized_node;
+		}
+		
+		FLASH_LOG(Templates, Debug, "    No matching pattern found");
+		return std::nullopt;
+	}
+
+	// Find a matching specialization pattern (string_view overload)
 	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name, 
 	                                                  const std::vector<TemplateTypeArg>& concrete_args) const {
 		// Heterogeneous lookup - string_view accepted directly
@@ -1685,7 +1810,7 @@ public:
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
-	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
+	std::unordered_map<StringHandle, std::vector<TemplatePattern>, TransparentStringHash, TransparentStringEqual> specialization_patterns_;
 	
 	// Register mapping from instantiated name to pattern name (for partial specializations)
 	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name) {
@@ -1720,19 +1845,19 @@ private:
 	}
 
 	// Map from template name to template declaration nodes (StringHandle key for efficient lookup)
-	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
+	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, TransparentStringEqual> templates_;
 
 	// Map from template name to template parameter names (supports heterogeneous lookup)
-	std::unordered_map<StringHandle, std::vector<StringHandle>, TransparentStringHash, std::equal_to<>> template_parameters_;
+	std::unordered_map<StringHandle, std::vector<StringHandle>, TransparentStringHash, TransparentStringEqual> template_parameters_;
 
 	// Map from alias template name to TemplateAliasNode (StringHandle key for efficient lookup)
-	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
+	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, TransparentStringEqual> alias_templates_;
 
 	// Map from variable template name to TemplateVariableDeclarationNode (StringHandle key for efficient lookup)
-	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, std::equal_to<>> variable_templates_;
+	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, TransparentStringEqual> variable_templates_;
 
 	// Map from class template name to deduction guides (StringHandle key for efficient lookup)
-	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> deduction_guides_;
+	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, TransparentStringEqual> deduction_guides_;
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
@@ -1742,15 +1867,15 @@ private:
 	// when type names contain underscores
 	std::unordered_map<FlashCpp::TemplateInstantiationKeyV2, ASTNode, FlashCpp::TemplateInstantiationKeyV2Hash> instantiations_v2_;
 
-	// Map from class name to out-of-line member function definitions (supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<OutOfLineMemberFunction>, TransparentStringHash, std::equal_to<>> out_of_line_members_;
+	// Map from class name to out-of-line member function definitions (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, std::vector<OutOfLineMemberFunction>, TransparentStringHash, TransparentStringEqual> out_of_line_members_;
 
-	// Map from class name to out-of-line static member variable definitions (supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<OutOfLineMemberVariable>, TransparentStringHash, std::equal_to<>> out_of_line_variables_;
+	// Map from class name to out-of-line static member variable definitions (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, std::vector<OutOfLineMemberVariable>, TransparentStringHash, TransparentStringEqual> out_of_line_variables_;
 
 	// Map from qualified member function template name (e.g., "Container$hash::convert") to
 	// outer template parameter bindings (e.g., T→int). Used during nested template instantiation.
-	std::unordered_map<StringHandle, OuterTemplateBinding, TransparentStringHash, std::equal_to<>> outer_template_bindings_;
+	std::unordered_map<StringHandle, OuterTemplateBinding, TransparentStringHash, TransparentStringEqual> outer_template_bindings_;
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
@@ -1758,7 +1883,7 @@ private:
 	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
 	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
 	// This allows looking up member aliases from the correct specialization
-	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
+	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, TransparentStringEqual> instantiation_to_pattern_;
 };
 
 // Global template registry
