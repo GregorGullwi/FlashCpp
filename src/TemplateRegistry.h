@@ -4,6 +4,7 @@
 #include "ChunkedString.h"
 #include "Lexer.h"  // For TokenPosition
 #include "TemplateTypes.h"  // For TypeIndex-based template keys
+#include "TemplateProfilingStats.h"  // For StringHandleHash
 #include <string>
 #include <string_view>
 #include <vector>
@@ -16,7 +17,8 @@
 using SaveHandle = size_t;
 
 // Transparent string hash for heterogeneous lookup (C++20)
-// Allows unordered_map<string, T, TransparentStringHash, equal_to<>> to lookup with string_view
+// Allows unordered_map with StringHandle keys to lookup with string_view
+// Use ONLY for maps that need heterogeneous lookup (string_view finding StringHandle keys)
 struct TransparentStringHash {
 	using is_transparent = void;
 	using hash_type = std::hash<std::string_view>;
@@ -813,7 +815,7 @@ struct TemplatePattern {
 	// For example, pattern T& matches int&, float&, etc.
 	// Returns true if match succeeds, and fills param_substitutions with T->int mapping
 	bool matches(const std::vector<TemplateTypeArg>& concrete_args, 
-	             std::unordered_map<StringHandle, TemplateTypeArg, TransparentStringHash, TransparentStringEqual>& param_substitutions) const
+	             std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) const
 	{
 		FLASH_LOG(Templates, Trace, "      matches(): pattern has ", pattern_args.size(), " args, concrete has ", concrete_args.size(), " args");
 		
@@ -1726,7 +1728,7 @@ public:
 		for (size_t i = 0; i < patterns.size(); ++i) {
 			const auto& pattern = patterns[i];
 			FLASH_LOG(Templates, Debug, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
-			std::unordered_map<StringHandle, TemplateTypeArg, TransparentStringHash, TransparentStringEqual> substitutions;
+			std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
 			if (pattern.matches(concrete_args, substitutions)) {
 				FLASH_LOG(Templates, Debug, "      Pattern #", i, " MATCHES!");
 				int spec = pattern.specificity();
@@ -1769,7 +1771,7 @@ public:
 		for (size_t i = 0; i < patterns.size(); ++i) {
 			const auto& pattern = patterns[i];
 			FLASH_LOG(Templates, Debug, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
-			std::unordered_map<StringHandle, TemplateTypeArg, TransparentStringHash, TransparentStringEqual> substitutions;
+			std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
 			if (pattern.matches(concrete_args, substitutions)) {
 				FLASH_LOG(Templates, Debug, "      Pattern #", i, " MATCHES!");
 				int spec = pattern.specificity();
@@ -1844,20 +1846,20 @@ private:
 		}
 	}
 
-	// Map from template name to template declaration nodes (StringHandle key for efficient lookup)
-	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, TransparentStringEqual> templates_;
+	// Map from template name to template declaration nodes (StringHandle key for fast lookup)
+	std::unordered_map<StringHandle, std::vector<ASTNode>, StringHandleHash, std::equal_to<>> templates_;
 
-	// Map from template name to template parameter names (supports heterogeneous lookup)
-	std::unordered_map<StringHandle, std::vector<StringHandle>, TransparentStringHash, TransparentStringEqual> template_parameters_;
+	// Map from template name to template parameter names (StringHandle key for fast lookup)
+	std::unordered_map<StringHandle, std::vector<StringHandle>, StringHandleHash, std::equal_to<>> template_parameters_;
 
-	// Map from alias template name to TemplateAliasNode (StringHandle key for efficient lookup)
-	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, TransparentStringEqual> alias_templates_;
+	// Map from alias template name to TemplateAliasNode (StringHandle key for fast lookup)
+	std::unordered_map<StringHandle, ASTNode, StringHandleHash, std::equal_to<>> alias_templates_;
 
-	// Map from variable template name to TemplateVariableDeclarationNode (StringHandle key for efficient lookup)
-	std::unordered_map<StringHandle, ASTNode, TransparentStringHash, TransparentStringEqual> variable_templates_;
+	// Map from variable template name to TemplateVariableDeclarationNode (StringHandle key for fast lookup)
+	std::unordered_map<StringHandle, ASTNode, StringHandleHash, std::equal_to<>> variable_templates_;
 
-	// Map from class template name to deduction guides (StringHandle key for efficient lookup)
-	std::unordered_map<StringHandle, std::vector<ASTNode>, TransparentStringHash, TransparentStringEqual> deduction_guides_;
+	// Map from class template name to deduction guides (StringHandle key for fast lookup)
+	std::unordered_map<StringHandle, std::vector<ASTNode>, StringHandleHash, std::equal_to<>> deduction_guides_;
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
@@ -1875,7 +1877,7 @@ private:
 
 	// Map from qualified member function template name (e.g., "Container$hash::convert") to
 	// outer template parameter bindings (e.g., T→int). Used during nested template instantiation.
-	std::unordered_map<StringHandle, OuterTemplateBinding, TransparentStringHash, TransparentStringEqual> outer_template_bindings_;
+	std::unordered_map<StringHandle, OuterTemplateBinding, StringHandleHash, std::equal_to<>> outer_template_bindings_;
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
@@ -1883,7 +1885,7 @@ private:
 	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
 	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
 	// This allows looking up member aliases from the correct specialization
-	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, TransparentStringEqual> instantiation_to_pattern_;
+	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> instantiation_to_pattern_;
 };
 
 // Global template registry
