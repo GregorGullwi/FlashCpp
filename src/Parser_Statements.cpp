@@ -95,37 +95,37 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"struct", &Parser::parse_struct_declaration},
 			{"class", &Parser::parse_struct_declaration},
 			{"union", &Parser::parse_struct_declaration},
-			{"static", &Parser::parse_variable_declaration},
-			{"extern", &Parser::parse_variable_declaration},
-			{"register", &Parser::parse_variable_declaration},
-			{"mutable", &Parser::parse_variable_declaration},
-			{"constexpr", &Parser::parse_variable_declaration},
-			{"constinit", &Parser::parse_variable_declaration},
-			{"consteval", &Parser::parse_variable_declaration},
-			{"int", &Parser::parse_variable_declaration},
-			{"float", &Parser::parse_variable_declaration},
-			{"double", &Parser::parse_variable_declaration},
-			{"char", &Parser::parse_variable_declaration},
-			{"wchar_t", &Parser::parse_variable_declaration},
-			{"char8_t", &Parser::parse_variable_declaration},
-			{"char16_t", &Parser::parse_variable_declaration},
-			{"char32_t", &Parser::parse_variable_declaration},
-			{"bool", &Parser::parse_variable_declaration},
+			{"static", &Parser::parse_declaration_or_function_definition},
+			{"extern", &Parser::parse_declaration_or_function_definition},
+			{"register", &Parser::parse_declaration_or_function_definition},
+			{"mutable", &Parser::parse_declaration_or_function_definition},
+			{"constexpr", &Parser::parse_declaration_or_function_definition},
+			{"constinit", &Parser::parse_declaration_or_function_definition},
+			{"consteval", &Parser::parse_declaration_or_function_definition},
+			{"int", &Parser::parse_declaration_or_function_definition},
+			{"float", &Parser::parse_declaration_or_function_definition},
+			{"double", &Parser::parse_declaration_or_function_definition},
+			{"char", &Parser::parse_declaration_or_function_definition},
+			{"wchar_t", &Parser::parse_declaration_or_function_definition},
+			{"char8_t", &Parser::parse_declaration_or_function_definition},
+			{"char16_t", &Parser::parse_declaration_or_function_definition},
+			{"char32_t", &Parser::parse_declaration_or_function_definition},
+			{"bool", &Parser::parse_declaration_or_function_definition},
 			{"void", &Parser::parse_declaration_or_function_definition},
-			{"short", &Parser::parse_variable_declaration},
-			{"long", &Parser::parse_variable_declaration},
-			{"signed", &Parser::parse_variable_declaration},
-			{"unsigned", &Parser::parse_variable_declaration},
-			{"const", &Parser::parse_variable_declaration},
-			{"volatile", &Parser::parse_variable_declaration},
-			{"alignas", &Parser::parse_variable_declaration},
-			{"auto", &Parser::parse_variable_declaration},
-			{"decltype", &Parser::parse_variable_declaration},  // C++11 decltype type specifier
+			{"short", &Parser::parse_declaration_or_function_definition},
+			{"long", &Parser::parse_declaration_or_function_definition},
+			{"signed", &Parser::parse_declaration_or_function_definition},
+			{"unsigned", &Parser::parse_declaration_or_function_definition},
+			{"const", &Parser::parse_declaration_or_function_definition},
+			{"volatile", &Parser::parse_declaration_or_function_definition},
+			{"alignas", &Parser::parse_declaration_or_function_definition},
+			{"auto", &Parser::parse_declaration_or_function_definition},
+			{"decltype", &Parser::parse_declaration_or_function_definition},  // C++11 decltype type specifier
 			// Microsoft-specific type keywords
-			{"__int8", &Parser::parse_variable_declaration},
-			{"__int16", &Parser::parse_variable_declaration},
-			{"__int32", &Parser::parse_variable_declaration},
-			{"__int64", &Parser::parse_variable_declaration},
+			{"__int8", &Parser::parse_declaration_or_function_definition},
+			{"__int16", &Parser::parse_declaration_or_function_definition},
+			{"__int32", &Parser::parse_declaration_or_function_definition},
+			{"__int64", &Parser::parse_declaration_or_function_definition},
 			{"new", &Parser::parse_expression_statement},
 			{"delete", &Parser::parse_expression_statement},
 			{"this", &Parser::parse_expression_statement},
@@ -266,7 +266,7 @@ ParseResult Parser::parse_statement_or_declaration()
 					}
 				}
 				restore_token_position(check_pos);
-				
+
 				// This is a struct/enum/typedef type declaration
 				return parse_variable_declaration();
 			}
@@ -525,19 +525,19 @@ ParseResult Parser::parse_variable_declaration()
 	// Process the first declaration
 	std::optional<ASTNode> first_init_expr;
 
-	// Phase 2 Consolidation: Check if this looks like a function declaration
+	// Check if this looks like a function declaration
 	// before trying to parse as direct initialization
 	// e.g., `static int func() { return 0; }` in block scope should be parsed as function
 	if (peek() == "("_tok) {
 		if (looks_like_function_parameters()) {
 			// This is a function declaration, delegate to parse_function_declaration
 			FLASH_LOG(Parser, Debug, "parse_variable_declaration: Detected function declaration, delegating to parse_function_declaration");
-			
+
 			// Create AttributeInfo for calling convention
 			AttributeInfo attr_info;
 			attr_info.linkage = specs.linkage;
 			attr_info.calling_convention = specs.calling_convention;
-			
+
 			// Try to parse as function
 			ParseResult function_result = parse_function_declaration(first_decl, attr_info.calling_convention);
 			if (!function_result.is_error()) {
@@ -550,7 +550,7 @@ ParseResult Parser::parse_variable_declaration()
 					func_node.set_is_constexpr(is_constexpr);
 					func_node.set_is_constinit(is_constinit);
 				}
-				
+
 				// Parse trailing specifiers
 				FlashCpp::MemberQualifiers member_quals;
 				FlashCpp::FunctionSpecifiers func_specs;
@@ -558,7 +558,7 @@ ParseResult Parser::parse_variable_declaration()
 				if (specs_result.is_error()) {
 					return specs_result;
 				}
-				
+
 				// Apply noexcept specifier
 				if (func_specs.is_noexcept) {
 					if (auto func_node_ptr = function_result.node()) {
@@ -569,7 +569,7 @@ ParseResult Parser::parse_variable_declaration()
 						}
 					}
 				}
-				
+
 				// Register function in symbol table
 				const Token& identifier_token = first_decl.identifier_token();
 				StringHandle func_name = identifier_token.handle();
@@ -578,17 +578,17 @@ ParseResult Parser::parse_variable_declaration()
 						return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
 					}
 				}
-				
+
 				// Check for declaration-only (;) vs function definition ({)
 				if (consume(";"_tok)) {
 					return function_result;
 				}
-				
+
 				// Parse function body
 				if (peek() == "{"_tok) {
 					// Enter function scope
 					FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
-					
+
 					// Add function parameters to symbol table
 					if (auto func_node_ptr = function_result.node()) {
 						FunctionDeclarationNode& func_decl = func_node_ptr->as<FunctionDeclarationNode>();
@@ -603,13 +603,13 @@ ParseResult Parser::parse_variable_declaration()
 							}
 						}
 					}
-					
+
 					// Parse function body
 					ParseResult body_result = parse_block();
 					if (body_result.is_error()) {
 						return body_result;
 					}
-					
+
 					// Set function body
 					if (auto func_node_ptr = function_result.node()) {
 						FunctionDeclarationNode& func_decl = func_node_ptr->as<FunctionDeclarationNode>();
@@ -620,7 +620,7 @@ ParseResult Parser::parse_variable_declaration()
 						}
 					}
 				}
-				
+
 				return function_result;
 			}
 			// If function parsing fails, fall through to try direct initialization

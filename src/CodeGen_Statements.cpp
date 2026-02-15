@@ -2466,7 +2466,66 @@
 									}
 								}
 							}
-							
+
+							// C++20 aggregate parenthesized initialization (P0960):
+							// If no matching constructor was found and the struct is an aggregate
+							// (no user-defined constructors), generate direct member stores.
+							bool used_aggregate_paren_init = false;
+							if (!matching_ctor && type_info.struct_info_ && num_args > 0 && !type_info.struct_info_->members.empty()) {
+								bool is_aggregate = true;
+								for (const auto& func : type_info.struct_info_->member_functions) {
+									if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+										if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+											is_aggregate = false;
+											break;
+										}
+									}
+								}
+
+								if (is_aggregate && num_args <= type_info.struct_info_->members.size()) {
+									FLASH_LOG(Codegen, Debug, "Using aggregate parenthesized init for ", type_info.name());
+									used_aggregate_paren_init = true;
+									// Emit default constructor call first (zero-initializes the object)
+									ConstructorCallOp default_ctor_op;
+									default_ctor_op.struct_name = type_info.name();
+									default_ctor_op.object = decl.identifier_token().handle();
+									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
+
+									// Then emit member stores for each argument
+									size_t member_idx = 0;
+									direct_ctor->arguments().visit([&](ASTNode argument) {
+										if (member_idx >= type_info.struct_info_->members.size()) {
+											member_idx++;
+											return;
+										}
+										const StructMember& member = type_info.struct_info_->members[member_idx];
+										auto arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
+										if (arg_operands.size() >= 3) {
+											MemberStoreOp store_op;
+											store_op.object = decl.identifier_token().handle();
+											store_op.member_name = member.getName();
+											store_op.offset = static_cast<int>(member.offset);
+											store_op.value = toTypedValue(arg_operands);
+											store_op.struct_type_info = nullptr;
+											store_op.is_reference = false;
+											store_op.is_rvalue_reference = false;
+											store_op.is_pointer_to_member = false;
+											ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), decl.identifier_token()));
+										}
+										member_idx++;
+									});
+
+									// Register for destructor if needed
+									if (type_info.struct_info_->hasDestructor()) {
+										registerVariableWithDestructor(
+											std::string(decl.identifier_token().value()),
+											std::string(StringTable::getStringView(type_info.name()))
+										);
+									}
+								}
+							}
+
+							if (!used_aggregate_paren_init) {
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();
@@ -2571,6 +2630,7 @@
 									std::string(StringTable::getStringView(type_info.name()))
 								);
 							}
+							} // end of non-aggregate constructor call block
 						} else if (has_copy_init) {
 							// Generate copy constructor call or converting constructor call
 							const ASTNode& init_node = *node.initializer();

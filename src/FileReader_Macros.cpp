@@ -1426,7 +1426,7 @@
 		// These indicate which C++ language features are supported
 		defines_["__cpp_aggregate_bases"] = DefineDirective{ "201603L", {} };  // C++17 aggregate base classes
 		defines_["__cpp_aggregate_nsdmi"] = DefineDirective{ "201304L", {} };  // Aggregate NSDMI
-		defines_["__cpp_aggregate_paren_init"] = DefineDirective{ "201902L", {} };  // Aggregate direct init
+		defines_["__cpp_aggregate_paren_init"] = DefineDirective{ "201902L", {} };  // C++20 aggregate parenthesized init (P0960)
 		defines_["__cpp_alias_templates"] = DefineDirective{ "200704L", {} };  // Alias templates
 		defines_["__cpp_aligned_new"] = DefineDirective{ "201606L", {} };  // Over-aligned new
 		defines_["__cpp_attributes"] = DefineDirective{ "200809L", {} };  // Attributes
@@ -1456,7 +1456,8 @@
 		defines_["__cpp_guaranteed_copy_elision"] = DefineDirective{ "201606L", {} };  // Guaranteed copy elision
 		defines_["__cpp_hex_float"] = DefineDirective{ "201603L", {} };  // Hexadecimal float literals
 		defines_["__cpp_if_constexpr"] = DefineDirective{ "201606L", {} };  // C++17 if constexpr
-		defines_["__cpp_impl_coroutine"] = DefineDirective{ "201902L", {} };  // C++20 coroutine support
+		// __cpp_impl_coroutine intentionally NOT defined - coroutines (co_await, co_yield,
+		// co_return) are not implemented and not planned for FlashCpp.
 		defines_["__cpp_impl_destroying_delete"] = DefineDirective{ "201806L", {} };  // Destroying delete
 		defines_["__cpp_impl_three_way_comparison"] = DefineDirective{ "201907L", {} };  // <=> support
 		defines_["__cpp_inheriting_constructors"] = DefineDirective{ "200802L", {} };  // Inheriting constructors
