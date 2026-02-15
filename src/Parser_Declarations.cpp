@@ -2707,11 +2707,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 		}
 
-		// Create a global variable declaration node for the first variable
+		// Create a variable declaration node for the first variable
 		// Reuse the existing decl_node from type_and_name_result
 		auto [global_var_node, global_decl_node] = emplace_node_ref<VariableDeclarationNode>(
 			type_and_name_result.node().value(),  // Use the existing DeclarationNode
-			initializer
+			initializer,
+			specs.storage_class
 		);
 		global_decl_node.set_is_constexpr(is_constexpr);
 		global_decl_node.set_is_constinit(is_constinit);
@@ -2830,7 +2831,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				// Create a variable declaration node for this additional variable
 				auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
 					emplace_node<DeclarationNode>(next_decl),
-					next_initializer
+					next_initializer,
+					specs.storage_class
 				);
 				next_var_decl.set_is_constexpr(is_constexpr);
 				next_var_decl.set_is_constinit(is_constinit);

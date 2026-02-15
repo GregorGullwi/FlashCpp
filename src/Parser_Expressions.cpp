@@ -9544,15 +9544,17 @@ ParseResult Parser::parse_lambda_expression() {
     if (peek() == "noexcept"_tok) {
         advance(); // consume 'noexcept'
         lambda_is_noexcept = true;
-        // Handle noexcept(expr) form
+        // Handle noexcept(expr) form - evaluate the expression
         if (peek() == "("_tok) {
             advance(); // consume '('
-            // Skip the noexcept expression
-            int paren_depth = 1;
-            while (!peek().is_eof() && paren_depth > 0) {
-                if (peek() == "("_tok) paren_depth++;
-                else if (peek() == ")"_tok) paren_depth--;
-                if (paren_depth > 0) advance();
+            auto noexcept_expr = parse_expression(MIN_PRECEDENCE, ExpressionContext::Normal);
+            if (noexcept_expr.node().has_value()) {
+                ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+                eval_ctx.parser = this;
+                auto eval_result = ConstExpr::Evaluator::evaluate(*noexcept_expr.node(), eval_ctx);
+                if (eval_result.success()) {
+                    lambda_is_noexcept = eval_result.as_int() != 0;
+                }
             }
             consume(")"_tok);
         }
