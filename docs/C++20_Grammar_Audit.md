@@ -49,13 +49,11 @@ Simple cases work incidentally via auto-parameter deduction, but explicit templa
 *   `constexpr`/`consteval` on lambdas — not parsed
 *   `requires` clause on lambdas — not parsed
 
-### 2. Aggregate Parenthesized Initialization — Not Properly Implemented (Medium Severity)
+### 2. Aggregate Parenthesized Initialization — Fixed
 
 C++20 (P0960) allows aggregate types to be initialized with parentheses: `Point p(1, 2)` where `Point` has no constructors.
 
-The feature macro `__cpp_aggregate_paren_init` is defined as `201902L` (FileReader_Macros.cpp:1429), but the actual implementation only handles brace initialization (`Type{args}`) at Parser_Expressions.cpp:7862. The parenthesized form `Type(args)` goes through `parse_direct_initialization()` which treats it as a constructor call, not aggregate init.
-
-**Impact:** Aggregate paren init will fail or produce incorrect results for types without user-defined constructors.
+**Resolution:** Added aggregate init fallback to the declaration-context codegen path (CodeGen_Statements.cpp). When no matching user-defined constructor is found and the struct is an aggregate, direct member stores are generated instead of a constructor call. This matches the existing aggregate init logic in the expression-context path (CodeGen_Lambdas.cpp). Works for block scope direct init, global scope, copy-init from temporaries, and expression context.
 
 ### 3. `[[likely]]`/`[[unlikely]]` in switch/case — Partial (Medium Severity)
 
@@ -77,10 +75,10 @@ Several `__cpp_*` feature-test macros advertise support for features that are no
 
 | Macro | Value | Actual Status |
 |-------|-------|---------------|
-| `__cpp_impl_coroutine` | `201902L` | Not planned (see below) |
-| `__cpp_aggregate_paren_init` | `201902L` | Only brace form works, not parenthesized |
+| `__cpp_impl_coroutine` | `201902L` | Not planned (see below) — **macro removed** |
+| `__cpp_aggregate_paren_init` | `201902L` | **Fixed** — both `()` and `{}` forms work |
 
-These can cause user code to take codepaths that the compiler cannot handle, producing confusing errors far from the actual limitation.
+`__cpp_impl_coroutine` has been removed. `__cpp_aggregate_paren_init` is now accurately defined.
 
 ---
 
@@ -88,11 +86,11 @@ These can cause user code to take codepaths that the compiler cannot handle, pro
 
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
-| — | Declaration dispatch routing | Low | Mitigated — plan above |
-| 1 | Template lambda params discarded | **Medium** | Parsed but not stored in AST |
-| 2 | Aggregate parenthesized init | **Medium** | Feature macro set but not implemented for `()` form |
-| 3 | `[[likely]]`/`[[unlikely]]` in switch/case | **Medium** | Only if/else handled, not switch/case |
-| 4 | Misleading feature-test macros | Low | `__cpp_impl_coroutine`, `__cpp_aggregate_paren_init` |
+| — | Declaration dispatch routing | Low | **Fixed** — keyword dispatch unified |
+| 1 | Template lambda params discarded | **Medium** | **Fixed** — stored in AST, specifiers parsed |
+| 2 | Aggregate parenthesized init | **Medium** | **Fixed** — both `()` and `{}` forms work |
+| 3 | `[[likely]]`/`[[unlikely]]` in switch/case | **Medium** | **Fixed** — skip_cpp_attributes() added |
+| 4 | Misleading feature-test macros | Low | **Fixed** — `__cpp_impl_coroutine` removed, `__cpp_aggregate_paren_init` now accurate |
 
 ---
 

@@ -1426,8 +1426,7 @@
 		// These indicate which C++ language features are supported
 		defines_["__cpp_aggregate_bases"] = DefineDirective{ "201603L", {} };  // C++17 aggregate base classes
 		defines_["__cpp_aggregate_nsdmi"] = DefineDirective{ "201304L", {} };  // Aggregate NSDMI
-		// __cpp_aggregate_paren_init intentionally NOT defined - parenthesized aggregate init
-		// (P0960) is not implemented; only brace-form aggregate init works.
+		defines_["__cpp_aggregate_paren_init"] = DefineDirective{ "201902L", {} };  // C++20 aggregate parenthesized init (P0960)
 		defines_["__cpp_alias_templates"] = DefineDirective{ "200704L", {} };  // Alias templates
 		defines_["__cpp_aligned_new"] = DefineDirective{ "201606L", {} };  // Over-aligned new
 		defines_["__cpp_attributes"] = DefineDirective{ "200809L", {} };  // Attributes
