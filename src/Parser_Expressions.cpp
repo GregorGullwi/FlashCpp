@@ -9520,23 +9520,25 @@ ParseResult Parser::parse_lambda_expression() {
         // Note: params.is_variadic could be used for variadic lambdas (C++14+)
     }
 
-    // Parse optional lambda specifiers (C++20): mutable, constexpr, consteval, noexcept
-    // Order per standard: mutable? constexpr? noexcept? -> type?
+    // Parse optional lambda specifiers (C++20 lambda-specifier-seq)
+    // Accepts mutable, constexpr, consteval in any order
     bool is_mutable = false;
-    if (peek() == "mutable"_tok) {
-        advance(); // consume 'mutable'
-        is_mutable = true;
-    }
-
-    // Parse optional constexpr/consteval specifiers (C++17/C++20)
     bool lambda_is_constexpr = false;
     bool lambda_is_consteval = false;
-    if (peek() == "constexpr"_tok) {
-        advance(); // consume 'constexpr'
-        lambda_is_constexpr = true;
-    } else if (peek() == "consteval"_tok) {
-        advance(); // consume 'consteval'
-        lambda_is_consteval = true;
+    bool parsing_specifiers = true;
+    while (parsing_specifiers) {
+        if (!is_mutable && peek() == "mutable"_tok) {
+            advance();
+            is_mutable = true;
+        } else if (!lambda_is_constexpr && !lambda_is_consteval && peek() == "constexpr"_tok) {
+            advance();
+            lambda_is_constexpr = true;
+        } else if (!lambda_is_consteval && !lambda_is_constexpr && peek() == "consteval"_tok) {
+            advance();
+            lambda_is_consteval = true;
+        } else {
+            parsing_specifiers = false;
+        }
     }
 
     // Parse optional noexcept specifier (C++20)
