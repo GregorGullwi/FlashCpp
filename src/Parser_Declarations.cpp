@@ -3694,7 +3694,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// Handle bitfield declarations: unsigned int field:8;
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
-					auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
 					if (width_result.is_error()) {
 						return width_result;
 					}
@@ -3722,7 +3722,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					std::optional<size_t> next_bitfield_width;
 					if (peek() == ":"_tok) {
 						advance(); // consume ':'
-						auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
 						if (width_result.is_error()) {
 							return width_result;
 						}
@@ -5281,7 +5281,7 @@ ParseResult Parser::parse_struct_declaration()
 						std::optional<size_t> bitfield_width;
 						if (peek() == ":"_tok) {
 							advance(); // consume ':'
-							auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
 							if (width_result.is_error()) {
 								return width_result;
 							}
@@ -6316,7 +6316,7 @@ ParseResult Parser::parse_struct_declaration()
 			if (peek() == ":"_tok) {
 				advance(); // consume ':'
 				// Parse the bitfield width expression (usually a numeric literal)
-				auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
 				if (width_result.is_error()) {
 					return width_result;
 				}
@@ -6456,7 +6456,7 @@ ParseResult Parser::parse_struct_declaration()
 				std::optional<size_t> additional_bitfield_width;
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
-					auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
 					if (width_result.is_error()) {
 						return width_result;
 					}
@@ -8910,7 +8910,7 @@ ParseResult Parser::parse_typedef_declaration()
 			// Handle bitfield declarations: unsigned int field:8;
 			if (peek() == ":"_tok) {
 				advance(); // consume ':'
-				auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
 				if (width_result.is_error()) {
 					return width_result;
 				}
@@ -8947,7 +8947,7 @@ ParseResult Parser::parse_typedef_declaration()
 				std::optional<size_t> additional_bitfield_width;
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
-					auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
 					if (width_result.is_error()) {
 						return width_result;
 					}
