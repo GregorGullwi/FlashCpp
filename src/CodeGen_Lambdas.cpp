@@ -1181,7 +1181,7 @@
 	// Generate an instantiated member function template
 	void generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info) {
 		auto saved_namespace_stack = current_namespace_stack_;
-		auto parseNamespaceComponents = [](std::string_view qualified_prefix) {
+		auto parse_namespace_components = [](std::string_view qualified_prefix) {
 			std::vector<std::string> components;
 			size_t start = 0;
 			while (start < qualified_prefix.size()) {
@@ -1195,23 +1195,22 @@
 			}
 			return components;
 		};
+		auto extract_namespace_prefix = [](std::string_view qualified_name) -> std::string_view {
+			size_t scope_pos = qualified_name.rfind("::");
+			if (scope_pos == std::string_view::npos) {
+				return {};
+			}
+			return qualified_name.substr(0, scope_pos);
+		};
 
 		std::string_view namespace_source;
 		if (inst_info.struct_name.isValid()) {
-			std::string_view struct_name = StringTable::getStringView(inst_info.struct_name);
-			size_t scope_pos = struct_name.rfind("::");
-			if (scope_pos != std::string_view::npos) {
-				namespace_source = struct_name.substr(0, scope_pos);
-			}
+			namespace_source = extract_namespace_prefix(StringTable::getStringView(inst_info.struct_name));
 		} else {
-			std::string_view qualified_name = StringTable::getStringView(inst_info.qualified_template_name);
-			size_t scope_pos = qualified_name.rfind("::");
-			if (scope_pos != std::string_view::npos) {
-				namespace_source = qualified_name.substr(0, scope_pos);
-			}
+			namespace_source = extract_namespace_prefix(StringTable::getStringView(inst_info.qualified_template_name));
 		}
 		if (!namespace_source.empty()) {
-			current_namespace_stack_ = parseNamespaceComponents(namespace_source);
+			current_namespace_stack_ = parse_namespace_components(namespace_source);
 		} else {
 			current_namespace_stack_.clear();
 		}
