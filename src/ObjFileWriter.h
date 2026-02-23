@@ -603,6 +603,10 @@ public:
 		if (g_enable_debug_output) std::cerr << "Function symbol added successfully" << std::endl;
 	}
 
+	void add_data(std::span<const uint8_t> data, SectionType section_type) {
+		add_data(std::span<const char>(reinterpret_cast<const char*>(data.data()), data.size()), section_type);
+	}
+
 	void add_data(std::span<const char> data, SectionType section_type) {
 		int section_index = sectiontype_to_index[section_type];
 		if (g_enable_debug_output) std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type) << " (index=" << section_index << ")";

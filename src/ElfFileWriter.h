@@ -158,6 +158,18 @@ public:
 		section->append_data(data.data(), data.size());
 	}
 
+	void add_data(const std::vector<uint8_t>& data, SectionType section_type) {
+		auto* section = getSectionForType(section_type);
+		if (!section) {
+			throw std::runtime_error("Section not found for type");
+		}
+		if (g_enable_debug_output) {
+			std::cerr << "Adding " << data.size() << " bytes to section "
+			          << section->get_name() << std::endl;
+		}
+		section->append_data(reinterpret_cast<const char*>(data.data()), data.size());
+	}
+
 	/**
 	 * @brief Add a relocation entry (default: PLT32 for function calls)
 	 * 
