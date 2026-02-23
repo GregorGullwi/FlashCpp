@@ -5673,6 +5673,11 @@ private:
 		textSectionData.push_back(shift_amount);
 	}
 
+	// Compute the mask for a bitfield of the given width in bits.
+	static uint64_t bitfieldMask(size_t width) {
+		return (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+	}
+
 	// Helper to emit CALL instruction with relocation
 	void emitCall(const std::string& symbol_name) {
 		textSectionData.push_back(0xE8); // CALL rel32
@@ -14083,14 +14088,13 @@ private:
 				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				
 				// Extract bitfield value if this is a bitfield member
-				FLASH_LOG_FORMAT(Codegen, Debug, "MemberAccess global path: bitfield_width.has_value()={}, bitfield_bit_offset={}", op.bitfield_width.has_value(), op.bitfield_bit_offset);
 				if (op.bitfield_width.has_value()) {
 					size_t bit_offset = op.bitfield_bit_offset;
 					size_t width = *op.bitfield_width;
 					if (bit_offset > 0) {
 						emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
 					}
-					uint64_t mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+					uint64_t mask = bitfieldMask(width);
 					emitAndImm64(temp_reg, mask);
 				}
 
@@ -14132,14 +14136,13 @@ private:
 			regAlloc.release(ptr_reg);
 			
 			// Extract bitfield value if this is a bitfield member
-			FLASH_LOG_FORMAT(Codegen, Debug, "MemberAccess pointer path: bitfield_width.has_value()={}, bitfield_bit_offset={}", op.bitfield_width.has_value(), op.bitfield_bit_offset);
 			if (op.bitfield_width.has_value()) {
 				size_t bit_offset = op.bitfield_bit_offset;
 				size_t width = *op.bitfield_width;
 				if (bit_offset > 0) {
 					emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
 				}
-				uint64_t mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+				uint64_t mask = bitfieldMask(width);
 				emitAndImm64(temp_reg, mask);
 			}
 
@@ -14162,7 +14165,7 @@ private:
 				emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
 			}
 			// AND temp_reg, (1 << width) - 1
-			uint64_t mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+			uint64_t mask = bitfieldMask(width);
 			emitAndImm64(temp_reg, mask);
 		}
 
@@ -14325,37 +14328,73 @@ private:
 					// Add relocation for the global variable (with offset already included in displacement)
 					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 				} else {
-					// Integer store: MOV [RIP + disp32], reg
-					int size_in_bits = op.value.size_in_bits;
-					uint8_t src_val = static_cast<uint8_t>(value_reg);
-					uint8_t src_bits = src_val & 0x07;
-					uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
-					uint8_t needs_rex_b = (src_val >> 3) & 0x01;
-					uint8_t rex = 0x40 | needs_rex_w | needs_rex_b;
-					uint8_t emit_rex = (needs_rex_w | needs_rex_b) != 0;
-					
-					if (emit_rex) {
-						textSectionData.push_back(rex);
-					}
-					
-					if (size_in_bits == 8) {
-						textSectionData.push_back(0x88); // MOV r/m8, r8
+					// Integer store
+					int member_size_bytes = op.value.size_in_bits / 8;
+					if (op.bitfield_width.has_value()) {
+						// Bitfield global write: read-modify-write via register-based addressing
+						size_t width = *op.bitfield_width;
+						size_t bit_offset = op.bitfield_bit_offset;
+						uint64_t mask = bitfieldMask(width);
+
+						// LEA addr_reg, [RIP + global]
+						X64Register addr_reg = allocateRegisterWithSpilling();
+						uint32_t reloc_offset_lea = emitLeaRipRelative(addr_reg);
+						pending_global_relocations_.push_back({reloc_offset_lea, object_name_handle, IMAGE_REL_AMD64_REL32});
+
+						// Load existing storage unit from [addr_reg + op.offset] into temp_reg
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, addr_reg, op.offset, member_size_bytes);
+
+						// Clear the bitfield bits in temp_reg
+						emitAndImm64(temp_reg, ~(mask << bit_offset));
+
+						// Shift value into position and mask it
+						if (bit_offset > 0) {
+							emitShlImm(value_reg, static_cast<uint8_t>(bit_offset));
+						}
+						emitAndImm64(value_reg, mask << bit_offset);
+
+						// OR value into storage unit
+						emitOrReg(temp_reg, value_reg);
+
+						// Store back to [addr_reg + op.offset]
+						emitStoreToMemory(textSectionData, temp_reg, addr_reg, op.offset, member_size_bytes);
+
+						regAlloc.release(temp_reg);
+						regAlloc.release(addr_reg);
 					} else {
-						textSectionData.push_back(0x89); // MOV r/m32/r/m64, r32/r64
+						// Non-bitfield integer store: MOV [RIP + disp32], reg
+						int size_in_bits = op.value.size_in_bits;
+						uint8_t src_val = static_cast<uint8_t>(value_reg);
+						uint8_t src_bits = src_val & 0x07;
+						uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
+						uint8_t needs_rex_b = (src_val >> 3) & 0x01;
+						uint8_t rex = 0x40 | needs_rex_w | needs_rex_b;
+						uint8_t emit_rex = (needs_rex_w | needs_rex_b) != 0;
+						
+						if (emit_rex) {
+							textSectionData.push_back(rex);
+						}
+						
+						if (size_in_bits == 8) {
+							textSectionData.push_back(0x88); // MOV r/m8, r8
+						} else {
+							textSectionData.push_back(0x89); // MOV r/m32/r/m64, r32/r64
+						}
+						
+						textSectionData.push_back(0x05 | (src_bits << 3));
+						
+						// Placeholder for displacement with member offset
+						uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+						int32_t disp_with_offset = op.offset;
+						textSectionData.push_back((disp_with_offset >> 0) & 0xFF);
+						textSectionData.push_back((disp_with_offset >> 8) & 0xFF);
+						textSectionData.push_back((disp_with_offset >> 16) & 0xFF);
+						textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
+						
+						// Add relocation
+						pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 					}
-					
-					textSectionData.push_back(0x05 | (src_bits << 3));
-					
-					// Placeholder for displacement with member offset
-					uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
-					int32_t disp_with_offset = op.offset;
-					textSectionData.push_back((disp_with_offset >> 0) & 0xFF);
-					textSectionData.push_back((disp_with_offset >> 8) & 0xFF);
-					textSectionData.push_back((disp_with_offset >> 16) & 0xFF);
-					textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
-					
-					// Add relocation
-					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 				}
 				
 				regAlloc.release(value_reg);
@@ -14481,7 +14520,7 @@ private:
 			// Bitfield store: read-modify-write to preserve other bitfields in the storage unit
 			size_t width = *op.bitfield_width;
 			size_t bit_offset = op.bitfield_bit_offset;
-			uint64_t mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+			uint64_t mask = bitfieldMask(width);
 
 			// Allocate a temp register for read-modify-write
 			X64Register temp_reg = allocateRegisterWithSpilling();
