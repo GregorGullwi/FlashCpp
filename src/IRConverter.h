@@ -3556,6 +3556,12 @@ public:
 			case IrOpcode::SehLeave:
 				handleSehLeave(instruction);
 				break;
+			case IrOpcode::SehGetExceptionCode:
+				handleSehGetExceptionCode(instruction);
+				break;
+			case IrOpcode::SehGetExceptionInfo:
+				handleSehGetExceptionInfo(instruction);
+				break;
 			default:
 				throw std::runtime_error("Not implemented yet");
 				break;
@@ -16441,7 +16447,12 @@ private:
 			}
 			
 			emitCall("_CxxThrowException");
-			// Note: _CxxThrowException never returns
+			// _CxxThrowException is [[noreturn]], but the call pushes a return address on the stack.
+			// That return address must fall WITHIN this function's PDATA range [begin, end).
+			// Without the int3, return_addr == PDATA_end (exclusive boundary) → the unwinder
+			// cannot find this function's PDATA and skips main's try/catch.
+			// Emitting int 3 extends the function code by 1 byte so return_addr < PDATA_end.
+			textSectionData.push_back(static_cast<char>(0xCC)); // int 3 (unreachable)
 		}
 	}
 
@@ -16475,7 +16486,8 @@ private:
 			emitXorRegReg(X64Register::RDX);
 			
 			emitCall("_CxxThrowException");
-			// Note: _CxxThrowException never returns
+			// Same PDATA range fix: emit int 3 so the return address is within the function range.
+			textSectionData.push_back(static_cast<char>(0xCC)); // int 3 (unreachable)
 		}
 	}
 
@@ -16659,6 +16671,62 @@ private:
 		emitPushReg(X64Register::RBP);
 		emitSubRSP(32);
 		emitMovRegReg(X64Register::RBP, X64Register::RDX);
+
+		// Save EXCEPTION_POINTERS* (RCX) to shadow space slot 2 ([rsp+0x08])
+		// so GetExceptionCode() / GetExceptionInformation() can load it after RCX may be clobbered.
+		// mov qword ptr [rsp+8], rcx  (48 89 4C 24 08)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x89));
+		textSectionData.push_back(static_cast<char>(0x4C));
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+	}
+
+	void handleSehGetExceptionCode(const IrInstruction& instruction) {
+		// SehGetExceptionCode: GetExceptionCode() intrinsic in filter funclet
+		// EXCEPTION_POINTERS* was saved to [rsp+0x08] in handleSehFilterBegin
+		// EXCEPTION_POINTERS->ExceptionRecord = [RCX+0] (pointer to EXCEPTION_RECORD)
+		// EXCEPTION_RECORD->ExceptionCode     = [ExceptionRecord+0] (DWORD at offset 0)
+		const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
+
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x44);
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+		// mov rax, [rax]        ; ExceptionRecord* (48 8B 00)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x00);
+		// mov eax, [rax]        ; ExceptionCode (DWORD) (8B 00)
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x00);
+
+		// Store 32-bit result to the result temp var (accessible via parent's RBP)
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
+
+		FLASH_LOG(Codegen, Debug, "SehGetExceptionCode: result temp at [rbp+", result_offset, "]");
+	}
+
+	void handleSehGetExceptionInfo(const IrInstruction& instruction) {
+		// SehGetExceptionInfo: GetExceptionInformation() intrinsic in filter funclet
+		// Returns the EXCEPTION_POINTERS* that was saved to [rsp+0x08] in handleSehFilterBegin
+		const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
+
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x44);
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+
+		// Store 64-bit pointer to the result temp var (accessible via parent's RBP)
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 64);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
+
+		FLASH_LOG(Codegen, Debug, "SehGetExceptionInfo: result temp at [rbp+", result_offset, "]");
 	}
 
 	void handleSehFilterEnd(const IrInstruction& instruction) {
