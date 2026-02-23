@@ -249,9 +249,24 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						return ASTNode(&new_expr);
 					}
 				} else {
-					// Non-dependent template argument - evaluate to get the type
+					// Non-dependent template argument - substitute/evaluate to a value if possible
 					FLASH_LOG(Templates, Debug, "    Template argument is non-dependent expression");
-					// For now, skip - we'll handle this later if needed
+					ASTNode substituted_arg_node = substitute(arg_node);
+					if (substituted_arg_node.is<ExpressionNode>()) {
+						const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
+						if (std::holds_alternative<NumericLiteralNode>(substituted_expr)) {
+							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(substituted_expr);
+							int64_t value = std::visit([](const auto& v) -> int64_t {
+								return static_cast<int64_t>(v);
+							}, lit.value());
+							substituted_template_args.emplace_back(value, lit.type());
+						} else if (std::holds_alternative<BoolLiteralNode>(substituted_expr)) {
+							const BoolLiteralNode& lit = std::get<BoolLiteralNode>(substituted_expr);
+							substituted_template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+						} else {
+							FLASH_LOG(Templates, Debug, "    Substituted template argument expression type not handled for value extraction");
+						}
+					}
 				}
 			} else {
 				FLASH_LOG(Templates, Debug, "    Template argument is unknown type");

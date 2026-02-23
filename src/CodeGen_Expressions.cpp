@@ -621,6 +621,23 @@
 				}
 			}
 
+			// If still unresolved, try std:: as a last-resort namespace lookup for
+			// unscoped memory-order enum values used by libstdc++ helper functions.
+			if (!symbol.has_value() &&
+			    (identifierNode.name().starts_with("memory_order_"sv) ||
+			     identifierNode.name().starts_with("__memory_order_"sv))) {
+				NamespaceHandle std_ns = gNamespaceRegistry.lookupNamespace(
+					NamespaceRegistry::GLOBAL_NAMESPACE,
+					StringTable::getOrInternStringHandle("std"sv));
+				if (std_ns.isValid()) {
+					symbol = global_symbol_table_->lookup_qualified(std_ns, identifier_handle);
+					if (symbol.has_value()) {
+						is_global = true;
+						resolved_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(std_ns, identifier_handle);
+					}
+				}
+			}
+
 		}
 
 		// Only check if it's a member variable if NOT found in symbol tables

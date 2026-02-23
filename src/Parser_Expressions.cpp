@@ -7242,8 +7242,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											FunctionCallNode& var_call_sv = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_sv, std::move(no_args_sv), idenfifier_token);
 											std::vector<ASTNode> targ_nodes_sv;
 											for (const auto& targ : *explicit_template_args) {
-												TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.base_type, targ.type_index, get_type_size_bits(targ.base_type), idenfifier_token);
-												targ_nodes_sv.push_back(ASTNode(&tts));
+												if (targ.is_dependent && targ.dependent_name.isValid()) {
+													Token dep_token(Token::Type::Identifier, targ.dependent_name.view(),
+													                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+													ExpressionNode& dep_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+														TemplateParameterReferenceNode(targ.dependent_name, dep_token));
+													targ_nodes_sv.push_back(ASTNode(&dep_expr));
+												} else {
+													TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.base_type, targ.type_index, get_type_size_bits(targ.base_type), idenfifier_token);
+													targ_nodes_sv.push_back(ASTNode(&tts));
+												}
 											}
 											if (!targ_nodes_sv.empty())
 												var_call_sv.set_template_arguments(std::move(targ_nodes_sv));
@@ -7285,8 +7293,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									FunctionCallNode& var_call_vt = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt, std::move(no_args_vt), idenfifier_token);
 									std::vector<ASTNode> targ_nodes_vt;
 									for (const auto& targ : *explicit_template_args) {
-										TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.base_type, targ.type_index, get_type_size_bits(targ.base_type), idenfifier_token);
-										targ_nodes_vt.push_back(ASTNode(&tts));
+										if (targ.is_dependent && targ.dependent_name.isValid()) {
+											Token dep_token(Token::Type::Identifier, targ.dependent_name.view(),
+											                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+											ExpressionNode& dep_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+												TemplateParameterReferenceNode(targ.dependent_name, dep_token));
+											targ_nodes_vt.push_back(ASTNode(&dep_expr));
+										} else {
+											TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.base_type, targ.type_index, get_type_size_bits(targ.base_type), idenfifier_token);
+											targ_nodes_vt.push_back(ASTNode(&tts));
+										}
 									}
 									if (!targ_nodes_vt.empty())
 										var_call_vt.set_template_arguments(std::move(targ_nodes_vt));
