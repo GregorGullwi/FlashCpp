@@ -1523,9 +1523,8 @@ ParseResult Parser::parse_template_declaration() {
 						if (enum_result.is_error()) {
 							return enum_result;
 						}
-						// Enums inside structs don't need to be added to the struct explicitly
-						// They're registered in the global type system by parse_enum_declaration
-						// The semicolon is already consumed by parse_enum_declaration
+						// Note: For template class bodies, nested enum tracking happens at instantiation time.
+						// The enum type is registered globally by parse_enum_declaration.
 						continue;
 					} else if (peek() == "using"_tok) {
 						// Handle type alias inside class body: using value_type = T;
@@ -2811,9 +2810,7 @@ ParseResult Parser::parse_template_declaration() {
 						if (enum_result.is_error()) {
 							return enum_result;
 						}
-						// Enums inside structs don't need to be added to the struct explicitly
-						// They're registered in the global type system by parse_enum_declaration
-						// The semicolon is already consumed by parse_enum_declaration
+						// Note: For template class bodies, nested enum tracking happens at instantiation time.
 						continue;
 					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
 						// Handle nested struct/class declarations inside partial specialization body
