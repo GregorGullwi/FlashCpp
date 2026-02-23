@@ -2274,8 +2274,13 @@ ParseResult Parser::parse_decltype_specifier()
 		// unresolved function calls with dependent arguments), create a dependent type
 		// placeholder instead of propagating the error. The actual function lookup
 		// will happen during template instantiation when the dependent types are known.
-		// EXCEPTION: In SFINAE context, propagate the error so the overload is rejected.
-		if ((parsing_template_body_ || !current_template_param_names_.empty()) && !in_sfinae_context_) {
+		// Also recover on recursion depth errors (e.g. __niter_base's mutually-recursive
+		// trailing return type) even in SFINAE context so the error doesn't cascade.
+		bool is_recursion_error = expr_result.error_message().find("recursion depth") != std::string::npos ||
+		                          expr_result.error_message().find("recursion") != std::string::npos;
+		bool should_recover = (parsing_template_body_ || !current_template_param_names_.empty()) &&
+		                      (!in_sfinae_context_ || is_recursion_error);
+		if (should_recover) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for failed decltype expression in template context");
 			// Restore position to start of expression for reliable paren counting
 			restore_token_position(expr_start_pos);

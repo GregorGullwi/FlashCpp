@@ -1091,7 +1091,7 @@ static bool is_known_type_trait_name(std::string_view name) {
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 {
 	static thread_local int recursion_depth = 0;
-	constexpr int MAX_RECURSION_DEPTH = 50;  // Lowered to catch issues faster
+	constexpr int MAX_RECURSION_DEPTH = 50;
 	
 	// RAII guard to ensure recursion_depth is decremented on all exit paths
 	struct RecursionGuard {
@@ -7232,10 +7232,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 											return ParseResult::success(*result);
 										} else {
-											// Variable template found but couldn't instantiate (likely dependent args)
-											// Create a placeholder identifier node
+											// Variable template found but couldn't instantiate (likely dependent args).
+											// Preserve template args in a FunctionCallNode so the ExpressionSubstitutor
+											// can instantiate it after substituting the template parameter (e.g. _Size→size_t).
 											FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' (qualified as '{}') found but not instantiated (dependent args)", idenfifier_token.value(), qualified_name);
-											result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+											TypeSpecifierNode& stub_type_sv = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(Type::Auto, TypeQualifier::None, 0, idenfifier_token);
+											DeclarationNode& stub_decl_sv = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_sv), idenfifier_token);
+											ChunkedVector<ASTNode> no_args_sv;
+											FunctionCallNode& var_call_sv = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_sv, std::move(no_args_sv), idenfifier_token);
+											std::vector<ASTNode> targ_nodes_sv;
+											for (const auto& targ : *explicit_template_args) {
+												TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.base_type, targ.type_index, get_type_size_bits(targ.base_type), idenfifier_token);
+												targ_nodes_sv.push_back(ASTNode(&tts));
+											}
+											if (!targ_nodes_sv.empty())
+												var_call_sv.set_template_arguments(std::move(targ_nodes_sv));
+											var_call_sv.set_qualified_name(qualified_name);
+											result = emplace_node<ExpressionNode>(var_call_sv);
 											return ParseResult::success(*result);
 										}
 									}
@@ -7262,10 +7275,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 									return ParseResult::success(*result);
 								} else {
-									// Variable template found but couldn't instantiate (likely dependent args)
-									// Create a placeholder identifier node - will be resolved during actual template instantiation
+									// Variable template found but couldn't instantiate (likely dependent args).
+									// Preserve template args in a FunctionCallNode so the ExpressionSubstitutor
+									// can instantiate it after substituting the template parameter (e.g. _Size→size_t).
 									FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args)", idenfifier_token.value());
-									result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+									TypeSpecifierNode& stub_type_vt = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(Type::Auto, TypeQualifier::None, 0, idenfifier_token);
+									DeclarationNode& stub_decl_vt = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt), idenfifier_token);
+									ChunkedVector<ASTNode> no_args_vt;
+									FunctionCallNode& var_call_vt = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt, std::move(no_args_vt), idenfifier_token);
+									std::vector<ASTNode> targ_nodes_vt;
+									for (const auto& targ : *explicit_template_args) {
+										TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.base_type, targ.type_index, get_type_size_bits(targ.base_type), idenfifier_token);
+										targ_nodes_vt.push_back(ASTNode(&tts));
+									}
+									if (!targ_nodes_vt.empty())
+										var_call_vt.set_template_arguments(std::move(targ_nodes_vt));
+									result = emplace_node<ExpressionNode>(var_call_vt);
 									return ParseResult::success(*result);
 								}
 							}
@@ -7786,6 +7811,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							Token inst_token(Token::Type::Identifier, inst_name, 
 							                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 							result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+							return ParseResult::success(*result);
+						} else {
+							// Variable template found but couldn't instantiate (likely dependent args).
+							// Preserve template args in a FunctionCallNode for later substitution.
+							FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args, path 3)", template_name_to_use);
+							TypeSpecifierNode& stub_type_vt3 = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(Type::Auto, TypeQualifier::None, 0, idenfifier_token);
+							DeclarationNode& stub_decl_vt3 = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt3), idenfifier_token);
+							ChunkedVector<ASTNode> no_args_vt3;
+							FunctionCallNode& var_call_vt3 = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt3, std::move(no_args_vt3), idenfifier_token);
+							if (!explicit_template_arg_nodes.empty())
+								var_call_vt3.set_template_arguments(std::move(explicit_template_arg_nodes));
+							if (!template_name_to_use.empty() && template_name_to_use != idenfifier_token.value())
+								var_call_vt3.set_qualified_name(template_name_to_use);
+							result = emplace_node<ExpressionNode>(var_call_vt3);
 							return ParseResult::success(*result);
 						}
 					}
