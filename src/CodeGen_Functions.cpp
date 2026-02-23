@@ -462,29 +462,14 @@
 				std::string_view struct_type_name = StringTable::getStringView(name_handle);
 				if (struct_type_name.find("_pattern_") != std::string_view::npos) continue;
 				if (struct_type_name.find("_unknown") != std::string_view::npos) continue;
-				// Skip template patterns (structs without $ hash suffix that have template parameters)
-				// Template instantiations always have a hash like "Holder$bb125dafdd4970ce"
-				// If a struct has no $ but appears in template registry, it's a pattern
+				// Skip template patterns — if the struct is registered as a class template in the
+				// template registry, it is an uninstantiated pattern and must not be used for codegen.
+				// Check by the exact name (qualified or unqualified) so namespace-sharing structs
+				// like std::array and other_ns::array are never confused with each other.
 				if (struct_type_name.find('$') == std::string_view::npos) {
-					// Check if this is a registered template by looking for it in template registry
-					// For now, we'll use a simpler heuristic: if any instantiation of this template
-					// exists (with same base name but with $), skip the pattern
-					// Strip namespace prefix for comparison: "std::array" → "array", since
-					// instantiated names use the unqualified base name (e.g., "array$hash").
-					std::string_view base_struct_name = struct_type_name;
-					if (auto ns_pos = base_struct_name.rfind("::"); ns_pos != std::string_view::npos) {
-						base_struct_name = base_struct_name.substr(ns_pos + 2);
+					if (gTemplateRegistry.lookupTemplate(struct_type_name).has_value()) {
+						continue;
 					}
-					bool has_instantiation = false;
-					// Look for any struct with the same base name (sans namespace) and a $ suffix
-					for (const auto& [other_name_handle, other_type_ptr] : gTypesByName) {
-						std::string_view other_name = StringTable::getStringView(other_name_handle);
-						if (other_name.starts_with(base_struct_name) && other_name.size() > base_struct_name.size() && other_name[base_struct_name.size()] == '$') {
-							has_instantiation = true;
-							break;
-						}
-					}
-					if (has_instantiation) continue;
 				}
 				
 				for (const auto& member_func : struct_info->member_functions) {
