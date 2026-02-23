@@ -10262,6 +10262,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		static thread_local std::unordered_set<std::string_view> body_reparse_in_progress;
 		if (body_reparse_in_progress.count(template_name)) {
 			FLASH_LOG(Templates, Debug, "Cycle detected in body re-parsing for '", template_name, "', skipping body to break cycle");
+			pack_param_info_ = std::move(saved_outer_pack_param_info);
 			return ASTNode(&new_func_ref);
 		}
 		body_reparse_in_progress.insert(template_name);
