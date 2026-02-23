@@ -14330,6 +14330,8 @@ private:
 				} else {
 					// Integer store
 					int member_size_bytes = op.value.size_in_bits / 8;
+					FLASH_LOG_FORMAT(Codegen, Debug, "MemberStore global: size_in_bits={}, member_size_bytes={}", op.value.size_in_bits, member_size_bytes);
+					assert(member_size_bytes > 0 && "Global bitfield RMW: op.value.size_in_bits must be storage unit size (>= 8 bits), not bitfield width");
 					if (op.bitfield_width.has_value()) {
 						// Bitfield global write: read-modify-write via register-based addressing
 						size_t width = *op.bitfield_width;

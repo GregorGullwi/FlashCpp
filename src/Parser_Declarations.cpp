@@ -6311,6 +6311,7 @@ ParseResult Parser::parse_struct_declaration()
 			const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
 
 			std::optional<size_t> bitfield_width;
+			std::optional<ASTNode> bitfield_width_expr;
 			// Handle bitfield declarations: int x : 5; or unnamed: int : 32;
 			// Bitfields specify a width in bits after ':' and before ';'
 			if (peek() == ":"_tok) {
@@ -6324,9 +6325,11 @@ ParseResult Parser::parse_struct_declaration()
 					ConstExpr::EvaluationContext ctx(gSymbolTable);
 					auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 					if (!eval_result.success() || eval_result.as_int() < 0) {
-						return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
+						// Defer evaluation for template non-type parameters
+						bitfield_width_expr = *width_result.node();
+					} else {
+						bitfield_width = static_cast<size_t>(eval_result.as_int());
 					}
-					bitfield_width = static_cast<size_t>(eval_result.as_int());
 				}
 			}
 
@@ -6435,7 +6438,7 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Add the first member to struct with current access level and default initializer
-			struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width);
+			struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr);
 
 			// Check for comma-separated additional declarations (e.g., int x, y, z;)
 			while (peek() == ","_tok) {
@@ -6454,6 +6457,7 @@ ParseResult Parser::parse_struct_declaration()
 				);
 
 				std::optional<size_t> additional_bitfield_width;
+				std::optional<ASTNode> additional_bitfield_width_expr;
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
 					auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
@@ -6464,9 +6468,11 @@ ParseResult Parser::parse_struct_declaration()
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 						if (!eval_result.success() || eval_result.as_int() < 0) {
-							return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
+							// Defer evaluation for template non-type parameters
+							additional_bitfield_width_expr = *width_result.node();
+						} else {
+							additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
 						}
-						additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
 					}
 				}
 
@@ -6504,7 +6510,7 @@ ParseResult Parser::parse_struct_declaration()
 				}
 
 				// Add this member to the struct
-				struct_ref.add_member(new_decl, current_access, additional_init, additional_bitfield_width);
+				struct_ref.add_member(new_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
 			}
 
 			// Expect semicolon after member declaration(s)
@@ -8907,6 +8913,7 @@ ParseResult Parser::parse_typedef_declaration()
 			}
 
 			std::optional<size_t> bitfield_width;
+			std::optional<ASTNode> bitfield_width_expr;
 			// Handle bitfield declarations: unsigned int field:8;
 			if (peek() == ":"_tok) {
 				advance(); // consume ':'
@@ -8918,9 +8925,11 @@ ParseResult Parser::parse_typedef_declaration()
 					ConstExpr::EvaluationContext ctx(gSymbolTable);
 					auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 					if (!eval_result.success() || eval_result.as_int() < 0) {
-						return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
+						// Defer evaluation for template non-type parameters
+						bitfield_width_expr = *width_result.node();
+					} else {
+						bitfield_width = static_cast<size_t>(eval_result.as_int());
 					}
-					bitfield_width = static_cast<size_t>(eval_result.as_int());
 				}
 			}
 
@@ -8932,7 +8941,8 @@ ParseResult Parser::parse_typedef_declaration()
 				member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), member_name_token);
 			}
 			members.push_back({member_decl_node, current_access, std::nullopt, bitfield_width});
-			struct_ref.add_member(member_decl_node, current_access, std::nullopt, bitfield_width);
+			members.back().bitfield_width_expr = bitfield_width_expr;
+			struct_ref.add_member(member_decl_node, current_access, std::nullopt, bitfield_width, bitfield_width_expr);
 
 			// Handle comma-separated declarations (e.g., int x, y, z;)
 			while (peek() == ","_tok) {
@@ -8945,6 +8955,7 @@ ParseResult Parser::parse_typedef_declaration()
 				}
 
 				std::optional<size_t> additional_bitfield_width;
+				std::optional<ASTNode> additional_bitfield_width_expr;
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
 					auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
@@ -8955,9 +8966,11 @@ ParseResult Parser::parse_typedef_declaration()
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 						if (!eval_result.success() || eval_result.as_int() < 0) {
-							return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
+							// Defer evaluation for template non-type parameters
+							additional_bitfield_width_expr = *width_result.node();
+						} else {
+							additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
 						}
-						additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
 					}
 				}
 
@@ -8967,7 +8980,8 @@ ParseResult Parser::parse_typedef_declaration()
 					next_member_name
 				);
 				members.push_back({next_member_decl, current_access, std::nullopt, additional_bitfield_width});
-				struct_ref.add_member(next_member_decl, current_access, std::nullopt, additional_bitfield_width);
+				members.back().bitfield_width_expr = additional_bitfield_width_expr;
+				struct_ref.add_member(next_member_decl, current_access, std::nullopt, additional_bitfield_width, additional_bitfield_width_expr);
 			}
 
 			// Expect semicolon

@@ -1263,18 +1263,72 @@
 			if (node.initializer()) {
 				const ASTNode& init_node = *node.initializer();
 				
-				// Handle array initialization with InitializerListNode
+				// Handle struct/array initialization with InitializerListNode
 				if (init_node.is<InitializerListNode>()) {
 					const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 					const auto& initializers = init_list.initializers();
 					
 					op.is_initialized = true;
-					op.element_count = initializers.size();
 					
-					// Build raw bytes for each element
-					for (const auto& elem_init : initializers) {
-						unsigned long long value = evalToValue(elem_init, type_node.type());
-						appendValueAsBytes(op.init_data, value, element_size);
+					// Check if this is struct aggregate initialization (vs. array element initialization)
+					if (type_node.type() == Type::Struct && !decl.is_array() && !type_node.is_array()
+						&& type_node.type_index() != 0 && type_node.type_index() < gTypeInfo.size()) {
+						const StructTypeInfo* struct_info_ptr = gTypeInfo[type_node.type_index()].getStructInfo();
+						if (struct_info_ptr) {
+							// Struct aggregate initialization: pack values into init_data using member bit offsets
+							op.init_data.resize(struct_info_ptr->total_size, 0);
+							size_t positional_index = 0;
+							for (size_t i = 0; i < initializers.size(); ++i) {
+								StringHandle member_name;
+								if (init_list.is_designated(i)) {
+									member_name = init_list.member_name(i);
+								} else if (positional_index < struct_info_ptr->members.size()) {
+									member_name = struct_info_ptr->members[positional_index].getName();
+									positional_index++;
+								} else {
+									break;
+								}
+								// Find the member
+								for (const auto& member : struct_info_ptr->members) {
+									if (member.getName() == member_name) {
+										unsigned long long value = evalToValue(initializers[i], member.type);
+										if (member.bitfield_width.has_value()) {
+											size_t width = *member.bitfield_width;
+											size_t bit_offset = member.bitfield_bit_offset;
+											unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+											value &= mask;
+											unsigned long long existing = 0;
+											for (size_t b = 0; b < member.size && (member.offset + b) < op.init_data.size(); ++b) {
+												existing |= (static_cast<unsigned long long>(static_cast<unsigned char>(op.init_data[member.offset + b])) << (b * 8));
+											}
+											existing |= (value << bit_offset);
+											for (size_t b = 0; b < member.size && (member.offset + b) < op.init_data.size(); ++b) {
+												op.init_data[member.offset + b] = static_cast<char>((existing >> (b * 8)) & 0xFF);
+											}
+										} else {
+											for (size_t b = 0; b < member.size && (member.offset + b) < op.init_data.size(); ++b) {
+												op.init_data[member.offset + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
+											}
+										}
+										break;
+									}
+								}
+							}
+						} else {
+							// Fallback: array-like behavior
+							op.element_count = initializers.size();
+							for (const auto& elem_init : initializers) {
+								unsigned long long value = evalToValue(elem_init, type_node.type());
+								appendValueAsBytes(op.init_data, value, element_size);
+							}
+						}
+					} else {
+						// Array initialization: each element is a separate value
+						op.element_count = initializers.size();
+						for (const auto& elem_init : initializers) {
+							unsigned long long value = evalToValue(elem_init, type_node.type());
+							appendValueAsBytes(op.init_data, value, element_size);
+						}
 					}
 				} else if (init_node.is<ExpressionNode>() && std::holds_alternative<ConstructorCallNode>(init_node.as<ExpressionNode>()) && type_node.type_index() != 0) {
 					// Struct-typed global variable initialized via constructor call (e.g., Ordering(-1))
@@ -2011,6 +2065,8 @@
 									member_store.is_reference = member.is_reference;
 									member_store.is_rvalue_reference = member.is_rvalue_reference;
 									member_store.struct_type_info = nullptr;
+									member_store.bitfield_width = member.bitfield_width;
+									member_store.bitfield_bit_offset = member.bitfield_bit_offset;
 
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), decl.identifier_token()));
 								}

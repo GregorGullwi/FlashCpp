@@ -3,7 +3,7 @@ int a : 3;
 int b : 5;
 };
 
-S g;
+S g = {2, 4};
 
 int main() {
 g.a = 1;
