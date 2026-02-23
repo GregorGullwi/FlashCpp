@@ -3135,7 +3135,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Validate that the namespace path actually exists before creating a forward declaration.
 					// This catches errors like f2::func() when only namespace f exists.
 					NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-					if (!validateQualifiedNamespace(ns_handle, final_identifier)) {
+					if (!validateQualifiedNamespace(ns_handle, final_identifier, parsing_template_body_)) {
 						return ParseResult::error(
 							std::string(StringBuilder().append("Use of undeclared identifier '")
 								.append(buildQualifiedNameFromStrings(namespaces, final_identifier.value()))
@@ -4434,7 +4434,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Create a QualifiedIdentifierNode with namespace handle
 		// If namespaces is empty, it means ::identifier (global namespace)
 		// If namespaces is not empty, it means ::ns::identifier
-		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+		// force_global=true because :: prefix means resolve from global namespace
+		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces, /*force_global=*/true);
 		auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
 
@@ -4487,7 +4488,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If still not found, create a forward declaration
 			if (!identifierType) {
 				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
-				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token())) {
+				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_body_)) {
 					return ParseResult::error(
 						std::string(StringBuilder().append("Use of undeclared identifier '")
 							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
@@ -5232,7 +5233,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If still not found, create a forward declaration
 			if (!identifierType) {
 				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
-				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token())) {
+				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_body_)) {
 					return ParseResult::error(
 						std::string(StringBuilder().append("Use of undeclared identifier '")
 							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))

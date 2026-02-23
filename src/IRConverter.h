@@ -2944,6 +2944,7 @@ inline void emitStoreToMemory(std::vector<char>& textSectionData, X64Register va
 	}
 }
 
+
 /**
  * @brief Emits MOV [RSP + offset], reg for storing a value to RSP-relative stack slot.
  *
@@ -5608,6 +5609,68 @@ private:
 		textSectionData.push_back(0x83); // ADD r/m64, imm8
 		textSectionData.push_back(0xC4); // ModR/M: RSP
 		textSectionData.push_back(amount);
+	}
+
+	// Helper to emit AND reg, imm64 for bitfield masking
+	void emitAndImm64(X64Register reg, uint64_t mask) {
+		uint8_t reg_enc = static_cast<uint8_t>(reg);
+		uint8_t rex = 0x48 | ((reg_enc >> 3) & 0x01); // REX.W + REX.B branchless
+		if (mask <= 0x7F) {
+			// AND r/m64, imm8 (sign-extended)
+			textSectionData.push_back(rex);
+			textSectionData.push_back(0x83);
+			textSectionData.push_back(0xE0 | (reg_enc & 0x07));
+			textSectionData.push_back(static_cast<uint8_t>(mask));
+		} else if (mask <= 0x7FFFFFFF) {
+			// AND r/m64, imm32 (sign-extended)
+			textSectionData.push_back(rex);
+			textSectionData.push_back(0x81);
+			textSectionData.push_back(0xE0 | (reg_enc & 0x07));
+			uint32_t m = static_cast<uint32_t>(mask);
+			textSectionData.push_back(m & 0xFF);
+			textSectionData.push_back((m >> 8) & 0xFF);
+			textSectionData.push_back((m >> 16) & 0xFF);
+			textSectionData.push_back((m >> 24) & 0xFF);
+		} else {
+			// Full 64-bit: MOV scratch, imm64; AND reg, scratch
+			X64Register scratch = (reg == X64Register::RAX) ? X64Register::RCX : X64Register::RAX;
+			uint8_t scratch_enc = static_cast<uint8_t>(scratch);
+			// Save scratch if it might be in use - use a simple push/pop
+			textSectionData.push_back(0x50 + (scratch_enc & 0x07)); // PUSH scratch
+			emitMovImm64(scratch, mask);
+			uint8_t rex2 = 0x48 | (((scratch_enc >> 3) & 0x01) << 2) | ((reg_enc >> 3) & 0x01); // REX.W + REX.R(scratch) + REX.B(reg) branchless
+			textSectionData.push_back(rex2);
+			textSectionData.push_back(0x21); // AND r/m64, r64
+			textSectionData.push_back(0xC0 | ((scratch_enc & 0x07) << 3) | (reg_enc & 0x07));
+			textSectionData.push_back(0x58 + (scratch_enc & 0x07)); // POP scratch
+		}
+	}
+
+	// Helper to emit SHL reg, imm8 for bitfield shifting
+	void emitShlImm(X64Register reg, uint8_t shift_amount) {
+		uint8_t reg_enc = static_cast<uint8_t>(reg);
+		textSectionData.push_back(0x48 | ((reg_enc >> 3) & 0x01)); // REX.W + REX.B branchless
+		textSectionData.push_back(0xC1); // SHL r/m64, imm8
+		textSectionData.push_back(0xE0 | (reg_enc & 0x07));
+		textSectionData.push_back(shift_amount);
+	}
+
+	// Helper to emit OR dest, src for bitfield combining
+	void emitOrReg(X64Register dest, X64Register src) {
+		uint8_t dest_enc = static_cast<uint8_t>(dest);
+		uint8_t src_enc = static_cast<uint8_t>(src);
+		textSectionData.push_back(0x48 | (((src_enc >> 3) & 0x01) << 2) | ((dest_enc >> 3) & 0x01)); // REX.W + REX.R + REX.B branchless
+		textSectionData.push_back(0x09); // OR r/m64, r64
+		textSectionData.push_back(0xC0 | ((src_enc & 0x07) << 3) | (dest_enc & 0x07));
+	}
+
+	// Helper to emit SHR reg, imm8 for bitfield extraction
+	void emitShrImm(X64Register reg, uint8_t shift_amount) {
+		uint8_t reg_enc = static_cast<uint8_t>(reg);
+		textSectionData.push_back(0x48 | ((reg_enc >> 3) & 0x01)); // REX.W + REX.B branchless
+		textSectionData.push_back(0xC1); // SHR r/m64, imm8
+		textSectionData.push_back(0xE8 | (reg_enc & 0x07));
+		textSectionData.push_back(shift_amount);
 	}
 
 	// Helper to emit CALL instruction with relocation
@@ -14066,6 +14129,19 @@ private:
 			emitLoadFromFrame(textSectionData, temp_reg, member_stack_offset, member_size_bytes);
 		}
 
+		// Extract bitfield value if this is a bitfield member
+		if (op.bitfield_width.has_value()) {
+			size_t bit_offset = op.bitfield_bit_offset;
+			size_t width = *op.bitfield_width;
+			if (bit_offset > 0) {
+				// SHR temp_reg, bit_offset
+				emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
+			}
+			// AND temp_reg, (1 << width) - 1
+			uint64_t mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+			emitAndImm64(temp_reg, mask);
+		}
+
 		if (op.is_reference) {
 			emitMovToFrame(temp_reg, result_offset, 64);
 			regAlloc.release(temp_reg);
@@ -14377,7 +14453,66 @@ private:
 		}
 
 		// Store the value to the member's location
-		if (is_pointer_access) {
+		if (op.bitfield_width.has_value()) {
+			// Bitfield store: read-modify-write to preserve other bitfields in the storage unit
+			size_t width = *op.bitfield_width;
+			size_t bit_offset = op.bitfield_bit_offset;
+			uint64_t mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+
+			// Allocate a temp register for read-modify-write
+			X64Register temp_reg = allocateRegisterWithSpilling();
+
+			if (is_pointer_access) {
+				X64Register base_reg = allocateRegisterWithSpilling();
+				auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, object_base_offset);
+				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+				                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+
+				// Load existing storage unit from [base_reg + op.offset] into temp_reg
+				emitMovFromMemory(temp_reg, base_reg, op.offset, member_size_bytes);
+
+				// Clear the bitfield bits: AND temp_reg, ~(mask << bit_offset)
+				uint64_t clear_mask = ~(mask << bit_offset);
+				emitAndImm64(temp_reg, clear_mask);
+
+				// Shift value into position: SHL value_reg, bit_offset
+				if (bit_offset > 0) {
+					emitShlImm(value_reg, static_cast<uint8_t>(bit_offset));
+				}
+				// Mask value to width: AND value_reg, (mask << bit_offset)
+				emitAndImm64(value_reg, mask << bit_offset);
+
+				// OR value into storage unit: OR temp_reg, value_reg
+				emitOrReg(temp_reg, value_reg);
+
+				// Store back to [base_reg + op.offset]
+				emitStoreToMemory(textSectionData, temp_reg, base_reg, op.offset, member_size_bytes);
+
+				regAlloc.release(base_reg);
+			} else {
+				// Load existing storage unit from [RBP + member_stack_offset] into temp_reg
+				emitMovFromFrameBySize(temp_reg, member_stack_offset, member_size_bytes * 8);
+
+				// Clear the bitfield bits: AND temp_reg, ~(mask << bit_offset)
+				uint64_t clear_mask = ~(mask << bit_offset);
+				emitAndImm64(temp_reg, clear_mask);
+
+				// Shift value into position: SHL value_reg, bit_offset
+				if (bit_offset > 0) {
+					emitShlImm(value_reg, static_cast<uint8_t>(bit_offset));
+				}
+				// Mask value to width: AND value_reg, (mask << bit_offset)
+				emitAndImm64(value_reg, mask << bit_offset);
+
+				// OR value into storage unit: OR temp_reg, value_reg
+				emitOrReg(temp_reg, value_reg);
+
+				// Store back to [RBP + member_stack_offset]
+				emitStoreToMemory(textSectionData, temp_reg, X64Register::RBP, member_stack_offset, member_size_bytes);
+			}
+
+			regAlloc.release(temp_reg);
+		} else if (is_pointer_access) {
 			// For 'this' pointer or reference: load pointer into base_reg, then store to [base_reg + offset]
 			// IMPORTANT: Allocate a register for the base pointer to avoid clobbering value_reg
 			X64Register base_reg = allocateRegisterWithSpilling();

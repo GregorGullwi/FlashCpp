@@ -857,34 +857,48 @@ private:
 
 public:
 	// Exposed for parser namespace-handle resolution while preserving SymbolTable alias rules.
-	NamespaceHandle resolve_namespace_handle(std::span<const StringType<>> namespaces) const {
+	// Set force_global=true for explicitly global-qualified names (e.g., ::ns::identifier).
+	NamespaceHandle resolve_namespace_handle(std::span<const StringType<>> namespaces, bool force_global = false) const {
 		if (namespaces.empty()) {
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
-		return resolve_namespace_handle_impl(namespaces);
+		return resolve_namespace_handle_impl(namespaces, force_global);
 	}
 
-	NamespaceHandle resolve_namespace_handle(const std::vector<StringType<>>& namespaces) const {
+	NamespaceHandle resolve_namespace_handle(const std::vector<StringType<>>& namespaces, bool force_global = false) const {
 		if (namespaces.empty()) {
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
-		return resolve_namespace_handle_impl(namespaces);
+		return resolve_namespace_handle_impl(namespaces, force_global);
 	}
 
 private:
 	template<typename StringContainer>
-	NamespaceHandle resolve_namespace_handle_impl(const StringContainer& namespaces) const {
+	NamespaceHandle resolve_namespace_handle_impl(const StringContainer& namespaces, bool force_global = false) const {
 		if (namespaces.empty()) {
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
 
-		NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
 		std::string_view first_component(namespaces[0]);
 		if (auto alias_handle = resolve_namespace_alias_handle(first_component); alias_handle.has_value()) {
 			return append_namespace_components(*alias_handle, namespaces, 1);
 		}
 
-		return append_namespace_components(current, namespaces, 0);
+		// Try resolving relative to the current namespace first (C++ unqualified lookup).
+		// E.g., inside namespace outer, "inner::type" should resolve to "outer::inner::type".
+		// Skip this for explicitly global-qualified names (::ns::identifier).
+		if (!force_global) {
+			NamespaceHandle current_ns = get_current_namespace_handle();
+			if (!current_ns.isGlobal()) {
+				StringHandle first_handle = StringTable::getOrInternStringHandle(first_component);
+				NamespaceHandle child = gNamespaceRegistry.lookupNamespace(current_ns, first_handle);
+				if (child.isValid()) {
+					return append_namespace_components(child, namespaces, 1);
+				}
+			}
+		}
+
+		return append_namespace_components(NamespaceRegistry::GLOBAL_NAMESPACE, namespaces, 0);
 	}
 
 	template<typename StringContainer>
@@ -967,12 +981,19 @@ inline std::string_view buildQualifiedNameFromHandle(NamespaceHandle ns_handle, 
 	return StringTable::getStringView(qualified_handle);
 }
 
+// Forward declaration for use in validateQualifiedNamespace
+extern SymbolTable gSymbolTable;
+
 /**
  * @brief Validate that a namespace handle refers to a known scope (declared namespace or class name).
  * Returns true if the namespace is valid (global, declared as namespace, or known as a class/struct type),
  * false if the identifier is completely unknown.
+ *
+ * @param in_template_context If true, also accepts qualifiers that are symbols in scope
+ *        (e.g., type aliases like "using pointer = _Ptr;" in a template struct body).
  */
-inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused]] const Token& error_token) {
+inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused]] const Token& error_token,
+	bool in_template_context = false) {
 	if (!ns_handle.isValid() || ns_handle.isGlobal()) {
 		return true;
 	}
@@ -985,6 +1006,14 @@ inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused
 	std::string_view root_name = gNamespaceRegistry.getName(root);
 	StringHandle root_handle = StringTable::getOrInternStringHandle(root_name);
 	if (gTypesByName.find(root_handle) != gTypesByName.end()) {
+		return true;
+	}
+	// In template contexts, accept qualifiers that are symbols in scope (e.g., type aliases)
+	if (in_template_context) {
+		return true;
+	}
+	// Also accept if the root name is a known symbol (e.g., a type alias like "using pointer = _Ptr;")
+	if (gSymbolTable.lookup(root_name).has_value()) {
 		return true;
 	}
 	return false;

@@ -437,6 +437,10 @@ struct LValueInfo {
 	// When true, handleMemberStore should dereference the pointer before accessing the member
 	bool is_pointer_to_member = false;
 	
+	// For bitfield members: width in bits and bit offset within storage unit
+	std::optional<size_t> bitfield_width;
+	size_t bitfield_bit_offset = 0;
+	
 	// Constructor for simple cases
 	LValueInfo(Kind k, std::variant<StringHandle, TempVar> b, int off = 0)
 		: kind(k), base(b), offset(off) {}
@@ -1014,6 +1018,8 @@ struct MemberLoadOp {
 	bool is_reference;                              // True if member is declared as T& (describes member declaration, not access)
 	bool is_rvalue_reference;                       // True if member is declared as T&& (describes member declaration, not access)
 	bool is_pointer_to_member = false;              // True if accessing through pointer (ptr->member), false for direct (obj.member)
+	std::optional<size_t> bitfield_width;           // Width in bits for bitfield members
+	size_t bitfield_bit_offset = 0;                 // Bit offset within the storage unit for bitfield members
 };
 
 // Member store (store value to struct/class member)
@@ -1027,6 +1033,8 @@ struct MemberStoreOp {
 	bool is_rvalue_reference;                       // True if member is declared as T&& (describes member declaration, not access)
 	StringHandle vtable_symbol;						// For vptr initialization - stores vtable symbol name
 	bool is_pointer_to_member = false;              // True if accessing through pointer (ptr->member), false for direct (obj.member)
+	std::optional<size_t> bitfield_width;           // Width in bits for bitfield members
+	size_t bitfield_bit_offset = 0;                 // Bit offset within the storage unit for bitfield members
 };
 
 // Label definition
