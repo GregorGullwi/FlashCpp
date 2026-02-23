@@ -5638,7 +5638,7 @@ private:
 			// Save scratch if it might be in use - use a simple push/pop
 			textSectionData.push_back(0x50 + (scratch_enc & 0x07)); // PUSH scratch
 			emitMovImm64(scratch, mask);
-			uint8_t rex2 = 0x48 | (((reg_enc >> 3) & 0x01) << 2) | ((scratch_enc >> 3) & 0x01); // REX.W + REX.R + REX.B branchless
+			uint8_t rex2 = 0x48 | (((scratch_enc >> 3) & 0x01) << 2) | ((reg_enc >> 3) & 0x01); // REX.W + REX.R(scratch) + REX.B(reg) branchless
 			textSectionData.push_back(rex2);
 			textSectionData.push_back(0x21); // AND r/m64, r64
 			textSectionData.push_back(0xC0 | ((scratch_enc & 0x07) << 3) | (reg_enc & 0x07));
