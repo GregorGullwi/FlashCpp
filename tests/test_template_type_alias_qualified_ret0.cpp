@@ -18,7 +18,6 @@ struct MyPtr {
 };
 
 int main() {
-    int x = 42;
     // Don't actually instantiate - just verify the template parses
-    return x;
+    return 0;
 }
