@@ -878,13 +878,23 @@ private:
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
 
-		NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
 		std::string_view first_component(namespaces[0]);
 		if (auto alias_handle = resolve_namespace_alias_handle(first_component); alias_handle.has_value()) {
 			return append_namespace_components(*alias_handle, namespaces, 1);
 		}
 
-		return append_namespace_components(current, namespaces, 0);
+		// Try resolving relative to the current namespace first (C++ unqualified lookup).
+		// E.g., inside namespace outer, "inner::type" should resolve to "outer::inner::type".
+		NamespaceHandle current_ns = get_current_namespace_handle();
+		if (!current_ns.isGlobal()) {
+			StringHandle first_handle = StringTable::getOrInternStringHandle(first_component);
+			NamespaceHandle child = gNamespaceRegistry.lookupNamespace(current_ns, first_handle);
+			if (child.isValid()) {
+				return append_namespace_components(child, namespaces, 1);
+			}
+		}
+
+		return append_namespace_components(NamespaceRegistry::GLOBAL_NAMESPACE, namespaces, 0);
 	}
 
 	template<typename StringContainer>
