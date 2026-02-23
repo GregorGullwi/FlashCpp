@@ -469,11 +469,17 @@
 					// Check if this is a registered template by looking for it in template registry
 					// For now, we'll use a simpler heuristic: if any instantiation of this template
 					// exists (with same base name but with $), skip the pattern
+					// Strip namespace prefix for comparison: "std::array" → "array", since
+					// instantiated names use the unqualified base name (e.g., "array$hash").
+					std::string_view base_struct_name = struct_type_name;
+					if (auto ns_pos = base_struct_name.rfind("::"); ns_pos != std::string_view::npos) {
+						base_struct_name = base_struct_name.substr(ns_pos + 2);
+					}
 					bool has_instantiation = false;
-					// Look for any struct with the same namespace prefix and a $ suffix
+					// Look for any struct with the same base name (sans namespace) and a $ suffix
 					for (const auto& [other_name_handle, other_type_ptr] : gTypesByName) {
 						std::string_view other_name = StringTable::getStringView(other_name_handle);
-						if (other_name.starts_with(struct_type_name) && other_name.size() > struct_type_name.size() && other_name[struct_type_name.size()] == '$') {
+						if (other_name.starts_with(base_struct_name) && other_name.size() > base_struct_name.size() && other_name[base_struct_name.size()] == '$') {
 							has_instantiation = true;
 							break;
 						}
