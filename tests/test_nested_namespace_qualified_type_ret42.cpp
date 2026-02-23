@@ -19,6 +19,7 @@ int get_value() {
 }
 }
 
+// Test: ::ns::identifier resolves from global namespace, not relative
 namespace ns {
     int get_value() { return 42; }
     
