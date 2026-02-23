@@ -9231,8 +9231,8 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	static int recursion_depth = 0;
 	recursion_depth++;
 	
-	if (recursion_depth > 10) {
-		FLASH_LOG(Templates, Error, "try_instantiate_template recursion depth exceeded 10! Possible infinite loop for template '", template_name, "'");
+	if (recursion_depth > 64) {
+		FLASH_LOG(Templates, Error, "try_instantiate_template recursion depth exceeded 64! Possible infinite loop for template '", template_name, "'");
 		recursion_depth--;
 		return std::nullopt;
 	}
@@ -13767,7 +13767,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (!template_params[i].is<TemplateParameterNode>()) continue;
 			
 			const auto& tparam = template_params[i].as<TemplateParameterNode>();
-			if (tparam.kind() != TemplateParameterKind::Type) continue;
 			
 			std::string_view param_name = tparam.name();
 			template_param_order.push_back(param_name);
@@ -13786,10 +13785,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// All remaining args consumed
 				break;
 			} else {
-				// Regular scalar parameter
+				// Regular scalar parameter (type or non-type)
 				if (arg_index < template_args_to_use.size()) {
 					name_substitution_map[param_name] = template_args_to_use[arg_index];
-					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[arg_index].base_type, " type_index=", template_args_to_use[arg_index].type_index);
+					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[arg_index].base_type, " type_index=", template_args_to_use[arg_index].type_index, " is_value=", template_args_to_use[arg_index].is_value);
 					arg_index++;
 				}
 			}

@@ -663,6 +663,22 @@
 				}
 			}
 		}
+		// If still not found and we're in a struct, check nested enum enumerators
+		// Unscoped enums declared inside a class make their enumerators accessible in the class scope
+		if (!symbol.has_value() && current_struct_name_.isValid()) {
+			StringHandle id_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+			// Search all enum types for this enumerator
+			for (const auto& [type_name, type_info] : gTypesByName) {
+				if (!type_info->isEnum()) continue;
+				const EnumTypeInfo* enum_info = type_info->getEnumInfo();
+				if (!enum_info || enum_info->is_scoped) continue;
+				const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
+				if (enumerator) {
+					return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+					         static_cast<unsigned long long>(enumerator->value) };
+				}
+			}
+		}
 		if (!symbol.has_value()) {
 			FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
 			FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
