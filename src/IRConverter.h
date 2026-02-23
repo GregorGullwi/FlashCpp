@@ -5299,11 +5299,12 @@ private:
 	// Returns the offset where the relocation displacement should be added
 	uint32_t emitLeaRipRelative(X64Register destinationRegister) {
 		// LEA reg, [RIP + disp32]
-		textSectionData.push_back(0x48); // REX.W for 64-bit
+		uint8_t dest_enc = static_cast<uint8_t>(destinationRegister);
+		textSectionData.push_back(0x48 | (((dest_enc >> 3) & 0x01) << 2)); // REX.W | REX.R branchless
 		textSectionData.push_back(0x8D); // LEA opcode
 		
 		// ModR/M byte: mod=00 (indirect), reg=destination, r/m=101 ([RIP+disp32])
-		uint8_t dest_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+		uint8_t dest_bits = dest_enc & 0x07;
 		textSectionData.push_back(0x05 | (dest_bits << 3)); // ModR/M: [RIP + disp32]
 		
 		// Add placeholder for the displacement (will be filled by relocation)
