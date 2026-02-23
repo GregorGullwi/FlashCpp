@@ -10256,21 +10256,24 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	if (func_decl.has_template_body_position()) {
 		FLASH_LOG(Templates, Debug, "Template has body position, re-parsing function body");
 
-		// Cycle detection: if this function body is already being re-parsed on this thread
-		// (e.g. __niter_base whose body calls __niter_base again), return early with the
-		// current (partial) instantiation to break the cycle.  Track by function name.
+		// Cycle detection: if this exact instantiation (same mangled name = same parameter
+		// types) is already being re-parsed on this thread, return early to break the cycle.
+		// Using the mangled name instead of just the template name means legitimately-different
+		// recursive instantiations (e.g. var_sum<int,int,int> called from var_sum<int,int,int,int>)
+		// are NOT blocked — only truly recursive calls to the exact same specialisation are.
 		static thread_local std::unordered_set<std::string_view> body_reparse_in_progress;
-		if (body_reparse_in_progress.count(template_name)) {
-			FLASH_LOG(Templates, Debug, "Cycle detected in body re-parsing for '", template_name, "', skipping body to break cycle");
+		std::string_view cycle_key = proper_mangled_name.view();
+		if (body_reparse_in_progress.count(cycle_key)) {
+			FLASH_LOG(Templates, Debug, "Cycle detected in body re-parsing for '", template_name, "' (mangled: '", cycle_key, "'), skipping body to break cycle");
 			pack_param_info_ = std::move(saved_outer_pack_param_info);
 			return ASTNode(&new_func_ref);
 		}
-		body_reparse_in_progress.insert(template_name);
+		body_reparse_in_progress.insert(cycle_key);
 		struct BodyReparseGuard {
 			std::unordered_set<std::string_view>& set;
 			std::string_view key;
 			~BodyReparseGuard() { set.erase(key); }
-		} body_reparse_guard{body_reparse_in_progress, template_name};
+		} body_reparse_guard{body_reparse_in_progress, cycle_key};
 
 		// Re-parse the function body with template parameters substituted
 		const std::vector<ASTNode>& func_template_params = template_func.template_parameters();
