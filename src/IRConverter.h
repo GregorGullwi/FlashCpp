@@ -6023,9 +6023,45 @@ private:
 	uint32_t emitMovRipRelativeStore(X64Register src, int size_in_bits) {
 		// For 64-bit: MOV [RIP + disp32], RAX - 48 89 05 [disp32]
 		// For 32-bit: MOV [RIP + disp32], EAX - 89 05 [disp32]
+		// For 16-bit: MOV WORD PTR [RIP + disp32], AX - 66 [44] 89 05 [disp32]
+		// For 8-bit:  MOV BYTE PTR [RIP + disp32], AL - [40|44] 88 05 [disp32]
 		uint8_t src_val = static_cast<uint8_t>(src);
 		uint8_t src_bits = src_val & 0x07;
-		// Branchless: compute REX prefix (0x48 for 64-bit, 0x40 for 32-bit with high reg, 0 otherwise)
+
+		if (size_in_bits <= 8) {
+			// MOV BYTE PTR [RIP + disp32], reg8: [REX] 88 ModRM d0 d1 d2 d3
+			// REX needed for reg >= 4: 0x40 base, plus REX.R (0x04) if extended (reg >= 8)
+			bool needs_rex = src_val >= 4;
+			uint8_t rex_byte = static_cast<uint8_t>(0x40 | ((src_val >> 3) << 2));
+			size_t base = textSectionData.size();
+			textSectionData.resize(base + 6 + needs_rex);
+			uint8_t* p = textSectionData.data() + base;
+			if (needs_rex) *p++ = rex_byte;
+			p[0] = 0x88; // MOV r/m8, r8
+			p[1] = 0x05 | (src_bits << 3); // ModR/M: reg, [RIP + disp32]
+			p[2] = 0x00; // disp32 placeholder
+			p[3] = 0x00;
+			p[4] = 0x00;
+			p[5] = 0x00;
+			return static_cast<uint32_t>(base + 2 + needs_rex);
+		} else if (size_in_bits == 16) {
+			// MOV WORD PTR [RIP + disp32], reg16: 66 [REX] 89 ModRM d0 d1 d2 d3
+			uint8_t needs_rex_r = (src_val >> 3) & 0x01; // 1 if R8-R15
+			size_t base = textSectionData.size();
+			textSectionData.resize(base + 7 + needs_rex_r);
+			uint8_t* p = textSectionData.data() + base;
+			*p++ = 0x66; // operand-size prefix
+			if (needs_rex_r) *p++ = 0x44; // REX.R for R8-R15
+			p[0] = 0x89; // MOV r/m16, r16
+			p[1] = 0x05 | (src_bits << 3); // ModR/M: reg, [RIP + disp32]
+			p[2] = 0x00; // disp32 placeholder
+			p[3] = 0x00;
+			p[4] = 0x00;
+			p[5] = 0x00;
+			return static_cast<uint32_t>(base + 3 + needs_rex_r);
+		}
+
+		// For 32-bit and 64-bit, use regular MOV
 		// For RIP-relative MOV, source is in the REG field of ModR/M (R/M=101 is fixed),
 		// so REX.R (bit 2 = 0x04) extends it — not REX.B (bit 0 = 0x01)
 		uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
