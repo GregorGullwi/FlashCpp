@@ -5936,11 +5936,14 @@ private:
 		uint8_t dest_bits = dest_val & 0x07;
 		
 		// Handle small sizes with MOVZX to zero-extend
+		// For extended registers (R8-R15), REX.R (0x44) must precede the 0F Bx opcode
+		uint8_t needs_rex_r = (dest_val >> 3) & 0x01; // 1 if R8-R15, else 0
 		if (size_in_bits <= 8) {
-			// MOVZX EAX, byte ptr [RIP + disp32]: 0F B6 05 [disp32]
+			// MOVZX r32, byte ptr [RIP + disp32]: [44] 0F B6 05+reg [disp32]
 			size_t base = textSectionData.size();
-			textSectionData.resize(base + 7);
+			textSectionData.resize(base + 7 + needs_rex_r);
 			uint8_t* p = textSectionData.data() + base;
+			if (needs_rex_r) *p++ = 0x44; // REX.R for R8-R15
 			p[0] = 0x0F;
 			p[1] = 0xB6; // MOVZX r32, r/m8
 			p[2] = 0x05 | (dest_bits << 3); // ModR/M: reg, [RIP + disp32]
@@ -5948,12 +5951,13 @@ private:
 			p[4] = 0x00;
 			p[5] = 0x00;
 			p[6] = 0x00;
-			return static_cast<uint32_t>(base + 3);
+			return static_cast<uint32_t>(base + 3 + needs_rex_r);
 		} else if (size_in_bits == 16) {
-			// MOVZX EAX, word ptr [RIP + disp32]: 0F B7 05 [disp32]
+			// MOVZX r32, word ptr [RIP + disp32]: [44] 0F B7 05+reg [disp32]
 			size_t base = textSectionData.size();
-			textSectionData.resize(base + 7);
+			textSectionData.resize(base + 7 + needs_rex_r);
 			uint8_t* p = textSectionData.data() + base;
+			if (needs_rex_r) *p++ = 0x44; // REX.R for R8-R15
 			p[0] = 0x0F;
 			p[1] = 0xB7; // MOVZX r32, r/m16
 			p[2] = 0x05 | (dest_bits << 3); // ModR/M: reg, [RIP + disp32]
@@ -5961,7 +5965,7 @@ private:
 			p[4] = 0x00;
 			p[5] = 0x00;
 			p[6] = 0x00;
-			return static_cast<uint32_t>(base + 3);
+			return static_cast<uint32_t>(base + 3 + needs_rex_r);
 		}
 		
 		// For 32-bit and 64-bit, use regular MOV
