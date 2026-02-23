@@ -9779,16 +9779,16 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// the outer and inner call, subtly shifting addresses.  Returning nullopt
 		// causes the caller to try the next overload (the non-recursive base case).
 		static thread_local std::unordered_set<std::string_view> trailing_return_in_progress;
-		if (trailing_return_in_progress.count(template_name)) {
-			FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "', returning auto to break cycle");
+		if (trailing_return_in_progress.count(saved_mangled_name)) {
+			FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", saved_mangled_name, "'), returning auto to break cycle");
 			return std::nullopt;
 		}
-		trailing_return_in_progress.insert(template_name);
+		trailing_return_in_progress.insert(saved_mangled_name);
 		struct TrailingReturnGuard {
 			std::unordered_set<std::string_view>& set;
 			std::string_view key;
 			~TrailingReturnGuard() { set.erase(key); }
-		} trailing_return_guard{trailing_return_in_progress, template_name};
+		} trailing_return_guard{trailing_return_in_progress, saved_mangled_name};
 		
 		// Save current position
 		SaveHandle current_pos = save_token_position();
