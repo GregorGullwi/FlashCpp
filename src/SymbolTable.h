@@ -857,23 +857,24 @@ private:
 
 public:
 	// Exposed for parser namespace-handle resolution while preserving SymbolTable alias rules.
-	NamespaceHandle resolve_namespace_handle(std::span<const StringType<>> namespaces) const {
+	// Set force_global=true for explicitly global-qualified names (e.g., ::ns::identifier).
+	NamespaceHandle resolve_namespace_handle(std::span<const StringType<>> namespaces, bool force_global = false) const {
 		if (namespaces.empty()) {
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
-		return resolve_namespace_handle_impl(namespaces);
+		return resolve_namespace_handle_impl(namespaces, force_global);
 	}
 
-	NamespaceHandle resolve_namespace_handle(const std::vector<StringType<>>& namespaces) const {
+	NamespaceHandle resolve_namespace_handle(const std::vector<StringType<>>& namespaces, bool force_global = false) const {
 		if (namespaces.empty()) {
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
-		return resolve_namespace_handle_impl(namespaces);
+		return resolve_namespace_handle_impl(namespaces, force_global);
 	}
 
 private:
 	template<typename StringContainer>
-	NamespaceHandle resolve_namespace_handle_impl(const StringContainer& namespaces) const {
+	NamespaceHandle resolve_namespace_handle_impl(const StringContainer& namespaces, bool force_global = false) const {
 		if (namespaces.empty()) {
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
@@ -885,12 +886,15 @@ private:
 
 		// Try resolving relative to the current namespace first (C++ unqualified lookup).
 		// E.g., inside namespace outer, "inner::type" should resolve to "outer::inner::type".
-		NamespaceHandle current_ns = get_current_namespace_handle();
-		if (!current_ns.isGlobal()) {
-			StringHandle first_handle = StringTable::getOrInternStringHandle(first_component);
-			NamespaceHandle child = gNamespaceRegistry.lookupNamespace(current_ns, first_handle);
-			if (child.isValid()) {
-				return append_namespace_components(child, namespaces, 1);
+		// Skip this for explicitly global-qualified names (::ns::identifier).
+		if (!force_global) {
+			NamespaceHandle current_ns = get_current_namespace_handle();
+			if (!current_ns.isGlobal()) {
+				StringHandle first_handle = StringTable::getOrInternStringHandle(first_component);
+				NamespaceHandle child = gNamespaceRegistry.lookupNamespace(current_ns, first_handle);
+				if (child.isValid()) {
+					return append_namespace_components(child, namespaces, 1);
+				}
 			}
 		}
 

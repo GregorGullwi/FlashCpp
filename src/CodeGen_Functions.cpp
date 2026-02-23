@@ -3969,6 +3969,8 @@
 		// Store member name for unified assignment handler
 		lvalue_info.member_name = ultimate_member_name;
 		lvalue_info.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
+		lvalue_info.bitfield_width = member->bitfield_width;
+		lvalue_info.bitfield_bit_offset = member->bitfield_bit_offset;
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Build MemberLoadOp
@@ -3988,6 +3990,8 @@
 		member_load.is_rvalue_reference = member->is_rvalue_reference;
 		member_load.struct_type_info = nullptr;
 		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
+		member_load.bitfield_width = member->bitfield_width;
+		member_load.bitfield_bit_offset = member->bitfield_bit_offset;
 
 		int member_size_bits = static_cast<int>(member->size * 8);
 

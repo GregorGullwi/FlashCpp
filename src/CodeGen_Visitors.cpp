@@ -879,8 +879,58 @@ public:
 					}
 				}
 				
-				// Initialize members with default initializers
+				// Combine bitfield default initializers into single per-unit stores
+				// (all default values are compile-time constants, so we can pre-combine them)
+				{
+					std::unordered_map<size_t, unsigned long long> combined_bitfield_values;
+					std::unordered_set<size_t> bitfield_offsets;
+					for (const auto& member : struct_info->members) {
+						if (member.bitfield_width.has_value() && member.default_initializer.has_value()) {
+							bitfield_offsets.insert(member.offset);
+							unsigned long long val = 0;
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
+							if (eval_result.success()) {
+								if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+									val = std::get<unsigned long long>(eval_result.value);
+								} else if (std::holds_alternative<long long>(eval_result.value)) {
+									val = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+								} else if (std::holds_alternative<bool>(eval_result.value)) {
+									val = std::get<bool>(eval_result.value) ? 1ULL : 0ULL;
+								}
+							}
+							size_t width = *member.bitfield_width;
+							unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+							combined_bitfield_values[member.offset] |= ((val & mask) << member.bitfield_bit_offset);
+						}
+					}
+
+					// Emit a single combined store for each bitfield storage unit
+					for (auto offset : bitfield_offsets) {
+						// Find any member at this offset to get type/size info
+						for (const auto& member : struct_info->members) {
+							if (member.offset == offset && member.bitfield_width.has_value()) {
+								MemberStoreOp combined_store;
+								combined_store.value.type = member.type;
+								combined_store.value.size_in_bits = static_cast<int>(member.size * 8);
+								combined_store.value.value = combined_bitfield_values[offset];
+								combined_store.object = StringTable::getOrInternStringHandle("this");
+								combined_store.member_name = member.getName();
+								combined_store.offset = static_cast<int>(offset);
+								combined_store.is_reference = false;
+								combined_store.is_rvalue_reference = false;
+								combined_store.struct_type_info = nullptr;
+								// No bitfield_width — write the full combined value
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(combined_store), Token()));
+								break;
+							}
+						}
+					}
+				}
+
+				// Initialize non-bitfield members with default initializers
 				for (const auto& member : struct_info->members) {
+					if (member.bitfield_width.has_value()) continue; // handled above
 					if (member.default_initializer.has_value()) {
 						const ASTNode& init_node = member.default_initializer.value();
 						if (init_node.has_value() && init_node.is<ExpressionNode>()) {
@@ -916,6 +966,8 @@ public:
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
 							member_store.struct_type_info = nullptr;
+							member_store.bitfield_width = member.bitfield_width;
+							member_store.bitfield_bit_offset = member.bitfield_bit_offset;
 							
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), Token()));
 						}
@@ -1895,7 +1947,9 @@ private:
 					false,                              // is_reference
 					false,                              // is_rvalue_reference
 					lv_info.is_pointer_to_member,       // is_pointer_to_member
-					token
+					token,
+					lv_info.bitfield_width,             // bitfield_width
+					lv_info.bitfield_bit_offset         // bitfield_bit_offset
 				);
 				return true;
 			}
@@ -2242,7 +2296,9 @@ private:
 			member_is_reference,
 			member_is_rvalue_reference,
 			lv_info.is_pointer_to_member,  // is_pointer_to_member
-			token
+			token,
+			lv_info.bitfield_width,
+			lv_info.bitfield_bit_offset
 		);
 		
 		return true;
@@ -2275,7 +2331,9 @@ private:
 	                     StringHandle member_name, int offset,
 	                     bool is_reference = false, bool is_rvalue_reference = false,
 	                     bool is_pointer_to_member = false,
-	                     const Token& token = Token()) {
+	                     const Token& token = Token(),
+	                     std::optional<size_t> bitfield_width = std::nullopt,
+	                     size_t bitfield_bit_offset = 0) {
 		MemberStoreOp member_store;
 		member_store.value = value;
 		member_store.object = object;
@@ -2286,6 +2344,8 @@ private:
 		member_store.is_rvalue_reference = is_rvalue_reference;
 		member_store.vtable_symbol = StringHandle();
 		member_store.is_pointer_to_member = is_pointer_to_member;
+		member_store.bitfield_width = bitfield_width;
+		member_store.bitfield_bit_offset = bitfield_bit_offset;
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 	}
@@ -4246,7 +4306,56 @@ private:
 						}
 					} else {
 						// Implicit default constructor: use default member initializers or zero-initialize
+
+						// Step 1: Handle bitfield members - combine into single per-unit stores
+						{
+							std::unordered_map<size_t, unsigned long long> combined_bitfield_values;
+							std::unordered_set<size_t> bitfield_offsets;
+							for (const auto& member : struct_info->members) {
+								if (member.bitfield_width.has_value()) {
+									bitfield_offsets.insert(member.offset);
+									unsigned long long val = 0;
+									if (member.default_initializer.has_value()) {
+										ConstExpr::EvaluationContext ctx(gSymbolTable);
+										auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
+										if (eval_result.success()) {
+											if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+												val = std::get<unsigned long long>(eval_result.value);
+											} else if (std::holds_alternative<long long>(eval_result.value)) {
+												val = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+											} else if (std::holds_alternative<bool>(eval_result.value)) {
+												val = std::get<bool>(eval_result.value) ? 1ULL : 0ULL;
+											}
+										}
+									}
+									size_t width = *member.bitfield_width;
+									unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+									combined_bitfield_values[member.offset] |= ((val & mask) << member.bitfield_bit_offset);
+								}
+							}
+							for (auto offset : bitfield_offsets) {
+								for (const auto& member : struct_info->members) {
+									if (member.offset == offset && member.bitfield_width.has_value()) {
+										MemberStoreOp combined_store;
+										combined_store.value.type = member.type;
+										combined_store.value.size_in_bits = static_cast<int>(member.size * 8);
+										combined_store.value.value = combined_bitfield_values[offset];
+										combined_store.object = StringTable::getOrInternStringHandle("this");
+										combined_store.member_name = member.getName();
+										combined_store.offset = static_cast<int>(offset);
+										combined_store.is_reference = false;
+										combined_store.is_rvalue_reference = false;
+										combined_store.struct_type_info = nullptr;
+										ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(combined_store), node.name_token()));
+										break;
+									}
+								}
+							}
+						}
+
+						// Step 2: Handle non-bitfield members
 						for (const auto& member : struct_info->members) {
+							if (member.bitfield_width.has_value()) continue; // handled above
 							// Generate MemberStore IR to initialize the member
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
 							
@@ -4610,6 +4719,8 @@ private:
 						member_store.is_reference = member.is_reference;
 						member_store.is_rvalue_reference = member.is_rvalue_reference;
 						member_store.struct_type_info = nullptr;
+						member_store.bitfield_width = member.bitfield_width;
+						member_store.bitfield_bit_offset = member.bitfield_bit_offset;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 					}

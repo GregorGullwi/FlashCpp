@@ -1376,10 +1376,29 @@
 									// Evaluate the default initializer
 									unsigned long long value = evalToValue(*member.default_initializer, member.type);
 									
-									// Write the value at the member's offset
-									size_t member_size = member.size;
-									for (size_t i = 0; i < member_size && (member.offset + i) < op.init_data.size(); ++i) {
-										op.init_data[member.offset + i] = static_cast<char>((value >> (i * 8)) & 0xFF);
+									if (member.bitfield_width.has_value()) {
+										// Bitfield: use bit-level OR to pack value into the storage unit
+										size_t width = *member.bitfield_width;
+										size_t bit_offset = member.bitfield_bit_offset;
+										unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+										value &= mask;
+										
+										// Read existing bytes at this offset, OR in the bitfield value, write back
+										unsigned long long existing = 0;
+										size_t member_size = member.size;
+										for (size_t i = 0; i < member_size && (member.offset + i) < op.init_data.size(); ++i) {
+											existing |= (static_cast<unsigned long long>(static_cast<unsigned char>(op.init_data[member.offset + i])) << (i * 8));
+										}
+										existing |= (value << bit_offset);
+										for (size_t i = 0; i < member_size && (member.offset + i) < op.init_data.size(); ++i) {
+											op.init_data[member.offset + i] = static_cast<char>((existing >> (i * 8)) & 0xFF);
+										}
+									} else {
+										// Regular member: write the value at the member's offset
+										size_t member_size = member.size;
+										for (size_t i = 0; i < member_size && (member.offset + i) < op.init_data.size(); ++i) {
+											op.init_data[member.offset + i] = static_cast<char>((value >> (i * 8)) & 0xFF);
+										}
 									}
 								}
 							}

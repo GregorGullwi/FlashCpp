@@ -4434,7 +4434,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Create a QualifiedIdentifierNode with namespace handle
 		// If namespaces is empty, it means ::identifier (global namespace)
 		// If namespaces is not empty, it means ::ns::identifier
-		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+		// force_global=true because :: prefix means resolve from global namespace
+		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces, /*force_global=*/true);
 		auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
 

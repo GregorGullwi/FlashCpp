@@ -335,6 +335,7 @@ struct StructMember {
 	size_t offset;          // Offset in bytes from start of struct
 	size_t size;            // Size in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
+	size_t bitfield_bit_offset = 0; // Bit offset within the storage unit for bitfield members
 	size_t referenced_size_bits; // Size of the referenced value in bits (for references)
 	size_t alignment;       // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
@@ -628,6 +629,7 @@ struct StructTypeInfo {
 		size_t offset = is_union ? 0 : ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
 
 		bool placed_in_active_bitfield_unit = false;
+		size_t bitfield_bit_offset = 0;
 		if (!is_union && bitfield_width.has_value()) {
 			size_t width = *bitfield_width;
 			size_t storage_bits = member_size * 8;
@@ -661,6 +663,7 @@ struct StructTypeInfo {
 				}
 
 				offset = active_bitfield_unit_offset;
+				bitfield_bit_offset = active_bitfield_bits_used;
 				active_bitfield_bits_used += width;
 			}
 		} else if (!is_union) {
@@ -689,6 +692,7 @@ struct StructTypeInfo {
 		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
 			              access, std::move(default_initializer), is_reference, is_rvalue_reference,
 			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
+		members.back().bitfield_bit_offset = bitfield_bit_offset;
 
 		// Update struct size and alignment
 		if (is_union) {
