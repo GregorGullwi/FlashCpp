@@ -2844,16 +2844,14 @@ private:
 		// Recover it from the declaration registry so unqualified lookup remains standard-compliant.
 		if (current_namespace_stack_.empty() && global_symbol_table_) {
 			if (auto ns_handle = global_symbol_table_->find_namespace_of_function(node); ns_handle.has_value() && !ns_handle->isGlobal()) {
-				std::string_view qualified_ns = gNamespaceRegistry.getQualifiedName(*ns_handle);
-				size_t start = 0;
-				while (start < qualified_ns.size()) {
-					size_t pos = qualified_ns.find("::", start);
-					if (pos == std::string_view::npos) {
-						current_namespace_stack_.emplace_back(qualified_ns.substr(start));
-						break;
-					}
-					current_namespace_stack_.emplace_back(qualified_ns.substr(start, pos - start));
-					start = pos + 2;
+				std::vector<NamespaceHandle> namespace_path;
+				NamespaceHandle current = *ns_handle;
+				while (current.isValid() && !current.isGlobal()) {
+					namespace_path.push_back(current);
+					current = gNamespaceRegistry.getParent(current);
+				}
+				for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+					current_namespace_stack_.emplace_back(gNamespaceRegistry.getName(*it));
 				}
 			}
 		}

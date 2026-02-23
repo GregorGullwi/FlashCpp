@@ -142,9 +142,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 	std::vector<ASTNode> explicit_template_arg_nodes;
 	
 	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
-	if (call.has_template_arguments()) {
-		explicit_template_arg_nodes = call.template_arguments();
-		FLASH_LOG(Templates, Debug, "  Found ", explicit_template_arg_nodes.size(), " template argument nodes");
+		if (call.has_template_arguments()) {
+			explicit_template_arg_nodes = call.template_arguments();
+			FLASH_LOG(Templates, Debug, "  Found ", explicit_template_arg_nodes.size(), " template argument nodes");
 		
 		FLASH_LOG(Templates, Debug, "  Function name: ", func_name);
 		
@@ -158,7 +158,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			}
 		}
 		
-		std::vector<TemplateTypeArg> substituted_template_args;
+			std::vector<TemplateTypeArg> substituted_template_args;
+			bool failed_value_extraction = false;
 		
 		if (has_pack_expansion) {
 			// Use pack expansion logic
@@ -252,27 +253,33 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					// Non-dependent template argument - substitute/evaluate to a value if possible
 					FLASH_LOG(Templates, Debug, "    Template argument is non-dependent expression");
 					ASTNode substituted_arg_node = substitute(arg_node);
-					if (substituted_arg_node.is<ExpressionNode>()) {
-						const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
-						if (std::holds_alternative<NumericLiteralNode>(substituted_expr)) {
-							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(substituted_expr);
-							const NumericLiteralValue& raw_value = lit.value();
-							int64_t value = 0;
-							if (std::holds_alternative<unsigned long long>(raw_value)) {
-								value = static_cast<int64_t>(std::get<unsigned long long>(raw_value));
-							} else if (std::holds_alternative<double>(raw_value)) {
-								value = static_cast<int64_t>(std::get<double>(raw_value));
-							} else {
-								FLASH_LOG(Templates, Debug, "    Numeric literal value variant type not handled for template arg extraction");
-								continue;
-							}
-							substituted_template_args.emplace_back(value, lit.type());
-						} else if (std::holds_alternative<BoolLiteralNode>(substituted_expr)) {
-							const BoolLiteralNode& lit = std::get<BoolLiteralNode>(substituted_expr);
-							substituted_template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+					if (!substituted_arg_node.is<ExpressionNode>()) {
+						FLASH_LOG(Templates, Debug, "    Substituted template argument is not an ExpressionNode");
+						failed_value_extraction = true;
+						break;
+					}
+					const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
+					if (std::holds_alternative<NumericLiteralNode>(substituted_expr)) {
+						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(substituted_expr);
+						const NumericLiteralValue& raw_value = lit.value();
+						int64_t value = 0;
+						if (std::holds_alternative<unsigned long long>(raw_value)) {
+							value = static_cast<int64_t>(std::get<unsigned long long>(raw_value));
+						} else if (std::holds_alternative<double>(raw_value)) {
+							value = static_cast<int64_t>(std::get<double>(raw_value));
 						} else {
-							FLASH_LOG(Templates, Debug, "    Substituted template argument expression type not handled for value extraction");
+							FLASH_LOG(Templates, Debug, "    Numeric literal value variant type not handled for template arg extraction");
+							failed_value_extraction = true;
+							break;
 						}
+						substituted_template_args.emplace_back(value, lit.type());
+					} else if (std::holds_alternative<BoolLiteralNode>(substituted_expr)) {
+						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(substituted_expr);
+						substituted_template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+					} else {
+						FLASH_LOG(Templates, Debug, "    Substituted template argument expression type not handled for value extraction");
+						failed_value_extraction = true;
+						break;
 					}
 				}
 			} else {
@@ -280,6 +287,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			}
 		}
 		} // End of else block for non-pack arguments
+		if (failed_value_extraction) {
+			FLASH_LOG(Templates, Debug, "  Could not safely extract all substituted template argument values; keeping original call");
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
+			return ASTNode(&new_expr);
+		}
 		
 		// If no arguments were collected but we have pack substitutions available, use them
 		if (substituted_template_args.empty() && !pack_map_.empty() && !call.has_template_arguments()) {
