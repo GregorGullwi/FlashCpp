@@ -2245,6 +2245,8 @@ private:
 		load_op.is_reference = member_is_reference;
 		load_op.is_rvalue_reference = member_is_rvalue_reference;
 		load_op.struct_type_info = nullptr;
+		load_op.bitfield_width = lv_info.bitfield_width;
+		load_op.bitfield_bit_offset = lv_info.bitfield_bit_offset;
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
 		

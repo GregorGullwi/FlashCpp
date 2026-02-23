@@ -2944,69 +2944,6 @@ inline void emitStoreToMemory(std::vector<char>& textSectionData, X64Register va
 	}
 }
 
-/**
- * @brief Emits MOV dest_reg, [base_reg + offset] for loading a value from memory.
- * Mirror of emitStoreToMemory but in the load direction.
- */
-inline void emitLoadFromMemory(std::vector<char>& textSectionData, X64Register dest_reg, X64Register base_reg, int32_t offset, int size_bytes) {
-	if (size_bytes <= 0 || size_bytes > 8) return;
-
-	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
-	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
-	bool dest_extended = static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8);
-	bool base_extended = static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8);
-
-	if (size_bytes == 8) {
-		uint8_t rex = 0x48;
-		if (dest_extended) rex |= 0x04;
-		if (base_extended) rex |= 0x01;
-		textSectionData.push_back(rex);
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-	} else if (size_bytes == 4) {
-		if (dest_extended || base_extended) {
-			uint8_t rex = 0x40;
-			if (dest_extended) rex |= 0x04;
-			if (base_extended) rex |= 0x01;
-			textSectionData.push_back(rex);
-		}
-		textSectionData.push_back(0x8B); // MOV r32, r/m32
-	} else if (size_bytes == 2) {
-		textSectionData.push_back(0x66);
-		if (dest_extended || base_extended) {
-			uint8_t rex = 0x40;
-			if (dest_extended) rex |= 0x04;
-			if (base_extended) rex |= 0x01;
-			textSectionData.push_back(rex);
-		}
-		textSectionData.push_back(0x8B); // MOV r16, r/m16
-	} else if (size_bytes == 1) {
-		bool dest_needs_rex = (static_cast<uint8_t>(dest_reg) >= 4);
-		bool base_needs_rex = (static_cast<uint8_t>(base_reg) >= 4);
-		if (dest_needs_rex || base_needs_rex) {
-			uint8_t rex = 0x40;
-			if (dest_extended) rex |= 0x04;
-			if (base_extended) rex |= 0x01;
-			textSectionData.push_back(rex);
-		}
-		textSectionData.push_back(0x8A); // MOV r8, r/m8
-	} else {
-		return;
-	}
-
-	if (offset == 0) {
-		textSectionData.push_back(0x00 | (dest_bits << 3) | base_bits);
-	} else if (offset >= -128 && offset <= 127) {
-		textSectionData.push_back(0x40 | (dest_bits << 3) | base_bits);
-		textSectionData.push_back(static_cast<uint8_t>(offset));
-	} else {
-		textSectionData.push_back(0x80 | (dest_bits << 3) | base_bits);
-		uint32_t offset_u32 = static_cast<uint32_t>(offset);
-		textSectionData.push_back(offset_u32 & 0xFF);
-		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-	}
-}
 
 /**
  * @brief Emits MOV [RSP + offset], reg for storing a value to RSP-relative stack slot.
@@ -5677,16 +5614,16 @@ private:
 	// Helper to emit AND reg, imm64 for bitfield masking
 	void emitAndImm64(X64Register reg, uint64_t mask) {
 		uint8_t reg_enc = static_cast<uint8_t>(reg);
-		uint8_t rex = 0x48; // REX.W
-		if (reg_enc >= 8) rex |= 0x01; // REX.B
-		textSectionData.push_back(rex);
+		uint8_t rex = 0x48 | ((reg_enc >> 3) & 0x01); // REX.W + REX.B branchless
 		if (mask <= 0x7F) {
 			// AND r/m64, imm8 (sign-extended)
+			textSectionData.push_back(rex);
 			textSectionData.push_back(0x83);
 			textSectionData.push_back(0xE0 | (reg_enc & 0x07));
 			textSectionData.push_back(static_cast<uint8_t>(mask));
 		} else if (mask <= 0x7FFFFFFF) {
 			// AND r/m64, imm32 (sign-extended)
+			textSectionData.push_back(rex);
 			textSectionData.push_back(0x81);
 			textSectionData.push_back(0xE0 | (reg_enc & 0x07));
 			uint32_t m = static_cast<uint32_t>(mask);
@@ -5697,43 +5634,32 @@ private:
 		} else {
 			// Full 64-bit: MOV scratch, imm64; AND reg, scratch
 			X64Register scratch = (reg == X64Register::RAX) ? X64Register::RCX : X64Register::RAX;
+			uint8_t scratch_enc = static_cast<uint8_t>(scratch);
 			// Save scratch if it might be in use - use a simple push/pop
-			textSectionData.push_back(0x50 + (static_cast<uint8_t>(scratch) & 0x07)); // PUSH scratch
+			textSectionData.push_back(0x50 + (scratch_enc & 0x07)); // PUSH scratch
 			emitMovImm64(scratch, mask);
-			uint8_t rex2 = 0x48;
-			if (reg_enc >= 8) rex2 |= 0x04; // REX.R
-			if (static_cast<uint8_t>(scratch) >= 8) rex2 |= 0x01; // REX.B
+			uint8_t rex2 = 0x48 | (((reg_enc >> 3) & 0x01) << 2) | ((scratch_enc >> 3) & 0x01); // REX.W + REX.R + REX.B branchless
 			textSectionData.push_back(rex2);
 			textSectionData.push_back(0x21); // AND r/m64, r64
-			textSectionData.push_back(0xC0 | ((static_cast<uint8_t>(scratch) & 0x07) << 3) | (reg_enc & 0x07));
-			textSectionData.push_back(0x58 + (static_cast<uint8_t>(scratch) & 0x07)); // POP scratch
+			textSectionData.push_back(0xC0 | ((scratch_enc & 0x07) << 3) | (reg_enc & 0x07));
+			textSectionData.push_back(0x58 + (scratch_enc & 0x07)); // POP scratch
 		}
 	}
 
 	// Helper to emit SHL reg, imm8 for bitfield shifting
 	void emitShlImm(X64Register reg, uint8_t shift_amount) {
 		uint8_t reg_enc = static_cast<uint8_t>(reg);
-		uint8_t rex = 0x48; // REX.W
-		if (reg_enc >= 8) rex |= 0x01; // REX.B
-		textSectionData.push_back(rex);
-		if (shift_amount == 1) {
-			textSectionData.push_back(0xD1); // SHL r/m64, 1
-			textSectionData.push_back(0xE0 | (reg_enc & 0x07));
-		} else {
-			textSectionData.push_back(0xC1); // SHL r/m64, imm8
-			textSectionData.push_back(0xE0 | (reg_enc & 0x07));
-			textSectionData.push_back(shift_amount);
-		}
+		textSectionData.push_back(0x48 | ((reg_enc >> 3) & 0x01)); // REX.W + REX.B branchless
+		textSectionData.push_back(0xC1); // SHL r/m64, imm8
+		textSectionData.push_back(0xE0 | (reg_enc & 0x07));
+		textSectionData.push_back(shift_amount);
 	}
 
 	// Helper to emit OR dest, src for bitfield combining
 	void emitOrReg(X64Register dest, X64Register src) {
 		uint8_t dest_enc = static_cast<uint8_t>(dest);
 		uint8_t src_enc = static_cast<uint8_t>(src);
-		uint8_t rex = 0x48; // REX.W
-		if (src_enc >= 8) rex |= 0x04; // REX.R
-		if (dest_enc >= 8) rex |= 0x01; // REX.B
-		textSectionData.push_back(rex);
+		textSectionData.push_back(0x48 | (((src_enc >> 3) & 0x01) << 2) | ((dest_enc >> 3) & 0x01)); // REX.W + REX.R + REX.B branchless
 		textSectionData.push_back(0x09); // OR r/m64, r64
 		textSectionData.push_back(0xC0 | ((src_enc & 0x07) << 3) | (dest_enc & 0x07));
 	}
@@ -5741,17 +5667,10 @@ private:
 	// Helper to emit SHR reg, imm8 for bitfield extraction
 	void emitShrImm(X64Register reg, uint8_t shift_amount) {
 		uint8_t reg_enc = static_cast<uint8_t>(reg);
-		uint8_t rex = 0x48; // REX.W
-		if (reg_enc >= 8) rex |= 0x01; // REX.B
-		textSectionData.push_back(rex);
-		if (shift_amount == 1) {
-			textSectionData.push_back(0xD1); // SHR r/m64, 1
-			textSectionData.push_back(0xE8 | (reg_enc & 0x07));
-		} else {
-			textSectionData.push_back(0xC1); // SHR r/m64, imm8
-			textSectionData.push_back(0xE8 | (reg_enc & 0x07));
-			textSectionData.push_back(shift_amount);
-		}
+		textSectionData.push_back(0x48 | ((reg_enc >> 3) & 0x01)); // REX.W + REX.B branchless
+		textSectionData.push_back(0xC1); // SHR r/m64, imm8
+		textSectionData.push_back(0xE8 | (reg_enc & 0x07));
+		textSectionData.push_back(shift_amount);
 	}
 
 	// Helper to emit CALL instruction with relocation
@@ -14550,7 +14469,7 @@ private:
 				                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
 				// Load existing storage unit from [base_reg + op.offset] into temp_reg
-				emitLoadFromMemory(textSectionData, temp_reg, base_reg, op.offset, member_size_bytes);
+				emitMovFromMemory(temp_reg, base_reg, op.offset, member_size_bytes);
 
 				// Clear the bitfield bits: AND temp_reg, ~(mask << bit_offset)
 				uint64_t clear_mask = ~(mask << bit_offset);
