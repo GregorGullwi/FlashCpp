@@ -11787,6 +11787,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return resolved_arg;
 	};
 	
+	// Helper lambda to resolve a deferred bitfield width from non-type template parameters
+	auto resolve_bitfield_width = [&](
+		const StructMemberDecl& member_decl,
+		const std::vector<ASTNode>& params,
+		const std::vector<TemplateTypeArg>& args) -> std::optional<size_t> {
+		if (member_decl.bitfield_width.has_value()) return member_decl.bitfield_width;
+		if (!member_decl.bitfield_width_expr.has_value()) return std::nullopt;
+		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
+		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
+		for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
+			if (!params[pi].is<TemplateParameterNode>()) continue;
+			const auto& tparam = params[pi].as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::NonType && args[pi].is_value)
+				nontype_sub_map[tparam.name()] = args[pi].value;
+		}
+		ASTNode substituted = substitute_template_params_in_expression(
+			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map);
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
+		if (eval_result.success() && eval_result.as_int() >= 0)
+			return static_cast<size_t>(eval_result.as_int());
+		return std::nullopt;
+	};
+
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -12388,27 +12412,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// Phase 7B: Intern member name and use StringHandle overload
 			StringHandle member_name_handle = decl.identifier_token().handle();
-			// Resolve deferred bitfield width from non-type template parameter
-			std::optional<size_t> resolved_bitfield_width = member_decl.bitfield_width;
-			if (!resolved_bitfield_width.has_value() && member_decl.bitfield_width_expr.has_value()) {
-				// Build nontype substitution map from template params and args
-				std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
-				std::unordered_map<std::string_view, int64_t> nontype_sub_map;
-				for (size_t pi = 0; pi < template_params.size() && pi < template_args.size(); ++pi) {
-					if (!template_params[pi].is<TemplateParameterNode>()) continue;
-					const auto& tparam = template_params[pi].as<TemplateParameterNode>();
-					if (tparam.kind() == TemplateParameterKind::NonType && template_args[pi].is_value) {
-						nontype_sub_map[tparam.name()] = template_args[pi].value;
-					}
-				}
-				ASTNode substituted_expr = substitute_template_params_in_expression(
-					*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map);
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
-				if (eval_result.success() && eval_result.as_int() >= 0) {
-					resolved_bitfield_width = static_cast<size_t>(eval_result.as_int());
-				}
-			}
 			struct_info->addMember(
 				member_name_handle,
 				member_type,
@@ -12423,7 +12426,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				false,
 				{},
 				static_cast<int>(ptr_depth),
-				resolved_bitfield_width
+				resolve_bitfield_width(member_decl, template_params, template_args)
 			);
 		}
 		
@@ -14707,27 +14710,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
-		// Resolve deferred bitfield width from non-type template parameter
-		std::optional<size_t> resolved_bitfield_width = member_decl.bitfield_width;
-		if (!resolved_bitfield_width.has_value() && member_decl.bitfield_width_expr.has_value()) {
-			// Build nontype substitution map from template params and args
-			std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
-			std::unordered_map<std::string_view, int64_t> nontype_sub_map;
-			for (size_t pi = 0; pi < template_params.size() && pi < template_args_to_use.size(); ++pi) {
-				if (!template_params[pi].is<TemplateParameterNode>()) continue;
-				const auto& tparam = template_params[pi].as<TemplateParameterNode>();
-				if (tparam.kind() == TemplateParameterKind::NonType && template_args_to_use[pi].is_value) {
-					nontype_sub_map[tparam.name()] = template_args_to_use[pi].value;
-				}
-			}
-			ASTNode substituted_expr = substitute_template_params_in_expression(
-				*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map);
-			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
-			if (eval_result.success() && eval_result.as_int() >= 0) {
-				resolved_bitfield_width = static_cast<size_t>(eval_result.as_int());
-			}
-		}
 		struct_info->addMember(
 			member_name_handle,
 			member_type,
@@ -14742,7 +14724,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			false,
 			{},
 			static_cast<int>(type_spec.pointer_depth()),
-			resolved_bitfield_width
+			resolve_bitfield_width(member_decl, template_params, template_args_to_use)
 		);
 	}
 
