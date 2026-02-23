@@ -663,6 +663,31 @@
 				}
 			}
 		}
+		// If still not found and we're in a struct, check nested enum enumerators
+		// Unscoped enums declared inside a class make their enumerators accessible in the class scope
+		// Only search enums tracked as nested within the current struct to avoid
+		// incorrectly resolving enumerators from unrelated structs.
+		if (!symbol.has_value() && current_struct_name_.isValid()) {
+			auto type_it = gTypesByName.find(current_struct_name_);
+			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+				if (struct_info) {
+					StringHandle id_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+					for (TypeIndex enum_idx : struct_info->getNestedEnumIndices()) {
+						if (enum_idx < gTypeInfo.size()) {
+							const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
+							if (enum_info && !enum_info->is_scoped) {
+								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
+								if (enumerator) {
+									return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+									         static_cast<unsigned long long>(enumerator->value) };
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 		if (!symbol.has_value()) {
 			FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
 			FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);

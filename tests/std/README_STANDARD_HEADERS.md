@@ -15,31 +15,31 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | N/A | ✅ Compiled | ~26ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~367ms (2026-02-11: Fixed with self-referential template handling and dependent type detection) |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~2685ms (2026-02-23: Re-enabled after dependent name and ptr_traits.h fixes) |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~341ms; `_Op_clone` symbol not found during codegen (enum enumerator used as value not substituted) |
+| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~586ms (2026-02-23: Fixed enum enumerator scope resolution in member functions) |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~415ms (2026-02-23: Updated timing; sibling namespace fix confirmed) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~265ms |
 | `<bit>` | N/A | ✅ Compiled | ~328ms (2026-02-06: Fixed with `__attribute__` and type trait whitelist fixes) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~4932ms; parsing completes but codegen fails on `__niter_base` recursion and missing identifiers |
-| `<string>` | `test_std_string.cpp` | ❌ Codegen Error | ~1539ms; parsing completes; fails during IR conversion |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~1040ms; parsing completes but codegen fails on `_Nm` symbol (non-type template param not substituted) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Codegen Error | ~4034ms; parsing completes but codegen fails on template instantiation issues |
-| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | ~1479ms; parsing completes but codegen fails on template instantiation issues |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | ~2149ms; parsing completes but codegen fails on template instantiation issues |
-| `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | ~1501ms; parsing completes but codegen fails on template instantiation issues |
-| `<memory>` | `test_std_memory.cpp` | ❌ Codegen Error | ~2047ms; parsing completes but codegen fails on template instantiation issues |
-| `<functional>` | `test_std_functional.cpp` | ❌ Codegen Error | ~1429ms; parsing completes but codegen fails on template instantiation issues |
-| `<map>` | `test_std_map.cpp` | ❌ Codegen Error | ~1450ms; parsing completes but codegen fails on template instantiation issues |
-| `<set>` | `test_std_set.cpp` | ❌ Codegen Error | ~1417ms; parsing completes but codegen fails on template instantiation issues |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Codegen Error | ~1742ms; parsing completes; fails during IR conversion |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | ~1688ms; parsing completes; fails during IR conversion |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Codegen Error | ~4298ms; parsing completes but codegen hangs on template instantiation |
-| `<atomic>` | N/A | ❌ Codegen Error | ~5523ms (2026-02-13: Parsing completes after member function call shadowing fix; codegen fails on `_Size` symbol) |
+| `<string_view>` | `test_std_string_view.cpp` | ✅ Compiled | ~5554ms (2026-02-23: Fixed with template recursion depth increase 10→64) |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Hits MAX_RECURSION_DEPTH (50) in parse_expression |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<span>` | `test_std_span.cpp` | ✅ Compiled | ~1972ms (2026-02-23: Fixed with template recursion depth increase and non-type param substitution) |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Hits MAX_RECURSION_DEPTH (50) in parse_expression |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Hits MAX_RECURSION_DEPTH (50) in parse_expression |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Parse Error | Variable template evaluation in constant expressions not supported (__is_ratio_v) |
+| `<atomic>` | N/A | ✅ Compiled | ~6105ms (2026-02-23: Fixed with enum enumerator scope resolution; some static_assert warnings remain) |
 | `<new>` | N/A | ✅ Compiled | ~44ms |
 | `<exception>` | N/A | ✅ Compiled | ~471ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~41ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<typeindex>` | N/A | ✅ Compiled | ~766ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<numeric>` | N/A | ✅ Compiled | ~884ms (2026-02-13: Compiles successfully) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Progressed from line 499→1137; struct body boundary tracking issue |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
 | `<csetjmp>` | N/A | ✅ Compiled | ~27ms |
 | `<csignal>` | N/A | ✅ Compiled | ~101ms (2026-02-13: Now compiles successfully) |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
@@ -48,10 +48,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<expected>` | N/A | ✅ Compiled | ~33ms (C++23) |
 | `<text_encoding>` | N/A | ✅ Compiled | ~34ms (C++26) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~35ms (C++23) |
-| `<barrier>` | N/A | ❌ Codegen Error | ~2141ms; parsing completes but codegen fails (depends on `<atomic>`) |
-| `<coroutine>` | N/A | ❌ Parse Error | ~31ms; fails on coroutine-specific syntax |
-| `<latch>` | N/A | ❌ Codegen Error | ~4598ms; parsing completes; fails on `_Size` symbol (non-type template param not substituted) |
-| `<shared_mutex>` | N/A | ❌ Codegen Error | ~744ms; parsing completes; fails on `_S_epoch_diff` symbol |
+| `<barrier>` | N/A | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
+| `<coroutine>` | N/A | ❌ Parse Error | ~31ms; fails on coroutine-specific syntax (requires -fcoroutines) |
+| `<latch>` | N/A | ❌ Codegen Error | ~5089ms (2026-02-23: Progressed past `_Op_clone`-style errors; now fails on `_Size` symbol) |
+| `<shared_mutex>` | N/A | ❌ Parse Error | Variable template evaluation in constant expressions not supported (__is_ratio_v) |
 | `<cstdlib>` | N/A | ✅ Compiled | ~84ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~53ms |
 | `<cstring>` | N/A | ✅ Compiled | ~49ms |
@@ -77,28 +77,30 @@ This directory contains test files for C++ standard library headers to assess Fl
 ### Summary (2026-02-23)
 
 **Total headers tested:** 68
-**Compiling successfully:** 42 (62%)
-**Parse errors:** 2 (`<variant>`, `<coroutine>`)
-**Codegen errors (parsing completes):** 23
+**Compiling successfully:** 46 (68%)
+**Parse errors:** 14
+**Codegen errors (parsing completes):** 1 (`<latch>`)
 **Timeout:** 1 (`<cmath>`)
 
 ### Known Blockers
 
-The most impactful blockers preventing more headers from compiling (parsing succeeds but codegen fails):
+The most impactful blockers preventing more headers from compiling:
 
-1. **Non-type template parameter substitution in codegen**: Template parameters like `_Nm` in `std::array<T, _Nm>` or `_Size` in atomic types are not being substituted in generated code. This causes symbol-not-found errors for `_Nm`, `_Size`, `_S_epoch_diff`, `_Op_clone`, etc. Affects: `<array>`, `<atomic>`, `<latch>`, `<any>`, `<shared_mutex>`.
+1. **`static_assert` evaluation with complex template expressions**: Many headers fail because `static_assert` conditions involving variable templates, nested type traits, or complex template expressions cannot be evaluated. The AST node is not recognized as an expression during template instantiation. Affects: `<array>`, `<tuple>`, `<vector>`, `<memory>`, `<functional>`, `<map>`, `<set>`, `<variant>`, `<barrier>`, `<algorithm>`.
 
-2. **`integral_constant<T,v>::value` codegen**: The static member initializer for `value` in `std::integral_constant` instantiations is not recognized as an expression during codegen. Results in zero-initialization warnings. Non-fatal but causes incorrect runtime behavior for type traits.
+2. **Variable template evaluation in constant expressions**: Variable templates like `__is_ratio_v<T>` or `is_nothrow_convertible_v<T,U>` are not evaluated to their constexpr values during template argument resolution. They're treated as types instead of values, causing incorrect `integral_constant::value` initialization. Affects: `<chrono>`, `<shared_mutex>`.
 
-3. **Template recursion depth limit**: The current limit of 10 is too low for some standard library templates like `__niter_base`. Affects: `<string_view>`, `<algorithm>`, `<ranges>`.
+3. **`parse_expression` recursion depth limit (50)**: Some complex template expressions exceed the expression parser's recursion depth of 50. Affects: `<string>`, `<ranges>`, `<iostream>`.
 
-4. **Fold expression codegen**: Fold expressions that reach codegen haven't been expanded during template instantiation. Affects: `<tuple>`, `<array>`.
+4. **Non-type template parameter substitution in codegen**: Some non-type template parameters (like `_Size` in `<latch>`) are still not resolved during code generation when they go through complex template instantiation chains involving variable templates.
 
 ### Recent Fixes (2026-02-23)
 
-1. **Namespace-qualified type alias resolution in nested namespaces**: `resolve_namespace_handle_impl` now tries resolving relative to the current namespace before falling back to global. E.g., inside `namespace outer`, `inner::type` now correctly resolves to `outer::inner::type`. This was blocking `<compare>` (where `inner::type(__v)` functional casts failed inside sibling namespaces) and `<utility>`.
+1. **Template recursion depth limit increased (10→64)**: The `try_instantiate_template` recursion depth limit was raised from 10 to 64, matching common compiler defaults. This unblocked `<string_view>` and `<span>` which needed deeper template instantiation chains (e.g., `__niter_base`).
 
-2. **Dependent name validation in template bodies**: When inside a template body (`parsing_template_body_`), qualified names like `pointer::pointer_to()` (where `pointer` is a template-dependent type alias from `using pointer = _Ptr;`) are now accepted as forward declarations instead of erroring. Also added fallback to `gSymbolTable.lookup()` for scope-local type aliases. This unblocked `<optional>` and the `ptr_traits.h` header used by many containers.
+2. **Non-type template parameters in deferred base class substitution**: The `name_substitution_map` in `try_instantiate_class_template` now includes non-type template parameters (previously filtered to Type-kind only). This fixes `integral_constant<T,v>::value` codegen when `integral_constant` is instantiated through inheritance chains like `extent_helper<N> : integral_constant<unsigned long long, N>`.
 
-3. **Bitfield width parsing with default member initializers**: Changed bitfield width expression parsing from `DEFAULT_PRECEDENCE` (2) to precedence 4 (above assignment=3) so that `unsigned _M_msb:1 = 0;` correctly parses the width as `1` and the `= 0` as a default member initializer. Fixes parsing of `max_size_type.h` used by `<string_view>` and `<ranges>`.
+3. **Enum enumerator scope resolution in member functions**: Added lookup of unscoped enum enumerators within the enclosing class scope during code generation. Previously, enumerators like `_Op_clone` from a nested `enum _Op` inside `std::any` were not found in symbol tables during member function codegen. This unblocked `<any>`, `<atomic>`, and partially `<latch>`.
+
+4. **Previous fixes (earlier in 2026-02-23)**:
 

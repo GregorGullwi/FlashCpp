@@ -596,6 +596,9 @@ struct StructTypeInfo {
 	std::vector<StructTypeInfo*> nested_classes_;    // Nested classes
 	StructTypeInfo* enclosing_class_ = nullptr;      // Enclosing class (if this is nested)
 
+	// Nested enum support - tracks enum TypeIndex values for enums declared inside this struct
+	std::vector<TypeIndex> nested_enum_indices_;
+
 	// Error tracking for semantic errors detected during finalization
 	std::string finalization_error_;  // Non-empty if semantic error occurred during finalization
 
@@ -973,6 +976,14 @@ struct StructTypeInfo {
 			nested_classes_.push_back(nested);
 			nested->enclosing_class_ = this;
 		}
+	}
+
+	void addNestedEnumIndex(TypeIndex enum_type_index) {
+		nested_enum_indices_.push_back(enum_type_index);
+	}
+
+	const std::vector<TypeIndex>& getNestedEnumIndices() const {
+		return nested_enum_indices_;
 	}
 
 	bool isNested() const {

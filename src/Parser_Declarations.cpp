@@ -4894,8 +4894,14 @@ ParseResult Parser::parse_struct_declaration()
 				if (enum_result.is_error()) {
 					return enum_result;
 				}
-				// Enums inside structs don't need to be added to the struct explicitly
-				// They're registered in the global type system by parse_enum_declaration
+				// Track the enum's TypeIndex in the struct for nested enum enumerator lookup during codegen
+				if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
+					const auto& enum_decl = enum_node->as<EnumDeclarationNode>();
+					auto enum_it = gTypesByName.find(StringTable::getOrInternStringHandle(enum_decl.name()));
+					if (enum_it != gTypesByName.end()) {
+						struct_info->addNestedEnumIndex(enum_it->second->type_index_);
+					}
+				}
 				// The semicolon is already consumed by parse_enum_declaration
 				continue;
 			}
