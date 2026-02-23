@@ -416,7 +416,7 @@ public:
 							zero_initialize();
 						} else if (op.is_initialized) {
 							if (!static_member.initializer->is<ExpressionNode>()) {
-								FLASH_LOG(Codegen, Error, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing");
+								FLASH_LOG(Codegen, Error, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing (actual type: ", static_member.initializer->type_name(), ")");
 								zero_initialize();
 							} else {
 							const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
