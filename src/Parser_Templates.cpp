@@ -9771,21 +9771,24 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	if (should_reparse) {
 		FLASH_LOG_FORMAT(Templates, Debug, "Re-parsing function declaration for SFINAE validation, in_sfinae_context={}", in_sfinae_context_);
 
-		// Cycle detection for trailing return type re-parsing: recursive calls to
-		// try_instantiate_single_template for the same function declaration node (e.g.
-		// __niter_base(reverse_iterator) whose decltype return type itself calls
-		// __niter_base) must be broken early, otherwise parse_expression overflows.
-		static thread_local std::unordered_set<const FunctionDeclarationNode*> reparse_in_progress;
-		if (reparse_in_progress.count(&func_decl)) {
-			FLASH_LOG(Templates, Debug, "Cycle detected in return type re-parsing for '", template_name, "', skipping");
+		// Cycle detection for trailing return type re-parsing: when evaluating a
+		// function's decltype trailing return type, encountering the same function
+		// (by name) again creates infinite recursion (e.g. __niter_base whose return
+		// type contains __niter_base itself).  Track by function name — pointer-based
+		// tracking is unreliable here because the registry vector may grow between
+		// the outer and inner call, subtly shifting addresses.  Returning nullopt
+		// causes the caller to try the next overload (the non-recursive base case).
+		static thread_local std::unordered_set<std::string_view> trailing_return_in_progress;
+		if (trailing_return_in_progress.count(template_name)) {
+			FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "', returning auto to break cycle");
 			return std::nullopt;
 		}
-		reparse_in_progress.insert(&func_decl);
-		struct ReparseGuard {
-			std::unordered_set<const FunctionDeclarationNode*>& set;
-			const FunctionDeclarationNode* key;
-			~ReparseGuard() { set.erase(key); }
-		} reparse_guard{reparse_in_progress, &func_decl};
+		trailing_return_in_progress.insert(template_name);
+		struct TrailingReturnGuard {
+			std::unordered_set<std::string_view>& set;
+			std::string_view key;
+			~TrailingReturnGuard() { set.erase(key); }
+		} trailing_return_guard{trailing_return_in_progress, template_name};
 		
 		// Save current position
 		SaveHandle current_pos = save_token_position();
@@ -10252,6 +10255,22 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
 		FLASH_LOG(Templates, Debug, "Template has body position, re-parsing function body");
+
+		// Cycle detection: if this function body is already being re-parsed on this thread
+		// (e.g. __niter_base whose body calls __niter_base again), return early with the
+		// current (partial) instantiation to break the cycle.  Track by function name.
+		static thread_local std::unordered_set<std::string_view> body_reparse_in_progress;
+		if (body_reparse_in_progress.count(template_name)) {
+			FLASH_LOG(Templates, Debug, "Cycle detected in body re-parsing for '", template_name, "', skipping body to break cycle");
+			return ASTNode(&new_func_ref);
+		}
+		body_reparse_in_progress.insert(template_name);
+		struct BodyReparseGuard {
+			std::unordered_set<std::string_view>& set;
+			std::string_view key;
+			~BodyReparseGuard() { set.erase(key); }
+		} body_reparse_guard{body_reparse_in_progress, template_name};
+
 		// Re-parse the function body with template parameters substituted
 		const std::vector<ASTNode>& func_template_params = template_func.template_parameters();
 		

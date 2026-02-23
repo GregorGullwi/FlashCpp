@@ -301,6 +301,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			
 			// Try variable template instantiation before class template
 			auto var_template_node = parser_.try_instantiate_variable_template(func_name, substituted_template_args);
+			// If not found by simple name, try qualified name if available
+			if (!var_template_node.has_value() && call.has_qualified_name()) {
+				var_template_node = parser_.try_instantiate_variable_template(call.qualified_name(), substituted_template_args);
+			}
 			if (var_template_node.has_value()) {
 				FLASH_LOG(Templates, Debug, "  Successfully instantiated variable template: ", func_name);
 				// Variable template instantiation returns the variable declaration node
