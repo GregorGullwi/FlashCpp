@@ -5969,13 +5969,13 @@ private:
 		}
 		
 		// For 32-bit and 64-bit, use regular MOV
-		// Branchless: compute REX prefix (0x48 for 64-bit, 0x40 for 32-bit with high reg, 0 otherwise)
-		// REX.W bit is 0x08, so 0x48 = 0x40 | 0x08
+		// For RIP-relative MOV, destination is in the REG field of ModR/M (R/M=101 is fixed),
+		// so REX.R (bit 2 = 0x04) extends it — not REX.B (bit 0 = 0x01)
 		uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
-		uint8_t needs_rex_b = (dest_val >> 3) & 0x01;
-		uint8_t rex = 0x40 | needs_rex_w | needs_rex_b;
+		uint8_t rex_r_bit = needs_rex_r << 2; // shift flag to REX.R position (bit 2 = 0x04)
+		uint8_t rex = 0x40 | needs_rex_w | rex_r_bit;
 		// Only emit REX if any bits are set beyond base 0x40
-		uint8_t emit_rex = (needs_rex_w | needs_rex_b) != 0;
+		uint8_t emit_rex = (needs_rex_w | rex_r_bit) != 0;
 		// Use reserve + direct writes for branchless emission
 		size_t base = textSectionData.size();
 		textSectionData.resize(base + 6 + emit_rex);
@@ -6026,12 +6026,13 @@ private:
 		uint8_t src_val = static_cast<uint8_t>(src);
 		uint8_t src_bits = src_val & 0x07;
 		// Branchless: compute REX prefix (0x48 for 64-bit, 0x40 for 32-bit with high reg, 0 otherwise)
-		// REX.W bit is 0x08, so 0x48 = 0x40 | 0x08
+		// For RIP-relative MOV, source is in the REG field of ModR/M (R/M=101 is fixed),
+		// so REX.R (bit 2 = 0x04) extends it — not REX.B (bit 0 = 0x01)
 		uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
-		uint8_t needs_rex_b = (src_val >> 3) & 0x01;
-		uint8_t rex = 0x40 | needs_rex_w | needs_rex_b;
+		uint8_t needs_rex_r = ((src_val >> 3) & 0x01) << 2; // 0x04 if R8-R15, else 0
+		uint8_t rex = 0x40 | needs_rex_w | needs_rex_r;
 		// Only emit REX if any bits are set beyond base 0x40
-		uint8_t emit_rex = (needs_rex_w | needs_rex_b) != 0;
+		uint8_t emit_rex = (needs_rex_w | needs_rex_r) != 0;
 		// Use reserve + direct writes for branchless emission
 		size_t base = textSectionData.size();
 		textSectionData.resize(base + 6 + emit_rex);
