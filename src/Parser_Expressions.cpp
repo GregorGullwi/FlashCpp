@@ -3135,18 +3135,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Validate that the namespace path actually exists before creating a forward declaration.
 					// This catches errors like f2::func() when only namespace f exists.
 					NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-					if (!validateQualifiedNamespace(ns_handle, final_identifier)) {
-						// Also accept if the qualifier is a known symbol (e.g., type alias "using pointer = _Ptr;")
-						// or if we're in a template body where names may be dependent
-						std::string_view root_name = gNamespaceRegistry.getRootNamespaceName(ns_handle);
-						bool is_template_context = parsing_template_body_ || !struct_parsing_context_stack_.empty();
-						if (!is_template_context && !gSymbolTable.lookup(root_name).has_value()) {
-							return ParseResult::error(
-								std::string(StringBuilder().append("Use of undeclared identifier '")
-									.append(buildQualifiedNameFromStrings(namespaces, final_identifier.value()))
-									.append("'").commit()),
-								final_identifier);
-						}
+					if (!validateQualifiedNamespace(ns_handle, final_identifier, parsing_template_body_)) {
+						return ParseResult::error(
+							std::string(StringBuilder().append("Use of undeclared identifier '")
+								.append(buildQualifiedNameFromStrings(namespaces, final_identifier.value()))
+								.append("'").commit()),
+							final_identifier);
 					}
 					// Namespace exists — create forward declaration for external functions (e.g., std::print)
 					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, final_identifier);
@@ -4493,18 +4487,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If still not found, create a forward declaration
 			if (!identifierType) {
 				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
-				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token())) {
-					// Also accept if the qualifier is a known symbol (e.g., type alias "using pointer = _Ptr;")
-					// or if we're in a template body where names may be dependent
-					std::string_view root_name = gNamespaceRegistry.getRootNamespaceName(qual_id.namespace_handle());
-					bool is_template_context = parsing_template_body_ || !struct_parsing_context_stack_.empty();
-					if (!is_template_context && !gSymbolTable.lookup(root_name).has_value()) {
-						return ParseResult::error(
-							std::string(StringBuilder().append("Use of undeclared identifier '")
-								.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
-								.append("'").commit()),
-							qual_id.identifier_token());
-					}
+				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_body_)) {
+					return ParseResult::error(
+						std::string(StringBuilder().append("Use of undeclared identifier '")
+							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
+							.append("'").commit()),
+						qual_id.identifier_token());
 				}
 				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
@@ -5244,18 +5232,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If still not found, create a forward declaration
 			if (!identifierType) {
 				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
-				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token())) {
-					// Also accept if the qualifier is a known symbol (e.g., type alias "using pointer = _Ptr;")
-					// or if we're in a template body where names may be dependent
-					std::string_view root_name = gNamespaceRegistry.getRootNamespaceName(qual_id.namespace_handle());
-					bool is_template_context = parsing_template_body_ || !struct_parsing_context_stack_.empty();
-					if (!is_template_context && !gSymbolTable.lookup(root_name).has_value()) {
-						return ParseResult::error(
-							std::string(StringBuilder().append("Use of undeclared identifier '")
-								.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
-								.append("'").commit()),
-							qual_id.identifier_token());
-					}
+				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_body_)) {
+					return ParseResult::error(
+						std::string(StringBuilder().append("Use of undeclared identifier '")
+							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
+							.append("'").commit()),
+						qual_id.identifier_token());
 				}
 				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());

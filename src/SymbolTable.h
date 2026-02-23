@@ -977,12 +977,19 @@ inline std::string_view buildQualifiedNameFromHandle(NamespaceHandle ns_handle, 
 	return StringTable::getStringView(qualified_handle);
 }
 
+// Forward declaration for use in validateQualifiedNamespace
+extern SymbolTable gSymbolTable;
+
 /**
  * @brief Validate that a namespace handle refers to a known scope (declared namespace or class name).
  * Returns true if the namespace is valid (global, declared as namespace, or known as a class/struct type),
  * false if the identifier is completely unknown.
+ *
+ * @param in_template_context If true, also accepts qualifiers that are symbols in scope
+ *        (e.g., type aliases like "using pointer = _Ptr;" in a template struct body).
  */
-inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused]] const Token& error_token) {
+inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused]] const Token& error_token,
+	bool in_template_context = false) {
 	if (!ns_handle.isValid() || ns_handle.isGlobal()) {
 		return true;
 	}
@@ -995,6 +1002,14 @@ inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused
 	std::string_view root_name = gNamespaceRegistry.getName(root);
 	StringHandle root_handle = StringTable::getOrInternStringHandle(root_name);
 	if (gTypesByName.find(root_handle) != gTypesByName.end()) {
+		return true;
+	}
+	// In template contexts, accept qualifiers that are symbols in scope (e.g., type aliases)
+	if (in_template_context) {
+		return true;
+	}
+	// Also accept if the root name is a known symbol (e.g., a type alias like "using pointer = _Ptr;")
+	if (gSymbolTable.lookup(root_name).has_value()) {
 		return true;
 	}
 	return false;

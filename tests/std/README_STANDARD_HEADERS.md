@@ -98,27 +98,7 @@ The most impactful blockers preventing more headers from compiling (parsing succ
 
 1. **Namespace-qualified type alias resolution in nested namespaces**: `resolve_namespace_handle_impl` now tries resolving relative to the current namespace before falling back to global. E.g., inside `namespace outer`, `inner::type` now correctly resolves to `outer::inner::type`. This was blocking `<compare>` (where `inner::type(__v)` functional casts failed inside sibling namespaces) and `<utility>`.
 
-2. **Dependent name validation in template bodies**: When inside a template body (`parsing_template_body_` or `struct_parsing_context_stack_`), qualified names like `pointer::pointer_to()` (where `pointer` is a template-dependent type alias from `using pointer = _Ptr;`) are now accepted as forward declarations instead of erroring. Also added fallback to `gSymbolTable.lookup()` for scope-local type aliases. This unblocked `<optional>` and the `ptr_traits.h` header used by many containers.
+2. **Dependent name validation in template bodies**: When inside a template body (`parsing_template_body_`), qualified names like `pointer::pointer_to()` (where `pointer` is a template-dependent type alias from `using pointer = _Ptr;`) are now accepted as forward declarations instead of erroring. Also added fallback to `gSymbolTable.lookup()` for scope-local type aliases. This unblocked `<optional>` and the `ptr_traits.h` header used by many containers.
 
 3. **Bitfield width parsing with default member initializers**: Changed bitfield width expression parsing from `DEFAULT_PRECEDENCE` (2) to precedence 4 (above assignment=3) so that `unsigned _M_msb:1 = 0;` correctly parses the width as `1` and the `= 0` as a default member initializer. Fixes parsing of `max_size_type.h` used by `<string_view>` and `<ranges>`.
-
-### Recent Fixes (2026-02-13, preprocessor)
-
-1. **Empty trailing macro arguments not captured**: `splitArgs("a, ")` returned `["a"]` instead of `["a", ""]`. Fixed to correctly push an empty trailing argument when the arg string ends after a comma. This is critical for glibc's `__MATHDECL_ALIAS` pattern which passes empty suffix arguments.
-
-2. **## token-pasting processed after rescanning instead of before**: Per C standard 6.10.3.3, `##` must be processed after argument substitution but before rescanning. FlashCpp was doing it after rescanning, causing `__CONCAT` expansions to corrupt identifiers in nested macro chains.
-
-3. **Macro arguments not pre-expanded before substitution**: Per C standard 6.10.3.1, arguments not adjacent to `#` or `##` must be fully expanded before being substituted into the replacement list. Without this, nested macro chains like `__SIMD_DECL(__MATH_PRECNAME(func, suffix))` would paste unexpanded macro names instead of their results.
-
-### Recent Fixes (2026-02-13)
-
-1. **Member function call shadowed by template function lookup**: When parsing a member function body inside a template struct, a call like `compare_exchange_weak(expected, desired, order, order)` would find the name in the template registry even though it was already resolved as a class member function. Fix: skip template registry lookup when `found_member_function_in_context` is already true. Unblocks `<atomic>` parsing.
-
-2. **`using Base::operator Type;` not parsed**: Using-declarations for conversion operators and assignment operators (e.g., `using __base_type::operator __integral_type;`) hit the `else { break; }` branch because `operator` is a keyword. Fix: handle `operator` keyword after `::` and build the full operator name.
-
-3. **Bool/Int type mismatch in partial specialization pattern matching**: Default bool template arguments (`template<typename T, bool = false>`) were stored as `Type::Int` during fill-in but `Type::Bool` in patterns, causing pattern matching to fail silently. Fix: use `Type::Bool` for bool defaults, and allow `Bool`/`Int` interchangeability in pattern matching for non-type value parameters. This fix enables partial specialization member function codegen.
-
-4. **Overload resolution ambiguity**: When multiple overloads tie on conversion rank (e.g., `f(T*)` vs `f(volatile T*)`), the resolver now picks the first match instead of returning ambiguous.
-
-5. **Codegen assert hang**: `assert(false)` in `generateIdentifierIr` replaced with `throw std::runtime_error()` per existing convention, preventing SIGABRT hangs.
 
