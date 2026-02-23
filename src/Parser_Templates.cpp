@@ -9148,11 +9148,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// Using the mangled name instead of the original template declaration pointer ensures
 		// distinct recursive instantiations (e.g. var_sum<int,int,int> from var_sum<int,int,int,int>)
 		// are not blocked.
-		static thread_local std::unordered_set<std::string_view> body_parse_in_progress;
-		std::string_view cycle_key = mangled_name;
+		static thread_local std::unordered_set<StringHandle> body_parse_in_progress;
+		StringHandle cycle_key = StringTable::getOrInternStringHandle(mangled_name);
 		if (body_parse_in_progress.count(cycle_key)) {
 			// Already parsing this body — skip body to break the cycle.
-			FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", cycle_key, "'), skipping body");
+			FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", mangled_name, "'), skipping body");
 			template_param_substitutions_ = std::move(saved_template_param_substitutions);
 			current_function_ = saved_current_function;
 			gSymbolTable.exit_scope();
@@ -9162,8 +9162,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 		body_parse_in_progress.insert(cycle_key);
 		struct BodyParseGuard {
-			std::unordered_set<std::string_view>& set;
-			std::string_view key;
+			std::unordered_set<StringHandle>& set;
+			StringHandle key;
 			~BodyParseGuard() { set.erase(key); }
 		} body_guard{body_parse_in_progress, cycle_key};
 
