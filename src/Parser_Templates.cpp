@@ -9143,6 +9143,27 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 
+		// Cycle detection: prevent infinite recursion from mutually-recursive trailing
+		// return types (e.g. __niter_base -> __make_reverse_iterator -> __niter_base).
+		// Use the address of the FunctionDeclarationNode as a unique key per function.
+		static thread_local std::unordered_set<const FunctionDeclarationNode*> body_parse_in_progress;
+		if (body_parse_in_progress.count(&func_decl)) {
+			// Already parsing this body — skip body to break the cycle.
+			FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "', skipping body");
+			template_param_substitutions_ = std::move(saved_template_param_substitutions);
+			current_function_ = saved_current_function;
+			gSymbolTable.exit_scope();
+			restore_lexer_position_only(current_pos);
+			discard_saved_token(current_pos);
+			return std::nullopt;
+		}
+		body_parse_in_progress.insert(&func_decl);
+		struct BodyParseGuard {
+			std::unordered_set<const FunctionDeclarationNode*>& set;
+			const FunctionDeclarationNode* key;
+			~BodyParseGuard() { set.erase(key); }
+		} body_guard{body_parse_in_progress, &func_decl};
+
 		// Parse the function body
 		auto block_result = parse_block();
 		
@@ -9749,6 +9770,22 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	
 	if (should_reparse) {
 		FLASH_LOG_FORMAT(Templates, Debug, "Re-parsing function declaration for SFINAE validation, in_sfinae_context={}", in_sfinae_context_);
+
+		// Cycle detection for trailing return type re-parsing: recursive calls to
+		// try_instantiate_single_template for the same function declaration node (e.g.
+		// __niter_base(reverse_iterator) whose decltype return type itself calls
+		// __niter_base) must be broken early, otherwise parse_expression overflows.
+		static thread_local std::unordered_set<const FunctionDeclarationNode*> reparse_in_progress;
+		if (reparse_in_progress.count(&func_decl)) {
+			FLASH_LOG(Templates, Debug, "Cycle detected in return type re-parsing for '", template_name, "', skipping");
+			return std::nullopt;
+		}
+		reparse_in_progress.insert(&func_decl);
+		struct ReparseGuard {
+			std::unordered_set<const FunctionDeclarationNode*>& set;
+			const FunctionDeclarationNode* key;
+			~ReparseGuard() { set.erase(key); }
+		} reparse_guard{reparse_in_progress, &func_decl};
 		
 		// Save current position
 		SaveHandle current_pos = save_token_position();

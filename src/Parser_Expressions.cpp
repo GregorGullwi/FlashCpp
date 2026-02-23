@@ -1091,7 +1091,7 @@ static bool is_known_type_trait_name(std::string_view name) {
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 {
 	static thread_local int recursion_depth = 0;
-	constexpr int MAX_RECURSION_DEPTH = 50;  // Lowered to catch issues faster
+	constexpr int MAX_RECURSION_DEPTH = 50;
 	
 	// RAII guard to ensure recursion_depth is decremented on all exit paths
 	struct RecursionGuard {

@@ -665,8 +665,10 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 		return ASTNode(&new_type);
 	}
 	
-	// Not a template parameter, return as-is
-	return ASTNode(&const_cast<IdentifierNode&>(id));
+	// Not a template parameter, return as-is (wrapped in ExpressionNode so the
+	// evaluator's is<ExpressionNode>() check passes)
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(id);
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIdentifierNode& qual_id) {
