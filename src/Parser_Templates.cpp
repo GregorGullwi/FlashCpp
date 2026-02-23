@@ -1523,8 +1523,9 @@ ParseResult Parser::parse_template_declaration() {
 						if (enum_result.is_error()) {
 							return enum_result;
 						}
-						// Note: For template class bodies, nested enum tracking happens at instantiation time.
-						// The enum type is registered globally by parse_enum_declaration.
+						// Note: nested_enum_indices_ tracking is not done here for template class bodies.
+						// Enums are registered globally by parse_enum_declaration, and enumerators are
+						// typically resolved via the global symbol table before the struct-scoped fallback.
 						continue;
 					} else if (peek() == "using"_tok) {
 						// Handle type alias inside class body: using value_type = T;
@@ -2810,7 +2811,9 @@ ParseResult Parser::parse_template_declaration() {
 						if (enum_result.is_error()) {
 							return enum_result;
 						}
-						// Note: For template class bodies, nested enum tracking happens at instantiation time.
+						// Note: nested_enum_indices_ tracking is not done here for template class bodies.
+						// Enums are registered globally by parse_enum_declaration, and enumerators are
+						// typically resolved via the global symbol table before the struct-scoped fallback.
 						continue;
 					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
 						// Handle nested struct/class declarations inside partial specialization body
@@ -13862,53 +13865,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (base.is_deferred) {
 			FLASH_LOG(Templates, Debug, "Base class '", base_class_name, "' is a template parameter - resolving with concrete type");
 			
-			// Find the template parameter by name and substitute with the concrete type
-			size_t arg_index = 0;
+			// Use name_substitution_map (which correctly handles all param kinds) to resolve
+			ensure_substitution_maps();
+			auto subst_it = name_substitution_map.find(base_class_name);
 			bool found = false;
-			for (size_t i = 0; i < template_params.size(); ++i) {
-				if (!template_params[i].is<TemplateParameterNode>()) continue;
+			if (subst_it != name_substitution_map.end()) {
+				const TemplateTypeArg& concrete_arg = subst_it->second;
 				
-				const auto& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.kind() != TemplateParameterKind::Type) continue;
-				
-				std::string_view param_name = tparam.name();
-				
-				if (param_name == base_class_name) {
-					// Found the template parameter - get the concrete type
-					if (arg_index < template_args_to_use.size()) {
-						const TemplateTypeArg& concrete_arg = template_args_to_use[arg_index];
-						
-						// Validate that the concrete type is a struct/class
-						if (concrete_arg.type_index >= gTypeInfo.size()) {
-							FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
-							break;
-						}
-						
-						const TypeInfo& concrete_type = gTypeInfo[concrete_arg.type_index];
-						if (concrete_type.type_ != Type::Struct) {
-							FLASH_LOG(Templates, Error, "Template argument '", concrete_type.name_, "' for base class must be a struct/class type");
-							// Could return error here, but for now just log and skip
-							break;
-						}
-						
-						// Check if the concrete type is final
-						if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
-							FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type.name_, "'");
-							// Could return error here, but for now just log and skip
-							break;
-						}
-						
+				// Validate that the concrete type is a struct/class
+				if (concrete_arg.type_index >= gTypeInfo.size()) {
+					FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
+				} else {
+					const TypeInfo& concrete_type = gTypeInfo[concrete_arg.type_index];
+					if (concrete_type.type_ != Type::Struct) {
+						FLASH_LOG(Templates, Error, "Template argument '", concrete_type.name_, "' for base class must be a struct/class type");
+					} else if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
+						FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type.name_, "'");
+					} else {
 						// Add the resolved base class
 						struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), concrete_arg.type_index, base.access, base.is_virtual);
 						FLASH_LOG(Templates, Debug, "Resolved template parameter base '", base_class_name, "' to concrete type '", StringTable::getStringView(concrete_type.name_), "' with type_index=", concrete_arg.type_index);
 						found = true;
 					}
-					break;
-				}
-				
-				// Track regular parameters to match indices
-				if (!tparam.is_variadic()) {
-					arg_index++;
 				}
 			}
 			
