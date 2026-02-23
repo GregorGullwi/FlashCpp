@@ -14025,6 +14025,9 @@ private:
 
 		// Calculate member size in bytes
 		int member_size_bytes = op.result.size_in_bits / 8;
+		bool unresolved_user_defined_member = (member_size_bytes == 0 &&
+			op.result.type == Type::UserDefined &&
+			op.result.type_index == 0);
 
 		// Flush all dirty registers to ensure values are saved before allocating
 		flushAllDirtyRegisters();
@@ -14138,7 +14141,14 @@ private:
 					load_opcodes = generateMovFromMemory8(temp_reg, temp_reg, op.offset);
 				} else {
 					// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
-					FLASH_LOG_FORMAT(Codegen, Warning, "MemberAccess: Unsupported member size {} bytes, skipping", member_size_bytes);
+					if (unresolved_user_defined_member) {
+						regAlloc.release(temp_reg);
+						return;
+					}
+					FLASH_LOG_FORMAT(Codegen, Warning,
+						"MemberAccess: Unsupported member size {} bytes for '{}' (type={}, ptr_depth={}, type_index={}), skipping",
+						member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.type),
+						op.result.pointer_depth, op.result.type_index);
 					regAlloc.release(temp_reg);
 					return;
 				}
@@ -14182,7 +14192,15 @@ private:
 				load_opcodes = generateMovFromMemory8(temp_reg, ptr_reg, op.offset);
 			} else {
 				// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
-				FLASH_LOG_FORMAT(Codegen, Warning, "MemberAccess pointer path: Unsupported member size {} bytes, skipping", member_size_bytes);
+				if (unresolved_user_defined_member) {
+					regAlloc.release(temp_reg);
+					regAlloc.release(ptr_reg);
+					return;
+				}
+				FLASH_LOG_FORMAT(Codegen, Warning,
+					"MemberAccess pointer path: Unsupported member size {} bytes for '{}' (type={}, ptr_depth={}, type_index={}), skipping",
+					member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.type),
+					op.result.pointer_depth, op.result.type_index);
 				regAlloc.release(temp_reg);
 				regAlloc.release(ptr_reg);
 				return;

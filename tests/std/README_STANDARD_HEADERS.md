@@ -50,7 +50,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~35ms (C++23) |
 | `<barrier>` | N/A | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
 | `<coroutine>` | N/A | ❌ Parse Error | ~31ms; fails on coroutine-specific syntax (requires -fcoroutines) |
-| `<latch>` | N/A | ❌ Codegen Error | ~5089ms (2026-02-23: Progressed past `_Op_clone`-style errors; now fails on `_Size` symbol) |
+| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~4438ms (2026-02-23: `memory_order_relaxed`/`__memory_order_mask` lookup fixed; now fails on `_Size` symbol) |
 | `<shared_mutex>` | N/A | ❌ Parse Error | Variable template evaluation in constant expressions not supported (__is_ratio_v) |
 | `<cstdlib>` | N/A | ✅ Compiled | ~84ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~53ms |
@@ -102,5 +102,6 @@ The most impactful blockers preventing more headers from compiling:
 
 3. **Enum enumerator scope resolution in member functions**: Added lookup of unscoped enum enumerators within the enclosing class scope during code generation. Previously, enumerators like `_Op_clone` from a nested `enum _Op` inside `std::any` were not found in symbol tables during member function codegen. This unblocked `<any>`, `<atomic>`, and partially `<latch>`.
 
-4. **Previous fixes (earlier in 2026-02-23)**:
+4. **Namespace-scope identifier fallback in codegen**: Added global-qualified fallback lookup for unresolved identifiers during code generation (including parent-namespace lookup and unique namespace-qualified fallback). This resolved `<latch>` failures on `memory_order_relaxed` and `__memory_order_mask` and exposed the remaining `_Size` non-type template substitution gap.
 
+5. **GCC atomic predefined macros**: Added missing predefined macros (`__GCC_ATOMIC_*` and `__GCC_ATOMIC_TEST_AND_SET_TRUEVAL`) in GCC/Clang compatibility mode to match libstdc++ expectations and avoid unresolved macro identifiers during `<atomic>/<latch>` compilation paths.

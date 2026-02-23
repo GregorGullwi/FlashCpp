@@ -1180,6 +1180,41 @@
 
 	// Generate an instantiated member function template
 	void generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info) {
+		auto saved_namespace_stack = current_namespace_stack_;
+		auto parse_namespace_components = [](std::string_view qualified_prefix) {
+			std::vector<std::string> components;
+			size_t start = 0;
+			while (start < qualified_prefix.size()) {
+				size_t sep = qualified_prefix.find("::", start);
+				if (sep == std::string_view::npos) {
+					components.emplace_back(qualified_prefix.substr(start));
+					break;
+				}
+				components.emplace_back(qualified_prefix.substr(start, sep - start));
+				start = sep + 2;
+			}
+			return components;
+		};
+		auto extract_namespace_prefix = [](std::string_view qualified_name) -> std::string_view {
+			size_t scope_pos = qualified_name.rfind("::");
+			if (scope_pos == std::string_view::npos) {
+				return {};
+			}
+			return qualified_name.substr(0, scope_pos);
+		};
+
+		std::string_view namespace_source;
+		if (inst_info.struct_name.isValid()) {
+			namespace_source = extract_namespace_prefix(StringTable::getStringView(inst_info.struct_name));
+		} else {
+			namespace_source = extract_namespace_prefix(StringTable::getStringView(inst_info.qualified_template_name));
+		}
+		if (!namespace_source.empty()) {
+			current_namespace_stack_ = parse_namespace_components(namespace_source);
+		} else {
+			current_namespace_stack_.clear();
+		}
+
 		// First, generate the FunctionDecl IR for the template instantiation
 		// This must be done at the top level, BEFORE any function bodies that might call it
 		generateTemplateFunctionDecl(inst_info);
@@ -1290,6 +1325,7 @@
 
 		// Exit function scope
 		symbol_table.exit_scope();
+		current_namespace_stack_ = saved_namespace_stack;
 	}
 
 	std::vector<IrOperand> generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {

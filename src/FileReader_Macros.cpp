@@ -1590,6 +1590,17 @@
 				defines_["__ELF__"] = DefineDirective{ "1", {} };
 			}
 			defines_["__VERSION__"] = DefineDirective{ "\"FlashCpp (gcc compatibility)\"", {} };
+			defines_["__GCC_ATOMIC_BOOL_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_CHAR_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_CHAR16_T_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_CHAR32_T_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_WCHAR_T_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_SHORT_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_INT_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_LONG_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_LLONG_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_POINTER_LOCK_FREE"] = DefineDirective{ "2", {} };
+			defines_["__GCC_ATOMIC_TEST_AND_SET_TRUEVAL"] = DefineDirective{ "1", {} };
 
 			defines_["__BASE_FILE__"] = FunctionDirective{ [this]() -> std::string {
 				// Prefer the main input file if available, otherwise fall back to the current file

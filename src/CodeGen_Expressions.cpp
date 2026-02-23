@@ -586,6 +586,41 @@
 					}
 				}
 			}
+
+			// If still unresolved, try unqualified lookup through the current namespace chain.
+			// This handles unscoped enum enumerators in namespace scope (e.g., memory_order_relaxed in std).
+			if (!symbol.has_value() && !current_namespace_stack_.empty()) {
+				NamespaceHandle current_ns = NamespaceRegistry::GLOBAL_NAMESPACE;
+				bool namespace_path_valid = true;
+				for (const auto& ns_name : current_namespace_stack_) {
+					NamespaceHandle next_ns = gNamespaceRegistry.lookupNamespace(
+						current_ns, StringTable::getOrInternStringHandle(ns_name));
+					if (!next_ns.isValid()) {
+						namespace_path_valid = false;
+						break;
+					}
+					current_ns = next_ns;
+				}
+
+				if (namespace_path_valid) {
+					NamespaceHandle search_ns = current_ns;
+					while (search_ns.isValid()) {
+						symbol = global_symbol_table_->lookup_qualified(search_ns, identifier_handle);
+						if (symbol.has_value()) {
+							is_global = true;
+							resolved_qualified_name = search_ns.isGlobal()
+								? identifier_handle
+								: gNamespaceRegistry.buildQualifiedIdentifier(search_ns, identifier_handle);
+							break;
+						}
+						if (search_ns.isGlobal()) {
+							break;
+						}
+						search_ns = gNamespaceRegistry.getParent(search_ns);
+					}
+				}
+			}
+
 		}
 
 		// Only check if it's a member variable if NOT found in symbol tables
