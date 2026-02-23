@@ -14082,6 +14082,18 @@ private:
 				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				
+				// Extract bitfield value if this is a bitfield member
+				FLASH_LOG_FORMAT(Codegen, Debug, "MemberAccess global path: bitfield_width.has_value()={}, bitfield_bit_offset={}", op.bitfield_width.has_value(), op.bitfield_bit_offset);
+				if (op.bitfield_width.has_value()) {
+					size_t bit_offset = op.bitfield_bit_offset;
+					size_t width = *op.bitfield_width;
+					if (bit_offset > 0) {
+						emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
+					}
+					uint64_t mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+					emitAndImm64(temp_reg, mask);
+				}
+
 				// Store loaded value to result_offset for later use (e.g., indirect_call)
 				emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 				regAlloc.release(temp_reg);
@@ -14119,6 +14131,18 @@ private:
 			// Release pointer register - no longer needed
 			regAlloc.release(ptr_reg);
 			
+			// Extract bitfield value if this is a bitfield member
+			FLASH_LOG_FORMAT(Codegen, Debug, "MemberAccess pointer path: bitfield_width.has_value()={}, bitfield_bit_offset={}", op.bitfield_width.has_value(), op.bitfield_bit_offset);
+			if (op.bitfield_width.has_value()) {
+				size_t bit_offset = op.bitfield_bit_offset;
+				size_t width = *op.bitfield_width;
+				if (bit_offset > 0) {
+					emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
+				}
+				uint64_t mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+				emitAndImm64(temp_reg, mask);
+			}
+
 			// Store loaded value to result_offset for later use (e.g., indirect_call)
 			emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 			regAlloc.release(temp_reg);
