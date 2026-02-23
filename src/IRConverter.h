@@ -5631,6 +5631,22 @@ private:
 			textSectionData.push_back((m >> 8) & 0xFF);
 			textSectionData.push_back((m >> 16) & 0xFF);
 			textSectionData.push_back((m >> 24) & 0xFF);
+		} else if (mask >= 0xFFFFFFFFFFFFFF80ULL) {
+			// AND r/m64, imm8 (sign-extended negative, e.g. 0xFFFFFFFFFFFFFFF8 -> imm8=0xF8)
+			textSectionData.push_back(rex);
+			textSectionData.push_back(0x83);
+			textSectionData.push_back(0xE0 | (reg_enc & 0x07));
+			textSectionData.push_back(static_cast<uint8_t>(mask & 0xFF));
+		} else if (mask >= 0xFFFFFFFF80000000ULL) {
+			// AND r/m64, imm32 (sign-extended negative, e.g. 0xFFFFFFFF80000000 -> imm32=0x80000000)
+			textSectionData.push_back(rex);
+			textSectionData.push_back(0x81);
+			textSectionData.push_back(0xE0 | (reg_enc & 0x07));
+			uint32_t m = static_cast<uint32_t>(mask & 0xFFFFFFFF);
+			textSectionData.push_back(m & 0xFF);
+			textSectionData.push_back((m >> 8) & 0xFF);
+			textSectionData.push_back((m >> 16) & 0xFF);
+			textSectionData.push_back((m >> 24) & 0xFF);
 		} else {
 			// Full 64-bit: MOV scratch, imm64; AND reg, scratch
 			X64Register scratch = (reg == X64Register::RAX) ? X64Register::RCX : X64Register::RAX;
