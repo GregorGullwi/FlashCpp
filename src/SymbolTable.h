@@ -746,7 +746,8 @@ public:
 		std::optional<NamespaceHandle> matched_namespace;
 		bool ambiguous = false;
 		for (const auto& [ns_handle, symbol_map] : namespace_symbols_) {
-			for (const auto& [_, nodes] : symbol_map) {
+			for (const auto& symbol_entry : symbol_map) {
+				const auto& nodes = symbol_entry.second;
 				for (const auto& candidate : nodes) {
 					if (candidate.is<FunctionDeclarationNode>() &&
 					    matches_function(candidate.as<FunctionDeclarationNode>())) {

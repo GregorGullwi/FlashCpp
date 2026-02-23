@@ -257,9 +257,15 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						if (std::holds_alternative<NumericLiteralNode>(substituted_expr)) {
 							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(substituted_expr);
 							const NumericLiteralValue& raw_value = lit.value();
-							int64_t value = std::holds_alternative<unsigned long long>(raw_value)
-								? static_cast<int64_t>(std::get<unsigned long long>(raw_value))
-								: static_cast<int64_t>(std::get<double>(raw_value));
+							int64_t value = 0;
+							if (std::holds_alternative<unsigned long long>(raw_value)) {
+								value = static_cast<int64_t>(std::get<unsigned long long>(raw_value));
+							} else if (std::holds_alternative<double>(raw_value)) {
+								value = static_cast<int64_t>(std::get<double>(raw_value));
+							} else {
+								FLASH_LOG(Templates, Debug, "    Numeric literal value variant type not handled for template arg extraction");
+								continue;
+							}
 							substituted_template_args.emplace_back(value, lit.type());
 						} else if (std::holds_alternative<BoolLiteralNode>(substituted_expr)) {
 							const BoolLiteralNode& lit = std::get<BoolLiteralNode>(substituted_expr);

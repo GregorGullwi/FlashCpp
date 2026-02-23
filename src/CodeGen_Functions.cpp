@@ -505,7 +505,7 @@
 							// Derive namespace from the matched function's parent struct first (authoritative),
 							// then fall back to the resolved type name when needed.
 							std::vector<std::string> ns_stack;
-							auto append_namespace_components = [&](std::string_view qualified_name) {
+							auto parse_namespace_into_stack = [&](std::string_view qualified_name) {
 								size_t ns_end = qualified_name.rfind("::");
 								if (ns_end == std::string_view::npos) {
 									return;
@@ -523,12 +523,12 @@
 								}
 							};
 
-							append_namespace_components(parent_for_mangling);
+							parse_namespace_into_stack(parent_for_mangling);
 							if (ns_stack.empty()) {
-								append_namespace_components(struct_type_name);
+								parse_namespace_into_stack(struct_type_name);
 							}
 							if (ns_stack.empty()) {
-								append_namespace_components(StringTable::getStringView(type_info_ptr->name()));
+								parse_namespace_into_stack(StringTable::getStringView(type_info_ptr->name()));
 							}
 							for (const auto& mf : struct_info->member_functions) {
 								DeferredMemberFunctionInfo deferred_info;

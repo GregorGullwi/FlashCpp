@@ -2835,8 +2835,10 @@ private:
 		struct NamespaceStackGuard {
 			std::vector<std::string>& target;
 			std::vector<std::string> saved;
+			explicit NamespaceStackGuard(std::vector<std::string>& stack)
+				: target(stack), saved(stack) {}
 			~NamespaceStackGuard() { target = std::move(saved); }
-		} namespace_guard{ current_namespace_stack_, current_namespace_stack_ };
+		} namespace_guard{ current_namespace_stack_ };
 
 		// Deferred or synthesized function generation can lose namespace stack context.
 		// Recover it from the declaration registry so unqualified lookup remains standard-compliant.
