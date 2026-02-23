@@ -1180,6 +1180,42 @@
 
 	// Generate an instantiated member function template
 	void generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info) {
+		auto saved_namespace_stack = current_namespace_stack_;
+		auto parseNamespaceComponents = [](std::string_view qualified_prefix) {
+			std::vector<std::string> components;
+			size_t start = 0;
+			while (start < qualified_prefix.size()) {
+				size_t sep = qualified_prefix.find("::", start);
+				if (sep == std::string_view::npos) {
+					components.emplace_back(qualified_prefix.substr(start));
+					break;
+				}
+				components.emplace_back(qualified_prefix.substr(start, sep - start));
+				start = sep + 2;
+			}
+			return components;
+		};
+
+		std::string_view namespace_source;
+		if (inst_info.struct_name.isValid()) {
+			std::string_view struct_name = StringTable::getStringView(inst_info.struct_name);
+			size_t scope_pos = struct_name.rfind("::");
+			if (scope_pos != std::string_view::npos) {
+				namespace_source = struct_name.substr(0, scope_pos);
+			}
+		} else {
+			std::string_view qualified_name = StringTable::getStringView(inst_info.qualified_template_name);
+			size_t scope_pos = qualified_name.rfind("::");
+			if (scope_pos != std::string_view::npos) {
+				namespace_source = qualified_name.substr(0, scope_pos);
+			}
+		}
+		if (!namespace_source.empty()) {
+			current_namespace_stack_ = parseNamespaceComponents(namespace_source);
+		} else {
+			current_namespace_stack_.clear();
+		}
+
 		// First, generate the FunctionDecl IR for the template instantiation
 		// This must be done at the top level, BEFORE any function bodies that might call it
 		generateTemplateFunctionDecl(inst_info);
@@ -1290,6 +1326,7 @@
 
 		// Exit function scope
 		symbol_table.exit_scope();
+		current_namespace_stack_ = saved_namespace_stack;
 	}
 
 	std::vector<IrOperand> generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {

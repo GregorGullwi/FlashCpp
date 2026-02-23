@@ -621,32 +621,6 @@
 				}
 			}
 
-			// If namespace context is unavailable (e.g., deferred codegen), try a unique
-			// qualified lookup across all known namespaces.
-			if (!symbol.has_value()) {
-				std::optional<ASTNode> unique_symbol;
-				NamespaceHandle unique_ns = NamespaceRegistry::GLOBAL_NAMESPACE;
-				bool ambiguous_match = false;
-				for (size_t ns_index = 1; ns_index < gNamespaceRegistry.currentSize(); ++ns_index) {
-					NamespaceHandle ns_handle{ static_cast<uint16_t>(ns_index) };
-					auto candidate = global_symbol_table_->lookup_qualified(ns_handle, identifier_handle);
-					if (!candidate.has_value()) {
-						continue;
-					}
-					if (unique_symbol.has_value()) {
-						ambiguous_match = true;
-						break;
-					}
-					unique_symbol = candidate;
-					unique_ns = ns_handle;
-				}
-
-				if (!ambiguous_match && unique_symbol.has_value()) {
-					symbol = unique_symbol;
-					is_global = true;
-					resolved_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(unique_ns, identifier_handle);
-				}
-			}
 		}
 
 		// Only check if it's a member variable if NOT found in symbol tables
@@ -747,33 +721,6 @@
 						}
 					}
 				}
-			}
-		}
-		// Last-chance fallback: if identifier names an unscoped enum enumerator and lookup
-		// failed due missing scope context during deferred codegen, resolve by unique match.
-		if (!symbol.has_value()) {
-			const EnumTypeInfo* matched_enum = nullptr;
-			const Enumerator* matched_enumerator = nullptr;
-			bool ambiguous_match = false;
-			for (const auto& type_info : gTypeInfo) {
-				const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-				if (!enum_info || enum_info->is_scoped) {
-					continue;
-				}
-				const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
-				if (!enumerator) {
-					continue;
-				}
-				if (matched_enumerator != nullptr) {
-					ambiguous_match = true;
-					break;
-				}
-				matched_enum = enum_info;
-				matched_enumerator = enumerator;
-			}
-			if (!ambiguous_match && matched_enum != nullptr && matched_enumerator != nullptr) {
-				return { matched_enum->underlying_type, static_cast<int>(matched_enum->underlying_size),
-				         static_cast<unsigned long long>(matched_enumerator->value) };
 			}
 		}
 		if (!symbol.has_value()) {
