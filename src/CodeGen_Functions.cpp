@@ -462,12 +462,13 @@
 				std::string_view struct_type_name = StringTable::getStringView(name_handle);
 				if (struct_type_name.find("_pattern_") != std::string_view::npos) continue;
 				if (struct_type_name.find("_unknown") != std::string_view::npos) continue;
-				// Skip template patterns — if the struct is registered as a class template in the
-				// template registry, it is an uninstantiated pattern and must not be used for codegen.
-				// Check by the exact name (qualified or unqualified) so namespace-sharing structs
-				// like std::array and other_ns::array are never confused with each other.
+				// Skip template patterns — if the struct was registered as a class template,
+				// it is an uninstantiated pattern and must not be used for codegen.
+				// isClassTemplate() uses the exact StringHandle (no string scan, no
+				// unqualified-name fallback) so it never accidentally matches a non-template
+				// struct that shares an unqualified name with a template in another namespace.
 				if (struct_type_name.find('$') == std::string_view::npos) {
-					if (gTemplateRegistry.lookupTemplate(struct_type_name).has_value()) {
+					if (gTemplateRegistry.isClassTemplate(name_handle)) {
 						continue;
 					}
 				}
