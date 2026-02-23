@@ -1,4 +1,4 @@
-ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width) {
+ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr) {
 	if (peek() != ":"_tok) {
 		return ParseResult::success();
 	}
@@ -12,6 +12,12 @@ ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width) {
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
 		auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 		if (!eval_result.success() || eval_result.as_int() < 0) {
+			// If caller wants deferred evaluation and the expression is not a plain literal,
+			// defer it (e.g., template non-type parameter).
+			if (out_expr != nullptr) {
+				*out_expr = *width_result.node();
+				return ParseResult::success();
+			}
 			return ParseResult::error("Bitfield width must be a non-negative integral constant expression", peek_info());
 		}
 		out_width = static_cast<size_t>(eval_result.as_int());
@@ -2114,9 +2120,10 @@ ParseResult Parser::parse_template_declaration() {
 					const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
 					const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
 					std::optional<size_t> bitfield_width;
+					std::optional<ASTNode> bitfield_width_expr;
 
 					// Handle bitfield declarations: int x : 5;
-					if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+					if (auto width_result = parse_bitfield_width(bitfield_width, &bitfield_width_expr); width_result.is_error()) {
 						return width_result;
 					}
 
@@ -2134,7 +2141,7 @@ ParseResult Parser::parse_template_declaration() {
 						}
 					}
 
-					struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width);
+					struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr);
 
 					// Handle comma-separated declarations (e.g., int x, y, z;)
 					while (peek() == ","_tok) {
@@ -2147,8 +2154,9 @@ ParseResult Parser::parse_template_declaration() {
 						}
 
 						std::optional<size_t> additional_bitfield_width;
+						std::optional<ASTNode> additional_bitfield_width_expr;
 						// Handle bitfield declarations: int x, y : 3;
-						if (auto width_result = parse_bitfield_width(additional_bitfield_width); width_result.is_error()) {
+						if (auto width_result = parse_bitfield_width(additional_bitfield_width, &additional_bitfield_width_expr); width_result.is_error()) {
 							return width_result;
 						}
 
@@ -2170,7 +2178,7 @@ ParseResult Parser::parse_template_declaration() {
 							emplace_node<TypeSpecifierNode>(type_spec),
 							next_member_name
 						);
-						struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width);
+						struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
 					}
 
 					// Consume semicolon
@@ -3410,9 +3418,10 @@ ParseResult Parser::parse_template_declaration() {
 						const DeclarationNode& decl_node = member_node.as<DeclarationNode>();
 						const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
 						std::optional<size_t> bitfield_width;
+						std::optional<ASTNode> bitfield_width_expr;
 
 						// Handle bitfield declarations: int x : 5;
-						if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+						if (auto width_result = parse_bitfield_width(bitfield_width, &bitfield_width_expr); width_result.is_error()) {
 							return width_result;
 						}
 
@@ -3438,7 +3447,7 @@ ParseResult Parser::parse_template_declaration() {
 								default_initializer = *init_result.node();
 							}
 						}
-						struct_ref.add_member(member_node, current_access, default_initializer, bitfield_width);
+						struct_ref.add_member(member_node, current_access, default_initializer, bitfield_width, bitfield_width_expr);
 
 						// Handle comma-separated declarations (e.g., int x, y, z;)
 						while (peek() == ","_tok) {
@@ -3451,8 +3460,9 @@ ParseResult Parser::parse_template_declaration() {
 							}
 
 							std::optional<size_t> additional_bitfield_width;
+							std::optional<ASTNode> additional_bitfield_width_expr;
 							// Handle bitfield declarations: int x, y : 3;
-							if (auto width_result = parse_bitfield_width(additional_bitfield_width); width_result.is_error()) {
+							if (auto width_result = parse_bitfield_width(additional_bitfield_width, &additional_bitfield_width_expr); width_result.is_error()) {
 								return width_result;
 							}
 
@@ -3474,7 +3484,7 @@ ParseResult Parser::parse_template_declaration() {
 								emplace_node<TypeSpecifierNode>(type_spec),
 								next_member_name
 							);
-							struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width);
+							struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
 						}
 					}
 					// Consume semicolon after data member
@@ -6425,7 +6435,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			if (peek() == ":"_tok) {
 				// Bitfield data member
 				std::optional<size_t> bitfield_width;
-				if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+				std::optional<ASTNode> bitfield_width_expr;
+				if (auto width_result = parse_bitfield_width(bitfield_width, &bitfield_width_expr); width_result.is_error()) {
 					return width_result;
 				}
 
@@ -6442,7 +6453,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				if (!consume(";"_tok)) {
 					return ParseResult::error("Expected ';' after bitfield member", current_token_);
 				}
-				member_struct_ref.add_member(*member_result.node(), current_access, init, bitfield_width);
+				member_struct_ref.add_member(*member_result.node(), current_access, init, bitfield_width, bitfield_width_expr);
 			} else if (peek() == ";"_tok) {
 				// Simple data member
 				advance(); // consume ';'
@@ -6793,7 +6804,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		} else if (peek() == ":"_tok) {
 			// Bitfield data member
 			std::optional<size_t> bitfield_width;
-			if (auto width_result = parse_bitfield_width(bitfield_width); width_result.is_error()) {
+			std::optional<ASTNode> bitfield_width_expr;
+			if (auto width_result = parse_bitfield_width(bitfield_width, &bitfield_width_expr); width_result.is_error()) {
 				return width_result;
 			}
 			std::optional<ASTNode> init;
@@ -6808,7 +6820,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			if (!consume(";"_tok)) {
 				return ParseResult::error("Expected ';' after bitfield member", peek_info());
 			}
-			member_struct_ref.add_member(*member_result.node(), current_access, init, bitfield_width);
+			member_struct_ref.add_member(*member_result.node(), current_access, init, bitfield_width, bitfield_width_expr);
 
 		} else if (peek() == ";"_tok) {
 			// Data member
@@ -11775,6 +11787,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return resolved_arg;
 	};
 	
+	// Helper lambda to resolve a deferred bitfield width from non-type template parameters
+	auto resolve_bitfield_width = [&](
+		const StructMemberDecl& member_decl,
+		const std::vector<ASTNode>& params,
+		const std::vector<TemplateTypeArg>& args) -> std::optional<size_t> {
+		if (member_decl.bitfield_width.has_value()) return member_decl.bitfield_width;
+		if (!member_decl.bitfield_width_expr.has_value()) return std::nullopt;
+		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
+		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
+		for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
+			if (!params[pi].is<TemplateParameterNode>()) continue;
+			const auto& tparam = params[pi].as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::NonType && args[pi].is_value)
+				nontype_sub_map[tparam.name()] = args[pi].value;
+		}
+		ASTNode substituted = substitute_template_params_in_expression(
+			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map);
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
+		if (eval_result.success() && eval_result.as_int() >= 0)
+			return static_cast<size_t>(eval_result.as_int());
+		return std::nullopt;
+	};
+
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -12390,7 +12426,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				false,
 				{},
 				static_cast<int>(ptr_depth),
-				member_decl.bitfield_width
+				resolve_bitfield_width(member_decl, template_params, template_args)
 			);
 		}
 		
@@ -14688,7 +14724,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			false,
 			{},
 			static_cast<int>(type_spec.pointer_depth()),
-			member_decl.bitfield_width
+			resolve_bitfield_width(member_decl, template_params, template_args_to_use)
 		);
 	}
 

@@ -2587,10 +2587,12 @@ struct StructMemberDecl {
 	AccessSpecifier access;
 	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
 	std::optional<size_t> bitfield_width;
+	std::optional<ASTNode> bitfield_width_expr;  // Deferred bitfield width for template non-type params
 
 	StructMemberDecl(ASTNode decl, AccessSpecifier acc, std::optional<ASTNode> init = std::nullopt,
 	                 std::optional<size_t> width = std::nullopt)
-		: declaration(decl), access(acc), default_initializer(init), bitfield_width(width) {}
+		: declaration(decl), access(acc), default_initializer(init), bitfield_width(width),
+		  bitfield_width_expr(std::nullopt) {}
 };
 
 // Struct member function with access specifier
@@ -2693,8 +2695,10 @@ public:
 	}
 
 	void add_member(const ASTNode& member, AccessSpecifier access, std::optional<ASTNode> default_initializer = std::nullopt,
-	               std::optional<size_t> bitfield_width = std::nullopt) {
+	               std::optional<size_t> bitfield_width = std::nullopt,
+	               std::optional<ASTNode> bitfield_width_expr = std::nullopt) {
 		members_.emplace_back(member, access, std::move(default_initializer), bitfield_width);
+		members_.back().bitfield_width_expr = std::move(bitfield_width_expr);
 	}
 
 	void add_base_class(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false, bool is_deferred = false) {
