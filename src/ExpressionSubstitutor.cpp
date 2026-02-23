@@ -256,9 +256,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
 						if (std::holds_alternative<NumericLiteralNode>(substituted_expr)) {
 							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(substituted_expr);
-							int64_t value = std::visit([](const auto& v) -> int64_t {
-								return static_cast<int64_t>(v);
-							}, lit.value());
+							const NumericLiteralValue& raw_value = lit.value();
+							int64_t value = std::holds_alternative<unsigned long long>(raw_value)
+								? static_cast<int64_t>(std::get<unsigned long long>(raw_value))
+								: static_cast<int64_t>(std::get<double>(raw_value));
 							substituted_template_args.emplace_back(value, lit.type());
 						} else if (std::holds_alternative<BoolLiteralNode>(substituted_expr)) {
 							const BoolLiteralNode& lit = std::get<BoolLiteralNode>(substituted_expr);

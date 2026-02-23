@@ -621,19 +621,35 @@
 				}
 			}
 
-			// If still unresolved, try std:: as a last-resort namespace lookup for
-			// unscoped memory-order enum values used by libstdc++ helper functions.
-			if (!symbol.has_value() &&
-			    (identifierNode.name().starts_with("memory_order_"sv) ||
-			     identifierNode.name().starts_with("__memory_order_"sv))) {
-				NamespaceHandle std_ns = gNamespaceRegistry.lookupNamespace(
-					NamespaceRegistry::GLOBAL_NAMESPACE,
-					StringTable::getOrInternStringHandle("std"sv));
-				if (std_ns.isValid()) {
-					symbol = global_symbol_table_->lookup_qualified(std_ns, identifier_handle);
+			// If still unresolved, consult namespace-scope using declarations/directives
+			// recorded in the global symbol table (e.g. using std::memory_order_relaxed;).
+			if (!symbol.has_value()) {
+				auto global_using_declarations = global_symbol_table_->get_current_using_declaration_handles();
+				for (const auto& [local_name, target_info] : global_using_declarations) {
+					if (local_name == identifierNode.name()) {
+						const auto& [namespace_handle, original_name] = target_info;
+						symbol = global_symbol_table_->lookup_qualified(namespace_handle, original_name);
+						if (symbol.has_value()) {
+							is_global = true;
+							StringHandle original_handle = StringTable::getOrInternStringHandle(original_name);
+							resolved_qualified_name = namespace_handle.isGlobal()
+								? original_handle
+								: gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, original_handle);
+							break;
+						}
+					}
+				}
+			}
+			if (!symbol.has_value()) {
+				auto global_using_directives = global_symbol_table_->get_current_using_directive_handles();
+				for (NamespaceHandle ns_handle : global_using_directives) {
+					symbol = global_symbol_table_->lookup_qualified(ns_handle, identifierNode.name());
 					if (symbol.has_value()) {
 						is_global = true;
-						resolved_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(std_ns, identifier_handle);
+						resolved_qualified_name = ns_handle.isGlobal()
+							? identifier_handle
+							: gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, identifier_handle);
+						break;
 					}
 				}
 			}

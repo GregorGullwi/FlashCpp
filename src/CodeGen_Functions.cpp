@@ -501,14 +501,16 @@
 							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved static member function via struct search: {} -> {}", func_name_view, function_name);
 							
 							// Queue all member functions of this struct for deferred generation
-							// since the matched function may call other members (e.g., lowest() calls min())
-							// Extract namespace from the type name (e.g., "std::numeric_limits$hash" → ["std"])
+							// since the matched function may call other members (e.g., lowest() calls min()).
+							// Derive namespace from the matched function's parent struct first (authoritative),
+							// then fall back to the resolved type name when needed.
 							std::vector<std::string> ns_stack;
-							std::string_view type_name_sv = StringTable::getStringView(type_info_ptr->name());
-							size_t ns_end = type_name_sv.rfind("::");
-							if (ns_end != std::string_view::npos) {
-								std::string_view ns_part = type_name_sv.substr(0, ns_end);
-								// Split by :: for nested namespaces
+							auto append_namespace_components = [&](std::string_view qualified_name) {
+								size_t ns_end = qualified_name.rfind("::");
+								if (ns_end == std::string_view::npos) {
+									return;
+								}
+								std::string_view ns_part = qualified_name.substr(0, ns_end);
 								size_t start = 0;
 								while (start < ns_part.size()) {
 									size_t pos = ns_part.find("::", start);
@@ -519,6 +521,14 @@
 									ns_stack.emplace_back(ns_part.substr(start, pos - start));
 									start = pos + 2;
 								}
+							};
+
+							append_namespace_components(parent_for_mangling);
+							if (ns_stack.empty()) {
+								append_namespace_components(struct_type_name);
+							}
+							if (ns_stack.empty()) {
+								append_namespace_components(StringTable::getStringView(type_info_ptr->name()));
 							}
 							for (const auto& mf : struct_info->member_functions) {
 								DeferredMemberFunctionInfo deferred_info;
@@ -6480,4 +6490,3 @@
 			scope_stack_.back().push_back({var_name, struct_name});
 		}
 	}
-
