@@ -311,7 +311,7 @@ public:
 
 private:
 	// Map from mangled name to function signature
-	mutable std::unordered_map<std::string, ObjectFileWriter::FunctionSignature> function_signatures_;
+	mutable std::unordered_map<std::string, ObjectFileWriter::FunctionSignature, ObjectFileCommon::StringViewHash, std::equal_to<>> function_signatures_;
 
 	// Get Microsoft Visual C++ type code for mangling (with pointer support)
 	std::string getTypeCode(const TypeSpecifierNode& type_node) const {
@@ -913,60 +913,50 @@ public:
 		debug_builder_.finalizeCurrentFunction();
 	}
 
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}, uint32_t stack_frame_size = 0) {
-		// Check if exception info has already been added for this function
-		for (const auto& existing : added_exception_functions_) {
-			if (existing == mangled_name) {
-				if (g_enable_debug_output) std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
-				return;
-			}
-		}
+	// --- Helper structs for exception info sub-functions ---
 
-		if (g_enable_debug_output) std::cerr << "Adding exception info for function: " << mangled_name << " at offset " << function_start << " size " << function_size << std::endl;
-		added_exception_functions_.push_back(std::string(mangled_name));
+	struct UnwindCodeResult {
+		std::vector<uint8_t> codes;
+		uint8_t prolog_size;
+		uint8_t frame_reg_and_offset;
+		uint8_t count_of_codes;
+		uint32_t effective_frame_size;
+	};
 
-		// Get current XDATA section size to calculate the offset for this function's unwind info
-		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-		uint32_t xdata_offset = static_cast<uint32_t>(xdata_section->get_data_size());
+	struct ScopeTableReloc {
+		uint32_t begin_offset;    // Offset of BeginAddress field within xdata
+		uint32_t end_offset;      // Offset of EndAddress field within xdata
+		uint32_t handler_offset;  // Offset of HandlerAddress field within xdata
+		uint32_t jump_offset;     // Offset of JumpTarget field within xdata
+		bool needs_handler_reloc; // True if HandlerAddress needs a relocation (RVA, not constant)
+		bool needs_jump_reloc;    // True if JumpTarget needs a relocation (non-zero RVA)
+	};
 
-		// Determine if this is SEH or C++ exception handling
-		bool is_seh = !seh_try_blocks.empty();
-		bool is_cpp = !try_blocks.empty();
-		uint32_t cpp_funcinfo_local_offset = 0;
-		bool has_cpp_funcinfo_local_offset = false;
-		StringBuilder cppx_sym_sb;
-		cppx_sym_sb.append("$cppxdata$").append(mangled_name);
-		std::string cppx_sym_name(cppx_sym_sb.commit());
+	struct PendingPdataEntry {
+		uint32_t begin_rva;
+		uint32_t end_rva;
+		uint32_t unwind_rva;
+	};
 
-		if (is_seh && is_cpp) {
-			FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
-			is_cpp = false;  // Prevent C++ EH metadata from corrupting SEH scope table
-		}
+	// --- Helper static methods ---
 
-		// Add XDATA (exception handling unwind information) for this specific function
-		// Windows x64 UNWIND_INFO structure:
-		// - BYTE Version:3, Flags:5
-		// - BYTE SizeOfProlog
-		// - BYTE CountOfCodes
-		// - BYTE FrameRegister:4, FrameOffset:4
-		// - UNWIND_CODE UnwindCode[CountOfCodes] (aligned to DWORD)
-		// - Optional: ExceptionHandler RVA (if UNW_FLAG_EHANDLER/UNW_FLAG_UHANDLER is set)
-		// - Optional: Exception-specific data
+	static void patch_xdata_u32(std::vector<char>& xdata, uint32_t offset, uint32_t value) {
+		xdata[offset + 0] = static_cast<char>(value & 0xFF);
+		xdata[offset + 1] = static_cast<char>((value >> 8) & 0xFF);
+		xdata[offset + 2] = static_cast<char>((value >> 16) & 0xFF);
+		xdata[offset + 3] = static_cast<char>((value >> 24) & 0xFF);
+	}
 
-		// Determine flags based on exception type
-		uint8_t unwind_flags = 0x00;
-		if (is_seh) {
-			// SEH needs both UNW_FLAG_EHANDLER (0x01) and UNW_FLAG_UHANDLER (0x02)
-			// EHANDLER triggers __C_specific_handler during the dispatch phase (__except filters)
-			// UHANDLER triggers it during the unwind phase (__finally handlers)
-			unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
-		} else if (is_cpp) {
-			// For C++ EH with __CxxFrameHandler3, use both dispatch and unwind handler flags.
-			// This matches MSVC FH3 objects where catch dispatch and unwind pass both route through
-			// the language-specific handler.
-			unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
-		}
+	static void appendLE_xdata(std::vector<char>& buf, uint32_t value) {
+		buf.push_back(static_cast<char>(value & 0xFF));
+		buf.push_back(static_cast<char>((value >> 8) & 0xFF));
+		buf.push_back(static_cast<char>((value >> 16) & 0xFF));
+		buf.push_back(static_cast<char>((value >> 24) & 0xFF));
+	}
 
+	// --- Exception info sub-functions ---
+
+	UnwindCodeResult build_unwind_codes(bool is_cpp, uint32_t stack_frame_size) {
 		// Build unwind codes array dynamically based on actual prologue.
 		// For C++ EH functions (clang-style prologue):
 		//   Offset 0:  push rbp              (1 byte)
@@ -986,235 +976,234 @@ public:
 		// Each UNWIND_CODE is 2 bytes: [offset_in_prolog, (info << 4) | operation]
 		//   UWOP_PUSH_NONVOL = 0, UWOP_ALLOC_LARGE = 1, UWOP_ALLOC_SMALL = 2, UWOP_SET_FPREG = 3
 
-		std::vector<uint8_t> unwind_codes;
-		uint8_t prolog_size;
-		uint8_t frame_reg_and_offset;
+		UnwindCodeResult result;
 		// When FrameOffset is capped at 15, the unwinder computes EstablisherFrame = RBP - FrameOffset*16,
 		// which differs from RBP - stack_frame_size. All EH displacements must use this capped value.
-		uint32_t effective_frame_size = stack_frame_size;
+		result.effective_frame_size = stack_frame_size;
 
 		if (is_cpp) {
 			// C++ EH prologue: push rbp(1) + sub rsp(7) + lea rbp(8) = 16
-			prolog_size = 16;
+			result.prolog_size = 16;
 			uint8_t frame_offset = static_cast<uint8_t>(std::min(stack_frame_size / 16, uint32_t(15)));
-			effective_frame_size = static_cast<uint32_t>(frame_offset) * 16;
-			frame_reg_and_offset = static_cast<uint8_t>((frame_offset << 4) | 0x05); // RBP=5
+			result.effective_frame_size = static_cast<uint32_t>(frame_offset) * 16;
+			result.frame_reg_and_offset = static_cast<uint8_t>((frame_offset << 4) | 0x05); // RBP=5
 
 			// UWOP_SET_FPREG at offset 16 (after lea rbp, [rsp+N])
-			unwind_codes.push_back(0x10);  // offset 16
-			unwind_codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
+			result.codes.push_back(0x10);  // offset 16
+			result.codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
 
 			// UWOP_ALLOC at offset 8 (after sub rsp, N)
 			if (stack_frame_size > 0) {
 				if (stack_frame_size <= 128) {
 					uint8_t info = static_cast<uint8_t>(stack_frame_size / 8 - 1);
-					unwind_codes.push_back(0x08);  // offset 8
-					unwind_codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));  // UWOP_ALLOC_SMALL
+					result.codes.push_back(0x08);  // offset 8
+					result.codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));  // UWOP_ALLOC_SMALL
 				} else {
-					unwind_codes.push_back(0x08);  // offset 8
-					unwind_codes.push_back(0x01);  // UWOP_ALLOC_LARGE, info=0
+					result.codes.push_back(0x08);  // offset 8
+					result.codes.push_back(0x01);  // UWOP_ALLOC_LARGE, info=0
 					uint16_t size_in_8bytes = static_cast<uint16_t>(stack_frame_size / 8);
-					unwind_codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
-					unwind_codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
+					result.codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
+					result.codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
 				}
 			}
 
 			// UWOP_PUSH_NONVOL(RBP) at offset 1
-			unwind_codes.push_back(0x01);
-			unwind_codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));
+			result.codes.push_back(0x01);
+			result.codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));
 		} else {
 			// Traditional prologue: push rbp(1) + mov rbp,rsp(3) + sub rsp(7) = 11
-			prolog_size = 11;
-			frame_reg_and_offset = 0x05; // RBP=5, FrameOffset=0
+			result.prolog_size = 11;
+			result.frame_reg_and_offset = 0x05; // RBP=5, FrameOffset=0
 
 			if (stack_frame_size > 0) {
 				if (stack_frame_size <= 128) {
 					uint8_t info = static_cast<uint8_t>(stack_frame_size / 8 - 1);
-					unwind_codes.push_back(prolog_size);  // offset at end of sub rsp instruction
-					unwind_codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));  // UWOP_ALLOC_SMALL
+					result.codes.push_back(result.prolog_size);  // offset at end of sub rsp instruction
+					result.codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));  // UWOP_ALLOC_SMALL
 				} else {
-					unwind_codes.push_back(prolog_size);
-					unwind_codes.push_back(0x01);  // UWOP_ALLOC_LARGE, info=0
+					result.codes.push_back(result.prolog_size);
+					result.codes.push_back(0x01);  // UWOP_ALLOC_LARGE, info=0
 					uint16_t size_in_8bytes = static_cast<uint16_t>(stack_frame_size / 8);
-					unwind_codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
-					unwind_codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
+					result.codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
+					result.codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
 				}
 			}
 
 			// UWOP_SET_FPREG at offset 4 (after mov rbp, rsp)
-			unwind_codes.push_back(0x04);
-			unwind_codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
+			result.codes.push_back(0x04);
+			result.codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
 
 			// UWOP_PUSH_NONVOL(RBP) at offset 1 (after push rbp)
-			unwind_codes.push_back(0x01);
-			unwind_codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));
+			result.codes.push_back(0x01);
+			result.codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));
 		}
 
 		// Pad to DWORD alignment (even number of unwind code slots)
-		if (unwind_codes.size() % 4 != 0) {
-			while (unwind_codes.size() % 4 != 0) {
-				unwind_codes.push_back(0x00);
+		if (result.codes.size() % 4 != 0) {
+			while (result.codes.size() % 4 != 0) {
+				result.codes.push_back(0x00);
 			}
 		}
 
-		uint8_t count_of_codes = static_cast<uint8_t>(unwind_codes.size() / 2);
 		// Adjust count_of_codes to actual number of UNWIND_CODE entries (excluding padding)
-		if (is_cpp) {
-			// SET_FPREG(1) + ALLOC(1 or 2) + PUSH_NONVOL(1)
-			if (stack_frame_size > 0) {
-				count_of_codes = (stack_frame_size <= 128) ? 3 : 4;
-			} else {
-				count_of_codes = 2;  // SET_FPREG(1) + PUSH_NONVOL(1)
-			}
+		if (stack_frame_size > 0) {
+			result.count_of_codes = (stack_frame_size <= 128) ? 3 : 4;
 		} else {
-			if (stack_frame_size > 0) {
-				count_of_codes = (stack_frame_size <= 128) ? 3 : 4;
-			} else {
-				count_of_codes = 2;
-			}
+			result.count_of_codes = 2;
 		}
 
-		std::vector<char> xdata = {
-			static_cast<char>(0x01 | (unwind_flags << 3)),  // Version 1, Flags
-			static_cast<char>(prolog_size),                  // Size of prolog
-			static_cast<char>(count_of_codes),               // Count of unwind codes
-			static_cast<char>(frame_reg_and_offset)          // Frame register and offset
-		};
-		for (auto b : unwind_codes) {
-			xdata.push_back(static_cast<char>(b));
-		}
-		
-		// Add exception handler RVA only when EHANDLER/UHANDLER flags are present.
-		// For plain unwind info (no language-specific handler), UNWIND_INFO ends after
-		// the aligned UNWIND_CODE array.
-		uint32_t handler_rva_offset = 0;
-		if (is_seh || is_cpp) {
-			handler_rva_offset = static_cast<uint32_t>(xdata.size());
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-		}
+		return result;
+	}
 
-		// For C++ EH, __CxxFrameHandler3 expects language-specific data to begin with
-		// a 32-bit image-relative pointer to FuncInfo.
-		uint32_t cpp_funcinfo_rva_field_offset = 0;
-		bool has_cpp_funcinfo_rva_field = false;
-		if (is_cpp) {
-			cpp_funcinfo_rva_field_offset = static_cast<uint32_t>(xdata.size());
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			has_cpp_funcinfo_rva_field = true;
-		}
+	void build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start,
+	                           const std::vector<SehTryBlockInfo>& seh_try_blocks,
+	                           std::vector<ScopeTableReloc>& scope_relocs) {
+		// SEH uses a scope table instead of FuncInfo
+		// Scope table format:
+		//   DWORD Count (number of scope entries)
+		//   SCOPE_TABLE_ENTRY Entries[Count]
+		//
+		// Each SCOPE_TABLE_ENTRY:
+		//   DWORD BeginAddress (image-relative RVA of try block start)
+		//   DWORD EndAddress (image-relative RVA of try block end)
+		//   DWORD HandlerAddress (RVA of filter funclet, or constant filter value for __except)
+		//   DWORD JumpTarget (image-relative RVA of __except handler, or 0 for __finally)
 
-		// Generate SEH-specific exception data
-		// Track scope table entry offsets for relocations
-		struct ScopeTableReloc {
-			uint32_t begin_offset;    // Offset of BeginAddress field within xdata
-			uint32_t end_offset;      // Offset of EndAddress field within xdata
-			uint32_t handler_offset;  // Offset of HandlerAddress field within xdata
-			uint32_t jump_offset;     // Offset of JumpTarget field within xdata
-			bool needs_handler_reloc; // True if HandlerAddress needs a relocation (RVA, not constant)
-			bool needs_jump_reloc;    // True if JumpTarget needs a relocation (non-zero RVA)
-		};
-		std::vector<ScopeTableReloc> scope_relocs;
-		// C++ EH relocation tracking (for __CxxFrameHandler3 metadata)
-		std::vector<uint32_t> cpp_xdata_rva_field_offsets; // fields that point within .xdata
-		std::vector<uint32_t> cpp_text_rva_field_offsets;  // fields that point into .text
+		FLASH_LOG_FORMAT(Codegen, Debug, "Generating SEH scope table with {} entries", seh_try_blocks.size());
 
-		if (is_seh) {
-			// SEH uses a scope table instead of FuncInfo
-			// Scope table format:
-			//   DWORD Count (number of scope entries)
-			//   SCOPE_TABLE_ENTRY Entries[Count]
-			//
-			// Each SCOPE_TABLE_ENTRY:
-			//   DWORD BeginAddress (image-relative RVA of try block start)
-			//   DWORD EndAddress (image-relative RVA of try block end)
-			//   DWORD HandlerAddress (RVA of filter funclet, or constant filter value for __except)
-			//   DWORD JumpTarget (image-relative RVA of __except handler, or 0 for __finally)
+		// Count - number of scope table entries
+		uint32_t scope_count = static_cast<uint32_t>(seh_try_blocks.size());
+		appendLE_xdata(xdata, scope_count);
 
-			FLASH_LOG_FORMAT(Codegen, Debug, "Generating SEH scope table with {} entries", seh_try_blocks.size());
+		// Generate scope table entries
+		for (const auto& seh_block : seh_try_blocks) {
+			ScopeTableReloc reloc_info;
 
-			// Count - number of scope table entries
-			uint32_t scope_count = static_cast<uint32_t>(seh_try_blocks.size());
-			xdata.push_back(static_cast<char>(scope_count & 0xFF));
-			xdata.push_back(static_cast<char>((scope_count >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((scope_count >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((scope_count >> 24) & 0xFF));
+			// BeginAddress - absolute .text offset (relocation against .text section symbol with value=0)
+			uint32_t begin_address = function_start + seh_block.try_start_offset;
+			reloc_info.begin_offset = static_cast<uint32_t>(xdata.size());
+			appendLE_xdata(xdata, begin_address);
 
-			// Generate scope table entries
-			for (const auto& seh_block : seh_try_blocks) {
-				ScopeTableReloc reloc_info;
+			// EndAddress - absolute .text offset
+			uint32_t end_address = function_start + seh_block.try_end_offset;
+			reloc_info.end_offset = static_cast<uint32_t>(xdata.size());
+			appendLE_xdata(xdata, end_address);
 
-				// BeginAddress - absolute .text offset (relocation against .text section symbol with value=0)
-				uint32_t begin_address = function_start + seh_block.try_start_offset;
-				reloc_info.begin_offset = static_cast<uint32_t>(xdata.size());
-				xdata.push_back(static_cast<char>(begin_address & 0xFF));
-				xdata.push_back(static_cast<char>((begin_address >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((begin_address >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((begin_address >> 24) & 0xFF));
+			// HandlerAddress - RVA of handler (or constant filter value for __except with constant filter)
+			uint32_t handler_address;
+			uint32_t jump_target;
+			reloc_info.needs_handler_reloc = false;
+			reloc_info.needs_jump_reloc = false;
 
-				// EndAddress - absolute .text offset
-				uint32_t end_address = function_start + seh_block.try_end_offset;
-				reloc_info.end_offset = static_cast<uint32_t>(xdata.size());
-				xdata.push_back(static_cast<char>(end_address & 0xFF));
-				xdata.push_back(static_cast<char>((end_address >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((end_address >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((end_address >> 24) & 0xFF));
-
-				// HandlerAddress - RVA of handler (or constant filter value for __except with constant filter)
-				uint32_t handler_address;
-				uint32_t jump_target;
-				reloc_info.needs_handler_reloc = false;
-				reloc_info.needs_jump_reloc = false;
-
-				if (seh_block.has_except_handler) {
-					if (seh_block.except_handler.is_constant_filter) {
-						handler_address = static_cast<uint32_t>(static_cast<int32_t>(seh_block.except_handler.constant_filter_value));
-						jump_target = function_start + seh_block.except_handler.handler_offset;
-						reloc_info.needs_jump_reloc = true;
-						FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: constant filter={}, jump_target={:x}",
-						                 seh_block.except_handler.constant_filter_value, jump_target);
-					} else {
-						// Non-constant filter: handler_address = RVA of filter funclet
-						handler_address = function_start + seh_block.except_handler.filter_funclet_offset;
-						reloc_info.needs_handler_reloc = true;
-						jump_target = function_start + seh_block.except_handler.handler_offset;
-						reloc_info.needs_jump_reloc = true;
-						FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: filter funclet at offset {:x}, jump_target={:x}",
-						                 seh_block.except_handler.filter_funclet_offset, jump_target);
-					}
-				} else if (seh_block.has_finally_handler) {
-					handler_address = function_start + seh_block.finally_handler.handler_offset;
-					reloc_info.needs_handler_reloc = true;
-					jump_target = 0;  // JumpTarget = 0 identifies __finally (termination handler) entries
+			if (seh_block.has_except_handler) {
+				if (seh_block.except_handler.is_constant_filter) {
+					handler_address = static_cast<uint32_t>(static_cast<int32_t>(seh_block.except_handler.constant_filter_value));
+					jump_target = function_start + seh_block.except_handler.handler_offset;
+					reloc_info.needs_jump_reloc = true;
+					FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: constant filter={}, jump_target={:x}",
+					                 seh_block.except_handler.constant_filter_value, jump_target);
 				} else {
-					handler_address = 0;  // No handler (shouldn't happen)
-					jump_target = 0;
+					// Non-constant filter: handler_address = RVA of filter funclet
+					handler_address = function_start + seh_block.except_handler.filter_funclet_offset;
+					reloc_info.needs_handler_reloc = true;
+					jump_target = function_start + seh_block.except_handler.handler_offset;
+					reloc_info.needs_jump_reloc = true;
+					FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: filter funclet at offset {:x}, jump_target={:x}",
+					                 seh_block.except_handler.filter_funclet_offset, jump_target);
 				}
-				reloc_info.handler_offset = static_cast<uint32_t>(xdata.size());
-				xdata.push_back(static_cast<char>(handler_address & 0xFF));
-				xdata.push_back(static_cast<char>((handler_address >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((handler_address >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((handler_address >> 24) & 0xFF));
+			} else if (seh_block.has_finally_handler) {
+				handler_address = function_start + seh_block.finally_handler.handler_offset;
+				reloc_info.needs_handler_reloc = true;
+				jump_target = 0;  // JumpTarget = 0 identifies __finally (termination handler) entries
+			} else {
+				handler_address = 0;  // No handler (shouldn't happen)
+				jump_target = 0;
+			}
+			reloc_info.handler_offset = static_cast<uint32_t>(xdata.size());
+			appendLE_xdata(xdata, handler_address);
 
-				reloc_info.jump_offset = static_cast<uint32_t>(xdata.size());
-				xdata.push_back(static_cast<char>(jump_target & 0xFF));
-				xdata.push_back(static_cast<char>((jump_target >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((jump_target >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((jump_target >> 24) & 0xFF));
+			reloc_info.jump_offset = static_cast<uint32_t>(xdata.size());
+			appendLE_xdata(xdata, jump_target);
 
-				scope_relocs.push_back(reloc_info);
+			scope_relocs.push_back(reloc_info);
 
-				FLASH_LOG_FORMAT(Codegen, Debug, "SEH scope: begin={} end={} handler={} type={}",
-				                 seh_block.try_start_offset, seh_block.try_end_offset,
-				                 (seh_block.has_except_handler ? seh_block.except_handler.handler_offset : seh_block.finally_handler.handler_offset),
-				                 (seh_block.has_except_handler ? "__except" : "__finally"));
+			FLASH_LOG_FORMAT(Codegen, Debug, "SEH scope: begin={} end={} handler={} type={}",
+			                 seh_block.try_start_offset, seh_block.try_end_offset,
+			                 (seh_block.has_except_handler ? seh_block.except_handler.handler_offset : seh_block.finally_handler.handler_offset),
+			                 (seh_block.has_except_handler ? "__except" : "__finally"));
+		}
+	}
+
+	void ensure_type_descriptor(const std::string& type_name) {
+		// Mangle the type name to get the symbol name
+		auto [type_desc_symbol, type_desc_runtime_name] = getMsvcTypeDescriptorInfo(type_name);
+		
+		// Check if we've already created a descriptor for this type
+		// by checking both the class member map and if the symbol already exists
+		if (type_descriptor_offsets_.find(type_name) == type_descriptor_offsets_.end()) {
+			// Check if the symbol already exists (could have been created elsewhere)
+			auto* existing_symbol = coffi_.get_symbol(type_desc_symbol);
+			if (existing_symbol) {
+				// Symbol already exists, just record its offset for later use
+				type_descriptor_offsets_[type_name] = existing_symbol->get_value();
+				if (g_enable_debug_output) std::cerr << "  Type descriptor '" << type_desc_symbol 
+				          << "' already exists for exception type '" << type_name << "'" << std::endl;
+			} else {
+				// Symbol doesn't exist, create it
+				// Validate that RDATA section exists
+				auto rdata_section_it = sectiontype_to_index.find(SectionType::RDATA);
+				if (rdata_section_it == sectiontype_to_index.end()) {
+					if (g_enable_debug_output) std::cerr << "ERROR: RDATA section not found for type descriptor generation of '" << type_name << "'" << std::endl;
+					return;
+				}
+				
+				// Generate type descriptor in .rdata section
+				auto rdata_section = coffi_.get_sections()[rdata_section_it->second];
+				uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+				
+				// Create type descriptor data
+				// Format: vtable_ptr (8 bytes) + spare (8 bytes) + mangled_name (null-terminated)
+				std::vector<char> type_desc_data;
+				
+				// vtable pointer (POINTER_SIZE bytes) - null for exception types
+				for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
+				
+				// spare pointer (POINTER_SIZE bytes) - null
+				for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
+				
+				// mangled name (null-terminated)
+				for (char c : type_desc_runtime_name) type_desc_data.push_back(c);
+				type_desc_data.push_back(0);
+				
+				// Add to .rdata section
+				add_data(type_desc_data, SectionType::RDATA);
+				
+				// Create symbol for the type descriptor
+				auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+				type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+				type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+				type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+				type_desc_sym->set_value(type_desc_offset);
+				
+				if (g_enable_debug_output) std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '" 
+				          << type_name << "' at offset " << type_desc_offset << std::endl;
+				
+				type_descriptor_offsets_[type_name] = type_desc_offset;
 			}
 		}
+	}
+
+	void build_cpp_exception_metadata(std::vector<char>& xdata, uint32_t xdata_offset,
+	                                  uint32_t function_start, uint32_t function_size,
+	                                  std::string_view mangled_name,
+	                                  const std::vector<TryBlockInfo>& try_blocks,
+	                                  const std::vector<UnwindMapEntryInfo>& unwind_map,
+	                                  uint32_t effective_frame_size, uint32_t stack_frame_size,
+	                                  uint32_t cpp_funcinfo_rva_field_offset,
+	                                  bool has_cpp_funcinfo_rva_field,
+	                                  uint32_t& cpp_funcinfo_local_offset_out,
+	                                  std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
+	                                  std::vector<uint32_t>& cpp_text_rva_field_offsets) {
 		// Add FuncInfo structure for C++ exception handling
 		// This contains information about try blocks and catch handlers
 		// FuncInfo structure (simplified):
@@ -1227,552 +1216,377 @@ public:
 		//   DWORD pIPToStateMap (RVA)
 		//   ... (other fields for EH4)
 
-		if (is_cpp && !try_blocks.empty()) {
-			[[maybe_unused]] uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
-			cpp_funcinfo_local_offset = funcinfo_offset;
-			has_cpp_funcinfo_local_offset = true;
-			if (has_cpp_funcinfo_rva_field) {
-				uint32_t funcinfo_rva = xdata_offset + funcinfo_offset;
-				xdata[cpp_funcinfo_rva_field_offset + 0] = static_cast<char>(funcinfo_rva & 0xFF);
-				xdata[cpp_funcinfo_rva_field_offset + 1] = static_cast<char>((funcinfo_rva >> 8) & 0xFF);
-				xdata[cpp_funcinfo_rva_field_offset + 2] = static_cast<char>((funcinfo_rva >> 16) & 0xFF);
-				xdata[cpp_funcinfo_rva_field_offset + 3] = static_cast<char>((funcinfo_rva >> 24) & 0xFF);
-				cpp_xdata_rva_field_offsets.push_back(cpp_funcinfo_rva_field_offset);
+		[[maybe_unused]] uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
+		cpp_funcinfo_local_offset_out = funcinfo_offset;
+		if (has_cpp_funcinfo_rva_field) {
+			uint32_t funcinfo_rva = xdata_offset + funcinfo_offset;
+			patch_xdata_u32(xdata, cpp_funcinfo_rva_field_offset, funcinfo_rva);
+			cpp_xdata_rva_field_offsets.push_back(cpp_funcinfo_rva_field_offset);
+		}
+
+		struct CatchStateBinding {
+			const CatchHandlerInfo* handler;
+			int32_t catch_state;
+		};
+
+		struct TryStateLayout {
+			int32_t try_low;
+			int32_t try_high;
+			int32_t catch_high;
+			std::vector<CatchStateBinding> catches;
+		};
+
+		std::vector<TryStateLayout> try_state_layout;
+		try_state_layout.reserve(try_blocks.size());
+
+		int32_t next_state = 0;
+		for (const auto& try_block : try_blocks) {
+			TryStateLayout layout;
+			layout.try_low = next_state++;
+			layout.try_high = layout.try_low;
+			layout.catch_high = layout.try_high;
+			layout.catches.reserve(try_block.catch_handlers.size());
+
+			for (const auto& handler : try_block.catch_handlers) {
+				int32_t catch_state = next_state++;
+				layout.catches.push_back(CatchStateBinding{&handler, catch_state});
+				layout.catch_high = catch_state;
 			}
 
-			struct CatchStateBinding {
-				const CatchHandlerInfo* handler;
-				int32_t catch_state;
-			};
+			try_state_layout.push_back(std::move(layout));
+		}
+		
+		// Magic number for x64 FH3 FuncInfo layout.
+		// 0x19930522 = FuncInfo with 10 fields (40 bytes) including dispUnwindHelp,
+		// pESTypeList, and EHFlags. Requires a stack-based state variable at
+		// [establisher_frame + dispUnwindHelp], initialized to -2 by the prologue.
+		// 0x19930520 = FuncInfo with 7 fields (28 bytes), basic FH3.
+		uint32_t magic = 0x19930522;
+		bool use_disp_unwind_help = (magic >= 0x19930521);
+		appendLE_xdata(xdata, magic);
+		
+		// maxState - state count used by FH3 state machine.
+		uint32_t max_state = static_cast<uint32_t>(next_state);
+		if (!unwind_map.empty() && unwind_map.size() > max_state) {
+			max_state = static_cast<uint32_t>(unwind_map.size());
+		}
 
-			struct TryStateLayout {
-				int32_t try_low;
-				int32_t try_high;
-				int32_t catch_high;
-				std::vector<CatchStateBinding> catches;
-			};
+		// FH3 expects a valid unwind map for the active state range.
+		// If IR-level unwind actions are missing, synthesize no-op entries.
+		uint32_t unwind_entry_count = !unwind_map.empty()
+			? static_cast<uint32_t>(unwind_map.size())
+			: max_state;
+		if (unwind_entry_count > max_state) {
+			max_state = unwind_entry_count;
+		}
+		appendLE_xdata(xdata, max_state);
 
-			std::vector<TryStateLayout> try_state_layout;
-			try_state_layout.reserve(try_blocks.size());
+		// pUnwindMap - patch after map emission
+		uint32_t p_unwind_map_field_offset = static_cast<uint32_t>(xdata.size());
+		appendLE_xdata(xdata, uint32_t(0));
 
-			int32_t next_state = 0;
-			for (const auto& try_block : try_blocks) {
-				TryStateLayout layout;
-				layout.try_low = next_state++;
-				layout.try_high = layout.try_low;
-				layout.catch_high = layout.try_high;
-				layout.catches.reserve(try_block.catch_handlers.size());
+		// nTryBlocks - number of try blocks
+		uint32_t num_try_blocks = static_cast<uint32_t>(try_blocks.size());
+		appendLE_xdata(xdata, num_try_blocks);
 
-				for (const auto& handler : try_block.catch_handlers) {
-					int32_t catch_state = next_state++;
-					layout.catches.push_back(CatchStateBinding{&handler, catch_state});
-					layout.catch_high = catch_state;
-				}
+		// pTryBlockMap - patch after map emission
+		uint32_t p_try_block_map_field_offset = static_cast<uint32_t>(xdata.size());
+		appendLE_xdata(xdata, uint32_t(0));
 
-				try_state_layout.push_back(std::move(layout));
-			}
-			
-			// Magic number for x64 FH3 FuncInfo layout.
-			// 0x19930522 = FuncInfo with 10 fields (40 bytes) including dispUnwindHelp,
-			// pESTypeList, and EHFlags. Requires a stack-based state variable at
-			// [establisher_frame + dispUnwindHelp], initialized to -2 by the prologue.
-			// 0x19930520 = FuncInfo with 7 fields (28 bytes), basic FH3.
-			uint32_t magic = 0x19930522;
-			bool use_disp_unwind_help = (magic >= 0x19930521);
-			xdata.push_back(static_cast<char>(magic & 0xFF));
-			xdata.push_back(static_cast<char>((magic >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((magic >> 24) & 0xFF));
-			
-			// maxState - state count used by FH3 state machine.
-			uint32_t max_state = static_cast<uint32_t>(next_state);
-			if (!unwind_map.empty() && unwind_map.size() > max_state) {
-				max_state = static_cast<uint32_t>(unwind_map.size());
-			}
+		// nIPMapEntries - patch after map emission
+		uint32_t n_ip_map_entries_field_offset = static_cast<uint32_t>(xdata.size());
+		appendLE_xdata(xdata, uint32_t(0));
 
-			// FH3 expects a valid unwind map for the active state range.
-			// If IR-level unwind actions are missing, synthesize no-op entries.
-			uint32_t unwind_entry_count = !unwind_map.empty()
-				? static_cast<uint32_t>(unwind_map.size())
-				: max_state;
-			if (unwind_entry_count > max_state) {
-				max_state = unwind_entry_count;
-			}
-			xdata.push_back(static_cast<char>(max_state & 0xFF));
-			xdata.push_back(static_cast<char>((max_state >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((max_state >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((max_state >> 24) & 0xFF));
+		// pIPToStateMap - patch after map emission
+		uint32_t p_ip_to_state_map_field_offset = static_cast<uint32_t>(xdata.size());
+		appendLE_xdata(xdata, uint32_t(0));
 
-			// pUnwindMap - patch after map emission
-			uint32_t p_unwind_map_field_offset = static_cast<uint32_t>(xdata.size());
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
+		// dispUnwindHelp - displacement from establisher frame to the state variable.
+		// EstablisherFrame = RBP - FrameOffset*16 (= RBP - effective_frame_size).
+		// State variable at [rbp-8].
+		// So dispUnwindHelp = (rbp-8) - (RBP - effective_frame_size) = effective_frame_size - 8.
+		// Only present when magic >= 0x19930521.
+		if (use_disp_unwind_help) {
+			int32_t disp_unwind_help = static_cast<int32_t>(effective_frame_size) - 8;
+			appendLE_xdata(xdata, static_cast<uint32_t>(disp_unwind_help));
+		}
 
-			// nTryBlocks - number of try blocks
-			uint32_t num_try_blocks = static_cast<uint32_t>(try_blocks.size());
-			xdata.push_back(static_cast<char>(num_try_blocks & 0xFF));
-			xdata.push_back(static_cast<char>((num_try_blocks >> 8) & 0xFF));
-			xdata.push_back(static_cast<char>((num_try_blocks >> 16) & 0xFF));
-			xdata.push_back(static_cast<char>((num_try_blocks >> 24) & 0xFF));
+		// pESTypeList - dynamic exception specification type list (unused)
+		// Only present when magic >= 0x19930522.
+		if (magic >= 0x19930522) {
+			appendLE_xdata(xdata, uint32_t(0));
+		}
 
-			// pTryBlockMap - patch after map emission
-			uint32_t p_try_block_map_field_offset = static_cast<uint32_t>(xdata.size());
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
+		// EHFlags (bit 0 set for /EHs semantics)
+		// Only present when magic >= 0x19930522.
+		if (magic >= 0x19930522) {
+			uint32_t eh_flags = 0x1;
+			appendLE_xdata(xdata, eh_flags);
+		}
 
-			// nIPMapEntries - patch after map emission
-			uint32_t n_ip_map_entries_field_offset = static_cast<uint32_t>(xdata.size());
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-
-			// pIPToStateMap - patch after map emission
-			uint32_t p_ip_to_state_map_field_offset = static_cast<uint32_t>(xdata.size());
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-
-			// dispUnwindHelp - displacement from establisher frame to the state variable.
-			// EstablisherFrame = RBP - FrameOffset*16 (= RBP - effective_frame_size).
-			// State variable at [rbp-8].
-			// So dispUnwindHelp = (rbp-8) - (RBP - effective_frame_size) = effective_frame_size - 8.
-			// Only present when magic >= 0x19930521.
-			if (use_disp_unwind_help) {
-				int32_t disp_unwind_help = static_cast<int32_t>(effective_frame_size) - 8;
-				xdata.push_back(static_cast<char>(disp_unwind_help & 0xFF));
-				xdata.push_back(static_cast<char>((disp_unwind_help >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((disp_unwind_help >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((disp_unwind_help >> 24) & 0xFF));
-			}
-
-			// pESTypeList - dynamic exception specification type list (unused)
-			// Only present when magic >= 0x19930522.
-			if (magic >= 0x19930522) {
-				xdata.push_back(0x00);
-				xdata.push_back(0x00);
-				xdata.push_back(0x00);
-				xdata.push_back(0x00);
-			}
-
-			// EHFlags (bit 0 set for /EHs semantics)
-			// Only present when magic >= 0x19930522.
-			if (magic >= 0x19930522) {
-				uint32_t eh_flags = 0x1;
-				xdata.push_back(static_cast<char>(eh_flags & 0xFF));
-				xdata.push_back(static_cast<char>((eh_flags >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((eh_flags >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((eh_flags >> 24) & 0xFF));
-			}
-
-			auto patch_u32 = [&xdata](uint32_t field_offset, uint32_t value) {
-				xdata[field_offset + 0] = static_cast<char>(value & 0xFF);
-				xdata[field_offset + 1] = static_cast<char>((value >> 8) & 0xFF);
-				xdata[field_offset + 2] = static_cast<char>((value >> 16) & 0xFF);
-				xdata[field_offset + 3] = static_cast<char>((value >> 24) & 0xFF);
-			};
-
-			uint32_t unwind_map_offset = 0;
-			if (unwind_entry_count > 0) {
-				unwind_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
-				patch_u32(p_unwind_map_field_offset, unwind_map_offset);
-				cpp_xdata_rva_field_offsets.push_back(p_unwind_map_field_offset);
-			}
-			
-			// Now add UnwindMap entries (if present)
-			// Each UnwindMapEntry:
-			//   int toState (state to transition to, -1 = end of unwind chain)
-			//   DWORD action (RVA to cleanup/destructor function, or 0 for no action)
-			if (unwind_entry_count > 0) {
-				for (uint32_t i = 0; i < unwind_entry_count; ++i) {
-					const bool has_ir_entry = i < unwind_map.size();
-					// toState
-					int32_t to_state = has_ir_entry ? unwind_map[i].to_state : -1;
-					xdata.push_back(static_cast<char>(to_state & 0xFF));
-					xdata.push_back(static_cast<char>((to_state >> 8) & 0xFF));
-					xdata.push_back(static_cast<char>((to_state >> 16) & 0xFF));
-					xdata.push_back(static_cast<char>((to_state >> 24) & 0xFF));
-					
-					// action - RVA to destructor/cleanup function
-					// For now, we'll use 0 (no action) since we don't have destructor function addresses yet
-					// TODO: Add relocation for destructor function when we have the mangled name
-					uint32_t action_rva = 0;
-					if (has_ir_entry && !unwind_map[i].action.empty()) {
-						// We would need to add a relocation here for the destructor function
-						// For now, just set to 0 and add TODO comment
-						// action_rva will be patched via relocation
-					}
-					xdata.push_back(static_cast<char>(action_rva & 0xFF));
-					xdata.push_back(static_cast<char>((action_rva >> 8) & 0xFF));
-					xdata.push_back(static_cast<char>((action_rva >> 16) & 0xFF));
-					xdata.push_back(static_cast<char>((action_rva >> 24) & 0xFF));
-				}
-			}
-
-			uint32_t tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
-			patch_u32(p_try_block_map_field_offset, tryblock_map_offset);
-			cpp_xdata_rva_field_offsets.push_back(p_try_block_map_field_offset);
-			
-			// Now add TryBlockMap entries
-			// Each TryBlockMapEntry:
-			//   int tryLow (state number)
-			//   int tryHigh (state number)
-			//   int catchHigh (state number after try)
-			//   int nCatches
-			//   DWORD pHandlerArray (RVA)
-			
-			uint32_t handler_array_base = tryblock_map_offset + (num_try_blocks * 20); // 20 bytes per TryBlockMapEntry
-			
-			for (size_t i = 0; i < try_blocks.size(); ++i) {
-				const auto& try_block = try_blocks[i];
-				const auto& state_layout = try_state_layout[i];
+		uint32_t unwind_map_offset = 0;
+		if (unwind_entry_count > 0) {
+			unwind_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
+			patch_xdata_u32(xdata, p_unwind_map_field_offset, unwind_map_offset);
+			cpp_xdata_rva_field_offsets.push_back(p_unwind_map_field_offset);
+		}
+		
+		// Now add UnwindMap entries (if present)
+		// Each UnwindMapEntry:
+		//   int toState (state to transition to, -1 = end of unwind chain)
+		//   DWORD action (RVA to cleanup/destructor function, or 0 for no action)
+		if (unwind_entry_count > 0) {
+			for (uint32_t i = 0; i < unwind_entry_count; ++i) {
+				const bool has_ir_entry = i < unwind_map.size();
+				// toState
+				int32_t to_state = has_ir_entry ? unwind_map[i].to_state : -1;
+				appendLE_xdata(xdata, static_cast<uint32_t>(to_state));
 				
-				// tryLow (state when entering try block)
-				uint32_t try_low = static_cast<uint32_t>(state_layout.try_low);
-				xdata.push_back(static_cast<char>(try_low & 0xFF));
-				xdata.push_back(static_cast<char>((try_low >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((try_low >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((try_low >> 24) & 0xFF));
-				
-				// tryHigh (inclusive state range for the try body)
-				uint32_t try_high = static_cast<uint32_t>(state_layout.try_high);
-				xdata.push_back(static_cast<char>(try_high & 0xFF));
-				xdata.push_back(static_cast<char>((try_high >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((try_high >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((try_high >> 24) & 0xFF));
-				
-				// catchHigh (highest state owned by this try + catch funclets)
-				uint32_t catch_high = static_cast<uint32_t>(state_layout.catch_high);
-				xdata.push_back(static_cast<char>(catch_high & 0xFF));
-				xdata.push_back(static_cast<char>((catch_high >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((catch_high >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((catch_high >> 24) & 0xFF));
-				
-				// nCatches
-				uint32_t num_catches = static_cast<uint32_t>(try_block.catch_handlers.size());
-				xdata.push_back(static_cast<char>(num_catches & 0xFF));
-				xdata.push_back(static_cast<char>((num_catches >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((num_catches >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((num_catches >> 24) & 0xFF));
-				
-				// pHandlerArray - RVA to handler array for this try block
-				uint32_t handler_array_offset = handler_array_base;
-				uint32_t p_handler_array_field_offset = static_cast<uint32_t>(xdata.size());
-				xdata.push_back(static_cast<char>(handler_array_offset & 0xFF));
-				xdata.push_back(static_cast<char>((handler_array_offset >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((handler_array_offset >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((handler_array_offset >> 24) & 0xFF));
-				cpp_xdata_rva_field_offsets.push_back(p_handler_array_field_offset);
-				
-				handler_array_base += num_catches * 20; // 20 bytes per HandlerType entry (x64 FH3 includes dispFrame)
+				// action - RVA to destructor/cleanup function
+				// For now, we'll use 0 (no action) since we don't have destructor function addresses yet
+				// TODO: Add relocation for destructor function when we have the mangled name
+				uint32_t action_rva = 0;
+				if (has_ir_entry && !unwind_map[i].action.empty()) {
+					// We would need to add a relocation here for the destructor function
+					// For now, just set to 0 and add TODO comment
+					// action_rva will be patched via relocation
+				}
+				appendLE_xdata(xdata, action_rva);
 			}
+		}
+
+		uint32_t tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
+		patch_xdata_u32(xdata, p_try_block_map_field_offset, tryblock_map_offset);
+		cpp_xdata_rva_field_offsets.push_back(p_try_block_map_field_offset);
+		
+		// Now add TryBlockMap entries
+		// Each TryBlockMapEntry:
+		//   int tryLow (state number)
+		//   int tryHigh (state number)
+		//   int catchHigh (state number after try)
+		//   int nCatches
+		//   DWORD pHandlerArray (RVA)
+		
+		uint32_t handler_array_base = tryblock_map_offset + (num_try_blocks * 20); // 20 bytes per TryBlockMapEntry
+		
+		for (size_t i = 0; i < try_blocks.size(); ++i) {
+			const auto& try_block = try_blocks[i];
+			const auto& state_layout = try_state_layout[i];
 			
-			// Now add HandlerType arrays for each try block
-			// Each HandlerType:
-			//   DWORD adjectives (0x01 = const, 0x08 = reference, 0 = by-value)
-			//   DWORD pType (RVA to type descriptor, 0 for catch-all)
-			//   int catchObjOffset (frame offset of catch parameter, negative)
-			//   DWORD addressOfHandler (RVA of catch handler code)
+			// tryLow (state when entering try block)
+			uint32_t try_low = static_cast<uint32_t>(state_layout.try_low);
+			appendLE_xdata(xdata, try_low);
 			
-			// First, generate type descriptors for all unique exception types
-			// Use class member to track across multiple function calls
+			// tryHigh (inclusive state range for the try body)
+			uint32_t try_high = static_cast<uint32_t>(state_layout.try_high);
+			appendLE_xdata(xdata, try_high);
 			
-			for (const auto& try_block : try_blocks) {
-				for (const auto& handler : try_block.catch_handlers) {
-					if (!handler.is_catch_all && !handler.type_name.empty()) {
-						// Mangle the type name to get the symbol name
-						auto [type_desc_symbol, type_desc_runtime_name] = getMsvcTypeDescriptorInfo(handler.type_name);
-						
-						// Check if we've already created a descriptor for this type
-						// by checking both the class member map and if the symbol already exists
-						if (type_descriptor_offsets_.find(handler.type_name) == type_descriptor_offsets_.end()) {
-							// Check if the symbol already exists (could have been created elsewhere)
-							auto* existing_symbol = coffi_.get_symbol(type_desc_symbol);
-							if (existing_symbol) {
-								// Symbol already exists, just record its offset for later use
-								type_descriptor_offsets_[handler.type_name] = existing_symbol->get_value();
-								if (g_enable_debug_output) std::cerr << "  Type descriptor '" << type_desc_symbol 
-								          << "' already exists for exception type '" << handler.type_name << "'" << std::endl;
-							} else {
-								// Symbol doesn't exist, create it
-								// Validate that RDATA section exists
-								auto rdata_section_it = sectiontype_to_index.find(SectionType::RDATA);
-								if (rdata_section_it == sectiontype_to_index.end()) {
-									if (g_enable_debug_output) std::cerr << "ERROR: RDATA section not found for type descriptor generation" << std::endl;
-									continue;
-								}
-								
-								// Generate type descriptor in .rdata section
-								auto rdata_section = coffi_.get_sections()[rdata_section_it->second];
-								uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-								
-								// Create type descriptor data
-								// Format: vtable_ptr (8 bytes) + spare (8 bytes) + mangled_name (null-terminated)
-								std::vector<char> type_desc_data;
-								
-								// vtable pointer (POINTER_SIZE bytes) - null for exception types
-								for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
-								
-								// spare pointer (POINTER_SIZE bytes) - null
-								for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
-								
-								// mangled name (null-terminated)
-								for (char c : type_desc_runtime_name) type_desc_data.push_back(c);
-								type_desc_data.push_back(0);
-								
-								// Add to .rdata section
-								add_data(type_desc_data, SectionType::RDATA);
-								
-								// Create symbol for the type descriptor
-								auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
-								type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-								type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-								type_desc_sym->set_section_number(rdata_section->get_index() + 1);
-								type_desc_sym->set_value(type_desc_offset);
-								
-								if (g_enable_debug_output) std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '" 
-								          << handler.type_name << "' at offset " << type_desc_offset << std::endl;
-								
-								type_descriptor_offsets_[handler.type_name] = type_desc_offset;
-							}
-						}
-					}
-				}
-			}
+			// catchHigh (highest state owned by this try + catch funclets)
+			uint32_t catch_high = static_cast<uint32_t>(state_layout.catch_high);
+			appendLE_xdata(xdata, catch_high);
 			
-			// Now generate HandlerType entries with proper pType references
-			auto ensure_catch_symbol = [this, function_start](std::string_view parent_mangled_name, uint32_t funclet_entry_offset, size_t handler_index) -> std::string {
-				StringBuilder sb;
-				sb.append("$catch$").append(parent_mangled_name).append("$").append(handler_index);
-				std::string catch_symbol_name(sb.commit());
-
-				auto* existing = coffi_.get_symbol(catch_symbol_name);
-				if (existing) {
-					return catch_symbol_name;
+			// nCatches
+			uint32_t num_catches = static_cast<uint32_t>(try_block.catch_handlers.size());
+			appendLE_xdata(xdata, num_catches);
+			
+			// pHandlerArray - RVA to handler array for this try block
+			uint32_t handler_array_offset = handler_array_base;
+			uint32_t p_handler_array_field_offset = static_cast<uint32_t>(xdata.size());
+			appendLE_xdata(xdata, handler_array_offset);
+			cpp_xdata_rva_field_offsets.push_back(p_handler_array_field_offset);
+			
+			handler_array_base += num_catches * 20; // 20 bytes per HandlerType entry (x64 FH3 includes dispFrame)
+		}
+		
+		// Now add HandlerType arrays for each try block
+		// Each HandlerType:
+		//   DWORD adjectives (0x01 = const, 0x08 = reference, 0 = by-value)
+		//   DWORD pType (RVA to type descriptor, 0 for catch-all)
+		//   int catchObjOffset (frame offset of catch parameter, negative)
+		//   DWORD addressOfHandler (RVA of catch handler code)
+		
+		// First, generate type descriptors for all unique exception types
+		// Use class member to track across multiple function calls
+		
+		for (const auto& try_block : try_blocks) {
+			for (const auto& handler : try_block.catch_handlers) {
+				if (!handler.is_catch_all && !handler.type_name.empty()) {
+					ensure_type_descriptor(handler.type_name);
 				}
-
-				auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
-				auto* catch_symbol = coffi_.add_symbol(catch_symbol_name);
-				catch_symbol->set_type(0x20);  // function symbol
-				catch_symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-				catch_symbol->set_section_number(text_section->get_index() + 1);
-				catch_symbol->set_value(function_start + funclet_entry_offset);
-
-				return catch_symbol_name;
-			};
-
-			size_t handler_index = 0;
-			for (size_t try_index = 0; try_index < try_blocks.size(); ++try_index) {
-				const auto& state_layout = try_state_layout[try_index];
-				for (const auto& catch_binding : state_layout.catches) {
-					const auto& handler = *catch_binding.handler;
-					// adjectives - MSVC exception handler flags
-					// 0x01 = const
-					// 0x08 = reference (lvalue reference &)
-					// 0x10 = rvalue reference (&&)
-					uint32_t adjectives = 0;
-					if (handler.is_catch_all) {
-						adjectives |= 0x40;
-					}
-					if (handler.is_const) {
-						adjectives |= 0x01;
-					}
-					if (handler.is_reference) {
-						adjectives |= 0x08;
-					}
-					if (handler.is_rvalue_reference) {
-						adjectives |= 0x10;
-					}
-					
-					xdata.push_back(static_cast<char>(adjectives & 0xFF));
-					xdata.push_back(static_cast<char>((adjectives >> 8) & 0xFF));
-					xdata.push_back(static_cast<char>((adjectives >> 16) & 0xFF));
-					xdata.push_back(static_cast<char>((adjectives >> 24) & 0xFF));
-					
-					// pType - RVA to type descriptor (0 for catch-all)
-					uint32_t ptype_offset = static_cast<uint32_t>(xdata.size());
-					// Add placeholder for pType (4 bytes)
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					
-					if (!handler.is_catch_all && !handler.type_name.empty()) {
-						// Type-specific catch - add relocation for pType to point to the type descriptor
-						auto type_desc_info = getMsvcTypeDescriptorInfo(handler.type_name);
-						const std::string& type_desc_symbol = type_desc_info.first;
-						add_xdata_relocation(xdata_offset + ptype_offset, type_desc_symbol);
-						
-						if (g_enable_debug_output) std::cerr << "  Added pType relocation for handler " << handler_index 
-						          << " to type descriptor '" << type_desc_symbol << "'" << std::endl;
-					}
-					// For catch(...), pType remains 0 (no relocation needed)
-					
-					// catchObjOffset (dispCatchObj).
-					// The CRT copies the exception object to [EstablisherFrame + dispCatchObj].
-					// EstablisherFrame = RBP - effective_frame_size.
-					// The catch variable is at [rbp + catch_obj_offset] (catch_obj_offset is negative).
-					// So: (RBP - effective_frame_size) + dispCatchObj = RBP + catch_obj_offset
-					//     dispCatchObj = catch_obj_offset + effective_frame_size
-					int32_t catch_offset = handler.catch_obj_offset;
-					if (is_cpp && catch_offset != 0) {
-						catch_offset += static_cast<int32_t>(effective_frame_size);
-					}
-					xdata.push_back(static_cast<char>(catch_offset & 0xFF));
-					xdata.push_back(static_cast<char>((catch_offset >> 8) & 0xFF));
-					xdata.push_back(static_cast<char>((catch_offset >> 16) & 0xFF));
-					xdata.push_back(static_cast<char>((catch_offset >> 24) & 0xFF));
-					
-					// addressOfHandler - RVA of catch handler entry.
-					// Use a dedicated catch symbol to mirror MSVC's handler map relocation style.
-					uint32_t funclet_entry_offset = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
-					std::string catch_symbol_name = ensure_catch_symbol(mangled_name, funclet_entry_offset, handler_index);
-					uint32_t address_of_handler_field_offset = static_cast<uint32_t>(xdata.size());
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					add_xdata_relocation(xdata_offset + address_of_handler_field_offset, catch_symbol_name);
-
-					// dispFrame - displacement from establisher frame to the catch funclet's
-					// frame pointer. On x64 FH3 (magic >= 0x19930522), HandlerType has 5 fields
-					// (20 bytes). The CRT computes frame_ptr = EstablisherFrame + dispFrame and
-					// passes it as RDX to the catch funclet.
-					// EstablisherFrame = RBP - effective_frame_size.
-					// The funclet does: lea rbp, [rdx + stack_frame_size].
-					// rbp = (RBP - effective_frame_size) + dispFrame + stack_frame_size.
-					// For rbp to equal parent's RBP: dispFrame = effective_frame_size - stack_frame_size.
-					// When not capped this is 0; when capped it's negative.
-					int32_t disp_frame = static_cast<int32_t>(effective_frame_size) - static_cast<int32_t>(stack_frame_size);
-					xdata.push_back(static_cast<char>(disp_frame & 0xFF));
-					xdata.push_back(static_cast<char>((disp_frame >> 8) & 0xFF));
-					xdata.push_back(static_cast<char>((disp_frame >> 16) & 0xFF));
-					xdata.push_back(static_cast<char>((disp_frame >> 24) & 0xFF));
-					
-					handler_index++;
-				}
-			}
-
-			// Build IP-to-state map for FH3 state lookup.
-			// Include both try body state ranges and catch funclet state ranges.
-			struct IpStateEntry {
-				uint32_t ip_rva;
-				int32_t state;
-			};
-
-			std::vector<IpStateEntry> ip_to_state_entries;
-			ip_to_state_entries.reserve(try_blocks.size() * 2 + 2);
-			ip_to_state_entries.push_back({function_start, -1});
-
-			for (size_t i = 0; i < try_blocks.size(); ++i) {
-				const auto& tb = try_blocks[i];
-				const auto& layout = try_state_layout[i];
-				ip_to_state_entries.push_back({function_start + tb.try_start_offset, layout.try_low});
-				uint32_t try_end_ip = tb.try_end_offset;
-				if (try_end_ip < function_size) {
-					try_end_ip += 1;
-				}
-				ip_to_state_entries.push_back({function_start + try_end_ip, -1});
-				
-				// Add catch funclet state ranges
-				for (const auto& catch_binding : layout.catches) {
-					const auto& handler = *catch_binding.handler;
-					uint32_t handler_start_rel = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
-					uint32_t handler_end_rel = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
-					
-						if (handler_start_rel < function_size && handler_end_rel > handler_start_rel) {
-						ip_to_state_entries.push_back({function_start + handler_start_rel, catch_binding.catch_state});
-						if (handler_end_rel <= function_size) {
-							ip_to_state_entries.push_back({function_start + handler_end_rel, -1});
-						}
-					}
-				}
-			}
-
-			ip_to_state_entries.push_back({function_start + function_size, -1});
-
-			std::sort(ip_to_state_entries.begin(), ip_to_state_entries.end(), [](const IpStateEntry& a, const IpStateEntry& b) {
-				if (a.ip_rva != b.ip_rva) {
-					return a.ip_rva < b.ip_rva;
-				}
-				return a.state < b.state;
-			});
-
-			std::vector<IpStateEntry> compact_entries;
-			compact_entries.reserve(ip_to_state_entries.size());
-			for (const auto& entry : ip_to_state_entries) {
-				if (!compact_entries.empty() && compact_entries.back().ip_rva == entry.ip_rva) {
-					compact_entries.back().state = entry.state;
-				} else {
-					compact_entries.push_back(entry);
-				}
-			}
-
-			uint32_t ip_to_state_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
-			patch_u32(n_ip_map_entries_field_offset, static_cast<uint32_t>(compact_entries.size()));
-			patch_u32(p_ip_to_state_map_field_offset, ip_to_state_map_offset);
-			cpp_xdata_rva_field_offsets.push_back(p_ip_to_state_map_field_offset);
-
-			for (const auto& entry : compact_entries) {
-				uint32_t ip_field_offset = static_cast<uint32_t>(xdata.size());
-				xdata.push_back(static_cast<char>(entry.ip_rva & 0xFF));
-				xdata.push_back(static_cast<char>((entry.ip_rva >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((entry.ip_rva >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((entry.ip_rva >> 24) & 0xFF));
-				cpp_text_rva_field_offsets.push_back(ip_field_offset);
-
-				xdata.push_back(static_cast<char>(entry.state & 0xFF));
-				xdata.push_back(static_cast<char>((entry.state >> 8) & 0xFF));
-				xdata.push_back(static_cast<char>((entry.state >> 16) & 0xFF));
-				xdata.push_back(static_cast<char>((entry.state >> 24) & 0xFF));
 			}
 		}
 		
-		// Mirror FuncInfo into .rdata and repoint UNWIND language-specific data pointer.
-		// Disabled while stabilizing FH3 metadata layout; keep FuncInfo in .xdata.
-		if (is_cpp && false && has_cpp_funcinfo_rva_field && has_cpp_funcinfo_local_offset) {
-			auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
-			uint32_t cppxdata_rva = static_cast<uint32_t>(rdata_section->get_data_size());
+		// Now generate HandlerType entries with proper pType references
+		auto ensure_catch_symbol = [this, function_start](std::string_view parent_mangled_name, uint32_t funclet_entry_offset, size_t handler_idx) -> std::string {
+			StringBuilder sb;
+			sb.append("$catch$").append(parent_mangled_name).append("$").append(handler_idx);
+			std::string catch_symbol_name(sb.commit());
 
-			// FuncInfo uses 9 DWORD fields (36 bytes) for FH3-compatible layout.
-			constexpr uint32_t kFuncInfoSize = 36;
-			if (cpp_funcinfo_local_offset + kFuncInfoSize <= xdata.size()) {
-				std::vector<char> cppxdata_blob(
-					xdata.begin() + static_cast<std::ptrdiff_t>(cpp_funcinfo_local_offset),
-					xdata.begin() + static_cast<std::ptrdiff_t>(cpp_funcinfo_local_offset + kFuncInfoSize));
-				add_data(cppxdata_blob, SectionType::RDATA);
+			auto* existing = coffi_.get_symbol(catch_symbol_name);
+			if (existing) {
+				return catch_symbol_name;
+			}
 
-				auto* cppx_sym = coffi_.get_symbol(cppx_sym_name);
-				if (!cppx_sym) {
-					cppx_sym = coffi_.add_symbol(cppx_sym_name);
-					cppx_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-					cppx_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-					cppx_sym->set_section_number(rdata_section->get_index() + 1);
-					cppx_sym->set_value(cppxdata_rva);
+			auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+			auto* catch_symbol = coffi_.add_symbol(catch_symbol_name);
+			catch_symbol->set_type(0x20);  // function symbol
+			catch_symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+			catch_symbol->set_section_number(text_section->get_index() + 1);
+			catch_symbol->set_value(function_start + funclet_entry_offset);
+
+			return catch_symbol_name;
+		};
+
+		size_t handler_index = 0;
+		for (size_t try_index = 0; try_index < try_blocks.size(); ++try_index) {
+			const auto& state_layout = try_state_layout[try_index];
+			for (const auto& catch_binding : state_layout.catches) {
+				const auto& handler = *catch_binding.handler;
+				// adjectives - MSVC exception handler flags
+				// 0x01 = const
+				// 0x08 = reference (lvalue reference &)
+				// 0x10 = rvalue reference (&&)
+				uint32_t adjectives = 0;
+				if (handler.is_catch_all) {
+					adjectives |= 0x40;
 				}
+				if (handler.is_const) {
+					adjectives |= 0x01;
+				}
+				if (handler.is_reference) {
+					adjectives |= 0x08;
+				}
+				if (handler.is_rvalue_reference) {
+					adjectives |= 0x10;
+				}
+				
+				appendLE_xdata(xdata, adjectives);
+				
+				// pType - RVA to type descriptor (0 for catch-all)
+				uint32_t ptype_offset = static_cast<uint32_t>(xdata.size());
+				// Add placeholder for pType (4 bytes)
+				appendLE_xdata(xdata, uint32_t(0));
+				
+				if (!handler.is_catch_all && !handler.type_name.empty()) {
+					// Type-specific catch - add relocation for pType to point to the type descriptor
+					auto type_desc_info = getMsvcTypeDescriptorInfo(handler.type_name);
+					const std::string& type_desc_symbol = type_desc_info.first;
+					add_xdata_relocation(xdata_offset + ptype_offset, type_desc_symbol);
+					
+					if (g_enable_debug_output) std::cerr << "  Added pType relocation for handler " << handler_index 
+					          << " to type descriptor '" << type_desc_symbol << "'" << std::endl;
+				}
+				// For catch(...), pType remains 0 (no relocation needed)
+				
+				// catchObjOffset (dispCatchObj).
+				// The CRT copies the exception object to [EstablisherFrame + dispCatchObj].
+				// EstablisherFrame = RBP - effective_frame_size.
+				// The catch variable is at [rbp + catch_obj_offset] (catch_obj_offset is negative).
+				// So: (RBP - effective_frame_size) + dispCatchObj = RBP + catch_obj_offset
+				//     dispCatchObj = catch_obj_offset + effective_frame_size
+				int32_t catch_offset = handler.catch_obj_offset;
+				if (catch_offset != 0) {
+					catch_offset += static_cast<int32_t>(effective_frame_size);
+				}
+				appendLE_xdata(xdata, static_cast<uint32_t>(catch_offset));
+				
+				// addressOfHandler - RVA of catch handler entry.
+				// Use a dedicated catch symbol to mirror MSVC's handler map relocation style.
+				uint32_t funclet_entry_offset = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+				std::string catch_symbol_name = ensure_catch_symbol(mangled_name, funclet_entry_offset, handler_index);
+				uint32_t address_of_handler_field_offset = static_cast<uint32_t>(xdata.size());
+				appendLE_xdata(xdata, uint32_t(0));
+				add_xdata_relocation(xdata_offset + address_of_handler_field_offset, catch_symbol_name);
 
-				// Repoint UNWIND language-specific pointer to $cppxdata$ symbol in .rdata.
-				xdata[cpp_funcinfo_rva_field_offset + 0] = static_cast<char>(cppxdata_rva & 0xFF);
-				xdata[cpp_funcinfo_rva_field_offset + 1] = static_cast<char>((cppxdata_rva >> 8) & 0xFF);
-				xdata[cpp_funcinfo_rva_field_offset + 2] = static_cast<char>((cppxdata_rva >> 16) & 0xFF);
-				xdata[cpp_funcinfo_rva_field_offset + 3] = static_cast<char>((cppxdata_rva >> 24) & 0xFF);
-
-				// Ensure FuncInfo internal map pointers in .rdata are image-relative via relocations.
-				// Offsets within FuncInfo: pUnwindMap=+8, pTryBlockMap=+16, pIPToStateMap=+24.
-				add_rdata_relocation(cppxdata_rva + 8, ".xdata", IMAGE_REL_AMD64_ADDR32NB);
-				add_rdata_relocation(cppxdata_rva + 16, ".xdata", IMAGE_REL_AMD64_ADDR32NB);
-				add_rdata_relocation(cppxdata_rva + 24, ".xdata", IMAGE_REL_AMD64_ADDR32NB);
+				// dispFrame - displacement from establisher frame to the catch funclet's
+				// frame pointer. On x64 FH3 (magic >= 0x19930522), HandlerType has 5 fields
+				// (20 bytes). The CRT computes frame_ptr = EstablisherFrame + dispFrame and
+				// passes it as RDX to the catch funclet.
+				// EstablisherFrame = RBP - effective_frame_size.
+				// The funclet does: lea rbp, [rdx + stack_frame_size].
+				// rbp = (RBP - effective_frame_size) + dispFrame + stack_frame_size.
+				// For rbp to equal parent's RBP: dispFrame = effective_frame_size - stack_frame_size.
+				// When not capped this is 0; when capped it's negative.
+				int32_t disp_frame = static_cast<int32_t>(effective_frame_size) - static_cast<int32_t>(stack_frame_size);
+				appendLE_xdata(xdata, static_cast<uint32_t>(disp_frame));
+				
+				handler_index++;
 			}
 		}
 
-		// Add the XDATA to the section
-		add_data(xdata, SectionType::XDATA);
+		// Build IP-to-state map for FH3 state lookup.
+		// Include both try body state ranges and catch funclet state ranges.
+		struct IpStateEntry {
+			uint32_t ip_rva;
+			int32_t state;
+		};
 
+		std::vector<IpStateEntry> ip_to_state_entries;
+		ip_to_state_entries.reserve(try_blocks.size() * 2 + 2);
+		ip_to_state_entries.push_back({function_start, -1});
+
+		for (size_t i = 0; i < try_blocks.size(); ++i) {
+			const auto& tb = try_blocks[i];
+			const auto& layout = try_state_layout[i];
+			ip_to_state_entries.push_back({function_start + tb.try_start_offset, layout.try_low});
+			uint32_t try_end_ip = tb.try_end_offset;
+			if (try_end_ip < function_size) {
+				try_end_ip += 1;
+			}
+			ip_to_state_entries.push_back({function_start + try_end_ip, -1});
+			
+			// Add catch funclet state ranges
+			for (const auto& catch_binding : layout.catches) {
+				const auto& handler = *catch_binding.handler;
+				uint32_t handler_start_rel = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+				uint32_t handler_end_rel = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
+				
+					if (handler_start_rel < function_size && handler_end_rel > handler_start_rel) {
+					ip_to_state_entries.push_back({function_start + handler_start_rel, catch_binding.catch_state});
+					if (handler_end_rel <= function_size) {
+						ip_to_state_entries.push_back({function_start + handler_end_rel, -1});
+					}
+				}
+			}
+		}
+
+		ip_to_state_entries.push_back({function_start + function_size, -1});
+
+		std::sort(ip_to_state_entries.begin(), ip_to_state_entries.end(), [](const IpStateEntry& a, const IpStateEntry& b) {
+			if (a.ip_rva != b.ip_rva) {
+				return a.ip_rva < b.ip_rva;
+			}
+			return a.state < b.state;
+		});
+
+		std::vector<IpStateEntry> compact_entries;
+		compact_entries.reserve(ip_to_state_entries.size());
+		for (const auto& entry : ip_to_state_entries) {
+			if (!compact_entries.empty() && compact_entries.back().ip_rva == entry.ip_rva) {
+				compact_entries.back().state = entry.state;
+			} else {
+				compact_entries.push_back(entry);
+			}
+		}
+
+		uint32_t ip_to_state_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
+		patch_xdata_u32(xdata, n_ip_map_entries_field_offset, static_cast<uint32_t>(compact_entries.size()));
+		patch_xdata_u32(xdata, p_ip_to_state_map_field_offset, ip_to_state_map_offset);
+		cpp_xdata_rva_field_offsets.push_back(p_ip_to_state_map_field_offset);
+
+		for (const auto& entry : compact_entries) {
+			uint32_t ip_field_offset = static_cast<uint32_t>(xdata.size());
+			appendLE_xdata(xdata, entry.ip_rva);
+			cpp_text_rva_field_offsets.push_back(ip_field_offset);
+			appendLE_xdata(xdata, static_cast<uint32_t>(entry.state));
+		}
+	}
+
+	void emit_exception_relocations(uint32_t xdata_offset, uint32_t handler_rva_offset,
+	                                bool is_seh, bool is_cpp,
+	                                const std::vector<ScopeTableReloc>& scope_relocs,
+	                                const std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
+	                                const std::vector<uint32_t>& cpp_text_rva_field_offsets) {
 		// Add relocation for the exception handler RVA
 		// Point to __C_specific_handler (SEH) or __CxxFrameHandler3 (C++)
 		if (is_seh) {
@@ -1851,7 +1665,14 @@ public:
 				}
 			}
 		}
+	}
 
+	void build_pdata_entries(uint32_t function_start, uint32_t function_size,
+	                         std::string_view mangled_name,
+	                         const std::vector<TryBlockInfo>& try_blocks,
+	                         bool is_cpp, uint32_t xdata_offset,
+	                         const UnwindCodeResult& unwind_info,
+	                         uint32_t cpp_funcinfo_local_offset) {
 		auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
 			return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
 		};
@@ -1879,11 +1700,6 @@ public:
 			uint32_t end;
 		};
 		std::vector<RelativeRange> catch_funclet_ranges;
-		struct PendingPdataEntry {
-			uint32_t begin_rva;
-			uint32_t end_rva;
-			uint32_t unwind_rva;
-		};
 		std::vector<PendingPdataEntry> pending_pdata_entries;
 		if (is_cpp) {
 			for (const auto& tb : try_blocks) {
@@ -1967,10 +1783,10 @@ public:
 					std::vector<char> post_catch_xdata = {
 						static_cast<char>(0x01),              // Version 1, Flags=0 (no handler)
 						static_cast<char>(0x00),              // SizeOfProlog = 0
-						static_cast<char>(count_of_codes),    // Same count of unwind codes
-						static_cast<char>(frame_reg_and_offset) // Same frame register and offset
+						static_cast<char>(unwind_info.count_of_codes),    // Same count of unwind codes
+						static_cast<char>(unwind_info.frame_reg_and_offset) // Same frame register and offset
 					};
-					for (auto b : unwind_codes) {
+					for (auto b : unwind_info.codes) {
 						post_catch_xdata.push_back(static_cast<char>(b));
 					}
 					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
@@ -2083,6 +1899,105 @@ public:
 			add_data(pdata, SectionType::PDATA);
 			add_pdata_relocations(pdata_offset, mangled_name, entry.unwind_rva);
 		}
+	}
+
+	// --- Main exception info function ---
+
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}, uint32_t stack_frame_size = 0) {
+		// Check if exception info has already been added for this function
+		for (const auto& existing : added_exception_functions_) {
+			if (existing == mangled_name) {
+				if (g_enable_debug_output) std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
+				return;
+			}
+		}
+
+		if (g_enable_debug_output) std::cerr << "Adding exception info for function: " << mangled_name << " at offset " << function_start << " size " << function_size << std::endl;
+		added_exception_functions_.push_back(std::string(mangled_name));
+
+		// Get current XDATA section size to calculate the offset for this function's unwind info
+		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+		uint32_t xdata_offset = static_cast<uint32_t>(xdata_section->get_data_size());
+
+		// Determine if this is SEH or C++ exception handling
+		bool is_seh = !seh_try_blocks.empty();
+		bool is_cpp = !try_blocks.empty();
+		uint32_t cpp_funcinfo_local_offset = 0;
+
+		if (is_seh && is_cpp) {
+			FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
+			is_cpp = false;  // Prevent C++ EH metadata from corrupting SEH scope table
+		}
+
+		// Determine flags based on exception type
+		uint8_t unwind_flags = 0x00;
+		if (is_seh || is_cpp) {
+			// SEH needs both UNW_FLAG_EHANDLER (0x01) and UNW_FLAG_UHANDLER (0x02)
+			// For C++ EH with __CxxFrameHandler3, use both dispatch and unwind handler flags.
+			unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
+		}
+
+		// Build unwind codes
+		UnwindCodeResult unwind_info = build_unwind_codes(is_cpp, stack_frame_size);
+		uint32_t effective_frame_size = unwind_info.effective_frame_size;
+
+		// Build UNWIND_INFO header + codes
+		std::vector<char> xdata = {
+			static_cast<char>(0x01 | (unwind_flags << 3)),  // Version 1, Flags
+			static_cast<char>(unwind_info.prolog_size),     // Size of prolog
+			static_cast<char>(unwind_info.count_of_codes),  // Count of unwind codes
+			static_cast<char>(unwind_info.frame_reg_and_offset) // Frame register and offset
+		};
+		for (auto b : unwind_info.codes) {
+			xdata.push_back(static_cast<char>(b));
+		}
+		
+		// Add exception handler RVA placeholder when EHANDLER/UHANDLER flags are present
+		uint32_t handler_rva_offset = 0;
+		if (is_seh || is_cpp) {
+			handler_rva_offset = static_cast<uint32_t>(xdata.size());
+			appendLE_xdata(xdata, uint32_t(0));
+		}
+
+		// For C++ EH, reserve space for FuncInfo RVA pointer
+		uint32_t cpp_funcinfo_rva_field_offset = 0;
+		bool has_cpp_funcinfo_rva_field = false;
+		if (is_cpp) {
+			cpp_funcinfo_rva_field_offset = static_cast<uint32_t>(xdata.size());
+			appendLE_xdata(xdata, uint32_t(0));
+			has_cpp_funcinfo_rva_field = true;
+		}
+
+		// Relocation tracking
+		std::vector<ScopeTableReloc> scope_relocs;
+		std::vector<uint32_t> cpp_xdata_rva_field_offsets;
+		std::vector<uint32_t> cpp_text_rva_field_offsets;
+
+		// Build SEH scope table
+		if (is_seh) {
+			build_seh_scope_table(xdata, function_start, seh_try_blocks, scope_relocs);
+		}
+
+		// Build C++ FuncInfo and associated metadata
+		if (is_cpp && !try_blocks.empty()) {
+			build_cpp_exception_metadata(xdata, xdata_offset, function_start, function_size,
+			                             mangled_name, try_blocks, unwind_map,
+			                             effective_frame_size, stack_frame_size,
+			                             cpp_funcinfo_rva_field_offset, has_cpp_funcinfo_rva_field,
+			                             cpp_funcinfo_local_offset,
+			                             cpp_xdata_rva_field_offsets, cpp_text_rva_field_offsets);
+		}
+
+		// Add the XDATA to the section
+		add_data(xdata, SectionType::XDATA);
+
+		// Emit relocations for exception handler and metadata
+		emit_exception_relocations(xdata_offset, handler_rva_offset, is_seh, is_cpp,
+		                           scope_relocs, cpp_xdata_rva_field_offsets, cpp_text_rva_field_offsets);
+
+		// Build and emit PDATA entries
+		build_pdata_entries(function_start, function_size, mangled_name, try_blocks,
+		                    is_cpp, xdata_offset, unwind_info, cpp_funcinfo_local_offset);
 	}
 
 	void finalize_debug_info() {
@@ -2717,13 +2632,13 @@ protected:
 
 	// Track type descriptors that have been created to avoid duplicates across functions
 	// Maps type name to its offset in .rdata section
-	std::unordered_map<std::string, uint32_t> type_descriptor_offsets_;
+	std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>> type_descriptor_offsets_;
 
 	// Track generated throw-info symbols by type name
-	std::unordered_map<std::string, std::string> throw_info_symbols_;
+	std::unordered_map<std::string, std::string, ObjectFileCommon::StringViewHash, std::equal_to<>> throw_info_symbols_;
 
 	// Cache for symbol name → file index lookups (avoids O(n) linear scan)
-	std::unordered_map<std::string, uint32_t> symbol_index_cache_;
+	std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>> symbol_index_cache_;
 
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;
