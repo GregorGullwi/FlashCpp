@@ -51,10 +51,7 @@
 									
 									// Get type info from the identifier
 									StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
-									std::optional<ASTNode> symbol = symbol_table.lookup(id_handle);
-									if (!symbol.has_value() && global_symbol_table_) {
-										symbol = global_symbol_table_->lookup(id_handle);
-									}
+									std::optional<ASTNode> symbol = lookupSymbol(id_handle);
 									
 									Type operand_type = Type::Int;  // Default
 									int operand_size = 32;
@@ -627,10 +624,7 @@
 		} else {
 			// Try to get from the function declaration stored in FunctionCallNode
 			// Look up the function in symbol table to get full declaration with parameters
-			auto local_func_symbol = symbol_table.lookup(func_decl_node.identifier_token().value());
-			if (!local_func_symbol.has_value() && global_symbol_table_) {
-				local_func_symbol = global_symbol_table_->lookup(func_decl_node.identifier_token().value());
-			}
+			auto local_func_symbol = lookupSymbol(func_decl_node.identifier_token().value());
 			if (local_func_symbol.has_value() && local_func_symbol->is<FunctionDeclarationNode>()) {
 				const auto& resolved_func_decl = local_func_symbol->as<FunctionDeclarationNode>();
 				param_nodes = resolved_func_decl.parameter_nodes();
@@ -680,10 +674,7 @@
 			if (param_is_ref_like &&
 			    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier.name());
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 				if (symbol.has_value()) {
 					const DeclarationNode* decl_ptr = nullptr;
 					if (symbol->is<DeclarationNode>()) {
@@ -902,10 +893,7 @@
 			// For identifiers that returned local variable references (string_view), handle specially
 			if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier.name());
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 				if (!symbol.has_value()) {
 					FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");
 					FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
@@ -2773,10 +2761,7 @@
 			result.base_array_name = base_ident.name();
 			
 			// Look up the declaration
-			std::optional<ASTNode> symbol = symbol_table.lookup(result.base_array_name);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(result.base_array_name);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(result.base_array_name);
 			if (symbol.has_value()) {
 				if (symbol->is<DeclarationNode>()) {
 					result.base_decl = &symbol->as<DeclarationNode>();
@@ -3177,10 +3162,7 @@
 		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
 			const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
-			std::optional<ASTNode> symbol = symbol_table.lookup(arr_ident.name());
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(arr_ident.name());
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(arr_ident.name());
 			if (symbol.has_value()) {
 				const DeclarationNode* decl_ptr = nullptr;
 				if (symbol->is<DeclarationNode>()) {
@@ -3579,10 +3561,7 @@
 		if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident->name());
 			
-			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(identifier_handle);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
 			
 			if (symbol.has_value()) {
 				const TypeSpecifierNode* type_node = nullptr;
@@ -4097,10 +4076,7 @@
 				std::string_view identifier = type_spec.token().value();
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier);
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(identifier);
 				
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -4179,10 +4155,7 @@
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(id_node.name());
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
 				
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -4240,10 +4213,7 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(member_access): object_name=", id_node.name());
 						
 						// Look up the identifier to get its type
-						std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-						if (!symbol.has_value() && global_symbol_table_) {
-							symbol = global_symbol_table_->lookup(id_node.name());
-						}
+						std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
 						
 						if (symbol.has_value()) {
 							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -4327,10 +4297,7 @@
 						const IdentifierNode& id_node = std::get<IdentifierNode>(array_expr);
 						
 						// Look up the array identifier in the symbol table
-						std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-						if (!symbol.has_value() && global_symbol_table_) {
-							symbol = global_symbol_table_->lookup(id_node.name());
-						}
+						std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
 						
 						if (symbol.has_value()) {
 							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -4492,10 +4459,7 @@
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(id_node.name());
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
 				
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);

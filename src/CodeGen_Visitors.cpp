@@ -1777,10 +1777,7 @@ private:
 		if (std::holds_alternative<IdentifierNode>(base_expr)) {
 			// Simple identifier - look it up in the symbol table
 			const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
-			std::optional<ASTNode> symbol = symbol_table.lookup(base_ident.name());
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(base_ident.name());
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(base_ident.name());
 			if (!symbol.has_value()) {
 				return false;
 			}
@@ -2269,10 +2266,7 @@ private:
 			std::string_view base_name = StringTable::getStringView(base_name_handle);
 			
 			// Look up the base object in symbol table
-			std::optional<ASTNode> symbol = symbol_table.lookup(base_name);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(base_name);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(base_name);
 			
 			if (symbol.has_value()) {
 				const DeclarationNode* decl = get_decl_from_symbol(*symbol);

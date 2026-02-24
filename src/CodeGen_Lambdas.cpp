@@ -960,6 +960,23 @@
 		}
 	}
 
+	/// Unified symbol lookup: searches local scope first, then falls back to global scope
+	std::optional<ASTNode> lookupSymbol(StringHandle handle) const {
+		auto symbol = symbol_table.lookup(handle);
+		if (!symbol.has_value() && global_symbol_table_) {
+			symbol = global_symbol_table_->lookup(handle);
+		}
+		return symbol;
+	}
+
+	std::optional<ASTNode> lookupSymbol(std::string_view name) const {
+		auto symbol = symbol_table.lookup(name);
+		if (!symbol.has_value() && global_symbol_table_) {
+			symbol = global_symbol_table_->lookup(name);
+		}
+		return symbol;
+	}
+
 
 	Ir ir_;
 	TempVar var_counter{ 0 };

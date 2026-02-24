@@ -1720,10 +1720,7 @@
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
 			
 			// Look up the identifier
-			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(identifier_handle);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
 			if (!symbol.has_value()) {
 				return std::nullopt;  // Can't find identifier
 			}
@@ -1825,10 +1822,7 @@
 			// Calculate actual element size from array declaration
 			if (std::holds_alternative<StringHandle>(array_operands[2])) {
 				StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-				std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(array_name);
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(array_name);
 				
 				const DeclarationNode* decl_ptr = getDeclarationFromSymbol(symbol);
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
@@ -1923,10 +1917,7 @@
 				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
 				StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
 				
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier_handle);
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
 				
 				if (symbol.has_value()) {
 					const TypeSpecifierNode* type_node = nullptr;
@@ -2027,10 +2018,7 @@
 				return true;
 			}
 
-			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(identifier_handle);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
 			if (!symbol.has_value()) {
 				return false;
 			}
@@ -2110,10 +2098,7 @@
 							// We need to calculate the actual element size from the array declaration
 							if (std::holds_alternative<StringHandle>(array_operands[2])) {
 								StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-								std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
-								if (!symbol.has_value() && global_symbol_table_) {
-									symbol = global_symbol_table_->lookup(array_name);
-								}
+								std::optional<ASTNode> symbol = lookupSymbol(array_name);
 								if (symbol.has_value()) {
 									const DeclarationNode* decl_ptr = nullptr;
 									if (symbol->is<DeclarationNode>()) {
@@ -2391,10 +2376,7 @@
 				// We need to calculate the actual element size from the array declaration
 				if (std::holds_alternative<StringHandle>(array_operands[2])) {
 					StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-					std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
-					if (!symbol.has_value() && global_symbol_table_) {
-						symbol = global_symbol_table_->lookup(array_name);
-					}
+					std::optional<ASTNode> symbol = lookupSymbol(array_name);
 					if (symbol.has_value()) {
 						const DeclarationNode* decl_ptr = nullptr;
 						if (symbol->is<DeclarationNode>()) {
@@ -2594,10 +2576,7 @@
 						auto object_name = StringTable::getOrInternStringHandle(object_ident.name());
 						
 						// Look up the struct in symbol table
-						std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-						if (!symbol.has_value() && global_symbol_table_) {
-							symbol = global_symbol_table_->lookup(object_name);
-						}
+						std::optional<ASTNode> symbol = lookupSymbol(object_name);
 						
 						if (symbol.has_value()) {
 							const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
