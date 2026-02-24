@@ -5372,7 +5372,7 @@ private:
 		size_bytes = (size_bytes + 7) & ~7;  // 8-byte align
 		next_temp_var_offset_ += size_bytes;
 		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
-		int32_t end_offset = offset - size_bytes;
+		int32_t end_offset = offset;
 		if (!variable_scopes.empty() && end_offset < variable_scopes.back().scope_stack_space) {
 			variable_scopes.back().scope_stack_space = end_offset;
 		}
