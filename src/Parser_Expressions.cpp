@@ -7071,9 +7071,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								
 								// If not found, the type may have been registered with filled-in default template args
 								// (e.g., basic_string_view<char> → basic_string_view<char, char_traits<char>>)
-								// Check the V2 cache for the instantiated struct node to get the correct name
+								// Check the cache for the instantiated struct node to get the correct name
 								if (type_it == gTypesByName.end()) {
-									auto cached = gTemplateRegistry.getInstantiationV2(
+									auto cached = gTemplateRegistry.getInstantiation(
 										StringTable::getOrInternStringHandle(idenfifier_token.value()),
 										*explicit_template_args);
 									if (cached.has_value() && cached->is<StructDeclarationNode>()) {
@@ -8280,7 +8280,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
-										instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *effective_template_args);
+										instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *effective_template_args, args.size());
 									}
 									if (instantiated_func.has_value()) {
 										// Check if the function is deleted
@@ -10869,9 +10869,8 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		// try to find the correct instantiation by looking up gTypesByName for a matching
 		// template instantiation with the same base template name.
 		if (!instantiated_func.has_value()) {
-			size_t dollar_pos = instantiated_class_name.find('$');
-			if (dollar_pos != std::string_view::npos) {
-				std::string_view base_tmpl = instantiated_class_name.substr(0, dollar_pos);
+			std::string_view base_tmpl = extractBaseTemplateName(instantiated_class_name);
+			if (!base_tmpl.empty()) {
 				// Search all types to find a matching template instantiation
 				for (const auto& [name_handle, type_info_ptr] : gTypesByName) {
 					if (type_info_ptr->isTemplateInstantiation() &&
@@ -10905,9 +10904,9 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	// If member has template args, append them using hash-based naming
 	if (member_template_args.has_value() && !member_template_args->empty()) {
 		// Generate hash suffix for template args
-		auto key = FlashCpp::makeInstantiationKeyV2(StringTable::getOrInternStringHandle(member_name), *member_template_args);
+		auto key = FlashCpp::makeInstantiationKey(StringTable::getOrInternStringHandle(member_name), *member_template_args);
 		func_name_builder.append("$");
-		auto hash_val = FlashCpp::TemplateInstantiationKeyV2Hash{}(key);
+		auto hash_val = FlashCpp::TemplateInstantiationKeyHash{}(key);
 		char hex[17];
 		std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash_val));
 		func_name_builder.append(std::string_view(hex, 16));
@@ -11436,12 +11435,11 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				auto sep_pos = type_name.find("::");
 				std::string_view base_part_sv = type_name.substr(0, sep_pos);
 				std::string_view member_part = type_name.substr(sep_pos + 2);
-				// '$' in the base part indicates a hash-based mangled template name
+				// Hash-based mangled template name in base part
 				// (e.g., "Wrapper$a1b2c3d4" for dependent Wrapper<T>)
-				auto dollar_pos = base_part_sv.find('$');
+				std::string_view base_template_name = extractBaseTemplateName(base_part_sv);
 				
-				if (dollar_pos != std::string_view::npos) {
-					std::string_view base_template_name = base_part_sv.substr(0, dollar_pos);
+				if (!base_template_name.empty()) {
 					
 					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {

@@ -45,9 +45,17 @@ T process_int(int value);
 template<typename T>
 T combine_values(int a, double b, char c);
 
-int main() {
-    // Template instantiation will be tested in Phase 2
-    // For now, we just verify that parsing works
-    return 0;
+template<typename T>
+struct wrapper { using type = T; };
+// Overload 1: return type depends on wrapper<T>::type which always resolves
+template<typename T>
+typename wrapper<T>::type bar(T x) { return 1 - x; }
+// Overload 2: different signature
+template<typename T>
+int bar(T x, int) { return x; }
+
+int main()
+{
+    return bar<int>(1, 2) - static_cast<int>(bar<double>(0));
 }
 

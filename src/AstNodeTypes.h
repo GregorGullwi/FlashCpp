@@ -1215,14 +1215,13 @@ struct TypeInfo
 {
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
 	TypeInfo(StringHandle name, Type type, TypeIndex idx, int type_size) : name_(name), type_(type), type_index_(idx), type_size_(type_size) {
-		updateIncompleteInstantiationFlag();
 	}
 
 	StringHandle name_;  // Pure StringHandle
 	Type type_;
 	TypeIndex type_index_;
 
-	// True if this type was created with unresolved template args (name contains "$unresolved")
+	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
 	bool is_incomplete_instantiation_ = false;
 
 	// For struct types, store additional information
@@ -1274,12 +1273,6 @@ struct TypeInfo
 		return name_;
 	};
 	
-	// Update is_incomplete_instantiation_ flag based on current name
-	void updateIncompleteInstantiationFlag() {
-		if (name_.isValid()) {
-			is_incomplete_instantiation_ = StringTable::getStringView(name_).find("$unresolved") != std::string_view::npos;
-		}
-	}
 	
 	// Helper methods for template instantiations
 	bool isTemplateInstantiation() const { return base_template_.valid(); }

@@ -516,10 +516,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 	// Pattern: Base$dependentHash::member(args) — needs re-instantiation with concrete types
 	// This happens when a template body is re-parsed: Base<T>::member() creates Base$hash1::member
 	// during initial template parsing, but the actual instantiation is Base$hash2.
-	size_t dollar_pos = func_name.find('$');
 	size_t scope_pos = func_name.find("::");
-	if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
-		std::string_view base_template_name = func_name.substr(0, dollar_pos);
+	std::string_view base_template_name;
+	if (scope_pos != std::string_view::npos) {
+		base_template_name = extractBaseTemplateName(func_name.substr(0, scope_pos));
+	}
+	if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
 		std::string_view member_name = func_name.substr(scope_pos + 2);
 		
 		// Collect concrete template arguments from param_map_
@@ -768,172 +770,67 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		}
 	}
 	
-	// Check if the namespace name contains template parameters
-	// Old format: has underscore (e.g., "R1_T")
-	// New format: has dollar sign + hash (e.g., "R1$3b360731384e1358")
-	size_t separator_pos = ns_name.find('$');
-	bool is_hash_based = (separator_pos != std::string_view::npos);
-	
-	if (!is_hash_based) {
-		separator_pos = ns_name.find('_');
-		if (separator_pos == std::string_view::npos) {
-			// No template parameters, return as-is
-			FLASH_LOG(Templates, Debug, "  No template parameters in namespace, returning as-is");
-			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
-			return ASTNode(&new_expr);
-		}
-	}
-	
-	// Extract the base template name (e.g., "R1")
-	std::string_view base_template_name = ns_name.substr(0, separator_pos);
-
-	if (IS_FLASH_LOG_ENABLED(Templates, Debug)) {
-		std::string_view param_part = ns_name.substr(separator_pos + 1);
-		FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name, ", param part: ", param_part, ", is_hash_based: ", is_hash_based);
-	}
-
-	// For hash-based names, the namespace already contains the fully instantiated name
-	// We just need to ensure the template is instantiated with the concrete type arguments
-	if (is_hash_based) {
-		// Hash-based name - extract template arguments from param_map_ and trigger instantiation
-		// Use template_param_order_ to preserve the original template parameter declaration order
-		// This ensures stricter correctness by maintaining the proper template argument order
-		std::vector<TemplateTypeArg> inst_args;
-		
-		if (!template_param_order_.empty()) {
-			// Use the preserved template parameter order for stricter correctness
-			for (std::string_view param_name : template_param_order_) {
-				auto it = param_map_.find(param_name);
-				if (it != param_map_.end()) {
-					inst_args.push_back(it->second);
-				}
-			}
-		} else {
-			// Fallback: iterate param_map_ in its internal order (less correct but functional)
-			for (const auto& [param_name, param_arg] : param_map_) {
-				inst_args.push_back(param_arg);
-			}
-		}
-		
-		// Also check pack_map_ for variadic template arguments
-		for (const auto& [pack_name, pack_args] : pack_map_) {
-			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
-		}
-		
-		if (!inst_args.empty()) {
-			FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name, 
-			          "' with ", inst_args.size(), " arguments");
-			parser_.try_instantiate_class_template(base_template_name, inst_args, true);
-			
-			// After instantiation, get the actual instantiated name (with new hash based on concrete types)
-			// The dependent hash in ns_name is based on template parameters (T), 
-			// but we need the hash based on concrete types (long)
-			std::string_view instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
-			
-			FLASH_LOG(Templates, Debug, "  Substituted namespace: ", ns_name, " -> ", instantiated_name);
-			
-			// Create a new QualifiedIdentifierNode with the correct instantiated namespace
-			StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
-			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
-				NamespaceRegistry::GLOBAL_NAMESPACE, 
-				instantiated_name_handle
-			);
-			
-			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-				new_ns_handle,
-				qual_id.identifier_token()
-			);
-			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
-			return ASTNode(&new_expr);
-		}
-		
-		// No template arguments - just return as-is
-		FLASH_LOG(Templates, Debug, "  Hash-based name, no template arguments to substitute");
+	// Check if the namespace name contains template parameters (hash-based naming)
+	std::string_view base_template_name = extractBaseTemplateName(ns_name);
+	if (base_template_name.empty()) {
+		// Not a template instantiation, return as-is
+		FLASH_LOG(Templates, Debug, "  No template parameters in namespace, returning as-is");
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 		return ASTNode(&new_expr);
 	}
 
-	// Old underscore-based name - look up by parameter name
-	std::string_view param_part = ns_name.substr(separator_pos + 1);
-	auto param_it = param_map_.find(param_part);
-	if (param_it == param_map_.end()) {
-		// Parameter not found in substitution map, return as-is
-		FLASH_LOG(Templates, Debug, "  Parameter not found in substitution map");
-		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
-		return ASTNode(&new_expr);
-	}
-	
-	FLASH_LOG_FORMAT(Templates, Warning, "Detected old underscore-based template name format, which is deprecated: {}", ns_name);
-	assert(false && "Old underscore-based template names are deprecated");
+	FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name);
 
-	const TemplateTypeArg& substitution = param_it->second;
+	// Extract template arguments from param_map_ and trigger instantiation
+	// Use template_param_order_ to preserve the original template parameter declaration order
+	std::vector<TemplateTypeArg> inst_args;
 	
-	FLASH_LOG(Templates, Debug, "  Found substitution: base_type=", (int)substitution.base_type, 
-	          ", type_index=", substitution.type_index);
-	
-	// Get the type name for the substitution
-	std::string_view subst_type_name;
-	if (substitution.type_index < gTypeInfo.size() && substitution.type_index > 0) {
-		subst_type_name = StringTable::getStringView(gTypeInfo[substitution.type_index].name());
-	} else if (substitution.base_type != Type::UserDefined && substitution.base_type != Type::Struct) {
-		// For primitive types, use the base_type name
-		switch (substitution.base_type) {
-			case Type::Int: subst_type_name = "int"; break;
-			case Type::Long: subst_type_name = "long"; break;
-			case Type::Short: subst_type_name = "short"; break;
-			case Type::Char: subst_type_name = "char"; break;
-			case Type::Bool: subst_type_name = "bool"; break;
-			case Type::Float: subst_type_name = "float"; break;
-			case Type::Double: subst_type_name = "double"; break;
-			case Type::Void: subst_type_name = "void"; break;
-			case Type::UnsignedInt: subst_type_name = "unsigned int"; break;
-			case Type::UnsignedLong: subst_type_name = "unsigned long"; break;
-			case Type::UnsignedShort: subst_type_name = "unsigned short"; break;
-			case Type::UnsignedChar: subst_type_name = "unsigned char"; break;
-			case Type::LongLong: subst_type_name = "long long"; break;
-			case Type::UnsignedLongLong: subst_type_name = "unsigned long long"; break;
-			default:
-				// Can't substitute, return as-is
-				FLASH_LOG(Templates, Debug, "  Unknown type, cannot substitute");
-				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
-				return ASTNode(&new_expr);
+	if (!template_param_order_.empty()) {
+		for (std::string_view param_name : template_param_order_) {
+			auto it = param_map_.find(param_name);
+			if (it != param_map_.end()) {
+				inst_args.push_back(it->second);
+			}
 		}
 	} else {
-		// Can't substitute, return as-is
-		FLASH_LOG(Templates, Debug, "  Substitution type not found");
-		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+		for (const auto& [param_name, param_arg] : param_map_) {
+			inst_args.push_back(param_arg);
+		}
+	}
+	
+	// Also check pack_map_ for variadic template arguments
+	for (const auto& [pack_name, pack_args] : pack_map_) {
+		inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
+	}
+	
+	if (!inst_args.empty()) {
+		FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name, 
+		          "' with ", inst_args.size(), " arguments");
+		parser_.try_instantiate_class_template(base_template_name, inst_args, true);
+		
+		// After instantiation, get the actual instantiated name (with new hash based on concrete types)
+		std::string_view instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
+		
+		FLASH_LOG(Templates, Debug, "  Substituted namespace: ", ns_name, " -> ", instantiated_name);
+		
+		// Create a new QualifiedIdentifierNode with the correct instantiated namespace
+		StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+		NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, 
+			instantiated_name_handle
+		);
+		
+		QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+			new_ns_handle,
+			qual_id.identifier_token()
+		);
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 		return ASTNode(&new_expr);
 	}
 	
-	// Construct the instantiated name: base_template + "_" + subst_type_name
-	// e.g., "R1" + "_" + "long" = "R1_long"
-	StringBuilder instantiated_name_builder;
-	instantiated_name_builder.append(base_template_name);
-	instantiated_name_builder.append("_"sv);
-	instantiated_name_builder.append(subst_type_name);
-	std::string_view instantiated_name = instantiated_name_builder.commit();
-	
-	FLASH_LOG(Templates, Debug, "  Substituted namespace: ", ns_name, " -> ", instantiated_name);
-	
-	// Ensure the template is instantiated with the concrete type argument
-	// This is necessary so the evaluator can find the type in gTypesByName
-	std::vector<TemplateTypeArg> inst_args;
-	inst_args.push_back(substitution);
-	FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name, "'");
-	parser_.try_instantiate_class_template(base_template_name, inst_args, true);
-	
-	// Look up or register the instantiated namespace
-	StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
-	NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
-		NamespaceRegistry::GLOBAL_NAMESPACE, 
-		instantiated_name_handle
-	);
-	
-	// Create a new QualifiedIdentifierNode with the substituted namespace
-	QualifiedIdentifierNode new_qual_id(new_ns_handle, qual_id.identifier_token());
-	
-	// Wrap in ExpressionNode
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+	// No template arguments - just return as-is
+	FLASH_LOG(Templates, Debug, "  No template arguments to substitute");
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 	return ASTNode(&new_expr);
 }
 

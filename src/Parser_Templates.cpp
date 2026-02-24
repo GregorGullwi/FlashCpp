@@ -733,7 +733,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Check if the target type is a template instantiation with unresolved parameters
 		// This happens when parsing things like: template<bool B> using bool_constant = integral_constant<bool, B>
-		// The integral_constant<bool, B> gets instantiated with "$unresolved" in the name
+		// The integral_constant<bool, B> gets instantiated with "?" placeholder in the name
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
@@ -744,7 +744,8 @@ ParseResult Parser::parse_template_declaration() {
 			std::string_view type_name = StringTable::getStringView(ti.name());
 
 			// Check for incomplete instantiation indicating unresolved template parameters
-			if (ti.is_incomplete_instantiation_) {
+			// But NOT if the name already contains :: (which means ::type was already resolved)
+			if (ti.is_incomplete_instantiation_ && type_name.find("::") == std::string_view::npos) {
 				has_unresolved_params = true;
 				FLASH_LOG(Parser, Debug, "Alias target type '", StringTable::getStringView(ti.name()), "' has unresolved parameters - using deferred instantiation");
 			}
@@ -8702,7 +8703,7 @@ std::optional<QualifiedIdParseResult> Parser::parse_qualified_identifier_with_te
 }
 
 // Try to instantiate a template with explicit template arguments
-std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types) {
+std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, explicit_types);
@@ -8726,6 +8727,23 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+
+	// Filter by call argument count if known (SIZE_MAX means unknown)
+	// Only reject if caller provides MORE args than the function has params
+	// (fewer args might use defaults, so we allow call_arg_count <= func_param_count)
+	if (call_arg_count != SIZE_MAX && !func_decl.is_variadic()) {
+		size_t func_param_count = func_decl.parameter_nodes().size();
+		bool has_variadic_func_pack = false;
+		for (const auto& p : func_decl.parameter_nodes()) {
+			if (p.is<DeclarationNode>() && p.as<DeclarationNode>().is_parameter_pack()) {
+				has_variadic_func_pack = true;
+				break;
+			}
+		}
+		if (!has_variadic_func_pack && call_arg_count > func_param_count) {
+			continue;  // Too many arguments for this overload
+		}
+	}
 
 	// Check if template has a variadic parameter pack
 	bool has_variadic_pack = false;
@@ -8978,12 +8996,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Generate mangled name first - it now includes reference qualifiers
 	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
-	// Check if we already have this instantiation using the mangled name as key
+	// Check if we already have this instantiation using structured key
 	// This ensures that int, int&, and int&& are treated as distinct instantiations
-	TemplateInstantiationKey key;
-	key.template_name = StringTable::getOrInternStringHandle(mangled_name);  // Use mangled name for uniqueness
-	// Note: We don't need to populate type_arguments since the mangled name already 
-	// includes all type info including references
+	auto key = FlashCpp::makeInstantiationKey(
+		StringTable::getOrInternStringHandle(template_name), template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -9173,10 +9189,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			~BodyParseGuard() { set.erase(key); }
 		} body_guard{body_parse_in_progress, cycle_key};
 
+		// Set current_template_param_names_ so the expression parser can find
+		// non-type template parameters (e.g., N in "x * N") via template_param_substitutions_
+		std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& pn : param_names) {
+			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+		}
+
 		// Parse the function body
 		auto block_result = parse_block();
 		
-		// Restore the template parameter substitutions
+		// Restore the template parameter substitutions and param names
+		current_template_param_names_ = std::move(saved_template_param_names);
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
@@ -9551,18 +9576,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Step 2: Check if we already have this instantiation
-	TemplateInstantiationKey key;
-	key.template_name = StringTable::getOrInternStringHandle(template_name);
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-			key.type_index_arguments.push_back(arg.type_index);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(arg.template_name);
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
+	auto key = FlashCpp::makeInstantiationKey(
+		StringTable::getOrInternStringHandle(template_name), template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -9821,7 +9836,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0);	// Placeholder size
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
-			// instead of staying as UserDefined, which would cause toString() to return "$unresolved"
+			// instead of staying as UserDefined, which would cause toString() to return "?"
 			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
 				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
@@ -9878,21 +9893,19 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// This catches cases like "typename enable_if<false>::type" where parsing succeeds
 		// but the type doesn't actually have a ::type member
 		//
-		// NOTE: This validation is limited - it can detect simple cases where the type
-		// is an incomplete instantiation (has unresolved template parameters), but cannot evaluate
-		// complex constant expressions like "is_int<T>::value" in template arguments.
-		// Full SFINAE support would require implementing constant expression evaluation
-		// during template instantiation.
+		// NOTE: is_incomplete_instantiation_ on placeholder types is informational —
+		// it indicates the type was created with dependent/unresolved args during
+		// template definition. During SFINAE re-parse with concrete args, the placeholder
+		// may still be referenced even though it was resolved. SFINAE rejection is
+		// handled by parse failures in parse_type_specifier, not by this flag.
 		if (return_type.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = return_type.as<TypeSpecifierNode>();
 			
 			if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 				
-				// Check for placeholder/unknown types that indicate failed resolution
 				if (type_info.is_incomplete_instantiation_) {
-					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
-					return std::nullopt;  // Substitution failure
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type still has incomplete instantiation placeholder: {}", StringTable::getStringView(type_info.name()));
 				}
 			}
 		}
@@ -11276,24 +11289,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						
 						FLASH_LOG(Templates, Debug, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
 						
-						// The struct name might be a mangled template instantiation
-						// Old format: "is_pointer_impl_T" (underscore-based)
-						// New format: "is_pointer_impl$47b270a920ee3ffb" (hash-based)
-						// We need to extract the template name by removing the suffix
-						size_t separator_pos = struct_name_view.find('$');
-						if (separator_pos == std::string_view::npos) {
-							separator_pos = struct_name_view.rfind('_');
-						}
-						
+						// The struct name might be a mangled template instantiation (hash-based)
+						// Extract the base template name from metadata
 						std::string_view template_name_to_lookup = struct_name_view;
-						if (separator_pos != std::string_view::npos) {
-							std::string_view suffix = struct_name_view.substr(separator_pos + 1);
-							// For hash-based: always extract base name (hash is always after $)
-							// For underscore-based: check if suffix looks like a template parameter
-							if (struct_name_view[separator_pos] == '$' || suffix.length() == 1 || suffix == "typename") {
-								template_name_to_lookup = struct_name_view.substr(0, separator_pos);
-								FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
-							}
+						std::string_view base_name = extractBaseTemplateName(struct_name_view);
+						if (!base_name.empty()) {
+							template_name_to_lookup = base_name;
+							FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
 						}
 						
 						// Try to instantiate the struct/class referenced in the qualified identifier
@@ -11674,23 +11676,43 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& arg : template_args) {
 		if (arg.is_dependent) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Skipping instantiation of {} - template arguments are dependent", template_name);
+			
+			// Register a placeholder TypeInfo for the dependent instantiated name
+			// so that extractBaseTemplateName() can identify it via TypeInfo metadata
+			// without needing string parsing (find('$')).
+			std::string_view inst_name = get_instantiated_class_name(template_name, template_args);
+			StringHandle inst_handle = StringTable::getOrInternStringHandle(inst_name);
+			if (gTypesByName.find(inst_handle) == gTypesByName.end()) {
+				auto& type_info = gTypeInfo.emplace_back();
+				type_info.type_ = Type::UserDefined;
+				type_info.type_index_ = gTypeInfo.size() - 1;
+				type_info.type_size_ = 0;
+				type_info.name_ = inst_handle;
+				auto template_args_info = convertToTemplateArgInfo(template_args);
+				type_info.setTemplateInstantiationInfo(
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+					template_args_info);
+				gTypesByName[inst_handle] = &type_info;
+				FLASH_LOG_FORMAT(Templates, Debug, "Registered dependent placeholder '{}' with base template '{}'", inst_name, template_name);
+			}
+			
 			// Return success (nullopt) but don't actually instantiate
 			// The type will be resolved during actual template instantiation
 			return std::nullopt;
 		}
 	}
 	
-	// V2 Cache: Check TypeIndex-based instantiation cache for O(1) lookup
+	// Check TypeIndex-based instantiation cache for O(1) lookup
 	// This uses TypeIndex instead of string keys to avoid ambiguity with type names containing underscores
 	std::string_view normalized_template_name = template_name;
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		normalized_template_name = template_name.substr(last_colon + 2);
 	}
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
-	auto v2_key = FlashCpp::makeInstantiationKeyV2(template_name_handle, template_args);
-	auto v2_cached = gTemplateRegistry.getInstantiationV2(v2_key);
-	if (v2_cached.has_value()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "V2 cache hit for '{}' with {} args", template_name, template_args.size());
+	auto cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args);
+	auto cached = gTemplateRegistry.getInstantiation(cache_key);
+	if (cached.has_value()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
 		return std::nullopt;  // Already instantiated - return nullopt to indicate success
 	}
 	
@@ -13318,8 +13340,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 		in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 		
-		// Register in V2 cache for O(1) lookup on future instantiations
-		gTemplateRegistry.registerInstantiationV2(v2_key, instantiated_struct);
+		// Register in cache for O(1) lookup on future instantiations
+		gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
 		
 		return instantiated_struct;  // Return the struct node for code generation
 		}
@@ -17267,8 +17289,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 	in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 	
-	// Register in V2 cache for O(1) lookup on future instantiations
-	gTemplateRegistry.registerInstantiationV2(v2_key, instantiated_struct);
+	// Register in cache for O(1) lookup on future instantiations
+	gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
 	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
@@ -17292,9 +17314,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
 	// try the base template class name (e.g., has_foo::method)
 	if (!template_opt.has_value()) {
-		size_t dollar_pos = struct_name.rfind('$');
-		if (dollar_pos != std::string_view::npos) {
-			std::string_view base_name = struct_name.substr(0, dollar_pos);
+		std::string_view base_name = extractBaseTemplateName(struct_name);
+		if (!base_name.empty()) {
 			StringBuilder base_qualified_name_sb;
 			base_qualified_name_sb.append(base_name).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
@@ -17344,18 +17365,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	// Check if we already have this instantiation
-	TemplateInstantiationKey key;
-	key.template_name = qualified_name;  // Already a StringHandle
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-			key.type_index_arguments.push_back(arg.type_index);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(arg.template_name);
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
+	auto key = FlashCpp::makeInstantiationKey(qualified_name, template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -17468,9 +17478,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
 	// try the base template class name (e.g., has_foo::method)
 	if (!all_templates || all_templates->empty()) {
-		size_t dollar_pos = struct_name.rfind('$');
-		if (dollar_pos != std::string_view::npos) {
-			std::string_view base_class_name = struct_name.substr(0, dollar_pos);
+		std::string_view base_class_name = extractBaseTemplateName(struct_name);
+		if (!base_class_name.empty()) {
 			StringBuilder base_qualified_name_sb;
 			base_qualified_name_sb.append(base_class_name).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
@@ -17500,18 +17509,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 
 		// Check if we already have this instantiation
-		TemplateInstantiationKey key;
-		key.template_name = qualified_name;
-		for (const auto& arg : template_args) {
-			if (arg.kind == TemplateArgument::Kind::Type) {
-				key.type_arguments.push_back(arg.type_value);
-				key.type_index_arguments.push_back(arg.type_index);
-			} else if (arg.kind == TemplateArgument::Kind::Template) {
-				key.template_arguments.push_back(arg.template_name);
-			} else {
-				key.value_arguments.push_back(arg.int_value);
-			}
-		}
+		auto key = FlashCpp::makeInstantiationKey(qualified_name, template_args);
 
 		auto existing_inst = gTemplateRegistry.getInstantiation(key);
 		if (existing_inst.has_value()) {
@@ -17595,7 +17593,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	StringHandle qualified_name,
 	const ASTNode& template_node,
 	const std::vector<TemplateArgument>& template_args,
-	const TemplateInstantiationKey& key) {
+	const FlashCpp::TemplateInstantiationKey& key) {
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
@@ -19509,10 +19507,12 @@ ASTNode Parser::substituteTemplateParameters(
 			// that needs to be resolved with concrete template arguments
 			std::string_view func_name = func_call.called_from().value();
 			if (func_name.empty()) func_name = func_call.function_declaration().identifier_token().value();
-			size_t dollar_pos = func_name.empty() ? std::string_view::npos : func_name.find('$');
 			size_t scope_pos = func_name.empty() ? std::string_view::npos : func_name.find("::");
-			if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
-				std::string_view base_template_name = func_name.substr(0, dollar_pos);
+			std::string_view base_template_name;
+			if (scope_pos != std::string_view::npos) {
+				base_template_name = extractBaseTemplateName(func_name.substr(0, scope_pos));
+			}
+			if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
 				std::string_view member_name = func_name.substr(scope_pos + 2);
 				
 				// Build concrete template arguments from the substitution context
@@ -19799,9 +19799,9 @@ ASTNode Parser::substituteTemplateParameters(
 						};
 
 						add_base_name_to_try(struct_name);
-						size_t hash_pos = struct_name.find('$');
-						if (hash_pos != std::string_view::npos) {
-							add_base_name_to_try(struct_name.substr(0, hash_pos));
+						std::string_view base_tmpl_name = extractBaseTemplateName(struct_name);
+						if (!base_tmpl_name.empty()) {
+							add_base_name_to_try(base_tmpl_name);
 						}
 						for (std::string_view base_name : base_names_to_try) {
 							add_name_to_try(base_name);

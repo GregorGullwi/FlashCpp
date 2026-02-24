@@ -372,10 +372,10 @@ struct TemplateTypeArg {
 					if (type_index < gTypeInfo.size()) {
 						result += StringTable::getStringView(gTypeInfo[type_index].name());
 					} else {
-						result += "$unresolved";
+						result += "?";
 					}
 					break;
-				default: result += "$unresolved"; break;
+				default: result += "?"; break;
 			}
 		}
 
@@ -490,13 +490,13 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 }
 
 /**
- * Create a TemplateInstantiationKeyV2 from template name and TemplateTypeArg vector
+ * Create a TemplateInstantiationKey from template name and TemplateTypeArg vector
  */
-inline TemplateInstantiationKeyV2 makeInstantiationKeyV2(
+inline TemplateInstantiationKey makeInstantiationKey(
 	StringHandle template_name,
 	const std::vector<TemplateTypeArg>& args) {
 	
-	TemplateInstantiationKeyV2 key(template_name);
+	TemplateInstantiationKey key(template_name);
 	key.type_args.reserve(args.size());
 	
 	for (const auto& arg : args) {
@@ -529,49 +529,12 @@ inline std::string_view generateInstantiatedNameFromArgs(
 	std::string_view template_name,
 	const std::vector<TemplateTypeArg>& args) {
 	
-	auto key = makeInstantiationKeyV2(
+	auto key = makeInstantiationKey(
 		StringTable::getOrInternStringHandle(template_name), args);
 	return generateInstantiatedName(template_name, key);
 }
 
 } // namespace FlashCpp
-
-// Template instantiation key - uniquely identifies a template instantiation
-struct TemplateInstantiationKey {
-	StringHandle template_name;
-	InlineVector<Type> type_arguments;  // For type parameters (Type enum)
-	InlineVector<TypeIndex> type_index_arguments;  // TypeIndex per type arg (differentiates struct types)
-	InlineVector<int64_t> value_arguments;  // For non-type parameters
-	InlineVector<StringHandle> template_arguments;  // For template template parameters
-	
-	bool operator==(const TemplateInstantiationKey& other) const {
-		return template_name == other.template_name &&
-		       type_arguments == other.type_arguments &&
-		       type_index_arguments == other.type_index_arguments &&
-		       value_arguments == other.value_arguments &&
-		       template_arguments == other.template_arguments;
-	}
-};
-
-// Hash function for TemplateInstantiationKey
-struct TemplateInstantiationKeyHash {
-	std::size_t operator()(const TemplateInstantiationKey& key) const {
-		std::size_t hash = std::hash<StringHandle>{}(key.template_name);
-		for (const auto& type : key.type_arguments) {
-			hash ^= std::hash<int>{}(static_cast<int>(type)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		for (const auto& idx : key.type_index_arguments) {
-			hash ^= std::hash<TypeIndex>{}(idx) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		for (const auto& value : key.value_arguments) {
-			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		for (const auto& tmpl : key.template_arguments) {
-			hash ^= std::hash<StringHandle>{}(tmpl) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		return hash;
-	}
-};
 
 // Template argument - can be a type, a value, or a template
 struct TemplateArgument {
@@ -761,6 +724,34 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 		return TemplateArgument::makeTypeSpecifier(ts);
 	}
 }
+
+/**
+ * Create a TemplateInstantiationKey from template name and TemplateArgument vector.
+ * Overload of makeInstantiationKey(StringHandle, const std::vector<TemplateTypeArg>&)
+ * that accepts TemplateArgument (the parser-level representation) instead of TemplateTypeArg.
+ * Each TemplateArgument is converted to TypeIndexArg via toTemplateTypeArg().
+ */
+namespace FlashCpp {
+inline TemplateInstantiationKey makeInstantiationKey(
+	StringHandle template_name,
+	const std::vector<TemplateArgument>& args) {
+	
+	TemplateInstantiationKey key(template_name);
+	
+	for (const auto& arg : args) {
+		if (arg.kind == TemplateArgument::Kind::Value) {
+			key.value_args.push_back(arg.int_value);
+		} else if (arg.kind == TemplateArgument::Kind::Template) {
+			key.template_template_args.push_back(arg.template_name);
+		} else {
+			// Type argument — convert via toTemplateTypeArg then to TypeIndexArg
+			key.type_args.push_back(makeTypeIndexArg(toTemplateTypeArg(arg)));
+		}
+	}
+	
+	return key;
+}
+} // namespace FlashCpp
 
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
@@ -1342,12 +1333,12 @@ public:
 	}
 	
 	// Check if a template instantiation already exists
-	bool hasInstantiation(const TemplateInstantiationKey& key) const {
+	bool hasInstantiation(const FlashCpp::TemplateInstantiationKey& key) const {
 		return instantiations_.find(key) != instantiations_.end();
 	}
 	
 	// Get an existing instantiation
-	std::optional<ASTNode> getInstantiation(const TemplateInstantiationKey& key) const {
+	std::optional<ASTNode> getInstantiation(const FlashCpp::TemplateInstantiationKey& key) const {
 		auto it = instantiations_.find(key);
 		if (it != instantiations_.end()) {
 			return it->second;
@@ -1356,41 +1347,23 @@ public:
 	}
 	
 	// Register a new instantiation
-	void registerInstantiation(const TemplateInstantiationKey& key, ASTNode instantiated_node) {
+	void registerInstantiation(const FlashCpp::TemplateInstantiationKey& key, ASTNode instantiated_node) {
 		instantiations_[key] = instantiated_node;
 	}
 	
-	// ============================================================================
-	// V2 TypeIndex-based template instantiation API
-	// ============================================================================
-	
-	// Get an existing instantiation using V2 key
-	std::optional<ASTNode> getInstantiationV2(const FlashCpp::TemplateInstantiationKeyV2& key) const {
-		auto it = instantiations_v2_.find(key);
-		if (it != instantiations_v2_.end()) {
-			return it->second;
-		}
-		return std::nullopt;
+	// Convenience method: register instantiation using template name and TemplateTypeArg args
+	void registerInstantiation(StringHandle template_name, 
+	                            const std::vector<TemplateTypeArg>& args,
+	                            ASTNode instantiated_node) {
+		auto key = FlashCpp::makeInstantiationKey(template_name, args);
+		instantiations_[key] = instantiated_node;
 	}
 	
-	// Register a new instantiation using V2 key
-	void registerInstantiationV2(const FlashCpp::TemplateInstantiationKeyV2& key, ASTNode instantiated_node) {
-		instantiations_v2_[key] = instantiated_node;
-	}
-	
-	// Convenience method: register instantiation using template name and args
-	void registerInstantiationV2(StringHandle template_name, 
-	                              const std::vector<TemplateTypeArg>& args,
-	                              ASTNode instantiated_node) {
-		auto key = FlashCpp::makeInstantiationKeyV2(template_name, args);
-		instantiations_v2_[key] = instantiated_node;
-	}
-	
-	// Convenience method: lookup instantiation using template name and args
-	std::optional<ASTNode> getInstantiationV2(StringHandle template_name,
-	                                           const std::vector<TemplateTypeArg>& args) const {
-		auto key = FlashCpp::makeInstantiationKeyV2(template_name, args);
-		return getInstantiationV2(key);
+	// Convenience method: lookup instantiation using template name and TemplateTypeArg args
+	std::optional<ASTNode> getInstantiation(StringHandle template_name,
+	                                         const std::vector<TemplateTypeArg>& args) const {
+		auto key = FlashCpp::makeInstantiationKey(template_name, args);
+		return getInstantiation(key);
 	}
 	
 	// Helper to convert Type to string for mangling
@@ -1409,7 +1382,7 @@ public:
 			case Type::UnsignedLongLong: return "ulonglong";
 			case Type::UnsignedShort: return "ushort";
 			case Type::UnsignedChar: return "uchar";
-			default: return "$unresolved";
+			default: return "?";
 		}
 	}
 
@@ -1816,7 +1789,6 @@ public:
 		templates_.clear();
 		template_parameters_.clear();
 		instantiations_.clear();
-		instantiations_v2_.clear();
 		out_of_line_variables_.clear();
 		out_of_line_members_.clear();
 		specializations_.clear();
@@ -1893,13 +1865,9 @@ private:
 	// Map from class template name to deduction guides (StringHandle key for fast lookup)
 	std::unordered_map<StringHandle, std::vector<ASTNode>, StringHandleHash, std::equal_to<>> deduction_guides_;
 
-	// Map from instantiation key to instantiated function node
-	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
-	
-	// V2: TypeIndex-based template instantiation cache (replaces string-based keys)
-	// This provides O(1) lookup without string concatenation and avoids ambiguity
-	// when type names contain underscores
-	std::unordered_map<FlashCpp::TemplateInstantiationKeyV2, ASTNode, FlashCpp::TemplateInstantiationKeyV2Hash> instantiations_v2_;
+	// TypeIndex-based template instantiation cache
+	// Uses TemplateInstantiationKey for O(1) lookup without string concatenation
+	std::unordered_map<FlashCpp::TemplateInstantiationKey, ASTNode, FlashCpp::TemplateInstantiationKeyHash> instantiations_;
 
 	// Map from class name to out-of-line member function definitions (StringHandle key for efficient lookup)
 	std::unordered_map<StringHandle, std::vector<OutOfLineMemberFunction>, TransparentStringHash, TransparentStringEqual> out_of_line_members_;
@@ -1933,6 +1901,26 @@ private:
 
 // Global template registry
 extern TemplateRegistry gTemplateRegistry;
+
+// ============================================================================
+// Template name extraction helper
+// ============================================================================
+
+/**
+ * Extract the base template name from an instantiated name.
+ *
+ * Checks gTypesByName for the name — if the TypeInfo has
+ * isTemplateInstantiation() metadata, returns baseTemplateName() directly.
+ * Returns empty string_view if the name is not a template instantiation.
+ */
+inline std::string_view extractBaseTemplateName(std::string_view name) {
+	auto name_handle = StringTable::getOrInternStringHandle(name);
+	auto type_it = gTypesByName.find(name_handle);
+	if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
+		return StringTable::getStringView(type_it->second->baseTemplateName());
+	}
+	return {};
+}
 
 // ============================================================================
 // Lazy Template Member Function Instantiation Registry

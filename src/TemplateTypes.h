@@ -114,11 +114,11 @@ struct TypeIndexArg {
 };
 
 // ============================================================================
-// TemplateInstantiationKeyV2 - TypeIndex-based template instantiation key
+// TemplateInstantiationKey - TypeIndex-based template instantiation key
 // ============================================================================
 
 /**
- * TemplateInstantiationKeyV2 - A template instantiation key using TypeIndex
+ * TemplateInstantiationKey - A template instantiation key using TypeIndex
  * 
  * This replaces string-based template instantiation keys with TypeIndex-based
  * keys. The key components are:
@@ -138,25 +138,25 @@ struct TypeIndexArg {
  * TypeIndex-based keys are unambiguous because TypeIndex is assigned uniquely
  * to each type during parsing.
  */
-struct TemplateInstantiationKeyV2 {
+struct TemplateInstantiationKey {
 	StringHandle base_template;                           // Template name handle
 	InlineVector<TypeIndexArg, 4> type_args;              // Type arguments
 	InlineVector<int64_t, 4> value_args;                  // Non-type arguments
 	InlineVector<StringHandle, 2> template_template_args; // Template template args
 	
-	TemplateInstantiationKeyV2() = default;
+	TemplateInstantiationKey() = default;
 	
-	explicit TemplateInstantiationKeyV2(StringHandle template_name)
+	explicit TemplateInstantiationKey(StringHandle template_name)
 		: base_template(template_name) {}
 	
-	bool operator==(const TemplateInstantiationKeyV2& other) const {
+	bool operator==(const TemplateInstantiationKey& other) const {
 		return base_template == other.base_template &&
 		       type_args == other.type_args &&
 		       value_args == other.value_args &&
 		       template_template_args == other.template_template_args;
 	}
 	
-	bool operator!=(const TemplateInstantiationKeyV2& other) const {
+	bool operator!=(const TemplateInstantiationKey& other) const {
 		return !(*this == other);
 	}
 	
@@ -175,10 +175,10 @@ struct TemplateInstantiationKeyV2 {
 };
 
 /**
- * Hash function for TemplateInstantiationKeyV2
+ * Hash function for TemplateInstantiationKey
  */
-struct TemplateInstantiationKeyV2Hash {
-	size_t operator()(const TemplateInstantiationKeyV2& key) const {
+struct TemplateInstantiationKeyHash {
+	size_t operator()(const TemplateInstantiationKey& key) const {
 		size_t h = std::hash<uint32_t>{}(key.base_template.handle);
 		
 		// Hash type arguments
@@ -278,7 +278,7 @@ struct FunctionSignatureKeyHash {
  * @return A unique, human-readable name like "is_arithmetic$a1b2c3d4"
  */
 inline std::string_view generateInstantiatedName(std::string_view template_name, 
-                                                  const TemplateInstantiationKeyV2& key) {
+                                                  const TemplateInstantiationKey& key) {
 	// Compute the hash of the template arguments
 	size_t h = 0;
 	for (const auto& arg : key.type_args) {
@@ -317,16 +317,16 @@ inline std::string_view generateInstantiatedName(std::string_view template_name,
 // 
 // Available functions:
 //   - FlashCpp::makeTypeIndexArg(const TemplateTypeArg& arg) -> TypeIndexArg
-//   - FlashCpp::makeInstantiationKeyV2(StringHandle, const std::vector<TemplateTypeArg>&) -> TemplateInstantiationKeyV2
+//   - FlashCpp::makeInstantiationKey(StringHandle, const std::vector<TemplateTypeArg>&) -> TemplateInstantiationKey
 
 } // namespace FlashCpp
 
 // Provide std::hash specialization for use with unordered_map
 namespace std {
 	template<>
-	struct hash<FlashCpp::TemplateInstantiationKeyV2> {
-		size_t operator()(const FlashCpp::TemplateInstantiationKeyV2& key) const {
-			return FlashCpp::TemplateInstantiationKeyV2Hash{}(key);
+	struct hash<FlashCpp::TemplateInstantiationKey> {
+		size_t operator()(const FlashCpp::TemplateInstantiationKey& key) const {
+			return FlashCpp::TemplateInstantiationKeyHash{}(key);
 		}
 	};
 	

@@ -542,10 +542,12 @@
 		// These occur when a template body contains Base<T>::member() and T is substituted
 		// but the hash was computed with the dependent type, not the concrete type.
 		if (!matched_func_decl) {
-			size_t dollar_pos = func_name_view.find('$');
 			size_t scope_pos = func_name_view.find("::");
-			if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
-				std::string_view base_template_name = func_name_view.substr(0, dollar_pos);
+			std::string_view base_template_name;
+			if (scope_pos != std::string_view::npos) {
+				base_template_name = extractBaseTemplateName(func_name_view.substr(0, scope_pos));
+			}
+			if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
 				std::string_view member_name = func_name_view.substr(scope_pos + 2);
 				
 				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving dependent qualified call: base_template='{}', member='{}'", base_template_name, member_name);
@@ -1943,14 +1945,7 @@
 					}
 					
 					// Check if we already have this instantiation
-					TemplateInstantiationKey inst_key;
-					inst_key.template_name = qualified_template_name;
-					for (const auto& arg : template_args) {
-						if (arg.kind == TemplateArgument::Kind::Type) {
-							inst_key.type_arguments.push_back(arg.type_value);
-							inst_key.type_index_arguments.push_back(arg.type_index);
-						}
-					}
+					auto inst_key = FlashCpp::makeInstantiationKey(qualified_template_name, template_args);
 					
 					auto existing_inst = gTemplateRegistry.getInstantiation(inst_key);
 					if (!existing_inst.has_value()) {
