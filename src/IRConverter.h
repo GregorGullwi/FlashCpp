@@ -9128,7 +9128,7 @@ private:
 			if (is_initialized) {
 				CodeView::VariableLocation loc;
 				loc.type = CodeView::VariableLocation::REGISTER;
-				loc.offset = 0;
+				loc.offset = var_it->second.offset;  // Provide stack offset as fallback for DWARF
 				loc.start_offset = start_offset;
 				loc.length = 100; // Placeholder until lifetime analysis is implemented
 				loc.register_code = getX64RegisterCodeViewCode(allocated_reg_val);
