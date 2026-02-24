@@ -86,166 +86,80 @@ inline bool xmm_needs_rex(X64Register xmm_reg) {
 }
 
 /**
- * @brief Generates a properly encoded SSE instruction for XMM register operations.
+ * @brief Generates a properly encoded SSE instruction with an optional prefix byte.
  * 
- * This function handles the REX prefix for XMM8-XMM15 registers. For SSE instructions,
- * the REX prefix format is: 0100WRXB where:
+ * Unified SSE instruction encoder that handles all three encoding forms:
+ * - With mandatory prefix (F3/F2): prefix [REX] 0F opcode ModR/M  (e.g., addss, addsd)
+ * - Without prefix:                [REX] 0F opcode ModR/M          (e.g., comiss)
+ * - With 0x66 override:            66 [REX] 0F opcode ModR/M       (e.g., comisd)
+ * 
+ * REX prefix format: 0100WRXB where:
  * - W is 0 for most SSE ops (legacy SSE, not 64-bit extension)
  * - R extends the ModR/M reg field (for xmm_dst >= XMM8)
  * - X extends the SIB index field (not used for reg-reg ops)
  * - B extends the ModR/M r/m field (for xmm_src >= XMM8)
  * 
- * @param prefix1 First prefix byte (e.g., 0xF3 for single-precision, 0xF2 for double-precision)
+ * @param prefix Optional prefix byte (0xF3, 0xF2, 0x66, or 0 for none)
  * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
- * @param opcode2 Second opcode byte (e.g., 0x58 for addss/addsd)
+ * @param opcode2 Second opcode byte (e.g., 0x58 for addss/addsd, 0x2F for comiss/comisd)
  * @param xmm_dst Destination XMM register
  * @param xmm_src Source XMM register
  * @return An OpCodeWithSize struct containing the instruction bytes
  */
+inline OpCodeWithSize generateSSEInstructionWithPrefix(uint8_t prefix, uint8_t opcode1, uint8_t opcode2, 
+                                                        X64Register xmm_dst, X64Register xmm_src) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* ptr = result.op_codes.data();
+	
+	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
+	uint8_t src_index = xmm_modrm_bits(xmm_src);
+	
+	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
+	
+	// Emit prefix byte if present (comes before REX)
+	if (prefix != 0) {
+		*ptr++ = prefix;
+		result.size_in_bytes++;
+	}
+	
+	// REX prefix comes after any prefix but before opcode bytes
+	if (needs_rex) {
+		uint8_t rex = REX_BASE;
+		if (dst_index >= 8) rex |= 0x04;  // REX.R
+		if (src_index >= 8) rex |= 0x01;  // REX.B
+		*ptr++ = rex;
+		result.size_in_bytes++;
+	}
+	
+	// Emit opcode bytes
+	*ptr++ = opcode1;
+	result.size_in_bytes++;
+	*ptr++ = opcode2;
+	result.size_in_bytes++;
+	
+	// ModR/M byte: 11 reg r/m (register-to-register mode)
+	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
+	*ptr++ = modrm;
+	result.size_in_bytes++;
+	
+	return result;
+}
+
+// Convenience wrappers for backward compatibility
 inline OpCodeWithSize generateSSEInstruction(uint8_t prefix1, uint8_t opcode1, uint8_t opcode2, 
                                               X64Register xmm_dst, X64Register xmm_src) {
-	OpCodeWithSize result;
-	result.size_in_bytes = 0;
-	uint8_t* ptr = result.op_codes.data();
-	
-	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
-	uint8_t src_index = xmm_modrm_bits(xmm_src);
-	
-	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
-	
-	// Always emit the mandatory prefix (F3 or F2)
-	*ptr++ = prefix1;
-	result.size_in_bytes++;
-	
-	// REX prefix must come after F3/F2 but before 0F for SSE instructions
-	if (needs_rex) {
-		uint8_t rex = 0x40;  // Base REX prefix
-		if (dst_index >= 8) {
-			rex |= 0x04;  // REX.R - extends ModR/M reg field
-		}
-		if (src_index >= 8) {
-			rex |= 0x01;  // REX.B - extends ModR/M r/m field
-		}
-		*ptr++ = rex;
-		result.size_in_bytes++;
-	}
-	
-	// Emit opcode bytes
-	*ptr++ = opcode1;
-	result.size_in_bytes++;
-	*ptr++ = opcode2;
-	result.size_in_bytes++;
-	
-	// ModR/M byte: 11 reg r/m (register-to-register mode)
-	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
-	*ptr++ = modrm;
-	result.size_in_bytes++;
-	
-	return result;
+	return generateSSEInstructionWithPrefix(prefix1, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
-/**
- * @brief Generates a properly encoded SSE instruction without mandatory prefix (like comiss).
- * 
- * This function handles the REX prefix for XMM8-XMM15 registers. For SSE instructions
- * without mandatory prefix (F3/F2), the format is: [REX] 0F opcode ModR/M
- * 
- * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
- * @param opcode2 Second opcode byte (e.g., 0x2F for comiss)
- * @param xmm_dst Destination XMM register
- * @param xmm_src Source XMM register
- * @return An OpCodeWithSize struct containing the instruction bytes
- */
 inline OpCodeWithSize generateSSEInstructionNoPrefix(uint8_t opcode1, uint8_t opcode2, 
                                                       X64Register xmm_dst, X64Register xmm_src) {
-	OpCodeWithSize result;
-	result.size_in_bytes = 0;
-	uint8_t* ptr = result.op_codes.data();
-	
-	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
-	uint8_t src_index = xmm_modrm_bits(xmm_src);
-	
-	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
-	
-	// REX prefix must come before opcode for SSE instructions without mandatory prefix
-	if (needs_rex) {
-		uint8_t rex = 0x40;  // Base REX prefix
-		if (dst_index >= 8) {
-			rex |= 0x04;  // REX.R - extends ModR/M reg field
-		}
-		if (src_index >= 8) {
-			rex |= 0x01;  // REX.B - extends ModR/M r/m field
-		}
-		*ptr++ = rex;
-		result.size_in_bytes++;
-	}
-	
-	// Emit opcode bytes
-	*ptr++ = opcode1;
-	result.size_in_bytes++;
-	*ptr++ = opcode2;
-	result.size_in_bytes++;
-	
-	// ModR/M byte: 11 reg r/m (register-to-register mode)
-	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
-	*ptr++ = modrm;
-	result.size_in_bytes++;
-	
-	return result;
+	return generateSSEInstructionWithPrefix(0, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
-/**
- * @brief Generates a properly encoded double-precision SSE instruction with 0x66 prefix.
- * 
- * This function handles double-precision scalar instructions like comisd, ucomisd that use
- * the 0x66 operand-size override prefix. The format is: 66 [REX] 0F opcode ModR/M
- * 
- * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
- * @param opcode2 Second opcode byte (e.g., 0x2F for comisd)
- * @param xmm_dst Destination XMM register
- * @param xmm_src Source XMM register
- * @return An OpCodeWithSize struct containing the instruction bytes
- */
 inline OpCodeWithSize generateSSEInstructionDouble(uint8_t opcode1, uint8_t opcode2, 
                                                     X64Register xmm_dst, X64Register xmm_src) {
-	OpCodeWithSize result;
-	result.size_in_bytes = 0;
-	uint8_t* ptr = result.op_codes.data();
-	
-	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
-	uint8_t src_index = xmm_modrm_bits(xmm_src);
-	
-	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
-	
-	// 0x66 operand-size override prefix comes FIRST
-	*ptr++ = 0x66;
-	result.size_in_bytes++;
-	
-	// REX prefix comes AFTER 0x66 but BEFORE opcode
-	if (needs_rex) {
-		uint8_t rex = 0x40;  // Base REX prefix
-		if (dst_index >= 8) {
-			rex |= 0x04;  // REX.R - extends ModR/M reg field
-		}
-		if (src_index >= 8) {
-			rex |= 0x01;  // REX.B - extends ModR/M r/m field
-		}
-		*ptr++ = rex;
-		result.size_in_bytes++;
-	}
-	
-	// Emit opcode bytes
-	*ptr++ = opcode1;
-	result.size_in_bytes++;
-	*ptr++ = opcode2;
-	result.size_in_bytes++;
-	
-	// ModR/M byte: 11 reg r/m (register-to-register mode)
-	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
-	*ptr++ = modrm;
-	result.size_in_bytes++;
-	
-	return result;
+	return generateSSEInstructionWithPrefix(0x66, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
 /**
