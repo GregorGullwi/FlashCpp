@@ -155,6 +155,9 @@ enum class IrOpcode : int_fast16_t {
 	SehLeave,            // __leave statement: jump to end of __try block
 	SehGetExceptionCode, // GetExceptionCode() intrinsic - reads ExceptionCode from RCX in filter funclet
 	SehGetExceptionInfo, // GetExceptionInformation() intrinsic - returns EXCEPTION_POINTERS* (RCX) in filter funclet
+	SehSaveExceptionCode,     // Save ExceptionCode from filter's [rsp+8] to a parent-frame slot
+	SehGetExceptionCodeBody,  // Read ExceptionCode from parent-frame slot (in __except body)
+	SehAbnormalTermination,   // _abnormal_termination() intrinsic - reads ECX saved in finally funclet prologue
 };
 
 // ============================================================================
@@ -420,7 +423,8 @@ struct LValueInfo {
 		Indirect,      // Through pointer dereference: *ptr
 		Member,        // Struct member access: obj.member
 		ArrayElement,  // Array element access: arr[i]
-		Temporary      // Temporary materialization
+		Temporary,     // Temporary materialization
+		Global         // Global variable: base = StringHandle (global name)
 	};
 	
 	Kind kind;
@@ -1489,7 +1493,9 @@ struct SehFinallyCallOp {
 
 // SEH filter funclet end - return filter result in EAX
 struct SehFilterEndOp {
-	TempVar filter_result;  // Temporary holding the filter expression result
+	TempVar filter_result;     // Temporary holding the filter expression result (used when !is_constant_result)
+	bool is_constant_result;   // True if the filter result is a compile-time constant
+	int32_t constant_result;   // Constant filter result value (used when is_constant_result)
 };
 
 // SEH __leave operation - jumps to end of current __try block
@@ -1500,6 +1506,22 @@ struct SehLeaveOp {
 // SEH GetExceptionCode() / GetExceptionInformation() intrinsic result
 struct SehExceptionIntrinsicOp {
 	TempVar result;  // Temporary to store the result
+};
+
+// SEH SehSaveExceptionCode: save ExceptionCode from filter funclet's [rsp+8] to parent frame slot
+struct SehSaveExceptionCodeOp {
+	TempVar saved_var;  // Parent-frame temp var to save exception code into
+};
+
+// SEH SehGetExceptionCodeBody: read exception code from parent-frame slot in __except body
+struct SehGetExceptionCodeBodyOp {
+	TempVar saved_var;  // Parent-frame slot where exception code was saved during filter
+	TempVar result;     // Temporary to store the loaded exception code
+};
+
+// SEH _abnormal_termination() / AbnormalTermination(): reads ECX saved in __finally funclet prologue
+struct SehAbnormalTerminationOp {
+	TempVar result;  // Temporary to store the result (0=normal, non-zero=exception unwind)
 };
 
 // Helper function to format conversion operations for IR output
@@ -2913,7 +2935,11 @@ public:
 		case IrOpcode::SehFilterEnd:
 		{
 			const auto& op = getTypedPayload<SehFilterEndOp>();
-			oss << "seh_filter_end %" << op.filter_result.var_number;
+			if (op.is_constant_result) {
+				oss << "seh_filter_end constant=" << op.constant_result;
+			} else {
+				oss << "seh_filter_end %" << op.filter_result.var_number;
+			}
 		}
 		break;
 
@@ -2935,6 +2961,27 @@ public:
 		{
 			const auto& op = getTypedPayload<SehExceptionIntrinsicOp>();
 			oss << "%" << op.result.var_number << " = seh_get_exception_info";
+		}
+		break;
+
+		case IrOpcode::SehSaveExceptionCode:
+		{
+			const auto& op = getTypedPayload<SehSaveExceptionCodeOp>();
+			oss << "seh_save_exception_code -> %" << op.saved_var.var_number;
+		}
+		break;
+
+		case IrOpcode::SehGetExceptionCodeBody:
+		{
+			const auto& op = getTypedPayload<SehGetExceptionCodeBodyOp>();
+			oss << "%" << op.result.var_number << " = seh_get_exception_code_body(%" << op.saved_var.var_number << ")";
+		}
+		break;
+
+		case IrOpcode::SehAbnormalTermination:
+		{
+			const auto& op = getTypedPayload<SehAbnormalTerminationOp>();
+			oss << "%" << op.result.var_number << " = seh_abnormal_termination";
 		}
 		break;
 

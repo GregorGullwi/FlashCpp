@@ -3562,6 +3562,15 @@ public:
 			case IrOpcode::SehGetExceptionInfo:
 				handleSehGetExceptionInfo(instruction);
 				break;
+			case IrOpcode::SehSaveExceptionCode:
+				handleSehSaveExceptionCode(instruction);
+				break;
+			case IrOpcode::SehGetExceptionCodeBody:
+				handleSehGetExceptionCodeBody(instruction);
+				break;
+			case IrOpcode::SehAbnormalTermination:
+				handleSehAbnormalTermination(instruction);
+				break;
 			default:
 				throw std::runtime_error("Not implemented yet");
 				break;
@@ -16625,9 +16634,18 @@ private:
 		//   push rbp
 		//   sub rsp, 32     (shadow space for any calls within __finally)
 		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		//   mov [rsp+8], ecx  (save AbnormalTermination flag for _abnormal_termination() intrinsic)
 		emitPushReg(X64Register::RBP);
 		emitSubRSP(32);
 		emitMovRegReg(X64Register::RBP, X64Register::RDX);
+
+		// Save AbnormalTermination (ECX) to shadow space slot 2 ([rsp+0x08])
+		// _abnormal_termination() will load it from there.
+		// mov dword ptr [rsp+8], ecx  (89 4C 24 08)
+		textSectionData.push_back(static_cast<char>(0x89));
+		textSectionData.push_back(static_cast<char>(0x4C));
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
 	}
 
 	void handleSehFinallyEnd([[maybe_unused]] const IrInstruction& instruction) {
@@ -16735,15 +16753,22 @@ private:
 
 		const auto& op = instruction.getTypedPayload<SehFilterEndOp>();
 
-		FLASH_LOG(Codegen, Debug, "SEH filter funclet end, result temp=", op.filter_result.var_number);
+		FLASH_LOG(Codegen, Debug, "SEH filter funclet end, result temp=", op.filter_result.var_number,
+		          " is_constant=", op.is_constant_result);
 
 		// Flush all dirty registers to ensure filter result is on the stack
 		flushAllDirtyRegisters();
 
-		// Load the filter result from stack into EAX
-		// getStackOffsetFromTempVar returns the RBP-relative offset
-		int32_t filter_offset = getStackOffsetFromTempVar(op.filter_result, 32);
-		emitMovFromFrameBySize(X64Register::RAX, filter_offset, 32);
+		// Load the filter result into EAX
+		if (op.is_constant_result) {
+			// Constant filter result (e.g. from a comma expression ending in a literal)
+			// mov eax, imm32
+			emitMovImm32(X64Register::RAX, static_cast<uint32_t>(op.constant_result));
+		} else {
+			// Load the filter result from its stack slot via RBP-relative addressing
+			int32_t filter_offset = getStackOffsetFromTempVar(op.filter_result, 32);
+			emitMovFromFrameBySize(X64Register::RAX, filter_offset, 32);
+		}
 
 		// Emit funclet epilogue:
 		//   add rsp, 32
@@ -16752,6 +16777,71 @@ private:
 		emitAddRSP(32);
 		emitPopReg(X64Register::RBP);
 		textSectionData.push_back(0xC3); // RET
+	}
+
+	void handleSehSaveExceptionCode(const IrInstruction& instruction) {
+		// SehSaveExceptionCode: called at start of filter funclet.
+		// EXCEPTION_POINTERS* was saved to [rsp+0x08] in handleSehFilterBegin.
+		// This handler reads ExceptionCode and writes it to a parent-frame slot so
+		// GetExceptionCode() works in the __except body (not just the filter expression).
+		const auto& op = instruction.getTypedPayload<SehSaveExceptionCodeOp>();
+
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x44);
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+		// mov rax, [rax]        ; ExceptionRecord* (48 8B 00)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x00);
+		// mov eax, [rax]        ; ExceptionCode (DWORD) (8B 00)
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x00);
+
+		// Store 32-bit ExceptionCode to the parent-frame slot (accessible via RBP)
+		int32_t saved_offset = getStackOffsetFromTempVar(op.saved_var, 32);
+		emitMovToFrameBySize(X64Register::RAX, saved_offset, 32);
+
+		FLASH_LOG(Codegen, Debug, "SehSaveExceptionCode: saved to [rbp+", saved_offset, "]");
+	}
+
+	void handleSehGetExceptionCodeBody(const IrInstruction& instruction) {
+		// SehGetExceptionCodeBody: load ExceptionCode from parent-frame slot
+		// (the slot was written by handleSehSaveExceptionCode in the filter funclet)
+		const auto& op = instruction.getTypedPayload<SehGetExceptionCodeBodyOp>();
+
+		// Load saved ExceptionCode from parent-frame slot
+		int32_t saved_offset = getStackOffsetFromTempVar(op.saved_var, 32);
+		emitMovFromFrameBySize(X64Register::RAX, saved_offset, 32);
+
+		// Store to result slot
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
+
+		FLASH_LOG(Codegen, Debug, "SehGetExceptionCodeBody: from [rbp+", saved_offset, "] -> result [rbp+", result_offset, "]");
+	}
+
+	void handleSehAbnormalTermination(const IrInstruction& instruction) {
+		// SehAbnormalTermination: _abnormal_termination() / AbnormalTermination() intrinsic
+		// Only valid inside a __finally funclet.
+		// ECX was saved to [rsp+0x08] in handleSehFinallyBegin.
+		// Returns: 0 if __finally running due to normal control flow,
+		//          non-zero if __finally running during exception unwind.
+		const auto& op = instruction.getTypedPayload<SehAbnormalTerminationOp>();
+
+		// mov eax, [rsp+0x08]   ; AbnormalTermination flag (8B 44 24 08)
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x44);
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+
+		// Store 32-bit result to result slot
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
+
+		FLASH_LOG(Codegen, Debug, "SehAbnormalTermination: result at [rbp+", result_offset, "]");
 	}
 
 	void handleSehLeave(const IrInstruction& instruction) {

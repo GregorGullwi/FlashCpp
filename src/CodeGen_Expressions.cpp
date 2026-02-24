@@ -1002,7 +1002,15 @@
 				}
 				
 				op.is_array = is_array_type;  // Arrays need LEA to get address
+				StringHandle saved_global_name = op.global_name;  // save before move
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+
+				// Register Global lvalue metadata so compound assignments (+=, -=, etc.) can write back
+				if (!is_array_type) {
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+						LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+						type_node.type(), size_bits));
+				}
 
 				// Return the temp variable that will hold the loaded value
 				// Include type_index for struct types
@@ -3428,8 +3436,10 @@
 					// Extract the value from RHS (rhsIrOperands[2])
 					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
 						store_operands.emplace_back(std::get<TempVar>(rhsIrOperands[2]));
-					} else if (std::holds_alternative<unsigned long long>(rhsIrOperands[2]) || std::holds_alternative<double>(rhsIrOperands[2])) {
-						// For constant values, we need to create a temp var and assign to it first
+					} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])
+					        || std::holds_alternative<unsigned long long>(rhsIrOperands[2])
+					        || std::holds_alternative<double>(rhsIrOperands[2])) {
+						// Local variable (StringHandle) or constant: load into a temp first
 						TempVar temp = var_counter.next();
 						AssignmentOp assign_op;
 						assign_op.result = temp;
@@ -3440,7 +3450,8 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 						store_operands.emplace_back(temp);
 					} else {
-						store_operands.emplace_back(std::get<TempVar>(rhsIrOperands[2]));
+						FLASH_LOG(Codegen, Error, "GlobalStore: unsupported RHS IrOperand type");
+						return {};
 					}
 
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
@@ -4712,6 +4723,9 @@
 		if (func_name == "GetExceptionInformation" || func_name == "_exception_info") {
 			return generateGetExceptionInformationIntrinsic(functionCallNode);
 		}
+		if (func_name == "_abnormal_termination" || func_name == "AbnormalTermination") {
+			return generateAbnormalTerminationIntrinsic(functionCallNode);
+		}
 
 		return std::nullopt;  // Not an intrinsic
 	}
@@ -5803,14 +5817,41 @@
 	}
 
 	// GetExceptionCode() - SEH intrinsic
-	// In a filter funclet: RCX = EXCEPTION_POINTERS*, reads ExceptionRecord->ExceptionCode
+	// In a filter funclet: RCX = EXCEPTION_POINTERS*, reads ExceptionRecord->ExceptionCode directly
+	// In __except body: reads from a parent-frame slot that was saved during filter evaluation
 	// Returns unsigned int (DWORD)
 	std::vector<IrOperand> generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
 		TempVar result = var_counter.next();
-		SehExceptionIntrinsicOp op;
-		op.result = result;
-		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
+		if (seh_in_filter_funclet_) {
+			// Filter context: EXCEPTION_POINTERS* is in [rsp+8], read ExceptionCode from there
+			SehExceptionIntrinsicOp op;
+			op.result = result;
+			ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
+		} else if (seh_has_saved_exception_code_) {
+			// __except body context: read from parent-frame slot saved during filter evaluation
+			SehGetExceptionCodeBodyOp op;
+			op.saved_var = seh_saved_exception_code_var_;
+			op.result = result;
+			ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCodeBody, std::move(op), functionCallNode.called_from()));
+		} else {
+			// Fallback (e.g. filter without a saved slot): use the direct filter path
+			SehExceptionIntrinsicOp op;
+			op.result = result;
+			ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
+		}
 		return {Type::UnsignedInt, 32, result, 0ULL};
+	}
+
+	// _abnormal_termination() / AbnormalTermination() - SEH intrinsic
+	// Only valid inside a __finally block.
+	// ECX is saved to [rsp+8] in the finally funclet prologue; reads from there.
+	// Returns int (0 = normal termination, non-zero = exception unwind)
+	std::vector<IrOperand> generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
+		TempVar result = var_counter.next();
+		SehAbnormalTerminationOp op;
+		op.result = result;
+		ir_.addInstruction(IrInstruction(IrOpcode::SehAbnormalTermination, std::move(op), functionCallNode.called_from()));
+		return {Type::Int, 32, result, 0ULL};
 	}
 
 	// GetExceptionInformation() - SEH intrinsic

@@ -1210,6 +1210,10 @@
 		// Jump to end after successful __try block execution
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 
+		// Saved exception code var for GetExceptionCode() in __except body
+		TempVar saved_exception_code_var;
+		bool has_saved_exception_code_for_body = false;
+
 		// For non-constant filters, emit a filter funclet between the try block and except handler
 		if (!is_constant_filter) {
 			StringBuilder filter_sb;
@@ -1219,22 +1223,47 @@
 			// Emit filter funclet label
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(filter_label)}, except_clause.except_token()));
 
-			// Emit SehFilterBegin marker (funclet prologue)
+			// Emit SehFilterBegin marker (funclet prologue: saves RCX to [rsp+8], sets RBP from RDX)
 			ir_.addInstruction(IrOpcode::SehFilterBegin, {}, except_clause.except_token());
 
+			// Allocate a parent-frame slot to save ExceptionCode for use in __except body
+			saved_exception_code_var = var_counter.next();
+			has_saved_exception_code_for_body = true;
+			SehSaveExceptionCodeOp save_op;
+			save_op.saved_var = saved_exception_code_var;
+			ir_.addInstruction(IrInstruction(IrOpcode::SehSaveExceptionCode, std::move(save_op), except_clause.except_token()));
+
+			// Set filter funclet context so GetExceptionCode() uses the filter path (reads RCX)
+			seh_in_filter_funclet_ = true;
+
 			// Evaluate the filter expression inside the funclet
-			// The funclet has rbp set to the parent's frame, so local variable access works
+			// RBP points to parent frame, so local variable access works correctly
 			auto filter_operands = visitExpressionNode(filter_inner_expr);
+
+			// Restore filter funclet context
+			seh_in_filter_funclet_ = false;
+
+			// Determine filter result - TempVar or constant
+			SehFilterEndOp filter_end_op;
 			if (filter_operands.size() >= 3 && std::holds_alternative<TempVar>(filter_operands[2])) {
 				filter_result = std::get<TempVar>(filter_operands[2]);
+				filter_end_op.filter_result = filter_result;
+				filter_end_op.is_constant_result = false;
+				filter_end_op.constant_result = 0;
+				FLASH_LOG(Codegen, Debug, "SEH filter is runtime expression, funclet filter_result=", filter_result.var_number);
+			} else if (filter_operands.size() >= 3 && std::holds_alternative<unsigned long long>(filter_operands[2])) {
+				// Filter expression returned a constant (e.g. comma expr ending in literal 1)
+				filter_end_op.filter_result = filter_result;
+				filter_end_op.is_constant_result = true;
+				filter_end_op.constant_result = static_cast<int32_t>(std::get<unsigned long long>(filter_operands[2]));
+				FLASH_LOG(Codegen, Debug, "SEH filter funclet returns constant=", filter_end_op.constant_result);
+			} else {
+				filter_end_op.filter_result = filter_result;
+				filter_end_op.is_constant_result = false;
+				filter_end_op.constant_result = 0;
+				FLASH_LOG(Codegen, Debug, "SEH filter: unknown result type, using default filter_result");
 			}
-
-			// Emit SehFilterEnd marker (moves result to EAX, funclet epilogue + ret)
-			SehFilterEndOp filter_end_op;
-			filter_end_op.filter_result = filter_result;
 			ir_.addInstruction(IrInstruction(IrOpcode::SehFilterEnd, std::move(filter_end_op), except_clause.except_token()));
-
-			FLASH_LOG(Codegen, Debug, "SEH filter is runtime expression, funclet filter_result=", filter_result.var_number);
 		}
 
 		// Emit label for __except handler entry
@@ -1251,8 +1280,20 @@
 		// Enter scope for __except block
 		symbol_table.enter_scope(ScopeType::Block);
 
+		// Set up GetExceptionCode() context for __except body, saving outer context for nesting
+		bool outer_has_saved = seh_has_saved_exception_code_;
+		TempVar outer_saved_var = seh_saved_exception_code_var_;
+		if (has_saved_exception_code_for_body) {
+			seh_has_saved_exception_code_ = true;
+			seh_saved_exception_code_var_ = saved_exception_code_var;
+		}
+
 		// Visit __except block body
 		visit(except_clause.body());
+
+		// Restore outer GetExceptionCode() context
+		seh_has_saved_exception_code_ = outer_has_saved;
+		seh_saved_exception_code_var_ = outer_saved_var;
 
 		// Emit SehExceptEnd marker
 		ir_.addInstruction(IrOpcode::SehExceptEnd, {}, except_clause.except_token());

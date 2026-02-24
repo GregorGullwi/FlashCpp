@@ -1104,6 +1104,11 @@
 	};
 	std::vector<SehContext> seh_context_stack_;  // Stack of active SEH contexts
 
+	// SEH filter/except body context tracking for GetExceptionCode() disambiguation
+	bool seh_in_filter_funclet_ = false;       // True while visiting the filter expression inside a filter funclet
+	bool seh_has_saved_exception_code_ = false; // True when a saved exception code var is available
+	TempVar seh_saved_exception_code_var_;     // Temp var holding exception code saved during filter, usable in except body
+
 	// SEH context helper methods
 	void pushSehContext(std::string_view end_label, std::string_view finally_label, bool has_finally) {
 		SehContext ctx;
