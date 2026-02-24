@@ -12339,29 +12339,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// WORKAROUND: If the base class name is an incomplete template instantiation, it was instantiated
 			// during pattern parsing with template parameters. We need to re-instantiate
 			// it with the concrete template arguments.
+			// Use TypeInfo metadata to detect incomplete instantiations and extract the base template name.
 			StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_name_str);
 			auto incomplete_type_it = gTypesByName.find(base_name_handle);
-			bool base_is_incomplete = (incomplete_type_it != gTypesByName.end() && incomplete_type_it->second->is_incomplete_instantiation_)
-				|| base_name_str.find("$unresolved") != std::string::npos;
-			if (base_is_incomplete) {
-				// Extract the base template name — prefer TypeInfo metadata (no string parsing needed)
-				std::string base_template_name;
-				if (incomplete_type_it != gTypesByName.end() && incomplete_type_it->second->isTemplateInstantiation()) {
-					base_template_name = std::string(StringTable::getStringView(incomplete_type_it->second->baseTemplateName()));
-				} else {
-					// Fallback: extract template name by finding '$' sentinel boundary.
-					// '$' cannot appear in C++ identifiers, so it's always our marker.
-					// Note: the old naming scheme uses '_' separators between template name and args,
-					// so the extracted prefix may include a trailing '_'. We try both with and without.
-					size_t pos = base_name_str.find('$');
-					std::string candidate = (pos != std::string::npos) ? base_name_str.substr(0, pos) : base_name_str;
-					// First try the exact prefix; if not found as a template, try without trailing '_'
-					auto tmpl_opt = gTemplateRegistry.lookupTemplate(candidate);
-					if (!tmpl_opt.has_value() && !candidate.empty() && candidate.back() == '_') {
-						candidate.pop_back();
-					}
-					base_template_name = std::move(candidate);
-				}
+			bool base_is_incomplete = incomplete_type_it != gTypesByName.end()
+				&& incomplete_type_it->second->is_incomplete_instantiation_;
+			if (base_is_incomplete && incomplete_type_it->second->isTemplateInstantiation()) {
+				std::string_view base_template_name = StringTable::getStringView(
+					incomplete_type_it->second->baseTemplateName());
 				
 				// For partial specialization like Tuple<First, Rest...> : Tuple<Rest...>
 				// The base class uses Rest... (the variadic pack), which corresponds to
