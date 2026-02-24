@@ -1465,7 +1465,6 @@ public:
 		}
 		
 		auto result = FlashCpp::generateInstantiatedNameFromArgs(base_name, type_args);
-		instantiated_names_.insert(StringTable::getOrInternStringHandle(result));
 		return result;
 	}
 
@@ -1828,7 +1827,6 @@ public:
 		instantiation_to_pattern_.clear();
 		class_template_names_.clear();
 		pattern_struct_names_.clear();
-		instantiated_names_.clear();
 		outer_template_bindings_.clear();
 	}
 
@@ -1852,15 +1850,6 @@ public:
 		pattern_struct_names_.insert(pattern_name);
 	}
 
-	// Register a hash-based instantiated name (contains '$')
-	void registerInstantiatedName(StringHandle name) {
-		instantiated_names_.insert(name);
-	}
-
-	// Returns true if 'name' is a hash-based template instantiation name (contains '$')
-	bool isInstantiatedName(StringHandle name) const {
-		return instantiated_names_.count(name) > 0;
-	}
 	
 	// Look up which pattern was used for an instantiation
 	std::optional<StringHandle> get_instantiation_pattern(StringHandle instantiated_name) const {
@@ -1939,9 +1928,7 @@ private:
 	// Used by isPatternStructName() for O(1) lookup, replacing find("_pattern_") substring searches.
 	std::unordered_set<StringHandle, StringHandleHash> pattern_struct_names_;
 
-	// Set of StringHandles that are hash-based template instantiation names (contain '$').
-	// Used by isInstantiatedName() for O(1) lookup, replacing find('$') character scans.
-	std::unordered_set<StringHandle, StringHandleHash> instantiated_names_;
+
 };
 
 // Global template registry

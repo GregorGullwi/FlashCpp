@@ -6188,6 +6188,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
 			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name_str));
 		
+		// Register this as a pattern struct name for O(1) lookup
+		gTemplateRegistry.registerPatternStructName(qualified_pattern_name);
+		
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
 			qualified_pattern_name,
@@ -10525,7 +10528,6 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 		template_name = template_name.substr(last_colon + 2);
 	}
 	auto result = FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
-	gTemplateRegistry.registerInstantiatedName(StringTable::getOrInternStringHandle(result));
 	return result;
 }
 
@@ -11052,9 +11054,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				
 				// Generate unique name for this instantiation using hash-based naming
 				std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
-				gTemplateRegistry.registerInstantiatedName(StringTable::getOrInternStringHandle(persistent_name));
-				
-				// Check if already instantiated
+			
+			// Check if already instantiated
 				if (gSymbolTable.lookup(persistent_name).has_value()) {
 					return gSymbolTable.lookup(persistent_name);
 				}
@@ -11107,7 +11108,6 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	// Generate unique name for the instantiation using hash-based naming
 	// This ensures consistent naming with class template instantiations
 	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
-	gTemplateRegistry.registerInstantiatedName(StringTable::getOrInternStringHandle(persistent_name));
 	
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {
@@ -12349,9 +12349,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (incomplete_type_it != gTypesByName.end() && incomplete_type_it->second->isTemplateInstantiation()) {
 					base_template_name = std::string(StringTable::getStringView(incomplete_type_it->second->baseTemplateName()));
 				} else {
-					// Fallback: extract template name by finding "$unresolved" sentinel
-					size_t pos = base_name_str.find("$unresolved");
-					base_template_name = (pos != std::string::npos) ? base_name_str.substr(0, pos) : base_name_str;
+					// Fallback: extract template name by finding '$' sentinel boundary.
+					// '$' cannot appear in C++ identifiers, so it's always our marker.
+					// Note: the old naming scheme uses '_' separators between template name and args,
+					// so the extracted prefix may include a trailing '_'. We try both with and without.
+					size_t pos = base_name_str.find('$');
+					std::string candidate = (pos != std::string::npos) ? base_name_str.substr(0, pos) : base_name_str;
+					// First try the exact prefix; if not found as a template, try without trailing '_'
+					auto tmpl_opt = gTemplateRegistry.lookupTemplate(candidate);
+					if (!tmpl_opt.has_value() && !candidate.empty() && candidate.back() == '_') {
+						candidate.pop_back();
+					}
+					base_template_name = std::move(candidate);
 				}
 				
 				// For partial specialization like Tuple<First, Rest...> : Tuple<Rest...>
