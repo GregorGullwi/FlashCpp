@@ -1088,6 +1088,7 @@ ParseResult Parser::parse_type_specifier()
 											placeholder_type.type_index_ = gTypeInfo.size() - 1;
 											placeholder_type.type_size_ = 0;
 											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+											placeholder_type.is_incomplete_instantiation_ = true;
 											gTypesByName[placeholder_type.name_] = &placeholder_type;
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
 												Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
@@ -1233,6 +1234,7 @@ ParseResult Parser::parse_type_specifier()
 								placeholder_type.type_index_ = gTypeInfo.size() - 1;
 								placeholder_type.type_size_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+								placeholder_type.is_incomplete_instantiation_ = true;
 								gTypesByName[placeholder_type.name_] = &placeholder_type;
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
@@ -1294,6 +1296,7 @@ ParseResult Parser::parse_type_specifier()
 							placeholder_type.type_index_ = gTypeInfo.size() - 1;
 							placeholder_type.type_size_ = 0;
 							placeholder_type.name_ = type_handle;
+							placeholder_type.is_incomplete_instantiation_ = true;
 							gTypesByName[type_handle] = &placeholder_type;
 							type_idx = placeholder_type.type_index_;
 							FLASH_LOG(Templates, Debug, "Created placeholder for dependent nested type: ", dependent_type_name);
@@ -1663,6 +1666,7 @@ ParseResult Parser::parse_type_specifier()
 							type_info.type_index_ = gTypeInfo.size() - 1;
 							type_info.type_size_ = 0;  // Unknown size for dependent type
 							type_info.name_ = type_idx;
+							type_info.is_incomplete_instantiation_ = true;
 							gTypesByName[type_idx] = &type_info;
 							
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -2104,6 +2108,7 @@ ParseResult Parser::parse_type_specifier()
 						type_info.type_index_ = gTypeInfo.size() - 1;
 						type_info.type_size_ = 0;  // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
+						type_info.is_incomplete_instantiation_ = true;
 						gTypesByName[type_name_handle] = &type_info;
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));

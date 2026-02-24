@@ -744,7 +744,8 @@ ParseResult Parser::parse_template_declaration() {
 			std::string_view type_name = StringTable::getStringView(ti.name());
 
 			// Check for incomplete instantiation indicating unresolved template parameters
-			if (ti.is_incomplete_instantiation_) {
+			// But NOT if the name already contains :: (which means ::type was already resolved)
+			if (ti.is_incomplete_instantiation_ && type_name.find("::") == std::string_view::npos) {
 				has_unresolved_params = true;
 				FLASH_LOG(Parser, Debug, "Alias target type '", StringTable::getStringView(ti.name()), "' has unresolved parameters - using deferred instantiation");
 			}
@@ -9866,21 +9867,19 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// This catches cases like "typename enable_if<false>::type" where parsing succeeds
 		// but the type doesn't actually have a ::type member
 		//
-		// NOTE: This validation is limited - it can detect simple cases where the type
-		// is an incomplete instantiation (has unresolved template parameters), but cannot evaluate
-		// complex constant expressions like "is_int<T>::value" in template arguments.
-		// Full SFINAE support would require implementing constant expression evaluation
-		// during template instantiation.
+		// NOTE: is_incomplete_instantiation_ on placeholder types is informational —
+		// it indicates the type was created with dependent/unresolved args during
+		// template definition. During SFINAE re-parse with concrete args, the placeholder
+		// may still be referenced even though it was resolved. SFINAE rejection is
+		// handled by parse failures in parse_type_specifier, not by this flag.
 		if (return_type.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = return_type.as<TypeSpecifierNode>();
 			
 			if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 				
-				// Check for placeholder/unknown types that indicate failed resolution
 				if (type_info.is_incomplete_instantiation_) {
-					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
-					return std::nullopt;  // Substitution failure
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type still has incomplete instantiation placeholder: {}", StringTable::getStringView(type_info.name()));
 				}
 			}
 		}
