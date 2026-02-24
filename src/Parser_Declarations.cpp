@@ -111,9 +111,8 @@ ParseResult Parser::parse_top_level_node()
 		}
 	}
 
-	// Check if it's a using directive, using declaration, or namespace alias
-	if (peek() == "using"_tok) {
-		auto result = parse_using_directive_or_declaration();
+	// Helper: parse, push resulting node to AST, return success/propagate.
+	auto try_parse_and_push = [&](ParseResult result) -> ParseResult {
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
 				ast_nodes_.push_back(*node);
@@ -121,7 +120,11 @@ ParseResult Parser::parse_top_level_node()
 			return saved_position.success();
 		}
 		return saved_position.propagate(std::move(result));
-	}
+	};
+
+	// Check if it's a using directive, using declaration, or namespace alias
+	if (peek() == "using"_tok)
+		return try_parse_and_push(parse_using_directive_or_declaration());
 
 	// Check if it's a static_assert declaration
 	if (peek() == "static_assert"_tok) {
@@ -139,52 +142,21 @@ ParseResult Parser::parse_top_level_node()
 		if (next.kind() == "namespace"_tok) {
 			pending_inline_namespace_ = true;
 			advance(); // consume 'inline'
-			auto result = parse_namespace();
-			if (!result.is_error()) {
-				if (auto node = result.node()) {
-					ast_nodes_.push_back(*node);
-				}
-				return saved_position.success();
-			}
-			return saved_position.propagate(std::move(result));
+			return try_parse_and_push(parse_namespace());
 		}
 	}
 
 	// Check if it's a namespace declaration
-	if (peek() == "namespace"_tok) {
-		auto result = parse_namespace();
-		if (!result.is_error()) {
-			if (auto node = result.node()) {
-				ast_nodes_.push_back(*node);
-			}
-			return saved_position.success();
-		}
-		return saved_position.propagate(std::move(result));
-	}
+	if (peek() == "namespace"_tok)
+		return try_parse_and_push(parse_namespace());
 
 	// Check if it's a template declaration (must come before struct/class check)
-	if (peek() == "template"_tok) {
-		auto result = parse_template_declaration();
-		if (!result.is_error()) {
-			if (auto node = result.node()) {
-				ast_nodes_.push_back(*node);
-			}
-			return saved_position.success();
-		}
-		return saved_position.propagate(std::move(result));
-	}
+	if (peek() == "template"_tok)
+		return try_parse_and_push(parse_template_declaration());
 
 	// Check if it's a concept declaration (C++20)
-	if (peek() == "concept"_tok) {
-		auto result = parse_concept_declaration();
-		if (!result.is_error()) {
-			if (auto node = result.node()) {
-				ast_nodes_.push_back(*node);
-			}
-			return saved_position.success();
-		}
-		return saved_position.propagate(std::move(result));
-	}
+	if (peek() == "concept"_tok)
+		return try_parse_and_push(parse_concept_declaration());
 
 	// Check if it's a class or struct declaration
 	// Note: alignas can appear before struct, but we handle that in parse_struct_declaration
@@ -206,28 +178,12 @@ ParseResult Parser::parse_top_level_node()
 	}
 
 	// Check if it's an enum declaration
-	if (peek() == "enum"_tok) {
-		auto result = parse_enum_declaration();
-		if (!result.is_error()) {
-			if (auto node = result.node()) {
-				ast_nodes_.push_back(*node);
-			}
-			return saved_position.success();
-		}
-		return saved_position.propagate(std::move(result));
-	}
+	if (peek() == "enum"_tok)
+		return try_parse_and_push(parse_enum_declaration());
 
 	// Check if it's a typedef declaration
-	if (peek() == "typedef"_tok) {
-		auto result = parse_typedef_declaration();
-		if (!result.is_error()) {
-			if (auto node = result.node()) {
-				ast_nodes_.push_back(*node);
-			}
-			return saved_position.success();
-		}
-		return saved_position.propagate(std::move(result));
-	}
+	if (peek() == "typedef"_tok)
+		return try_parse_and_push(parse_typedef_declaration());
 
 	// Check for extern "C" linkage specification
 	if (peek() == "extern"_tok) {

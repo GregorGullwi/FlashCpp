@@ -6277,6 +6277,24 @@ private:
 		return spill_reg;
 	}
 
+	/// Check if an argument is a two-register struct under System V AMD64 ABI (9-16 bytes, by value).
+	bool isTwoRegisterStruct(const TypedValue& arg) const {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			return arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference();
+		}
+		return false;
+	}
+
+	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
+	bool shouldPassStructByAddress(const TypedValue& arg) const {
+		if (arg.type != Type::Struct || arg.is_reference()) return false;
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			return arg.size_in_bits > 128;  // Linux: structs > 16 bytes pass by pointer
+		} else {
+			return arg.size_in_bits > 64;   // Windows: structs > 8 bytes pass by pointer
+		}
+	}
+
 	void handleFunctionCall(const IrInstruction& instruction) {
 		// Use typed payload
 		if (instruction.hasTypedPayload()) {
@@ -6353,14 +6371,7 @@ private:
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
-				
-				// Check if this is a two-register struct (System V AMD64 ABI: 9-16 byte structs)
-				bool is_two_reg_struct = false;
-				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference()) {
-						is_two_reg_struct = true;
-					}
-				}
+				bool is_two_reg_struct = isTwoRegisterStruct(arg);
 				
 				// Determine if this argument goes on stack
 				bool goes_on_stack = variadic_needs_stack_args; // For Windows variadic: ALL args go on stack
@@ -6403,24 +6414,7 @@ private:
 					}
 
 					// Determine if this stack argument needs to pass an address instead of its value
-					// (mirrors the should_pass_address logic used for register arguments)
-					bool stack_pass_address = false;
-					if (arg.is_reference()) {
-						// Reference parameters always pass by address
-						stack_pass_address = true;
-					} else if (arg.type == Type::Struct && !arg.is_reference()) {
-						if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-							// Linux: structs > 16 bytes pass by pointer
-							if (arg.size_in_bits > 128) {
-								stack_pass_address = true;
-							}
-						} else {
-							// Windows: structs > 8 bytes pass by pointer
-							if (arg.size_in_bits > 64) {
-								stack_pass_address = true;
-							}
-						}
-					}
+					bool stack_pass_address = arg.is_reference() || shouldPassStructByAddress(arg);
 
 					if (stack_pass_address) {
 						// Store address of the argument on the stack
@@ -6520,14 +6514,7 @@ private:
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
-				
-				// Check if this is a two-register struct (System V AMD64 ABI: 9-16 byte structs)
-				bool is_potential_two_reg_struct = false;
-				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference()) {
-						is_potential_two_reg_struct = true;
-					}
-				}
+				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg);
 				
 				// Check if this argument fits in a register (accounting for param_shift)
 				bool use_register = false;
@@ -6565,51 +6552,17 @@ private:
 				//   - Structs of 1, 2, 4, or 8 bytes: pass by value in one register
 				//   - All other structs: pass by pointer
 				bool should_pass_address = false;
-				bool is_two_register_struct = false;  // For System V AMD64 ABI 9-16 byte structs
+				bool is_two_register_struct = false;
 				if (call_op.is_member_function && i == 0) {
 					// First argument of member function is always "this" pointer
 					should_pass_address = true;
 				} else if (arg.is_reference()) {
 					// Parameter is explicitly a reference - always pass by address
 					should_pass_address = true;
-				} else if (arg.type == Type::Struct && std::holds_alternative<StringHandle>(arg.value)) {
-					// Check struct size for ABI-specific handling
-					if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-						// System V AMD64 ABI (Linux)
-						if (arg.size_in_bits > 128) {
-							// Struct > 16 bytes - pass by reference (address)
-							should_pass_address = true;
-						} else if (arg.size_in_bits > 64) {
-							// Struct 9-16 bytes - pass by value in TWO consecutive registers
-							is_two_register_struct = true;
-						}
-						// Else: Struct ≤8 bytes - pass by value in one register (default path)
-					} else {
-						// Windows x64 ABI
-						if (arg.size_in_bits > 64) {
-							// Large struct - pass by reference (address)
-							should_pass_address = true;
-						}
-					}
-				} else if (arg.type == Type::Struct && std::holds_alternative<TempVar>(arg.value)) {
-					// Handle TempVar struct arguments for ABI-specific handling
-					if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-						// System V AMD64 ABI (Linux)
-						if (arg.size_in_bits > 128) {
-							// Struct > 16 bytes - pass by reference (address)
-							should_pass_address = true;
-						} else if (arg.size_in_bits > 64) {
-							// Struct 9-16 bytes - pass by value in TWO consecutive registers
-							is_two_register_struct = true;
-						}
-						// Else: Struct ≤8 bytes - pass by value in one register (default path)
-					} else {
-						// Windows x64 ABI
-						if (arg.size_in_bits > 64) {
-							// Large struct - pass by reference (address)
-							should_pass_address = true;
-						}
-					}
+				} else if (shouldPassStructByAddress(arg)) {
+					should_pass_address = true;
+				} else {
+					is_two_register_struct = is_potential_two_reg_struct;
 				}
 				
 				if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
@@ -10044,18 +9997,11 @@ private:
 								int base_offset = 0;
 								if (std::holds_alternative<StringHandle>(base)) {
 									auto base_name = std::get<StringHandle>(base);
-									const StackVariableScope* scope_with_var = nullptr;
-									for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
-										auto var_it = scope_it->variables.find(base_name);
-										if (var_it != scope_it->variables.end()) {
-											scope_with_var = &(*scope_it);
-											base_offset = var_it->second.offset;
-											break;
-										}
-									}
-									if (scope_with_var == nullptr) {
+									auto offset_opt = findIdentifierStackOffset(base_name);
+									if (!offset_opt.has_value()) {
 										return false;
 									}
+									base_offset = offset_opt.value();
 								} else {
 									base_offset = getStackOffsetFromTempVar(std::get<TempVar>(base));
 								}
@@ -11282,15 +11228,19 @@ private:
 		return reg;
 	}
 
-	std::optional<int32_t> findIdentifierStackOffset(StringHandle name) const {
+	const VariableInfo* findVariableInfo(StringHandle name) const {
 		for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
-			const auto& scope = *scope_it;
-			auto found = scope.variables.find(name);
-			if (found != scope.variables.end()) {
-				return found->second.offset;
+			auto found = scope_it->variables.find(name);
+			if (found != scope_it->variables.end()) {
+				return &found->second;
 			}
 		}
-		return std::nullopt;
+		return nullptr;
+	}
+
+	std::optional<int32_t> findIdentifierStackOffset(StringHandle name) const {
+		const VariableInfo* info = findVariableInfo(name);
+		return info ? std::optional<int32_t>(info->offset) : std::nullopt;
 	}
 
 	enum class IncDecKind { PreIncrement, PostIncrement, PreDecrement, PostDecrement };
@@ -15210,14 +15160,7 @@ private:
 
 			// Search from innermost to outermost scope so branch conditions can reference
 			// parameters/locals declared in parent scopes.
-			const VariableInfo* var_info = nullptr;
-			for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
-				auto it = scope_it->variables.find(var_name);
-				if (it != scope_it->variables.end()) {
-					var_info = &it->second;
-					break;
-				}
-			}
+			const VariableInfo* var_info = findVariableInfo(var_name);
 
 			if (var_info) {
 				// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)
