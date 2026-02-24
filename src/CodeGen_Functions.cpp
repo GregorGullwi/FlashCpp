@@ -461,12 +461,11 @@
 				// Skip pattern structs (templates) - they shouldn't be used for code generation
 				if (gTemplateRegistry.isPatternStructName(name_handle)) continue;
 				if (type_info_ptr->is_incomplete_instantiation_) continue;
-				// Skip template patterns — if the struct was registered as a class template,
-				// it is an uninstantiated pattern and must not be used for codegen.
-				// isClassTemplate() uses the exact StringHandle (no string scan, no
-				// unqualified-name fallback) so it never accidentally matches a non-template
-				// struct that shares an unqualified name with a template in another namespace.
-				// Template instantiations (isTemplateInstantiation) are concrete types, not patterns.
+				// Skip uninstantiated class template patterns — if the struct was registered
+				// as a class template but is NOT a template instantiation, it is an
+				// uninstantiated pattern and must not be used for codegen.
+				// Template instantiations (isTemplateInstantiation) are concrete types
+				// and should NOT be skipped.
 				if (!type_info_ptr->isTemplateInstantiation()) {
 					if (gTemplateRegistry.isClassTemplate(name_handle)) {
 						continue;

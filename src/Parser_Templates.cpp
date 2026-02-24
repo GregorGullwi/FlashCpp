@@ -12340,6 +12340,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// WORKAROUND: If the base class name is an incomplete template instantiation, it was instantiated
 			// during pattern parsing with template parameters. We need to re-instantiate
 			// it with the concrete template arguments.
+			// String fallback: base_name_str may come from TemplateTypeArg::toString() which
+			// appends "_unknown" before the TypeInfo is registered in gTypesByName.
 			bool base_is_incomplete = false;
 			{
 				StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_name_str);

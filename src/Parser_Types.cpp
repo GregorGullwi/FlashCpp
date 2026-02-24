@@ -1880,7 +1880,9 @@ ParseResult Parser::parse_type_specifier()
 					}
 					
 					// If we're in a template body and the instantiated name is an incomplete instantiation,
-					// this is likely a template-dependent nested type that can't be resolved yet
+					// this is likely a template-dependent nested type that can't be resolved yet.
+					// String fallback: names from TemplateTypeArg::toString() may produce "_unknown"
+					// before a TypeInfo is registered in gTypesByName (e.g., during initial parsing).
 					StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 					auto inst_type_it = gTypesByName.find(inst_name_handle);
 					bool inst_is_incomplete = (inst_type_it != gTypesByName.end() && inst_type_it->second->is_incomplete_instantiation_)
