@@ -708,7 +708,6 @@ public:
 		// Always update the symbol size using the actual mangled name
 		updateSymbolSize(std::string(mangled_name), code_length);
 	}
-	}
 
 	void set_function_debug_range([[maybe_unused]] const std::string_view manged_name, [[maybe_unused]] uint32_t prologue_size, [[maybe_unused]] uint32_t epilogue_size) {
 		// Not required for DWARF
