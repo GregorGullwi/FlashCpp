@@ -279,6 +279,19 @@
 		bool has_precomputed_mangled = functionCallNode.has_mangled_name();
 		const FunctionDeclarationNode* matched_func_decl = nullptr;
 		
+		// Helper: resolve mangled name from a matched function declaration
+		auto resolveMangledName = [&](const FunctionDeclarationNode* func_decl, std::string_view struct_name = "") {
+			if (!has_precomputed_mangled) {
+				if (func_decl->has_mangled_name()) {
+					function_name = func_decl->mangled_name();
+				} else if (func_decl->linkage() != Linkage::C) {
+					function_name = struct_name.empty()
+						? generateMangledNameForCall(*func_decl, "", current_namespace_stack_)
+						: generateMangledNameForCall(*func_decl, struct_name);
+				}
+			}
+		};
+
 		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic
 		if (has_precomputed_mangled) {
@@ -318,17 +331,8 @@
 				if (overload_decl == &decl_node) {
 					// Found the matching overload
 					matched_func_decl = overload_func_decl;
-
-					// Use pre-computed mangled name if available, otherwise generate it
-					if (!has_precomputed_mangled) {
-						if (matched_func_decl->has_mangled_name()) {
-							function_name = matched_func_decl->mangled_name();
-							FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name: {}", function_name);
-						} else if (matched_func_decl->linkage() != Linkage::C) {
-							function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
-							FLASH_LOG_FORMAT(Codegen, Debug, "Generated mangled name (no pre-computed): {}", function_name);
-						}
-					}
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched overload, function_name: {}", function_name);
 					break;
 				}
 			}
@@ -342,15 +346,7 @@
 				? &scoped_overloads[0].as<FunctionDeclarationNode>()
 				: &scoped_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
 	
-			// Use pre-computed mangled name if available, otherwise generate it
-			if (!has_precomputed_mangled) {
-				if (matched_func_decl->has_mangled_name()) {
-					function_name = matched_func_decl->mangled_name();
-					FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 1): {}", function_name);
-				} else if (matched_func_decl->linkage() != Linkage::C) {
-					function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
-				}
-			}
+			resolveMangledName(matched_func_decl);
 		}
 
 		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
@@ -360,15 +356,7 @@
 				? &gSymbolTable_overloads[0].as<FunctionDeclarationNode>()
 				: &gSymbolTable_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
 	
-			// Use pre-computed mangled name if available, otherwise generate it
-			if (!has_precomputed_mangled) {
-				if (matched_func_decl->has_mangled_name()) {
-					function_name = matched_func_decl->mangled_name();
-					FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 2): {}", function_name);
-				} else if (matched_func_decl->linkage() != Linkage::C) {
-					function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
-				}
-			}
+			resolveMangledName(matched_func_decl);
 		}
 
 		// Final fallback: if we're in a member function, check the current struct's member functions
@@ -383,15 +371,7 @@
 							if (func_decl.decl_node().identifier_token().value() == func_name_view) {
 								// Found matching member function
 								matched_func_decl = &func_decl;
-							
-								// Use pre-computed mangled name if available, otherwise generate it
-								if (!has_precomputed_mangled) {
-									if (matched_func_decl->has_mangled_name()) {
-										function_name = matched_func_decl->mangled_name();
-									} else if (matched_func_decl->linkage() != Linkage::C) {
-										function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(current_struct_name_));
-									}
-								}
+								resolveMangledName(matched_func_decl, StringTable::getStringView(current_struct_name_));
 								break;
 							}
 						}
@@ -416,16 +396,7 @@
 												if (func_decl.decl_node().identifier_token().value() == func_name_view) {
 													// Found matching member function in base class
 													matched_func_decl = &func_decl;
-												
-													// Use pre-computed mangled name if available
-													if (!has_precomputed_mangled) {
-														if (matched_func_decl->has_mangled_name()) {
-															function_name = matched_func_decl->mangled_name();
-														} else if (matched_func_decl->linkage() != Linkage::C) {
-															// Generate mangled name with base class name
-															function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
-														}
-													}
+													resolveMangledName(matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
 													return; // Stop searching once found
 												}
 											}
@@ -483,11 +454,7 @@
 							if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(parent_for_mangling))) {
 								parent_for_mangling = struct_type_name;
 							}
-							if (func_decl.has_mangled_name()) {
-								function_name = func_decl.mangled_name();
-							} else if (func_decl.linkage() != Linkage::C) {
-								function_name = generateMangledNameForCall(func_decl, parent_for_mangling);
-							}
+							resolveMangledName(matched_func_decl, parent_for_mangling);
 							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved static member function via struct search: {} -> {}", func_name_view, function_name);
 							
 							// Queue all member functions of this struct for deferred generation
@@ -570,13 +537,7 @@
 													std::string_view func_id = func_decl.decl_node().identifier_token().value();
 													if (func_id == member_name) {
 														matched_func_decl = &func_decl;
-														if (!has_precomputed_mangled) {
-															if (matched_func_decl->has_mangled_name()) {
-																function_name = matched_func_decl->mangled_name();
-															} else if (matched_func_decl->linkage() != Linkage::C) {
-																function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
-															}
-														}
+														resolveMangledName(matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
 														break;
 													}
 												}

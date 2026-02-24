@@ -6277,6 +6277,24 @@ private:
 		return spill_reg;
 	}
 
+	/// Check if an argument is a two-register struct under System V AMD64 ABI (9-16 bytes, by value).
+	bool isTwoRegisterStruct(const TypedValue& arg) const {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			return arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference();
+		}
+		return false;
+	}
+
+	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
+	bool shouldPassStructByAddress(const TypedValue& arg) const {
+		if (arg.type != Type::Struct || arg.is_reference()) return false;
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			return arg.size_in_bits > 128;  // Linux: structs > 16 bytes pass by pointer
+		} else {
+			return arg.size_in_bits > 64;   // Windows: structs > 8 bytes pass by pointer
+		}
+	}
+
 	void handleFunctionCall(const IrInstruction& instruction) {
 		// Use typed payload
 		if (instruction.hasTypedPayload()) {
@@ -6353,14 +6371,7 @@ private:
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
-				
-				// Check if this is a two-register struct (System V AMD64 ABI: 9-16 byte structs)
-				bool is_two_reg_struct = false;
-				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference()) {
-						is_two_reg_struct = true;
-					}
-				}
+				bool is_two_reg_struct = isTwoRegisterStruct(arg);
 				
 				// Determine if this argument goes on stack
 				bool goes_on_stack = variadic_needs_stack_args; // For Windows variadic: ALL args go on stack
@@ -6403,24 +6414,7 @@ private:
 					}
 
 					// Determine if this stack argument needs to pass an address instead of its value
-					// (mirrors the should_pass_address logic used for register arguments)
-					bool stack_pass_address = false;
-					if (arg.is_reference()) {
-						// Reference parameters always pass by address
-						stack_pass_address = true;
-					} else if (arg.type == Type::Struct && !arg.is_reference()) {
-						if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-							// Linux: structs > 16 bytes pass by pointer
-							if (arg.size_in_bits > 128) {
-								stack_pass_address = true;
-							}
-						} else {
-							// Windows: structs > 8 bytes pass by pointer
-							if (arg.size_in_bits > 64) {
-								stack_pass_address = true;
-							}
-						}
-					}
+					bool stack_pass_address = arg.is_reference() || shouldPassStructByAddress(arg);
 
 					if (stack_pass_address) {
 						// Store address of the argument on the stack
@@ -6520,14 +6514,7 @@ private:
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
-				
-				// Check if this is a two-register struct (System V AMD64 ABI: 9-16 byte structs)
-				bool is_potential_two_reg_struct = false;
-				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference()) {
-						is_potential_two_reg_struct = true;
-					}
-				}
+				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg);
 				
 				// Check if this argument fits in a register (accounting for param_shift)
 				bool use_register = false;
@@ -6565,51 +6552,17 @@ private:
 				//   - Structs of 1, 2, 4, or 8 bytes: pass by value in one register
 				//   - All other structs: pass by pointer
 				bool should_pass_address = false;
-				bool is_two_register_struct = false;  // For System V AMD64 ABI 9-16 byte structs
+				bool is_two_register_struct = false;
 				if (call_op.is_member_function && i == 0) {
 					// First argument of member function is always "this" pointer
 					should_pass_address = true;
 				} else if (arg.is_reference()) {
 					// Parameter is explicitly a reference - always pass by address
 					should_pass_address = true;
-				} else if (arg.type == Type::Struct && std::holds_alternative<StringHandle>(arg.value)) {
-					// Check struct size for ABI-specific handling
-					if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-						// System V AMD64 ABI (Linux)
-						if (arg.size_in_bits > 128) {
-							// Struct > 16 bytes - pass by reference (address)
-							should_pass_address = true;
-						} else if (arg.size_in_bits > 64) {
-							// Struct 9-16 bytes - pass by value in TWO consecutive registers
-							is_two_register_struct = true;
-						}
-						// Else: Struct ≤8 bytes - pass by value in one register (default path)
-					} else {
-						// Windows x64 ABI
-						if (arg.size_in_bits > 64) {
-							// Large struct - pass by reference (address)
-							should_pass_address = true;
-						}
-					}
-				} else if (arg.type == Type::Struct && std::holds_alternative<TempVar>(arg.value)) {
-					// Handle TempVar struct arguments for ABI-specific handling
-					if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-						// System V AMD64 ABI (Linux)
-						if (arg.size_in_bits > 128) {
-							// Struct > 16 bytes - pass by reference (address)
-							should_pass_address = true;
-						} else if (arg.size_in_bits > 64) {
-							// Struct 9-16 bytes - pass by value in TWO consecutive registers
-							is_two_register_struct = true;
-						}
-						// Else: Struct ≤8 bytes - pass by value in one register (default path)
-					} else {
-						// Windows x64 ABI
-						if (arg.size_in_bits > 64) {
-							// Large struct - pass by reference (address)
-							should_pass_address = true;
-						}
-					}
+				} else if (shouldPassStructByAddress(arg)) {
+					should_pass_address = true;
+				} else {
+					is_two_register_struct = is_potential_two_reg_struct;
 				}
 				
 				if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
