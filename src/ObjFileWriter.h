@@ -311,7 +311,7 @@ public:
 
 private:
 	// Map from mangled name to function signature
-	mutable std::unordered_map<std::string, ObjectFileWriter::FunctionSignature> function_signatures_;
+	mutable std::unordered_map<std::string, ObjectFileWriter::FunctionSignature, ObjectFileCommon::StringViewHash, std::equal_to<>> function_signatures_;
 
 	// Get Microsoft Visual C++ type code for mangling (with pointer support)
 	std::string getTypeCode(const TypeSpecifierNode& type_node) const {
@@ -2632,13 +2632,13 @@ protected:
 
 	// Track type descriptors that have been created to avoid duplicates across functions
 	// Maps type name to its offset in .rdata section
-	std::unordered_map<std::string, uint32_t> type_descriptor_offsets_;
+	std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>> type_descriptor_offsets_;
 
 	// Track generated throw-info symbols by type name
-	std::unordered_map<std::string, std::string> throw_info_symbols_;
+	std::unordered_map<std::string, std::string, ObjectFileCommon::StringViewHash, std::equal_to<>> throw_info_symbols_;
 
 	// Cache for symbol name → file index lookups (avoids O(n) linear scan)
-	std::unordered_map<std::string, uint32_t> symbol_index_cache_;
+	std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>> symbol_index_cache_;
 
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;

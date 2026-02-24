@@ -118,7 +118,7 @@ public:
 		// Determine symbol binding based on whether the function is inline
 		// Inline functions need STB_WEAK so the linker can discard duplicates
 		bool is_inline = false;
-		auto it = function_signatures_.find(std::string(mangled_name));
+		auto it = function_signatures_.find(mangled_name);
 		if (it != function_signatures_.end()) {
 			is_inline = it->second.is_inline;
 		}
@@ -1395,7 +1395,7 @@ public:
 	}
 	
 	// Map to store LSDA info for each function
-	std::unordered_map<std::string, LSDAGenerator::FunctionLSDAInfo> function_lsda_map_;
+	std::unordered_map<std::string, LSDAGenerator::FunctionLSDAInfo, ObjectFileCommon::StringViewHash, std::equal_to<>> function_lsda_map_;
 	
 	// Generate .gcc_except_table section
 	void generate_gcc_except_table() {
@@ -1586,16 +1586,16 @@ private:
 	std::unique_ptr<ELFIO::string_section_accessor> string_accessor_;
 	
 	// Relocation accessors (one per section that needs relocations)
-	std::unordered_map<std::string, std::unique_ptr<ELFIO::relocation_section_accessor>> rela_accessors_;
+	std::unordered_map<std::string, std::unique_ptr<ELFIO::relocation_section_accessor>, ObjectFileCommon::StringViewHash, std::equal_to<>> rela_accessors_;
 
 	// Cache for section name → section pointer lookups (avoids O(n) iteration)
-	std::unordered_map<std::string, ELFIO::section*> section_name_cache_;
+	std::unordered_map<std::string, ELFIO::section*, ObjectFileCommon::StringViewHash, std::equal_to<>> section_name_cache_;
 
 	// String literal counter for generating unique names
 	uint32_t string_literal_counter_ = 0;
 
 	// Function signatures for name mangling
-	std::unordered_map<std::string, FunctionSignature> function_signatures_;
+	std::unordered_map<std::string, FunctionSignature, ObjectFileCommon::StringViewHash, std::equal_to<>> function_signatures_;
 
 	// Track functions that already have exception info to avoid duplicates
 	std::vector<std::string> added_exception_functions_;

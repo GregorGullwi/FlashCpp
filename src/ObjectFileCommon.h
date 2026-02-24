@@ -3,12 +3,21 @@
 #include "AstNodeTypes.h"
 #include <vector>
 #include <string>
+#include <string_view>
 #include <cstdint>
+#include <functional>
 
 // Shared structures between ObjectFileWriter and ElfFileWriter
 // This avoids duplication while maintaining compatibility
 
 namespace ObjectFileCommon {
+
+	// Transparent hash for std::string-keyed maps enabling string_view lookups without allocation
+	struct StringViewHash {
+		using is_transparent = void;
+		size_t operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
+		size_t operator()(const std::string& s) const { return std::hash<std::string_view>{}(s); }
+	};
 
 	// Function signature information for mangling
 	struct FunctionSignature {

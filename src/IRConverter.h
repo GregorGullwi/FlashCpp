@@ -4658,7 +4658,7 @@ private:
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
 
-		auto it = function_spans.find(std::string(func_name));
+		auto it = function_spans.find(func_name);
 		if (it == function_spans.end()) {
 			return func_stack_space; // No instructions found for this function
 		}
@@ -16988,8 +16988,8 @@ private:
 
 	TWriterClass writer;
 	std::vector<uint8_t> textSectionData;
-	std::unordered_map<std::string, uint32_t> functionSymbols;
-	std::unordered_map<std::string, std::span<const IrInstruction>> function_spans;
+	std::unordered_map<std::string, uint32_t, TransparentStringHash, std::equal_to<>> functionSymbols;
+	std::unordered_map<std::string, std::span<const IrInstruction>, TransparentStringHash, std::equal_to<>> function_spans;
 
 	RegisterAllocator regAlloc;
 
@@ -17072,7 +17072,7 @@ private:
 	// Track which stack offsets hold references (parameters or locals)
 	std::unordered_map<int32_t, ReferenceInfo> reference_stack_info_;
 	// Map from variable names to their offsets (for reference lookup by name)
-	std::unordered_map<std::string, int32_t> variable_name_to_offset_;
+	std::unordered_map<std::string, int32_t, TransparentStringHash, std::equal_to<>> variable_name_to_offset_;
 	// Track TempVar sizes from instructions that produce them (for correct loads in conditionals)
 	std::unordered_map<StringHandle, int> temp_var_sizes_;
 
