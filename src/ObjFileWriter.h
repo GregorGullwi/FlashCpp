@@ -1026,6 +1026,7 @@ public:
 
 		if (is_seh && is_cpp) {
 			FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
+			is_cpp = false;  // Prevent C++ EH metadata from corrupting SEH scope table
 		}
 
 		// Add XDATA (exception handling unwind information) for this specific function
