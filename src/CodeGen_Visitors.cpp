@@ -2832,6 +2832,30 @@ private:
 			return;
 		}
 
+		struct NamespaceStackGuard {
+			std::vector<std::string>& target;
+			std::vector<std::string> saved;
+			explicit NamespaceStackGuard(std::vector<std::string>& stack)
+				: target(stack), saved(stack) {}
+			~NamespaceStackGuard() { target = std::move(saved); }
+		} namespace_guard{ current_namespace_stack_ };
+
+		// Deferred or synthesized function generation can lose namespace stack context.
+		// Recover it from the declaration registry so unqualified lookup remains standard-compliant.
+		if (current_namespace_stack_.empty() && global_symbol_table_) {
+			if (auto ns_handle = global_symbol_table_->find_namespace_of_function(node); ns_handle.has_value() && !ns_handle->isGlobal()) {
+				std::vector<NamespaceHandle> namespace_path;
+				NamespaceHandle current = *ns_handle;
+				while (current.isValid() && !current.isGlobal()) {
+					namespace_path.push_back(current);
+					current = gNamespaceRegistry.getParent(current);
+				}
+				for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+					current_namespace_stack_.emplace_back(gNamespaceRegistry.getName(*it));
+				}
+			}
+		}
+
 		// Reset the temporary variable counter for each new function
 		// For member functions, reserve TempVar(1) for the implicit 'this' parameter
 		var_counter = node.is_member_function() ? TempVar(2) : TempVar();
@@ -5289,4 +5313,3 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
 		}
 	}
-

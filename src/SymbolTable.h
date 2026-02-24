@@ -717,6 +717,68 @@ public:
 		return NamespaceRegistry::GLOBAL_NAMESPACE;
 	}
 
+	// Find the namespace where a specific function declaration is registered.
+	// Used by codegen to restore proper namespace context in deferred generation paths.
+	std::optional<NamespaceHandle> find_namespace_of_function(const FunctionDeclarationNode& function_node) const {
+		auto matches_function = [&](const FunctionDeclarationNode& candidate) -> bool {
+			if (&candidate == &function_node) {
+				return true;
+			}
+			if (candidate.is_member_function() != function_node.is_member_function()) {
+				return false;
+			}
+			if (candidate.parent_struct_name() != function_node.parent_struct_name()) {
+				return false;
+			}
+			if (candidate.parameter_nodes().size() != function_node.parameter_nodes().size()) {
+				return false;
+			}
+			if (candidate.decl_node().identifier_token().value() != function_node.decl_node().identifier_token().value()) {
+				return false;
+			}
+			if (candidate.has_mangled_name() && function_node.has_mangled_name()) {
+				return candidate.mangled_name() == function_node.mangled_name();
+			}
+			return true;
+		};
+
+		// Match by identity/signature and require uniqueness across namespaces.
+		std::optional<NamespaceHandle> matched_namespace;
+		bool ambiguous = false;
+		for (const auto& [ns_handle, symbol_map] : namespace_symbols_) {
+			for (const auto& symbol_entry : symbol_map) {
+				const auto& nodes = symbol_entry.second;
+				for (const auto& candidate : nodes) {
+					if (candidate.is<FunctionDeclarationNode>() &&
+					    matches_function(candidate.as<FunctionDeclarationNode>())) {
+						if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
+							ambiguous = true;
+							break;
+						}
+						matched_namespace = ns_handle;
+					}
+					if (candidate.is<TemplateFunctionDeclarationNode>()) {
+						const auto& tmpl = candidate.as<TemplateFunctionDeclarationNode>();
+						if (tmpl.function_declaration().is<FunctionDeclarationNode>() &&
+						    matches_function(tmpl.function_declaration().as<FunctionDeclarationNode>())) {
+							if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
+								ambiguous = true;
+								break;
+							}
+							matched_namespace = ns_handle;
+						}
+					}
+				}
+				if (ambiguous) break;
+			}
+			if (ambiguous) break;
+		}
+		if (!ambiguous && matched_namespace.has_value()) {
+			return matched_namespace;
+		}
+		return std::nullopt;
+	}
+
 	// Get all using directives from the current scope and all enclosing scopes as handles.
 	std::vector<NamespaceHandle> get_current_using_directive_handles() const {
 		std::vector<NamespaceHandle> result;

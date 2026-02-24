@@ -50,7 +50,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~35ms (C++23) |
 | `<barrier>` | N/A | ❌ Parse Error | static_assert fails during template instantiation (AST node is not an expression) |
 | `<coroutine>` | N/A | ❌ Parse Error | ~31ms; fails on coroutine-specific syntax (requires -fcoroutines) |
-| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~4438ms (2026-02-23: `memory_order_relaxed`/`__memory_order_mask` lookup fixed; now fails on `_Size` symbol) |
+| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~5837ms (2026-02-23: namespace fallback now resolves `memory_order_relaxed` in libstdc++ helper functions; remaining blocker is unresolved `_Size`) |
 | `<shared_mutex>` | N/A | ❌ Parse Error | Variable template evaluation in constant expressions not supported (__is_ratio_v) |
 | `<cstdlib>` | N/A | ✅ Compiled | ~84ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~53ms |
