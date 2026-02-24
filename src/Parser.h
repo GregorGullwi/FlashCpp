@@ -772,7 +772,7 @@ private:
             StringHandle qualified_name,
             const ASTNode& template_node,
             const std::vector<TemplateArgument>& template_args,
-            const TemplateInstantiationKey& key);
+            const FlashCpp::TemplateInstantiationKey& key);
         std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
     public:
         bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand

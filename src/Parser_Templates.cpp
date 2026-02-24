@@ -8978,12 +8978,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Generate mangled name first - it now includes reference qualifiers
 	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
-	// Check if we already have this instantiation using the mangled name as key
+	// Check if we already have this instantiation using structured key
 	// This ensures that int, int&, and int&& are treated as distinct instantiations
-	TemplateInstantiationKey key;
-	key.template_name = StringTable::getOrInternStringHandle(mangled_name);  // Use mangled name for uniqueness
-	// Note: We don't need to populate type_arguments since the mangled name already 
-	// includes all type info including references
+	auto key = FlashCpp::makeInstantiationKey(
+		StringTable::getOrInternStringHandle(template_name), template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -9551,18 +9549,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Step 2: Check if we already have this instantiation
-	TemplateInstantiationKey key;
-	key.template_name = StringTable::getOrInternStringHandle(template_name);
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-			key.type_index_arguments.push_back(arg.type_index);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(arg.template_name);
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
+	auto key = FlashCpp::makeInstantiationKey(
+		StringTable::getOrInternStringHandle(template_name), template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -11680,17 +11668,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 	
-	// V2 Cache: Check TypeIndex-based instantiation cache for O(1) lookup
+	// Check TypeIndex-based instantiation cache for O(1) lookup
 	// This uses TypeIndex instead of string keys to avoid ambiguity with type names containing underscores
 	std::string_view normalized_template_name = template_name;
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		normalized_template_name = template_name.substr(last_colon + 2);
 	}
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
-	auto v2_key = FlashCpp::makeInstantiationKeyV2(template_name_handle, template_args);
-	auto v2_cached = gTemplateRegistry.getInstantiationV2(v2_key);
-	if (v2_cached.has_value()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "V2 cache hit for '{}' with {} args", template_name, template_args.size());
+	auto inst_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args);
+	auto cached = gTemplateRegistry.getInstantiation(inst_key);
+	if (cached.has_value()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
 		return std::nullopt;  // Already instantiated - return nullopt to indicate success
 	}
 	
@@ -13318,8 +13306,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 		in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 		
-		// Register in V2 cache for O(1) lookup on future instantiations
-		gTemplateRegistry.registerInstantiationV2(v2_key, instantiated_struct);
+		// Register in cache for O(1) lookup on future instantiations
+		gTemplateRegistry.registerInstantiation(inst_key, instantiated_struct);
 		
 		return instantiated_struct;  // Return the struct node for code generation
 		}
@@ -17267,8 +17255,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 	in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 	
-	// Register in V2 cache for O(1) lookup on future instantiations
-	gTemplateRegistry.registerInstantiationV2(v2_key, instantiated_struct);
+	// Register in cache for O(1) lookup on future instantiations
+	gTemplateRegistry.registerInstantiation(inst_key, instantiated_struct);
 	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
@@ -17344,18 +17332,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	// Check if we already have this instantiation
-	TemplateInstantiationKey key;
-	key.template_name = qualified_name;  // Already a StringHandle
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-			key.type_index_arguments.push_back(arg.type_index);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(arg.template_name);
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
+	auto key = FlashCpp::makeInstantiationKey(qualified_name, template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -17500,18 +17477,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 
 		// Check if we already have this instantiation
-		TemplateInstantiationKey key;
-		key.template_name = qualified_name;
-		for (const auto& arg : template_args) {
-			if (arg.kind == TemplateArgument::Kind::Type) {
-				key.type_arguments.push_back(arg.type_value);
-				key.type_index_arguments.push_back(arg.type_index);
-			} else if (arg.kind == TemplateArgument::Kind::Template) {
-				key.template_arguments.push_back(arg.template_name);
-			} else {
-				key.value_arguments.push_back(arg.int_value);
-			}
-		}
+		auto key = FlashCpp::makeInstantiationKey(qualified_name, template_args);
 
 		auto existing_inst = gTemplateRegistry.getInstantiation(key);
 		if (existing_inst.has_value()) {
@@ -17595,7 +17561,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	StringHandle qualified_name,
 	const ASTNode& template_node,
 	const std::vector<TemplateArgument>& template_args,
-	const TemplateInstantiationKey& key) {
+	const FlashCpp::TemplateInstantiationKey& key) {
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();

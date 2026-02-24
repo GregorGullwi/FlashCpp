@@ -1943,14 +1943,7 @@
 					}
 					
 					// Check if we already have this instantiation
-					TemplateInstantiationKey inst_key;
-					inst_key.template_name = qualified_template_name;
-					for (const auto& arg : template_args) {
-						if (arg.kind == TemplateArgument::Kind::Type) {
-							inst_key.type_arguments.push_back(arg.type_value);
-							inst_key.type_index_arguments.push_back(arg.type_index);
-						}
-					}
+					auto inst_key = FlashCpp::makeInstantiationKey(qualified_template_name, template_args);
 					
 					auto existing_inst = gTemplateRegistry.getInstantiation(inst_key);
 					if (!existing_inst.has_value()) {

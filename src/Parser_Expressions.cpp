@@ -7071,9 +7071,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								
 								// If not found, the type may have been registered with filled-in default template args
 								// (e.g., basic_string_view<char> → basic_string_view<char, char_traits<char>>)
-								// Check the V2 cache for the instantiated struct node to get the correct name
+								// Check the cache for the instantiated struct node to get the correct name
 								if (type_it == gTypesByName.end()) {
-									auto cached = gTemplateRegistry.getInstantiationV2(
+									auto cached = gTemplateRegistry.getInstantiation(
 										StringTable::getOrInternStringHandle(idenfifier_token.value()),
 										*explicit_template_args);
 									if (cached.has_value() && cached->is<StructDeclarationNode>()) {
@@ -10905,9 +10905,9 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	// If member has template args, append them using hash-based naming
 	if (member_template_args.has_value() && !member_template_args->empty()) {
 		// Generate hash suffix for template args
-		auto key = FlashCpp::makeInstantiationKeyV2(StringTable::getOrInternStringHandle(member_name), *member_template_args);
+		auto key = FlashCpp::makeInstantiationKey(StringTable::getOrInternStringHandle(member_name), *member_template_args);
 		func_name_builder.append("$");
-		auto hash_val = FlashCpp::TemplateInstantiationKeyV2Hash{}(key);
+		auto hash_val = FlashCpp::TemplateInstantiationKeyHash{}(key);
 		char hex[17];
 		std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash_val));
 		func_name_builder.append(std::string_view(hex, 16));
