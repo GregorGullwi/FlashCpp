@@ -5356,6 +5356,29 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to emit CMP dword [rbp+offset], imm32 for exception selector dispatch
+	void emitCmpFrameImm32(int32_t frame_offset, int32_t imm_value) {
+		// CMP dword [rbp+disp32], imm32: 81 BD <disp32> <imm32>
+		textSectionData.push_back(0x81);
+		textSectionData.push_back(0xBD);  // ModR/M: mod=10, reg=7(/7=CMP), rm=5(rbp)
+		auto disp = std::bit_cast<std::array<uint8_t, 4>>(frame_offset);
+		textSectionData.insert(textSectionData.end(), disp.begin(), disp.end());
+		auto imm = std::bit_cast<std::array<uint8_t, 4>>(imm_value);
+		textSectionData.insert(textSectionData.end(), imm.begin(), imm.end());
+	}
+
+	// Allocate an anonymous stack slot for ELF exception dispatch temporaries
+	int32_t allocateElfTempStackSlot(int size_bytes) {
+		size_bytes = (size_bytes + 7) & ~7;  // 8-byte align
+		next_temp_var_offset_ += size_bytes;
+		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+		int32_t end_offset = offset - size_bytes;
+		if (!variable_scopes.empty() && end_offset < variable_scopes.back().scope_stack_space) {
+			variable_scopes.back().scope_stack_space = end_offset;
+		}
+		return offset;
+	}
+
 	// Helper to generate and emit size-aware MOV from frame
 	// Takes SizedRegister for destination (register + size) and SizedStackSlot for source (offset + size)
 	// This makes both source and destination sizes explicit for clarity
@@ -9308,7 +9331,11 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				// Patch ELF catch handler selector filter values before passing to writer.
+				// The filter values must match the LSDA type table ordering.
+				patchElfCatchFilterValues(try_blocks);
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+				elf_catch_filter_patches_.clear();
 			} else {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
 			}
@@ -15975,17 +16002,70 @@ private:
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
 			// Landing pad: call __cxa_begin_catch to get the exception object
 			//
-			// The exception object pointer is in RAX (passed by personality routine)
-			// We need to:
-			// 1. Call __cxa_begin_catch(void* exceptionObject) -> returns adjusted pointer
-			// 2. Extract/cast the exception value
-			// 3. Store it in the catch variable
+			// For try blocks with MULTIPLE catch handlers, the personality routine
+			// enters the landing pad with:
+			//   RAX = exception object pointer
+			//   EDX = selector (type_filter of matched action)
+			// We must save these, dispatch to the correct handler based on selector,
+			// then call __cxa_begin_catch in the matched handler.
 			
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
 			
-			// Call __cxa_begin_catch with exception pointer in RDI
-			// The exception pointer is in RAX from personality routine
-			emitMovRegReg(X64Register::RDI, X64Register::RAX);
+			// Determine handler index within this try block
+			size_t handler_index = 0;
+			bool is_multi_handler = false;
+			if (!current_function_try_blocks_.empty()) {
+				const TryBlock& try_block = current_function_try_blocks_.back();
+				handler_index = try_block.catch_handlers.size() - 1;  // Just added
+				// We don't know total count yet, but if handler_index > 0, we're multi
+				is_multi_handler = (handler_index > 0);
+			}
+			
+			if (handler_index == 0) {
+				// First handler: save RAX (exception ptr) and EDX (selector) to stack
+				// These will be used by subsequent handlers for dispatch.
+				// We allocate two 8-byte slots for these.
+				elf_exc_ptr_offset_ = allocateElfTempStackSlot(8);
+				elf_selector_offset_ = allocateElfTempStackSlot(4);
+				// mov [rbp+exc_ptr_offset], rax
+				emitMovToFrame(X64Register::RAX, elf_exc_ptr_offset_, 64);
+				// mov [rbp+selector_offset], edx (32-bit)
+				emitMovToFrameBySize(X64Register::RDX, elf_selector_offset_, 32);
+			}
+			
+			// For non-last handlers, emit selector comparison + skip jump.
+			// We always emit it (even for potentially-last handlers) because we don't
+			// know if more handlers follow. If this IS the last handler, the personality
+			// routine guarantees the selector matches, so the JNE never fires.
+			if (!catch_op.is_catch_all) {
+				// Load selector from stack and compare with this handler's filter.
+				// The actual filter value will be patched at function finalization.
+				// CMP dword [rbp+offset], imm32
+				emitCmpFrameImm32(elf_selector_offset_, 0);  // placeholder 0
+				// Record patch position: the IMM32 is at the last 4 bytes we just wrote
+				uint32_t filter_patch_pos = static_cast<uint32_t>(textSectionData.size()) - 4;
+				elf_catch_filter_patches_.push_back({filter_patch_pos, handler_index});
+				
+				// JNE catch_end_label (skip this handler if selector doesn't match)
+				StringHandle catch_end_handle = StringTable::getOrInternStringHandle(catch_op.catch_end_label);
+				textSectionData.push_back(0x0F);  // Two-byte opcode prefix
+				textSectionData.push_back(0x85);  // JNE rel32
+				uint32_t jne_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_branches_.push_back({catch_end_handle, jne_patch});
+			}
+			
+			// Load exception pointer from saved slot and call __cxa_begin_catch
+			if (is_multi_handler || !catch_op.is_catch_all) {
+				// Multi-handler or typed: use saved exception pointer
+				emitMovFromFrameBySize(X64Register::RDI, elf_exc_ptr_offset_, 64);
+			} else {
+				// Single catch-all handler: RAX still has the exception pointer
+				emitMovRegReg(X64Register::RDI, X64Register::RAX);
+			}
 			emitCall("__cxa_begin_catch");
 			
 			// Result in RAX is pointer to the actual exception object
@@ -16994,7 +17074,9 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				patchElfCatchFilterValues(try_blocks);
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+				elf_catch_filter_patches_.clear();
 			} else {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
 			}
@@ -17335,6 +17417,68 @@ private:
 		}
 	}
 
+	// Patch ELF catch handler filter values in the generated code.
+	// This is called at function finalization when we know the complete type table.
+	// The filter values must match what the LSDA generator will produce.
+	void patchElfCatchFilterValues(const std::vector<ObjectFileWriter::TryBlockInfo>& try_blocks) {
+		if (elf_catch_filter_patches_.empty()) return;
+
+		// Build the type table in the same order as ElfFileWriter will build it.
+		// This determines the filter values for each handler.
+		std::vector<std::string> type_table;
+		for (const auto& try_block : try_blocks) {
+			for (const auto& handler : try_block.catch_handlers) {
+				if (!handler.is_catch_all && !handler.type_name.empty()) {
+					std::string typeinfo_sym = writer.get_typeinfo_symbol(handler.type_name);
+					if (std::find(type_table.begin(), type_table.end(), typeinfo_sym) == type_table.end()) {
+						type_table.push_back(typeinfo_sym);
+					}
+				}
+			}
+		}
+		// Add NULL entry for catch-all (same as LSDAGenerator's generate() does)
+		bool has_catch_all = false;
+		for (const auto& try_block : try_blocks) {
+			for (const auto& handler : try_block.catch_handlers) {
+				if (handler.is_catch_all) { has_catch_all = true; break; }
+			}
+			if (has_catch_all) break;
+		}
+		if (has_catch_all) {
+			if (std::find(type_table.begin(), type_table.end(), "") == type_table.end()) {
+				type_table.push_back("");
+			}
+		}
+
+		int table_size = static_cast<int>(type_table.size());
+
+		// Now compute filters and patch each CMP instruction
+		for (const auto& patch : elf_catch_filter_patches_) {
+			// Find this handler's type in the type table
+			int filter = 0;
+			if (patch.handler_index < try_blocks.back().catch_handlers.size()) {
+				const auto& handler = try_blocks.back().catch_handlers[patch.handler_index];
+				if (handler.is_catch_all) {
+					auto it = std::find(type_table.begin(), type_table.end(), "");
+					if (it != type_table.end()) {
+						filter = table_size - static_cast<int>(std::distance(type_table.begin(), it));
+					}
+				} else if (!handler.type_name.empty()) {
+					std::string typeinfo_sym = writer.get_typeinfo_symbol(handler.type_name);
+					auto it = std::find(type_table.begin(), type_table.end(), typeinfo_sym);
+					if (it != type_table.end()) {
+						filter = table_size - static_cast<int>(std::distance(type_table.begin(), it));
+					}
+				}
+			}
+			// Patch the IMM32 in textSectionData
+			auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<int32_t>(filter));
+			for (int i = 0; i < 4; i++) {
+				textSectionData[patch.patch_offset + i] = bytes[i];
+			}
+		}
+	}
+
 	// Debug information tracking
 	void addLineMapping(uint32_t line_number, int32_t manual_offset = 0) {
 		if (current_function_name_.isValid()) {
@@ -17519,6 +17663,17 @@ private:
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
+
+	// ELF catch handler selector dispatch tracking
+	// For multi-handler try blocks on Linux, the landing pad needs selector-based dispatch.
+	// We emit CMP instructions with placeholder filter values that get patched at function finalization.
+	struct ElfCatchFilterPatch {
+		uint32_t patch_offset;      // Offset of the IMM32 placeholder in textSectionData
+		size_t handler_index;       // Handler index within its try block (0-based)
+	};
+	std::vector<ElfCatchFilterPatch> elf_catch_filter_patches_;
+	int32_t elf_exc_ptr_offset_ = 0;   // Stack offset for saved exception pointer
+	int32_t elf_selector_offset_ = 0;  // Stack offset for saved selector value
 
 	// Windows SEH (Structured Exception Handling) tracking
 	struct SehExceptHandler {

@@ -84,18 +84,34 @@ public:
 		LSDAGenerationResult result;
 		std::vector<uint8_t>& lsda_data = result.data;
 		
+		// Make a mutable copy so we can add NULL type table entries for catch-all handlers.
+		// In the Itanium C++ ABI, catch(...) requires a NULL entry in the type table
+		// with a positive type_filter pointing to it. type_filter=0 means "cleanup" which
+		// does NOT catch exceptions during the search phase.
+		FunctionLSDAInfo effective_info = info;
+		for (const auto& region : effective_info.try_regions) {
+			for (const auto& handler : region.catch_handlers) {
+				if (handler.is_catch_all) {
+					// Add empty string sentinel for NULL type_info entry (catch-all)
+					if (std::find(effective_info.type_table.begin(), effective_info.type_table.end(), "") == effective_info.type_table.end()) {
+						effective_info.type_table.push_back("");
+					}
+				}
+			}
+		}
+		
 		// Build type table first (to know offsets)
 		std::vector<uint8_t> type_table_data;
 		std::vector<std::pair<uint32_t, std::string>> type_table_relocs;
-		encode_type_table(type_table_data, info, type_table_relocs);
+		encode_type_table(type_table_data, effective_info, type_table_relocs);
 		
 		// Build action table
 		std::vector<uint8_t> action_table_data;
-		encode_action_table(action_table_data, info);
+		encode_action_table(action_table_data, effective_info);
 		
 		// Build call site table
 		std::vector<uint8_t> call_site_table_data;
-		encode_call_site_table(call_site_table_data, info);
+		encode_call_site_table(call_site_table_data, effective_info);
 		
 		// Now assemble the LSDA header with actual sizes
 		encode_header(lsda_data, type_table_data.size(), call_site_table_data.size(), action_table_data.size());
@@ -224,15 +240,26 @@ private:
 				
 				// Generate type filter
 				if (handler.is_catch_all) {
-					DwarfCFI::appendSLEB128(type_filter_bytes, 0);  // 0 = cleanup, will run for any exception
+					// Catch-all uses a NULL entry in the type table with a POSITIVE type_filter.
+					// type_filter=0 means "cleanup" which does NOT catch during search phase.
+					// A positive filter pointing to a NULL type table entry = catch-all.
+					int catch_all_index = find_type_index(info.type_table, "");
+					if (catch_all_index >= 0) {
+						int filter = static_cast<int>(info.type_table.size()) - catch_all_index;
+						DwarfCFI::appendSLEB128(type_filter_bytes, filter);
+					} else {
+						DwarfCFI::appendSLEB128(type_filter_bytes, 0);  // fallback
+					}
 				} else {
 					// Find type index in type table (0-based)
 					int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
 					if (type_index < 0) {
 						DwarfCFI::appendSLEB128(type_filter_bytes, 0);
 					} else {
-						// Type filter is POSITIVE and 1-based for catch clauses
-						int filter = type_index + 1;
+						// Type filter maps to type table entries read in REVERSE order.
+						// Filter N refers to entry at (type_table_end - N * entry_size).
+						// So filter = type_table_size - type_index.
+						int filter = static_cast<int>(info.type_table.size()) - type_index;
 						if (g_enable_debug_output) {
 							std::cerr << "[DEBUG] Action table: handler_idx=" << handler_idx
 							         << " type_index=" << type_index
@@ -298,14 +325,21 @@ private:
 
 		// Iterate in FORWARD order (they will be accessed in reverse via negative indices)
 		for (const auto& typeinfo_symbol : info.type_table) {
-			// Record relocation for this type_info pointer
-			uint32_t offset = static_cast<uint32_t>(data.size());
-			relocations.push_back({offset, typeinfo_symbol});
+			if (typeinfo_symbol.empty()) {
+				// NULL entry for catch-all: no relocation, just 4 zero bytes
+				for (int i = 0; i < 4; ++i) {
+					data.push_back(0);
+				}
+			} else {
+				// Record relocation for this type_info pointer
+				uint32_t offset = static_cast<uint32_t>(data.size());
+				relocations.push_back({offset, typeinfo_symbol});
 
-			// Each entry is a 4-byte PC-relative pointer (sdata4)
-			// Placeholder - will be filled by linker via R_X86_64_PC32 relocation
-			for (int i = 0; i < 4; ++i) {
-				data.push_back(0);
+				// Each entry is a 4-byte PC-relative pointer (sdata4)
+				// Placeholder - will be filled by linker via R_X86_64_PC32 relocation
+				for (int i = 0; i < 4; ++i) {
+					data.push_back(0);
+				}
 			}
 		}
 	}
