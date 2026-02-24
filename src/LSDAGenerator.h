@@ -4,6 +4,7 @@
 #include "ObjectFileCommon.h"
 #include <vector>
 #include <cstdint>
+#include <cassert>
 #include <string>
 #include <iostream>
 #include <iomanip>
@@ -244,12 +245,9 @@ private:
 					// type_filter=0 means "cleanup" which does NOT catch during search phase.
 					// A positive filter pointing to a NULL type table entry = catch-all.
 					int catch_all_index = find_type_index(info.type_table, "");
-					if (catch_all_index >= 0) {
-						int filter = static_cast<int>(info.type_table.size()) - catch_all_index;
-						DwarfCFI::appendSLEB128(type_filter_bytes, filter);
-					} else {
-						DwarfCFI::appendSLEB128(type_filter_bytes, 0);  // fallback
-					}
+					assert(catch_all_index >= 0 && "catch-all handler requires NULL entry in type table");
+					int filter = static_cast<int>(info.type_table.size()) - catch_all_index;
+					DwarfCFI::appendSLEB128(type_filter_bytes, filter);
 				} else {
 					// Find type index in type table (0-based)
 					int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
