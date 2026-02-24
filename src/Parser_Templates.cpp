@@ -12349,8 +12349,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (incomplete_type_it != gTypesByName.end() && incomplete_type_it->second->isTemplateInstantiation()) {
 					base_template_name = std::string(StringTable::getStringView(incomplete_type_it->second->baseTemplateName()));
 				} else {
-					// Fallback: extract template name by finding '$' sentinel
-					size_t pos = base_name_str.find('$');
+					// Fallback: extract template name by finding "$unresolved" sentinel
+					size_t pos = base_name_str.find("$unresolved");
 					base_template_name = (pos != std::string::npos) ? base_name_str.substr(0, pos) : base_name_str;
 				}
 				
