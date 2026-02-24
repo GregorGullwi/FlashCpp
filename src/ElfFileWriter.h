@@ -135,6 +135,9 @@ public:
 		std::string mangled_name_str(mangled_name);
 		accessor->add_symbol(*string_accessor_, mangled_name_str.c_str(), value, size, bind, type, other, section_index);
 
+		// Track for debug info
+		debug_pending_text_offset_ = section_offset;
+
 		if (g_enable_debug_output) {
 			std::cerr << "Function symbol added successfully" << std::endl;
 		}
@@ -646,45 +649,82 @@ public:
 		function_signatures_[std::string(mangled_name)] = sig;
 	}
 
-	// Debug info methods (placeholders - DWARF support deferred)
-	void add_source_file([[maybe_unused]] const std::string& filename) {
-		// Placeholder for DWARF debug info
+	// Debug info methods - DWARF4 implementation
+	void add_source_file(const std::string& filename) {
+		debug_source_files_.push_back(filename);
 	}
 
-	void set_current_function_for_debug([[maybe_unused]] const std::string& name, [[maybe_unused]] uint32_t file_id) {
-		// Placeholder
+	void set_current_function_for_debug(const std::string& name, uint32_t file_id) {
+		if (debug_has_current_)
+			debug_functions_.push_back(std::move(debug_current_func_));
+		debug_current_func_ = {};
+		debug_current_func_.name        = name;
+		debug_current_func_.text_offset = debug_pending_text_offset_;
+		debug_current_func_.file_id     = file_id;
+		debug_has_current_ = true;
 	}
 
-	void add_line_mapping([[maybe_unused]] uint32_t code_offset, [[maybe_unused]] uint32_t line_number) {
-		// Placeholder
+	void add_line_mapping(uint32_t code_offset, uint32_t line_number) {
+		if (debug_has_current_)
+			debug_current_func_.lines.push_back({code_offset, line_number});
 	}
 
-	void add_local_variable([[maybe_unused]] const std::string& name, [[maybe_unused]] uint32_t type_index, [[maybe_unused]] uint16_t flags,
-	                       [[maybe_unused]] const std::vector<CodeView::VariableLocation>& locations) {
-		// Placeholder - DWARF debug info implementation deferred
+	void add_local_variable(const std::string& name, uint32_t type_index, [[maybe_unused]] uint16_t flags,
+	                       const std::vector<CodeView::VariableLocation>& locations) {
+		if (!debug_has_current_ || locations.empty()) return;
+		DebugVarInfo v;
+		v.name = name;
+		v.cv_type_index = type_index;
+		const auto& loc = locations[0];
+		// Prefer stack offset if available (loc.offset != 0 for initialized vars in ELF path)
+		if (loc.type == CodeView::VariableLocation::REGISTER && loc.offset != 0) {
+			v.is_register = false;
+			v.stack_off   = loc.offset;
+		} else if (loc.type == CodeView::VariableLocation::REGISTER) {
+			v.is_register = true;
+			v.dwarf_reg   = dwarfRegFromCodeViewReg(loc.register_code);
+		} else {
+			v.is_register = false;
+			v.stack_off   = loc.offset;
+		}
+		debug_current_func_.vars.push_back(std::move(v));
 	}
 
-	void add_function_parameter([[maybe_unused]] const std::string& name, [[maybe_unused]] uint32_t type_index, [[maybe_unused]] int32_t stack_offset) {
-		// Placeholder
+	void add_function_parameter(const std::string& name, uint32_t type_index, int32_t stack_offset) {
+		if (!debug_has_current_) return;
+		DebugVarInfo v;
+		v.name         = name;
+		v.cv_type_index = type_index;
+		v.is_parameter  = true;
+		v.is_register   = false;
+		v.stack_off     = stack_offset;
+		debug_current_func_.vars.push_back(std::move(v));
 	}
 
-	void update_function_length([[maybe_unused]] const std::string_view manged_name, [[maybe_unused]] uint32_t code_length) {
-		// Placeholder
+	void update_function_length([[maybe_unused]] const std::string_view mangled_name, uint32_t code_length) {
+		if (debug_has_current_) {
+			debug_current_func_.length = code_length;
+			// Update the symbol size using the current function's own name
+			updateSymbolSize(debug_current_func_.name, code_length);
+		}
 	}
 
 	void set_function_debug_range([[maybe_unused]] const std::string_view manged_name, [[maybe_unused]] uint32_t prologue_size, [[maybe_unused]] uint32_t epilogue_size) {
-		// Placeholder
+		// Not required for DWARF
 	}
 
 	void finalize_current_function() {
-		// Placeholder
+		// Not required for DWARF
 	}
 
 	void finalize_debug_info() {
-		// Placeholder for DWARF generation
-		if (g_enable_debug_output) {
-			std::cerr << "DWARF debug info not yet implemented" << std::endl;
+		// Save last function
+		if (debug_has_current_) {
+			debug_functions_.push_back(std::move(debug_current_func_));
+			debug_has_current_ = false;
 		}
+		if (!debug_functions_.empty())
+			generateDwarfSections();
 	}
 
 	// CFI instruction tracking for a single function (defined here for use in add_function_exception_info)
@@ -1557,6 +1597,34 @@ private:
 	// Track functions that already have exception info to avoid duplicates
 	std::vector<std::string> added_exception_functions_;
 
+	// ===== DWARF4 debug info data =====
+	struct DebugLineEntry {
+		uint32_t code_offset;  // offset from function start
+		uint32_t line_number;
+	};
+	struct DebugVarInfo {
+		std::string name;
+		bool        is_parameter   = false;
+		bool        is_register    = false;
+		int         dwarf_reg      = -1;    // DWARF register number (when is_register)
+		int32_t     stack_off      = 0;     // RBP-relative offset (when !is_register)
+		uint32_t    cv_type_index  = 0x74;  // CodeView type index for base type mapping
+	};
+	struct DebugFuncInfo {
+		std::string              name;
+		uint32_t                 text_offset = 0;
+		uint32_t                 length      = 0;
+		uint32_t                 file_id     = 0;
+		std::vector<DebugLineEntry> lines;
+		std::vector<DebugVarInfo>   vars;
+	};
+
+	std::vector<std::string>   debug_source_files_;
+	std::vector<DebugFuncInfo> debug_functions_;
+	DebugFuncInfo              debug_current_func_;
+	bool                       debug_has_current_         = false;
+	uint32_t                   debug_pending_text_offset_ = 0;
+
 	/**
 	 * @brief Create standard ELF sections
 	 */
@@ -1878,6 +1946,434 @@ private:
 			std::cerr << "  .data size: " << data_section_->get_size() << std::endl;
 			std::cerr << "  .bss size: " << bss_section_->get_size() << std::endl;
 			std::cerr << "  .rodata size: " << rodata_section_->get_size() << std::endl;
+		}
+	}
+
+	// ===== DWARF4 helper methods =====
+
+	// Update the st_size field of a FUNC symbol by name
+	void updateSymbolSize(const std::string& name, uint32_t size) {
+		auto* accessor = getSymbolAccessor();
+		if (!accessor) return;
+		ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
+		for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
+			std::string sym_name;
+			ELFIO::Elf64_Addr sym_value;
+			ELFIO::Elf_Xword sym_size;
+			unsigned char sym_bind, sym_type, sym_other;
+			ELFIO::Elf_Half sym_section;
+			accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
+			if (sym_name == name && sym_type == ELFIO::STT_FUNC) {
+				ELFIO::section* symtab_sec = getSectionByName(".symtab");
+				if (symtab_sec) {
+					size_t entry_size = symtab_sec->get_entry_size();
+					char* data = const_cast<char*>(symtab_sec->get_data());
+					// st_size is at offset 16 in a 64-bit ELF symbol entry
+					*reinterpret_cast<ELFIO::Elf_Xword*>(&data[i * entry_size + 16]) = size;
+				}
+				return;
+			}
+		}
+	}
+
+	// Map CodeView x64 register code to DWARF x86-64 register number (System V AMD64)
+	static int dwarfRegFromCodeViewReg(uint16_t cv) {
+		switch (cv) {
+			case  0: return  0; // RAX
+			case  1: return  2; // RCX
+			case  2: return  1; // RDX
+			case  3: return  3; // RBX
+			case  4: return  7; // RSP
+			case  5: return  6; // RBP
+			case  6: return  4; // RSI
+			case  7: return  5; // RDI
+			case  8: return  8; case  9: return  9;
+			case 10: return 10; case 11: return 11;
+			case 12: return 12; case 13: return 13;
+			case 14: return 14; case 15: return 15;
+			default:
+				if (cv >= 154 && cv <= 169) return 17 + (cv - 154); // XMM0-15
+				return -1;
+		}
+	}
+
+	// DWARF encoding helpers
+	static void dw_u8 (std::vector<uint8_t>& b, uint8_t  v) { b.push_back(v); }
+	static void dw_u16(std::vector<uint8_t>& b, uint16_t v) { b.push_back(v); b.push_back(v>>8); }
+	static void dw_u32(std::vector<uint8_t>& b, uint32_t v) {
+		b.push_back(v); b.push_back(v>>8); b.push_back(v>>16); b.push_back(v>>24);
+	}
+	static void dw_u64(std::vector<uint8_t>& b, uint64_t v) {
+		for (int i = 0; i < 8; ++i) { b.push_back(v & 0xff); v >>= 8; }
+	}
+	static void dw_uleb(std::vector<uint8_t>& b, uint64_t v) {
+		do { uint8_t byte = v & 0x7f; v >>= 7; if (v) byte |= 0x80; b.push_back(byte); } while (v);
+	}
+	static void dw_sleb(std::vector<uint8_t>& b, int64_t v) {
+		bool more = true;
+		while (more) {
+			uint8_t byte = v & 0x7f; v >>= 7;
+			if ((v == 0 && !(byte & 0x40)) || (v == -1 && (byte & 0x40))) more = false;
+			else byte |= 0x80;
+			b.push_back(byte);
+		}
+	}
+	// Patch a previously reserved 4-byte field
+	static void dw_patch32(std::vector<uint8_t>& b, uint32_t off, uint32_t v) {
+		b[off]=v; b[off+1]=v>>8; b[off+2]=v>>16; b[off+3]=v>>24;
+	}
+
+	// Build a DW_OP_fbreg location expression for a stack-relative variable.
+	// CFA = RBP + 16 (from .eh_frame), so a variable at [RBP + rbp_off] has
+	// frame-base offset rbp_off - 16.
+	static std::vector<uint8_t> dwarfFbregExpr(int32_t rbp_off) {
+		std::vector<uint8_t> expr;
+		expr.push_back(0x91); // DW_OP_fbreg
+		dw_sleb(expr, static_cast<int64_t>(rbp_off) - 16);
+		return expr;
+	}
+
+	// Build a DW_OP_reg<N> or DW_OP_regx location expression for a register variable.
+	static std::vector<uint8_t> dwarfRegExpr(int dwarf_reg) {
+		std::vector<uint8_t> expr;
+		if (dwarf_reg >= 0 && dwarf_reg <= 31) {
+			expr.push_back(static_cast<uint8_t>(0x50 + dwarf_reg)); // DW_OP_reg0..DW_OP_reg31
+		} else {
+			expr.push_back(0x90); // DW_OP_regx
+			dw_uleb(expr, static_cast<uint64_t>(dwarf_reg));
+		}
+		return expr;
+	}
+
+	// Create or look up a symbol index needed for DWARF relocations.
+	// Returns the existing symbol index if found, otherwise creates an undefined entry.
+	ELFIO::Elf_Word dwarfSymbolIndex(const std::string& name) {
+		auto* accessor = getSymbolAccessor();
+		ELFIO::Elf_Xword count = accessor->get_symbols_num();
+		for (ELFIO::Elf_Xword i = 0; i < count; ++i) {
+			std::string sym_name;
+			ELFIO::Elf64_Addr sv; ELFIO::Elf_Xword ss;
+			unsigned char sb, st, so; ELFIO::Elf_Half sec;
+			accessor->get_symbol(i, sym_name, sv, ss, sb, st, sec, so);
+			if (sym_name == name) return static_cast<ELFIO::Elf_Word>(i);
+		}
+		// Not found – add a placeholder (will be resolved at link time)
+		return accessor->add_symbol(*string_accessor_, name.c_str(), 0, 0,
+		                            ELFIO::STB_GLOBAL, ELFIO::STT_FUNC,
+		                            ELFIO::STV_DEFAULT, ELFIO::SHN_UNDEF);
+	}
+
+	// Generate all DWARF4 debug sections
+	void generateDwarfSections() {
+		const std::string src_file = !debug_source_files_.empty()
+		                             ? debug_source_files_[0] : "unknown.cpp";
+
+		// ── .debug_str ──────────────────────────────────────────────────────────
+		std::vector<uint8_t> str_data;
+		std::unordered_map<std::string, uint32_t> str_cache;
+
+		auto addStr = [&](const std::string& s) -> uint32_t {
+			auto it = str_cache.find(s);
+			if (it != str_cache.end()) return it->second;
+			uint32_t off = static_cast<uint32_t>(str_data.size());
+			str_data.insert(str_data.end(), s.begin(), s.end());
+			str_data.push_back(0);
+			str_cache[s] = off;
+			return off;
+		};
+
+		uint32_t producer_off = addStr("FlashCpp");
+		uint32_t compdir_off  = addStr(".");
+		uint32_t srcfile_off  = addStr(src_file);
+		for (const auto& f : debug_functions_) {
+			addStr(f.name);
+			for (const auto& v : f.vars) addStr(v.name);
+		}
+
+		// ── .debug_abbrev ───────────────────────────────────────────────────────
+		std::vector<uint8_t> abbrev_data;
+
+		// Abbrev 1: DW_TAG_compile_unit, has children
+		dw_uleb(abbrev_data, 1);   dw_uleb(abbrev_data, 0x11); dw_u8(abbrev_data, 1);
+		dw_uleb(abbrev_data, 0x25); dw_uleb(abbrev_data, 0x0e); // producer, strp
+		dw_uleb(abbrev_data, 0x13); dw_uleb(abbrev_data, 0x05); // language, data2
+		dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
+		dw_uleb(abbrev_data, 0x1b); dw_uleb(abbrev_data, 0x0e); // comp_dir, strp
+		dw_uleb(abbrev_data, 0x10); dw_uleb(abbrev_data, 0x17); // stmt_list, sec_offset
+		dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+
+		// Abbrev 2: DW_TAG_subprogram, has children
+		dw_uleb(abbrev_data, 2);   dw_uleb(abbrev_data, 0x2e); dw_u8(abbrev_data, 1);
+		dw_uleb(abbrev_data, 0x3f); dw_uleb(abbrev_data, 0x19); // external, flag_present
+		dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
+		dw_uleb(abbrev_data, 0x11); dw_uleb(abbrev_data, 0x01); // low_pc, addr
+		dw_uleb(abbrev_data, 0x12); dw_uleb(abbrev_data, 0x07); // high_pc, data8
+		dw_uleb(abbrev_data, 0x40); dw_uleb(abbrev_data, 0x18); // frame_base, exprloc
+		dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+
+		// Abbrev 3: DW_TAG_formal_parameter, no children
+		dw_uleb(abbrev_data, 3);   dw_uleb(abbrev_data, 0x05); dw_u8(abbrev_data, 0);
+		dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
+		dw_uleb(abbrev_data, 0x49); dw_uleb(abbrev_data, 0x13); // type, ref4
+		dw_uleb(abbrev_data, 0x02); dw_uleb(abbrev_data, 0x18); // location, exprloc
+		dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+
+		// Abbrev 4: DW_TAG_variable, no children
+		dw_uleb(abbrev_data, 4);   dw_uleb(abbrev_data, 0x34); dw_u8(abbrev_data, 0);
+		dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
+		dw_uleb(abbrev_data, 0x49); dw_uleb(abbrev_data, 0x13); // type, ref4
+		dw_uleb(abbrev_data, 0x02); dw_uleb(abbrev_data, 0x18); // location, exprloc
+		dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+
+		// Abbrev 5: DW_TAG_base_type, no children
+		dw_uleb(abbrev_data, 5);   dw_uleb(abbrev_data, 0x24); dw_u8(abbrev_data, 0);
+		dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
+		dw_uleb(abbrev_data, 0x3e); dw_uleb(abbrev_data, 0x0b); // encoding, data1
+		dw_uleb(abbrev_data, 0x0b); dw_uleb(abbrev_data, 0x0b); // byte_size, data1
+		dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+
+		dw_u8(abbrev_data, 0); // end of abbrev table
+
+		// ── .debug_line ─────────────────────────────────────────────────────────
+		std::vector<uint8_t> line_data;
+		// (offset_in_line_data, function_symbol_name)
+		std::vector<std::pair<uint32_t, std::string>> line_relocs;
+
+		// Header (DWARF4 line number program header)
+		uint32_t unit_len_off = static_cast<uint32_t>(line_data.size());
+		dw_u32(line_data, 0);                   // unit_length placeholder
+		dw_u16(line_data, 4);                   // version = 4
+		uint32_t hdr_len_off = static_cast<uint32_t>(line_data.size());
+		dw_u32(line_data, 0);                   // header_length placeholder
+		uint32_t hdr_body_start = static_cast<uint32_t>(line_data.size());
+		dw_u8(line_data, 1);                    // minimum_instruction_length
+		dw_u8(line_data, 1);                    // maximum_ops_per_insn (DWARF4)
+		dw_u8(line_data, 1);                    // default_is_stmt
+		dw_u8(line_data, static_cast<uint8_t>(-5)); // line_base = -5
+		dw_u8(line_data, 14);                   // line_range
+		dw_u8(line_data, 13);                   // opcode_base
+		// standard_opcode_lengths[1..12]
+		static constexpr uint8_t kOpcLens[12] = {0,1,1,1,1,0,0,0,1,0,0,1};
+		for (uint8_t l : kOpcLens) dw_u8(line_data, l);
+		dw_u8(line_data, 0);                    // include_directories: empty list
+		// file_names: entry 1
+		for (char c : src_file) dw_u8(line_data, static_cast<uint8_t>(c));
+		dw_u8(line_data, 0);                    // name null terminator
+		dw_uleb(line_data, 0);                  // directory index
+		dw_uleb(line_data, 0);                  // mtime
+		dw_uleb(line_data, 0);                  // file size
+		dw_u8(line_data, 0);                    // end of file_names list
+
+		// Patch header_length
+		uint32_t hdr_len_val = static_cast<uint32_t>(line_data.size()) - hdr_body_start;
+		dw_patch32(line_data, hdr_len_off, hdr_len_val);
+
+		// Line number program – one sequence per function
+		for (const auto& f : debug_functions_) {
+			if (f.length == 0 || f.lines.empty()) continue;
+
+			// Sort line entries by code offset
+			std::vector<DebugLineEntry> sorted_lines = f.lines;
+			std::sort(sorted_lines.begin(), sorted_lines.end(),
+			          [](const DebugLineEntry& a, const DebugLineEntry& b) {
+				          return a.code_offset < b.code_offset;
+			          });
+
+			// DW_LNE_set_address at function start
+			dw_u8(line_data, 0x00);             // extended opcode
+			dw_uleb(line_data, 9);              // length: 1 + 8
+			dw_u8(line_data, 0x02);             // DW_LNE_set_address
+			uint32_t addr_off = static_cast<uint32_t>(line_data.size());
+			line_relocs.push_back({addr_off, f.name});
+			dw_u64(line_data, 0);               // address (filled by relocation)
+
+			uint32_t cur_addr = 0;
+			uint32_t cur_line = 1; // initial line register = 1
+
+			for (const auto& le : sorted_lines) {
+				// Advance PC
+				if (le.code_offset > cur_addr) {
+					dw_u8(line_data, 0x02);     // DW_LNS_advance_pc
+					dw_uleb(line_data, le.code_offset - cur_addr);
+					cur_addr = le.code_offset;
+				}
+				// Advance line
+				int32_t ldelta = static_cast<int32_t>(le.line_number) - static_cast<int32_t>(cur_line);
+				if (ldelta != 0) {
+					dw_u8(line_data, 0x03);     // DW_LNS_advance_line
+					dw_sleb(line_data, ldelta);
+					cur_line = le.line_number;
+				}
+				dw_u8(line_data, 0x01);         // DW_LNS_copy
+			}
+
+			// Advance to end of function
+			if (f.length > cur_addr) {
+				dw_u8(line_data, 0x02);
+				dw_uleb(line_data, f.length - cur_addr);
+			}
+
+			// DW_LNE_end_sequence
+			dw_u8(line_data, 0x00);
+			dw_uleb(line_data, 1);
+			dw_u8(line_data, 0x01);
+		}
+
+		// Patch unit_length for .debug_line
+		dw_patch32(line_data, unit_len_off,
+		           static_cast<uint32_t>(line_data.size()) - unit_len_off - 4);
+
+		// ── .debug_info ─────────────────────────────────────────────────────────
+		std::vector<uint8_t> info_data;
+		std::vector<std::pair<uint32_t, std::string>> info_relocs;
+
+		// Map CodeView type index to DWARF base type properties.
+		// CV type indices (e.g. 0x74 = T_INT4) come from IRConverter's variable/parameter
+		// type_index assignments; DWARF encoding constants follow DWARF4 §7.8 (DW_ATE_*).
+		struct DwarfBaseType { const char* name; uint8_t encoding; uint8_t byte_size; };
+		static constexpr std::pair<uint32_t, DwarfBaseType> kBaseTypes[] = {
+			{0x10, {"char",      6, 1}},  // T_CHAR      → DW_ATE_signed_char
+			{0x30, {"bool",      2, 1}},  // T_BOOL08    → DW_ATE_boolean
+			{0x40, {"float",     4, 4}},  // T_REAL32    → DW_ATE_float
+			{0x41, {"double",    4, 8}},  // T_REAL64    → DW_ATE_float
+			{0x72, {"long long", 5, 8}},  // T_INT8      → DW_ATE_signed
+			{0x74, {"int",       5, 4}},  // T_INT4      → DW_ATE_signed
+		};
+
+		// Collect unique CV type indices used by variables/parameters
+		std::unordered_map<uint32_t, uint32_t> type_to_die_offset; // cv_type -> CU-relative offset
+
+		// Compilation unit header
+		uint32_t info_ul_off = static_cast<uint32_t>(info_data.size());
+		dw_u32(info_data, 0);       // unit_length placeholder
+		dw_u16(info_data, 4);       // version = 4
+		dw_u32(info_data, 0);       // debug_abbrev_offset = 0
+		dw_u8 (info_data, 8);       // address_size = 8
+
+		// DW_TAG_compile_unit (abbrev 1)
+		dw_uleb(info_data, 1);
+		dw_u32(info_data, producer_off);    // DW_AT_producer
+		dw_u16(info_data, 0x0004);          // DW_AT_language = DW_LANG_C_plus_plus
+		dw_u32(info_data, srcfile_off);     // DW_AT_name
+		dw_u32(info_data, compdir_off);     // DW_AT_comp_dir
+		dw_u32(info_data, 0);               // DW_AT_stmt_list = 0 (offset into .debug_line)
+
+		// Emit DW_TAG_base_type DIEs for all types referenced by variables
+		// Only emit types that are actually used
+		auto collectNeededTypes = [&]() {
+			for (const auto& f : debug_functions_)
+				for (const auto& v : f.vars)
+					type_to_die_offset.try_emplace(v.cv_type_index, 0); // placeholder
+		};
+		collectNeededTypes();
+
+		for (auto& [cv_type, die_offset] : type_to_die_offset) {
+			// Find the base type descriptor
+			const DwarfBaseType* bt = nullptr;
+			for (const auto& [cv, desc] : kBaseTypes)
+				if (cv == cv_type) { bt = &desc; break; }
+			if (!bt) continue; // skip unknown types
+
+			// Record this DIE's CU-relative offset (from start of unit_length field)
+			die_offset = static_cast<uint32_t>(info_data.size()) - info_ul_off;
+			// Emit DW_TAG_base_type (abbrev 5)
+			dw_uleb(info_data, 5);
+			dw_u32(info_data, addStr(bt->name)); // DW_AT_name (strp) - may extend str_data
+			dw_u8 (info_data, bt->encoding);     // DW_AT_encoding
+			dw_u8 (info_data, bt->byte_size);    // DW_AT_byte_size
+		}
+
+		// DW_TAG_subprogram entries
+		for (const auto& f : debug_functions_) {
+			dw_uleb(info_data, 2);          // abbrev 2 (DW_TAG_subprogram)
+			// DW_AT_external: flag_present → no data emitted
+			dw_u32(info_data, str_cache[f.name]); // DW_AT_name (strp)
+			// DW_AT_low_pc: 8-byte address with relocation
+			uint32_t low_pc_off = static_cast<uint32_t>(info_data.size());
+			info_relocs.push_back({low_pc_off, f.name});
+			dw_u64(info_data, 0);           // DW_AT_low_pc (placeholder)
+			dw_u64(info_data, f.length);    // DW_AT_high_pc (data8 = length)
+			// DW_AT_frame_base: exprloc = DW_OP_call_frame_cfa (1 byte)
+			dw_uleb(info_data, 1);
+			dw_u8(info_data, 0x9c);         // DW_OP_call_frame_cfa
+
+			// Variable / parameter DIEs
+			for (const auto& v : f.vars) {
+				dw_uleb(info_data, v.is_parameter ? 3u : 4u);
+				dw_u32(info_data, str_cache[v.name]); // DW_AT_name (strp)
+				// DW_AT_type (ref4): CU-relative offset of base type DIE
+				auto type_it = type_to_die_offset.find(v.cv_type_index);
+				uint32_t type_ref = (type_it != type_to_die_offset.end()) ? type_it->second : 0;
+				dw_u32(info_data, type_ref); // DW_AT_type
+				// DW_AT_location (exprloc)
+				std::vector<uint8_t> loc_expr;
+				if (v.is_register && v.dwarf_reg >= 0)
+					loc_expr = dwarfRegExpr(v.dwarf_reg);
+				else
+					loc_expr = dwarfFbregExpr(v.stack_off);
+				dw_uleb(info_data, loc_expr.size());
+				info_data.insert(info_data.end(), loc_expr.begin(), loc_expr.end());
+			}
+
+			dw_u8(info_data, 0); // DW_TAG_null (end subprogram children)
+		}
+
+		dw_u8(info_data, 0); // DW_TAG_null (end compile_unit children)
+
+		// Patch unit_length
+		dw_patch32(info_data, info_ul_off,
+		           static_cast<uint32_t>(info_data.size()) - info_ul_off - 4);
+
+		// ── Create ELF sections ──────────────────────────────────────────────────
+
+		auto* debug_str_sec = elf_writer_.sections.add(".debug_str");
+		debug_str_sec->set_type(ELFIO::SHT_PROGBITS);
+		debug_str_sec->set_flags(0);  // No SHF_MERGE: linker would dedup suffixes and invalidate our offsets
+		debug_str_sec->set_addr_align(1);
+		debug_str_sec->set_data(reinterpret_cast<const char*>(str_data.data()), str_data.size());
+
+		auto* debug_abbrev_sec = elf_writer_.sections.add(".debug_abbrev");
+		debug_abbrev_sec->set_type(ELFIO::SHT_PROGBITS);
+		debug_abbrev_sec->set_flags(0);
+		debug_abbrev_sec->set_addr_align(1);
+		debug_abbrev_sec->set_data(reinterpret_cast<const char*>(abbrev_data.data()), abbrev_data.size());
+
+		auto* debug_line_sec = elf_writer_.sections.add(".debug_line");
+		debug_line_sec->set_type(ELFIO::SHT_PROGBITS);
+		debug_line_sec->set_flags(0);
+		debug_line_sec->set_addr_align(1);
+		debug_line_sec->set_data(reinterpret_cast<const char*>(line_data.data()), line_data.size());
+
+		auto* debug_info_sec = elf_writer_.sections.add(".debug_info");
+		debug_info_sec->set_type(ELFIO::SHT_PROGBITS);
+		debug_info_sec->set_flags(0);
+		debug_info_sec->set_addr_align(1);
+		debug_info_sec->set_data(reinterpret_cast<const char*>(info_data.data()), info_data.size());
+
+		// Relocations for .debug_info (DW_AT_low_pc of each subprogram)
+		if (!info_relocs.empty()) {
+			auto* rela_sec = elf_writer_.sections.add(".rela.debug_info");
+			rela_sec->set_type(ELFIO::SHT_RELA);
+			rela_sec->set_info(debug_info_sec->get_index());
+			rela_sec->set_link(symtab_section_->get_index());
+			rela_sec->set_addr_align(8);
+			rela_sec->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+			ELFIO::relocation_section_accessor rela(elf_writer_, rela_sec);
+			for (const auto& [off, sym_name] : info_relocs)
+				rela.add_entry(off, dwarfSymbolIndex(sym_name), ELFIO::R_X86_64_64, 0);
+		}
+
+		// Relocations for .debug_line (DW_LNE_set_address per function)
+		if (!line_relocs.empty()) {
+			auto* rela_sec = elf_writer_.sections.add(".rela.debug_line");
+			rela_sec->set_type(ELFIO::SHT_RELA);
+			rela_sec->set_info(debug_line_sec->get_index());
+			rela_sec->set_link(symtab_section_->get_index());
+			rela_sec->set_addr_align(8);
+			rela_sec->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+			ELFIO::relocation_section_accessor rela(elf_writer_, rela_sec);
+			for (const auto& [off, sym_name] : line_relocs)
+				rela.add_entry(off, dwarfSymbolIndex(sym_name), ELFIO::R_X86_64_64, 0);
 		}
 	}
 
