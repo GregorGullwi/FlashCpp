@@ -52,22 +52,13 @@
 									
 									// Get type info from the identifier
 									StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
-									std::optional<ASTNode> symbol = lookupSymbol(id_handle);
-									
 									Type operand_type = Type::Int;  // Default
 									int operand_size = 32;
-									if (symbol.has_value()) {
-										if (symbol->is<DeclarationNode>()) {
-											const TypeSpecifierNode& type = symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-											operand_type = type.type();
-											operand_size = static_cast<int>(type.size_in_bits());
-											if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
-										} else if (symbol->is<VariableDeclarationNode>()) {
-											const TypeSpecifierNode& type = symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-											operand_type = type.type();
-											operand_size = static_cast<int>(type.size_in_bits());
-											if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
-										}
+									if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
+										const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
+										operand_type = type.type();
+										operand_size = static_cast<int>(type.size_in_bits());
+										if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
 									}
 									
 									op.operand.type = operand_type;
@@ -636,26 +627,18 @@
 			if (param_is_ref_like &&
 			    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
-				if (symbol.has_value()) {
-					const DeclarationNode* decl_ptr = nullptr;
-					if (symbol->is<DeclarationNode>()) {
-						decl_ptr = &symbol->as<DeclarationNode>();
-					} else if (symbol->is<VariableDeclarationNode>()) {
-						decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-					}
-					if (decl_ptr) {
-						const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-							// Argument is a reference variable being passed to a reference parameter
-							// Pass the identifier name directly - the IRConverter will use MOV to
-							// load the address stored in the reference variable
-							irOperands.emplace_back(type_node.type());
-							irOperands.emplace_back(64);  // References are stored as 64-bit pointers
-							irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
-							arg_index++;
-							return;  // Skip the rest of the processing
-						}
+				const DeclarationNode* decl_ptr = lookupDeclaration(identifier.name());
+				if (decl_ptr) {
+					const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+						// Argument is a reference variable being passed to a reference parameter
+						// Pass the identifier name directly - the IRConverter will use MOV to
+						// load the address stored in the reference variable
+						irOperands.emplace_back(type_node.type());
+						irOperands.emplace_back(64);  // References are stored as 64-bit pointers
+						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
+						arg_index++;
+						return;  // Skip the rest of the processing
 					}
 				}
 			}
@@ -854,14 +837,7 @@
 					FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
 					throw std::runtime_error("Missing symbol for function argument");
 				}
-
-				const DeclarationNode* decl_ptr = nullptr;
-				if (symbol->is<DeclarationNode>()) {
-					decl_ptr = &symbol->as<DeclarationNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-				}
-
+				const DeclarationNode* decl_ptr = get_decl_from_symbol(*symbol);
 				if (!decl_ptr) {
 					FLASH_LOG(Codegen, Error, "Function argument '", identifier.name(), "' is not a DeclarationNode");
 					throw std::runtime_error("Unexpected symbol type for function argument");
@@ -2648,14 +2624,7 @@
 			result.base_array_name = base_ident.name();
 			
 			// Look up the declaration
-			std::optional<ASTNode> symbol = lookupSymbol(result.base_array_name);
-			if (symbol.has_value()) {
-				if (symbol->is<DeclarationNode>()) {
-					result.base_decl = &symbol->as<DeclarationNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					result.base_decl = &symbol->as<VariableDeclarationNode>().declaration();
-				}
-			}
+			result.base_decl = lookupDeclaration(result.base_array_name);
 			
 			// Reverse the indices so they're in order from outermost to innermost
 			// For arr[i][j], we collected [j, i], now reverse to [i, j]
@@ -3049,66 +3018,57 @@
 		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
 			const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
-			std::optional<ASTNode> symbol = lookupSymbol(arr_ident.name());
-			if (symbol.has_value()) {
-				const DeclarationNode* decl_ptr = nullptr;
-				if (symbol->is<DeclarationNode>()) {
-					decl_ptr = &symbol->as<DeclarationNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
+			const DeclarationNode* decl_ptr = lookupDeclaration(arr_ident.name());
+			if (decl_ptr) {
+				const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+				
+				// Capture type_index for struct types (important for member access on array elements)
+				if (type_node.type() == Type::Struct) {
+					element_type_index = type_node.type_index();
 				}
 				
-				if (decl_ptr) {
-					const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-					
-					// Capture type_index for struct types (important for member access on array elements)
-					if (type_node.type() == Type::Struct) {
-						element_type_index = type_node.type_index();
-					}
-					
-					// For array types, ALWAYS get the element size from type_node, not from array_operands
-					// array_operands[1] contains 64 (pointer size) for arrays, not the element size
-					if (decl_ptr->is_array() || type_node.is_array()) {
-						// Check if this is an array of pointers (e.g., int* ptrs[3])
-						// In this case, the element size should be the pointer size (64 bits), not the base type size
-						if (type_node.pointer_depth() > 0) {
-							// Array of pointers: element size is always 64 bits (pointer size)
-							element_size_bits = 64;
-							// Track pointer depth for the array element (e.g., for int* arr[3], element has pointer_depth=1)
-							element_pointer_depth = type_node.pointer_depth();
-						} else {
-							// Get the element size from type_node
-							element_size_bits = static_cast<int>(type_node.size_in_bits());
-							// If still 0, compute from type info for struct types
-							if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
-								const TypeInfo& type_info = gTypeInfo[element_type_index];
-								const StructTypeInfo* struct_info = type_info.getStructInfo();
-								if (struct_info) {
-									element_size_bits = static_cast<int>(struct_info->total_size * 8);
-								}
+				// For array types, ALWAYS get the element size from type_node, not from array_operands
+				// array_operands[1] contains 64 (pointer size) for arrays, not the element size
+				if (decl_ptr->is_array() || type_node.is_array()) {
+					// Check if this is an array of pointers (e.g., int* ptrs[3])
+					// In this case, the element size should be the pointer size (64 bits), not the base type size
+					if (type_node.pointer_depth() > 0) {
+						// Array of pointers: element size is always 64 bits (pointer size)
+						element_size_bits = 64;
+						// Track pointer depth for the array element (e.g., for int* arr[3], element has pointer_depth=1)
+						element_pointer_depth = type_node.pointer_depth();
+					} else {
+						// Get the element size from type_node
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+						// If still 0, compute from type info for struct types
+						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
+							const TypeInfo& type_info = gTypeInfo[element_type_index];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info) {
+								element_size_bits = static_cast<int>(struct_info->total_size * 8);
 							}
 						}
 					}
-					// For array parameters with explicit size (e.g., reference-to-array params),
-					// we need pointer indirection
-					// NOTE: Local arrays with explicit size (e.g., int arr[3]) are NOT pointers
-					// EXCEPTION: Reference-to-array parameters (e.g., int (&arr)[3]) ARE pointers
-					if (type_node.is_array() && decl_ptr->array_size().has_value()) {
-						// Check if this is a reference to an array (parameter)
-						// References to arrays need pointer indirection
-						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-							is_pointer_to_array = true;
-						}
-						// Local arrays with explicit size are NOT pointers (they're actual arrays on stack)
-						// We don't set is_pointer_to_array for non-reference arrays
+				}
+				// For array parameters with explicit size (e.g., reference-to-array params),
+				// we need pointer indirection
+				// NOTE: Local arrays with explicit size (e.g., int arr[3]) are NOT pointers
+				// EXCEPTION: Reference-to-array parameters (e.g., int (&arr)[3]) ARE pointers
+				if (type_node.is_array() && decl_ptr->array_size().has_value()) {
+					// Check if this is a reference to an array (parameter)
+					// References to arrays need pointer indirection
+					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+						is_pointer_to_array = true;
 					}
-					// For pointer types or reference types (not arrays), get the pointee size
-					// BUT: Skip this if we already handled an array of pointers above (decl_ptr->is_array() case)
-					else if (!decl_ptr->is_array() && (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference())) {
-						// Get the base type size (what the pointer points to)
-						element_size_bits = static_cast<int>(type_node.size_in_bits());
-						is_pointer_to_array = true;  // This is a pointer or reference, not an actual array
-					}
+					// Local arrays with explicit size are NOT pointers (they're actual arrays on stack)
+					// We don't set is_pointer_to_array for non-reference arrays
+				}
+				// For pointer types or reference types (not arrays), get the pointee size
+				// BUT: Skip this if we already handled an array of pointers above (decl_ptr->is_array() case)
+				else if (!decl_ptr->is_array() && (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference())) {
+					// Get the base type size (what the pointer points to)
+					element_size_bits = static_cast<int>(type_node.size_in_bits());
+					is_pointer_to_array = true;  // This is a pointer or reference, not an actual array
 				}
 			}
 		}
@@ -3448,80 +3408,74 @@
 		if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident->name());
 			
-			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
+			const TypeSpecifierNode* type_node = nullptr;
+			if (const DeclarationNode* decl = lookupDeclaration(identifier_handle)) {
+				type_node = &decl->type_node().as<TypeSpecifierNode>();
+			}
 			
-			if (symbol.has_value()) {
-				const TypeSpecifierNode* type_node = nullptr;
-				if (symbol->is<DeclarationNode>()) {
-					type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-				}
+			// Check if it's a struct with operator-> overload
+			if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+				auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "->");
 				
-				// Check if it's a struct with operator-> overload
-				if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
-					auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "->");
+				if (overload_result.has_overload) {
+					// Found an overload! Call operator->() to get pointer, then access member
+					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}", 
+					         type_node->type_index());
 					
-					if (overload_result.has_overload) {
-						// Found an overload! Call operator->() to get pointer, then access member
-						FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}", 
-						         type_node->type_index());
-						
-						const StructMemberFunction& member_func = *overload_result.member_overload;
-						const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						
-						// Get struct name for mangling
-						std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
-						
-						// Get the return type from the function declaration (should be a pointer)
-						const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-						
-						// Generate mangled name for operator->
-						std::string_view operator_func_name = "operator->";
-						std::vector<TypeSpecifierNode> empty_params;
-						std::vector<std::string_view> empty_namespace;
-						auto mangled_name = NameMangling::generateMangledName(
-							operator_func_name,
-							return_type,
-							empty_params,
-							false,
-							struct_name,
-							empty_namespace,
-							Linkage::CPlusPlus
-						);
-						
-						// Generate the call to operator->()
-						TempVar ptr_result = var_counter.next();
-						
-						CallOp call_op;
-						call_op.result = ptr_result;
-						call_op.return_type = return_type.type();
-						call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-						if (call_op.return_size_in_bits == 0) {
-							call_op.return_size_in_bits = get_type_size_bits(return_type.type());
-						}
-						call_op.function_name = mangled_name;
-						call_op.is_variadic = false;
-						call_op.is_member_function = true;
-						
-						// Add 'this' pointer as first argument
-						call_op.args.push_back(TypedValue{
-							.type = type_node->type(),
-							.size_in_bits = 64,  // Pointer size
-							.value = IrValue(identifier_handle)
-						});
-						
-						// Add the function call instruction
-						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
-						
-						// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
-						if (return_type.pointer_depth() > 0) {
-							base_object = ptr_result;
-							base_type = return_type.type();
-							base_type_index = return_type.type_index();
-							is_pointer_dereference = true;
-							base_setup_complete = true;
-						}
+					const StructMemberFunction& member_func = *overload_result.member_overload;
+					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+					
+					// Get struct name for mangling
+					std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
+					
+					// Get the return type from the function declaration (should be a pointer)
+					const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+					
+					// Generate mangled name for operator->
+					std::string_view operator_func_name = "operator->";
+					std::vector<TypeSpecifierNode> empty_params;
+					std::vector<std::string_view> empty_namespace;
+					auto mangled_name = NameMangling::generateMangledName(
+						operator_func_name,
+						return_type,
+						empty_params,
+						false,
+						struct_name,
+						empty_namespace,
+						Linkage::CPlusPlus
+					);
+					
+					// Generate the call to operator->()
+					TempVar ptr_result = var_counter.next();
+					
+					CallOp call_op;
+					call_op.result = ptr_result;
+					call_op.return_type = return_type.type();
+					call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+					if (call_op.return_size_in_bits == 0) {
+						call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+					}
+					call_op.function_name = mangled_name;
+					call_op.is_variadic = false;
+					call_op.is_member_function = true;
+					
+					// Add 'this' pointer as first argument
+					call_op.args.push_back(TypedValue{
+						.type = type_node->type(),
+						.size_in_bits = 64,  // Pointer size
+						.value = IrValue(identifier_handle)
+					});
+					
+					// Add the function call instruction
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
+					
+					// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
+					if (return_type.pointer_depth() > 0) {
+						base_object = ptr_result;
+						base_type = return_type.type();
+						base_type_index = return_type.type_index();
+						is_pointer_dereference = true;
+						base_setup_complete = true;
 					}
 				}
 			}
@@ -3960,26 +3914,22 @@
 			// array variable, the parser may incorrectly parse it as a type.
 			// If size_in_bits is 0, try looking up the identifier in the symbol table.
 			if (type_spec.size_in_bits() == 0 && type_spec.token().type() == Token::Type::Identifier) {
-				std::string_view identifier = type_spec.token().value();
+				StringHandle identifier = StringTable::getOrInternStringHandle(type_spec.token().value());
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = lookupSymbol(identifier);
-				
-				if (symbol.has_value()) {
-					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-					if (decl) {
-						auto array_size = calculateArraySize(*decl);
-						if (array_size.has_value()) {
-							// Return sizeof result for array
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
-						}
+				const DeclarationNode* decl = lookupDeclaration(identifier);
+				if (decl) {
+					auto array_size = calculateArraySize(*decl);
+					if (array_size.has_value()) {
+						// Return sizeof result for array
+						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
 					}
 				}
 				
 				// Handle template parameters in member functions with trailing requires clauses
 				// When sizeof(T) is used in a template class member function, T is a template parameter
 				// that should be resolved from the instantiated class's template arguments
-				if (!symbol.has_value() && current_struct_name_.isValid()) {
+				if (!decl && !lookupSymbol(identifier).has_value() && current_struct_name_.isValid()) {
 					// We're in a member function - try to resolve the template parameter
 					std::string_view struct_name = StringTable::getStringView(current_struct_name_);
 					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
@@ -4042,46 +3992,42 @@
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
-				
-				if (symbol.has_value()) {
-					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-					if (decl) {
-						// Check if it's an array
-						auto array_size = calculateArraySize(*decl);
-						if (array_size.has_value()) {
-							// Return sizeof result for array
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
+				const DeclarationNode* decl = lookupDeclaration(id_node.name());
+				if (decl) {
+					// Check if it's an array
+					auto array_size = calculateArraySize(*decl);
+					if (array_size.has_value()) {
+						// Return sizeof result for array
+						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
+					}
+					
+					// For regular variables, get the type size from the declaration
+					const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
+					if (var_type.type() == Type::Struct) {
+						size_t type_index = var_type.type_index();
+						if (type_index < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info && struct_info->total_size > 0) {
+								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(struct_info->total_size) };
+							}
+							// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
+							if (type_info.type_size_ > 0) {
+								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(type_info.type_size_) };
+							}
 						}
-						
-						// For regular variables, get the type size from the declaration
-						const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
-						if (var_type.type() == Type::Struct) {
-							size_t type_index = var_type.type_index();
-							if (type_index < gTypeInfo.size()) {
-								const TypeInfo& type_info = gTypeInfo[type_index];
-								const StructTypeInfo* struct_info = type_info.getStructInfo();
-								if (struct_info && struct_info->total_size > 0) {
-									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(struct_info->total_size) };
-								}
-								// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
-								if (type_info.type_size_ > 0) {
-									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(type_info.type_size_) };
-								}
-							}
-							// Fallback: use size_in_bits from the type specifier node
-							if (var_type.size_in_bits() > 0) {
-								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(var_type.size_in_bits() / 8) };
-							}
-						} else {
-							// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
-							int size_bits = var_type.size_in_bits();
-							if (size_bits == 0) {
-								size_bits = get_type_size_bits(var_type.type());
-							}
-							size_in_bytes = size_bits / 8;
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+						// Fallback: use size_in_bits from the type specifier node
+						if (var_type.size_in_bits() > 0) {
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(var_type.size_in_bits() / 8) };
 						}
+					} else {
+						// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
+						int size_bits = var_type.size_in_bits();
+						if (size_bits == 0) {
+							size_bits = get_type_size_bits(var_type.type());
+						}
+						size_in_bytes = size_bits / 8;
+						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 					}
 				}
 			}
@@ -4100,70 +4046,66 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(member_access): object_name=", id_node.name());
 						
 						// Look up the identifier to get its type
-						std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
-						
-						if (symbol.has_value()) {
-							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-							if (decl) {
-								const TypeSpecifierNode& obj_type = decl->type_node().as<TypeSpecifierNode>();
-								FLASH_LOG(Codegen, Debug, "sizeof(member_access): obj_type=", (int)obj_type.type(), " type_index=", obj_type.type_index());
-								if (obj_type.type() == Type::Struct) {
-									size_t type_index = obj_type.type_index();
-									if (type_index < gTypeInfo.size()) {
-										const TypeInfo& type_info = gTypeInfo[type_index];
-										std::string_view base_type_name = StringTable::getStringView(type_info.name());
-										FLASH_LOG(Codegen, Debug, "sizeof(member_access): type_info name=", base_type_name);
-										const StructTypeInfo* struct_info = type_info.getStructInfo();
-										
-										// First try the direct struct_info
-										size_t direct_member_size = 0;
-										if (struct_info && !struct_info->members.empty()) {
-											FLASH_LOG(Codegen, Debug, "sizeof(member_access): struct found, members=", struct_info->members.size());
-											// Find the member in the struct
-											for (const auto& member : struct_info->members) {
-												FLASH_LOG(Codegen, Debug, "  checking member: ", StringTable::getStringView(member.getName()), " size=", member.size);
-												if (StringTable::getStringView(member.getName()) == member_name) {
-													direct_member_size = member.size;
-													break;
-												}
+						const DeclarationNode* decl = lookupDeclaration(id_node.name());
+						if (decl) {
+							const TypeSpecifierNode& obj_type = decl->type_node().as<TypeSpecifierNode>();
+							FLASH_LOG(Codegen, Debug, "sizeof(member_access): obj_type=", (int)obj_type.type(), " type_index=", obj_type.type_index());
+							if (obj_type.type() == Type::Struct) {
+								size_t type_index = obj_type.type_index();
+								if (type_index < gTypeInfo.size()) {
+									const TypeInfo& type_info = gTypeInfo[type_index];
+									std::string_view base_type_name = StringTable::getStringView(type_info.name());
+									FLASH_LOG(Codegen, Debug, "sizeof(member_access): type_info name=", base_type_name);
+									const StructTypeInfo* struct_info = type_info.getStructInfo();
+									
+									// First try the direct struct_info
+									size_t direct_member_size = 0;
+									if (struct_info && !struct_info->members.empty()) {
+										FLASH_LOG(Codegen, Debug, "sizeof(member_access): struct found, members=", struct_info->members.size());
+										// Find the member in the struct
+										for (const auto& member : struct_info->members) {
+											FLASH_LOG(Codegen, Debug, "  checking member: ", StringTable::getStringView(member.getName()), " size=", member.size);
+											if (StringTable::getStringView(member.getName()) == member_name) {
+												direct_member_size = member.size;
+												break;
 											}
 										}
-										
-										// If direct lookup found a member with size > 1, use it
-										// Otherwise, search for instantiated types (template vs instantiation mismatch)
-										if (direct_member_size > 1) {
-											FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
-											return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
-										}
-										
-										// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
-										// search for instantiated types that match this base template name
-										// This handles cases like test<int> where type_index points to 'test' 
-										// but we need 'test$hash' for the correct member size
-										for (const auto& ti : gTypeInfo) {
-											std::string_view ti_name = StringTable::getStringView(ti.name());
-											// Check if this is an instantiation of the base template
-											// Instantiated names start with base_name followed by '_' or '$'
-											if (ti_name.size() > base_type_name.size() && 
-											    ti_name.substr(0, base_type_name.size()) == base_type_name &&
-											    (ti_name[base_type_name.size()] == '_' || ti_name[base_type_name.size()] == '$')) {
-												const StructTypeInfo* inst_struct_info = ti.getStructInfo();
-												if (inst_struct_info && !inst_struct_info->members.empty()) {
-													for (const auto& member : inst_struct_info->members) {
-														if (StringTable::getStringView(member.getName()) == member_name) {
-															FLASH_LOG(Codegen, Debug, "sizeof(member_access): Found in instantiated type '", ti_name, "' member size=", member.size);
-															return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member.size) };
-														}
+									}
+									
+									// If direct lookup found a member with size > 1, use it
+									// Otherwise, search for instantiated types (template vs instantiation mismatch)
+									if (direct_member_size > 1) {
+										FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
+										return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
+									}
+									
+									// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
+									// search for instantiated types that match this base template name
+									// This handles cases like test<int> where type_index points to 'test' 
+									// but we need 'test$hash' for the correct member size
+									for (const auto& ti : gTypeInfo) {
+										std::string_view ti_name = StringTable::getStringView(ti.name());
+										// Check if this is an instantiation of the base template
+										// Instantiated names start with base_name followed by '_' or '$'
+										if (ti_name.size() > base_type_name.size() && 
+										    ti_name.substr(0, base_type_name.size()) == base_type_name &&
+										    (ti_name[base_type_name.size()] == '_' || ti_name[base_type_name.size()] == '$')) {
+											const StructTypeInfo* inst_struct_info = ti.getStructInfo();
+											if (inst_struct_info && !inst_struct_info->members.empty()) {
+												for (const auto& member : inst_struct_info->members) {
+													if (StringTable::getStringView(member.getName()) == member_name) {
+														FLASH_LOG(Codegen, Debug, "sizeof(member_access): Found in instantiated type '", ti_name, "' member size=", member.size);
+														return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member.size) };
 													}
 												}
 											}
 										}
-										
-										// If no instantiation found but direct lookup had a result, use that
-										if (direct_member_size > 0) {
-											FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
-											return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
-										}
+									}
+									
+									// If no instantiation found but direct lookup had a result, use that
+									if (direct_member_size > 0) {
+										FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
+										return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
 									}
 								}
 							}
@@ -4184,72 +4126,68 @@
 						const IdentifierNode& id_node = std::get<IdentifierNode>(array_expr);
 						
 						// Look up the array identifier in the symbol table
-						std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
-						
-						if (symbol.has_value()) {
-							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-							if (decl) {
-								const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
-								
-								// Get the base element type size
-								size_t element_size = var_type.size_in_bits() / 8;
-								if (element_size == 0) {
-									element_size = get_type_size_bits(var_type.type()) / 8;
-								}
-								
-								// Handle struct element types
-								if (element_size == 0 && var_type.type() == Type::Struct) {
-									size_t type_index = var_type.type_index();
-									if (type_index < gTypeInfo.size()) {
-										const TypeInfo& type_info = gTypeInfo[type_index];
-										const StructTypeInfo* struct_info = type_info.getStructInfo();
-										if (struct_info) {
-											element_size = struct_info->total_size;
-										}
-									}
-								}
-								
-								// For multidimensional arrays, arr[0] should return size of the sub-array
-								// e.g., for int arr[3][4], sizeof(arr[0]) = sizeof(int[4]) = 16
-								const auto& dims = decl->array_dimensions();
-								if (dims.size() > 1) {
-									// Calculate sub-array size: element_size * product of all dims except first
-									size_t sub_array_count = 1;
-									ConstExpr::EvaluationContext ctx(symbol_table);
-									
-									for (size_t i = 1; i < dims.size(); ++i) {
-										auto eval_result = ConstExpr::Evaluator::evaluate(dims[i], ctx);
-										if (!eval_result.success()) {
-											// Can't evaluate dimension at compile time, fall through to IR generation
-											FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not evaluate dimension ", i, 
-											          " for '", id_node.name(), "', falling back to IR generation");
-											goto fallback_to_ir;
-										}
-										
-										long long dim_size = eval_result.as_int();
-										if (dim_size <= 0) {
-											FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Invalid dimension size ", dim_size, 
-											          " for '", id_node.name(), "'");
-											goto fallback_to_ir;
-										}
-										
-										sub_array_count *= static_cast<size_t>(dim_size);
-									}
-									
-									size_in_bytes = element_size * sub_array_count;
-									FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): multidim array=", id_node.name(), 
-									          " element_size=", element_size, " sub_array_count=", sub_array_count,
-									          " total=", size_in_bytes);
-								} else {
-									// Single dimension or non-array, just return element size
-									size_in_bytes = element_size;
-									FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
-									          " element_size=", size_in_bytes);
-								}
-								
-								// Return the size without generating runtime IR
-								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+						const DeclarationNode* decl = lookupDeclaration(id_node.name());
+						if (decl) {
+							const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
+							
+							// Get the base element type size
+							size_t element_size = var_type.size_in_bits() / 8;
+							if (element_size == 0) {
+								element_size = get_type_size_bits(var_type.type()) / 8;
 							}
+							
+							// Handle struct element types
+							if (element_size == 0 && var_type.type() == Type::Struct) {
+								size_t type_index = var_type.type_index();
+								if (type_index < gTypeInfo.size()) {
+									const TypeInfo& type_info = gTypeInfo[type_index];
+									const StructTypeInfo* struct_info = type_info.getStructInfo();
+									if (struct_info) {
+										element_size = struct_info->total_size;
+									}
+								}
+							}
+							
+							// For multidimensional arrays, arr[0] should return size of the sub-array
+							// e.g., for int arr[3][4], sizeof(arr[0]) = sizeof(int[4]) = 16
+							const auto& dims = decl->array_dimensions();
+							if (dims.size() > 1) {
+								// Calculate sub-array size: element_size * product of all dims except first
+								size_t sub_array_count = 1;
+								ConstExpr::EvaluationContext ctx(symbol_table);
+								
+								for (size_t i = 1; i < dims.size(); ++i) {
+									auto eval_result = ConstExpr::Evaluator::evaluate(dims[i], ctx);
+									if (!eval_result.success()) {
+										// Can't evaluate dimension at compile time, fall through to IR generation
+										FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not evaluate dimension ", i, 
+										          " for '", id_node.name(), "', falling back to IR generation");
+										goto fallback_to_ir;
+									}
+									
+									long long dim_size = eval_result.as_int();
+									if (dim_size <= 0) {
+										FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Invalid dimension size ", dim_size, 
+										          " for '", id_node.name(), "'");
+										goto fallback_to_ir;
+									}
+									
+									sub_array_count *= static_cast<size_t>(dim_size);
+								}
+								
+								size_in_bytes = element_size * sub_array_count;
+								FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): multidim array=", id_node.name(), 
+								          " element_size=", element_size, " sub_array_count=", sub_array_count,
+								          " total=", size_in_bytes);
+							} else {
+								// Single dimension or non-array, just return element size
+								size_in_bytes = element_size;
+								FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
+								          " element_size=", size_in_bytes);
+							}
+							
+							// Return the size without generating runtime IR
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 						}
 						
 						fallback_to_ir:

@@ -977,6 +977,17 @@
 		return symbol;
 	}
 
+	/// Lookup + extract DeclarationNode in one step (returns nullptr if not found or not a declaration)
+	const DeclarationNode* lookupDeclaration(StringHandle handle) const {
+		auto symbol = lookupSymbol(handle);
+		return symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+	}
+
+	const DeclarationNode* lookupDeclaration(std::string_view name) const {
+		auto symbol = lookupSymbol(name);
+		return symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+	}
+
 	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
 	TempVar emitAddressOf(Type type, int size_in_bits, IrValue source, Token token = Token()) {
 		TempVar addr_var = var_counter.next();

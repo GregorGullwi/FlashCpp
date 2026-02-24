@@ -237,7 +237,22 @@ TempVar emitAddressOf(const IrOperand& operand, Type type, int size_bits);
 TempVar emitDereference(const TypedValue& pointer, Type pointee_type, int size_bits);
 ```
 
-### 4.3 TempVar Allocation Pattern (222 occurrences)
+### 4.3 `lookupSymbol()` → DeclarationNode Extraction Duplication (MEDIUM - ~80 lines reducible)
+
+`lookupSymbol()` returns `std::optional<ASTNode>`, but 15+ call sites in CodeGen immediately extract a `DeclarationNode*` via inline `is<DeclarationNode>() / is<VariableDeclarationNode>()` checks — duplicating what `get_decl_from_symbol()` (AstNodeTypes.h) already provides. A redundant `getDeclarationFromSymbol()` (CodeGen_Expressions.cpp) also wraps the same logic.
+
+**Examples (inline extraction — 6-8 lines each):**
+- CodeGen_Functions.cpp: lines 639-645, 851-862, 2651-2657, 3052-3058
+- CodeGen_Expressions.cpp: lines 1894-1901, 2075-2081, 2353-2359
+
+**Fix:** Add `lookupDeclaration()` that combines `lookupSymbol()` + `get_decl_from_symbol()`:
+```cpp
+const DeclarationNode* lookupDeclaration(StringHandle handle) const;
+const DeclarationNode* lookupDeclaration(std::string_view name) const;
+```
+Remove `getDeclarationFromSymbol()` from CodeGen_Expressions.cpp and replace all inline extraction with calls to `lookupDeclaration()` or `get_decl_from_symbol()`.
+
+### 4.4 TempVar Allocation Pattern (222 occurrences)
 
 `TempVar result_var = var_counter.next()` is called without any pooling or reuse of dead temporaries.
 
@@ -366,6 +381,7 @@ StringBuilder (ChunkedString.h lines 354-361) grows by 16x. For strings >1MB thi
 | 19 | Extract `isTwoRegisterStruct()` + `shouldPassStructByAddress()` ABI helpers | IRConverter.h | ~50 lines saved | ✅ Done |
 | 20 | Extract `findVariableInfo()` to flatten variable scope lookups | IRConverter.h | ~15 lines saved | ✅ Done |
 | 21 | Replace `std::string` map keys with `string_view`-compatible | Multiple | Perf (352+ allocs) | TODO |
+| 26 | Unify `lookupSymbol()` → DeclarationNode extraction into `lookupDeclaration()` | CodeGen_*.cpp | ~80 lines saved | ✅ Done |
 
 ### Phase 4: Architectural (Optional)
 
@@ -399,9 +415,14 @@ StringBuilder (ChunkedString.h lines 354-361) grows by 16x. For strings >1MB thi
 
 **Net lines reduced:** ~760 lines across 12 files
 
+**Completed in Phase 3 continuation (lookupDeclaration refactoring):**
+- **CodeGen_Lambdas.cpp:** Added `lookupDeclaration(StringHandle)` and `lookupDeclaration(string_view)` helpers combining `lookupSymbol()` + `get_decl_from_symbol()` in one call
+- **CodeGen_Functions.cpp:** 10 sites refactored: replaced `lookupSymbol()` + inline `is<DeclarationNode>()/is<VariableDeclarationNode>()` extraction or `get_decl_from_symbol()` with `lookupDeclaration()` (~67 lines removed)
+- **CodeGen_Expressions.cpp:** 8 sites refactored: removed redundant `getDeclarationFromSymbol()` static function, replaced inline extraction patterns with `lookupDeclaration()` or `get_decl_from_symbol()` (~51 lines removed)
+
 ### Estimated Total Impact
 
-- **Lines of code reduced:** ~760 through deduplication (Phases 1-3)
+- **Lines of code reduced:** ~878 through deduplication (Phases 1-3)
 - **Readability:** Significant improvement from shorter functions, named constants, less nesting
 - **Performance:** O(1) caches replacing O(n) linear scans in ElfFileWriter and ObjFileWriter
 - **Maintenance:** Easier to add new IR opcodes, parse constructs, and file format features

@@ -1659,18 +1659,6 @@
 	// Address Expression Analysis for One-Pass Address Calculation
 	// ============================================================================
 	
-	// Helper function to extract DeclarationNode from a symbol (handles both DeclarationNode and VariableDeclarationNode)
-	static const DeclarationNode* getDeclarationFromSymbol(const std::optional<ASTNode>& symbol) {
-		if (!symbol.has_value()) {
-			return nullptr;
-		}
-		if (symbol->is<DeclarationNode>()) {
-			return &symbol->as<DeclarationNode>();
-		} else if (symbol->is<VariableDeclarationNode>()) {
-			return &symbol->as<VariableDeclarationNode>().declaration();
-		}
-		return nullptr;
-	}
 	
 	// Structure to hold the components of an address expression
 	struct AddressComponents {
@@ -1694,20 +1682,13 @@
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
 			
 			// Look up the identifier
-			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
-			if (!symbol.has_value()) {
+			const DeclarationNode* decl = lookupDeclaration(identifier_handle);
+			if (!decl) {
 				return std::nullopt;  // Can't find identifier
 			}
 			
 			// Get type info
-			const TypeSpecifierNode* type_node = nullptr;
-			if (symbol->is<DeclarationNode>()) {
-				type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-			} else if (symbol->is<VariableDeclarationNode>()) {
-				type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-			} else {
-				return std::nullopt;
-			}
+			const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
 			
 			AddressComponents result;
 			result.base = identifier_handle;
@@ -1796,9 +1777,7 @@
 			// Calculate actual element size from array declaration
 			if (std::holds_alternative<StringHandle>(array_operands[2])) {
 				StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-				std::optional<ASTNode> symbol = lookupSymbol(array_name);
-				
-				const DeclarationNode* decl_ptr = getDeclarationFromSymbol(symbol);
+				const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
 					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
 					if (type_node.pointer_depth() > 0) {
@@ -1891,17 +1870,12 @@
 				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
 				StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
 				
-				std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
+				const DeclarationNode* decl = lookupDeclaration(identifier_handle);
 				
-				if (symbol.has_value()) {
-					const TypeSpecifierNode* type_node = nullptr;
-					if (symbol->is<DeclarationNode>()) {
-						type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					} else if (symbol->is<VariableDeclarationNode>()) {
-						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-					}
+				if (decl) {
+					const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
 					
-					if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+					if (type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
 						// Check for operator& overload
 						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "&");
 						
@@ -1992,19 +1966,12 @@
 				return true;
 			}
 
-			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
-			if (!symbol.has_value()) {
+			const DeclarationNode* decl = lookupDeclaration(identifier_handle);
+			if (!decl) {
 				return false;
 			}
 
-			const TypeSpecifierNode* type_node = nullptr;
-			if (symbol->is<DeclarationNode>()) {
-				type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-			} else if (symbol->is<VariableDeclarationNode>()) {
-				type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-			} else {
-				return false;
-			}
+			const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
 
 			out.clear();
 			out.emplace_back(type_node->type());
@@ -2072,37 +2039,28 @@
 							// We need to calculate the actual element size from the array declaration
 							if (std::holds_alternative<StringHandle>(array_operands[2])) {
 								StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-								std::optional<ASTNode> symbol = lookupSymbol(array_name);
-								if (symbol.has_value()) {
-									const DeclarationNode* decl_ptr = nullptr;
-									if (symbol->is<DeclarationNode>()) {
-										decl_ptr = &symbol->as<DeclarationNode>();
-									} else if (symbol->is<VariableDeclarationNode>()) {
-										decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-									}
-									
-									if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
-										// This is an array - calculate element size
-										const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-										if (type_node.pointer_depth() > 0) {
-											// Array of pointers
-											element_size_bits = 64;
-										} else if (type_node.type() == Type::Struct) {
-											// Array of structs
-											TypeIndex type_index_from_decl = type_node.type_index();
-											if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
-												const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
-												const StructTypeInfo* struct_info = type_info.getStructInfo();
-												if (struct_info) {
-													element_size_bits = static_cast<int>(struct_info->total_size * 8);
-												}
+								const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
+								if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+									// This is an array - calculate element size
+									const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+									if (type_node.pointer_depth() > 0) {
+										// Array of pointers
+										element_size_bits = 64;
+									} else if (type_node.type() == Type::Struct) {
+										// Array of structs
+										TypeIndex type_index_from_decl = type_node.type_index();
+										if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
+											const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
+											const StructTypeInfo* struct_info = type_info.getStructInfo();
+											if (struct_info) {
+												element_size_bits = static_cast<int>(struct_info->total_size * 8);
 											}
-										} else {
-											// Regular array - use type size
-											element_size_bits = static_cast<int>(type_node.size_in_bits());
-											if (element_size_bits == 0) {
-												element_size_bits = get_type_size_bits(type_node.type());
-											}
+										}
+									} else {
+										// Regular array - use type size
+										element_size_bits = static_cast<int>(type_node.size_in_bits());
+										if (element_size_bits == 0) {
+											element_size_bits = get_type_size_bits(type_node.type());
 										}
 									}
 								}
@@ -2350,37 +2308,28 @@
 				// We need to calculate the actual element size from the array declaration
 				if (std::holds_alternative<StringHandle>(array_operands[2])) {
 					StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-					std::optional<ASTNode> symbol = lookupSymbol(array_name);
-					if (symbol.has_value()) {
-						const DeclarationNode* decl_ptr = nullptr;
-						if (symbol->is<DeclarationNode>()) {
-							decl_ptr = &symbol->as<DeclarationNode>();
-						} else if (symbol->is<VariableDeclarationNode>()) {
-							decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-						}
-						
-						if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
-							// This is an array - calculate element size
-							const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-							if (type_node.pointer_depth() > 0) {
-								// Array of pointers
-								element_size_bits = 64;
-							} else if (type_node.type() == Type::Struct) {
-								// Array of structs
-								TypeIndex type_index = type_node.type_index();
-								if (type_index > 0 && type_index < gTypeInfo.size()) {
-									const TypeInfo& type_info = gTypeInfo[type_index];
-									const StructTypeInfo* struct_info = type_info.getStructInfo();
-									if (struct_info) {
-										element_size_bits = static_cast<int>(struct_info->total_size * 8);
-									}
+					const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
+					if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+						// This is an array - calculate element size
+						const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+						if (type_node.pointer_depth() > 0) {
+							// Array of pointers
+							element_size_bits = 64;
+						} else if (type_node.type() == Type::Struct) {
+							// Array of structs
+							TypeIndex type_index = type_node.type_index();
+							if (type_index > 0 && type_index < gTypeInfo.size()) {
+								const TypeInfo& type_info = gTypeInfo[type_index];
+								const StructTypeInfo* struct_info = type_info.getStructInfo();
+								if (struct_info) {
+									element_size_bits = static_cast<int>(struct_info->total_size * 8);
 								}
-							} else {
-								// Regular array - use type size
-								element_size_bits = static_cast<int>(type_node.size_in_bits());
-								if (element_size_bits == 0) {
-									element_size_bits = get_type_size_bits(type_node.type());
-								}
+							}
+						} else {
+							// Regular array - use type size
+							element_size_bits = static_cast<int>(type_node.size_in_bits());
+							if (element_size_bits == 0) {
+								element_size_bits = get_type_size_bits(type_node.type());
 							}
 						}
 					}
@@ -2938,7 +2887,7 @@
 					if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 						const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
 						auto symbol = symbol_table.lookup(identifier.name());
-						const DeclarationNode* decl = getDeclarationFromSymbol(symbol);
+						const DeclarationNode* decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
 						if (decl) {
 							pointer_depth = decl->type_node().as<TypeSpecifierNode>().pointer_depth();
 						}
