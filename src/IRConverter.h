@@ -11065,6 +11065,7 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
 		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
+		regAlloc.release(ctx.rhs_physical_reg);
 	}
 
 	void handleBitwiseAnd(const IrInstruction& instruction) {
