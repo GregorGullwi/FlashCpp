@@ -1548,6 +1548,9 @@ private:
 	// Relocation accessors (one per section that needs relocations)
 	std::unordered_map<std::string, std::unique_ptr<ELFIO::relocation_section_accessor>> rela_accessors_;
 
+	// Cache for section name → section pointer lookups (avoids O(n) iteration)
+	std::unordered_map<std::string, ELFIO::section*> section_name_cache_;
+
 	// String literal counter for generating unique names
 	uint32_t string_literal_counter_ = 0;
 
@@ -1634,12 +1637,17 @@ private:
 	}
 
 	/**
-	 * @brief Get section by name
+	 * @brief Get section by name (cached for O(1) repeated lookups)
 	 */
 	ELFIO::section* getSectionByName(const std::string& name) {
+		auto it = section_name_cache_.find(name);
+		if (it != section_name_cache_.end()) {
+			return it->second;
+		}
 		for (auto& sec : elf_writer_.sections) {
 			if (sec->get_name() == name) {
-				return sec.get();  // Get raw pointer from unique_ptr
+				section_name_cache_[name] = sec.get();
+				return sec.get();
 			}
 		}
 		return nullptr;

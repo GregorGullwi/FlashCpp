@@ -2750,15 +2750,25 @@ public:
 		return throw_info_symbol;
 	}
 
-	// Helper: get or create symbol index for a function name
+	// Helper: get or create symbol index for a function name (cached for O(1) repeated lookups)
 	uint32_t get_or_create_symbol_index(const std::string& symbol_name) {
-		// First, check if symbol already exists
+		// Check cache first
+		auto cache_it = symbol_index_cache_.find(symbol_name);
+		if (cache_it != symbol_index_cache_.end()) {
+			if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Cache hit for '" << symbol_name 
+			          << "' at file index " << cache_it->second << std::endl;
+			return cache_it->second;
+		}
+
+		// Check if symbol already exists in COFFI
 		auto symbols = coffi_.get_symbols();
 		for (size_t i = 0; i < symbols->size(); ++i) {
 			if ((*symbols)[i].get_name() == symbol_name) {
+				uint32_t file_index = (*symbols)[i].get_index();
 				if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Found existing symbol '" << symbol_name 
-				          << "' at array index " << i << ", file index " << (*symbols)[i].get_index() << std::endl;
-				return (*symbols)[i].get_index();
+				          << "' at array index " << i << ", file index " << file_index << std::endl;
+				symbol_index_cache_[symbol_name] = file_index;
+				return file_index;
 			}
 		}
 		
@@ -2772,6 +2782,7 @@ public:
 		
 		// Return the index from COFFI (which includes aux entries)
 		uint32_t file_index = symbol->get_index();
+		symbol_index_cache_[symbol_name] = file_index;
 		if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Created new symbol at file index " << file_index 
 		          << " for '" << symbol_name << "'" << std::endl;
 		return file_index;
@@ -2800,6 +2811,9 @@ protected:
 
 	// Track generated throw-info symbols by type name
 	std::unordered_map<std::string, std::string> throw_info_symbols_;
+
+	// Cache for symbol name → file index lookups (avoids O(n) linear scan)
+	std::unordered_map<std::string, uint32_t> symbol_index_cache_;
 
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;

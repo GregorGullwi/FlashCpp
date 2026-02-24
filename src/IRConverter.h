@@ -44,6 +44,17 @@ extern bool g_enable_exceptions;
 // - SSE float mov: Prefix (1) + REX (1) + Opcode (2) + ModR/M (1) + Disp32 (4) = 9 bytes
 static constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 9;
 
+// x86-64 REX prefix byte constants
+// REX format: 0100WRXB
+// W = 64-bit operand size, R = ModR/M reg extension, X = SIB index extension, B = ModR/M r/m extension
+static constexpr uint8_t REX_BASE = 0x40;  // REX prefix with no bits set (enables uniform byte regs)
+static constexpr uint8_t REX_B    = 0x41;  // REX.B - extends r/m or base register to R8-R15
+static constexpr uint8_t REX_X    = 0x42;  // REX.X - extends SIB index register
+static constexpr uint8_t REX_R    = 0x44;  // REX.R - extends ModR/M reg field to R8-R15
+static constexpr uint8_t REX_W    = 0x48;  // REX.W - 64-bit operand size
+static constexpr uint8_t REX_WB   = 0x49;  // REX.W + REX.B
+static constexpr uint8_t REX_WR   = 0x4C;  // REX.W + REX.R
+
 struct OpCodeWithSize {
 	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes{};  // Zero-initialize
 	size_t size_in_bytes = 0;
@@ -3964,6 +3975,40 @@ private:
 		auto movzx_encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.result_physical_reg);
 		std::array<uint8_t, 4> movzxInst = { movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	// Helper function to emit a floating-point comparison instruction (comiss/comisd + SETcc)
+	// Consolidates the repeated pattern across handleFloatEqual, handleFloatNotEqual, etc.
+	void emitFloatComparisonInstruction(ArithmeticOperationContext& ctx, uint8_t setcc_opcode) {
+		// Use SSE comiss/comisd for comparison
+		// Properly handles XMM8-XMM15 registers with REX prefix
+		if (ctx.operand_type == Type::Float) {
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+		} else if (ctx.operand_type == Type::Double) {
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+		}
+
+		// Allocate a general-purpose register for the boolean result
+		X64Register bool_reg = allocateRegisterWithSpilling();
+
+		// Set result based on condition flags: SETcc r8
+		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
+		uint8_t setcc_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
+		textSectionData.push_back(setcc_rex);
+		std::array<uint8_t, 3> setccInst = { 0x0F, setcc_opcode, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
+		textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
+
+		// Update context for boolean result (1 byte)
+		ctx.result_value.type = Type::Bool;
+		ctx.result_value.size_in_bits = 8;
+		ctx.result_physical_reg = bool_reg;
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -10917,36 +10962,19 @@ private:
 		current_scope.variables[instruction.getOperandAs<std::string_view>(2)].offset = stack_offset;*/
 	}
 
-	void handleAdd(const IrInstruction& instruction) {
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "addition");
-
-		// Perform the addition operation: ADD dst, src (opcode 0x01)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x01, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
+	void handleBinaryArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
+		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
-
-		// Release the RHS register (we're done with it)
 		regAlloc.release(ctx.rhs_physical_reg);
-		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
-		// that will be used by subsequent operations
+	}
+
+	void handleAdd(const IrInstruction& instruction) {
+		handleBinaryArithmetic(instruction, 0x01, "addition"); // ADD dst, src
 	}
 
 	void handleSubtract(const IrInstruction& instruction) {
-		// Setup and load operands
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtraction");
-
-		// Perform the subtraction operation: SUB dst, src (opcode 0x29)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x29, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
-
-		// Release the RHS register (we're done with it)
-		regAlloc.release(ctx.rhs_physical_reg);
-		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
+		handleBinaryArithmetic(instruction, 0x29, "subtraction"); // SUB dst, src
 	}
 
 	void handleMultiply(const IrInstruction& instruction) {
@@ -11119,40 +11147,22 @@ private:
 		storeArithmeticResult(ctx);
 	}
 
-	void handleBitwiseAnd(const IrInstruction& instruction) {
-		// Setup and load operands
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise AND");
-
-		// Perform the bitwise AND operation: AND dst, src (opcode 0x21)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x21, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
+	void handleBitwiseArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
+		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
+	}
+
+	void handleBitwiseAnd(const IrInstruction& instruction) {
+		handleBitwiseArithmetic(instruction, 0x21, "bitwise AND"); // AND dst, src
 	}
 
 	void handleBitwiseOr(const IrInstruction& instruction) {
-		// Setup and load operands
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise OR");
-
-		// Perform the bitwise OR operation: OR dst, src (opcode 0x09)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x09, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		handleBitwiseArithmetic(instruction, 0x09, "bitwise OR"); // OR dst, src
 	}
 
 	void handleBitwiseXor(const IrInstruction& instruction) {
-		// Setup and load operands
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise XOR");
-
-		// Perform the bitwise XOR operation: XOR dst, src (opcode 0x31)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x31, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		handleBitwiseArithmetic(instruction, 0x31, "bitwise XOR"); // XOR dst, src
 	}
 
 	void handleModulo(const IrInstruction& instruction) {
@@ -11422,218 +11432,33 @@ private:
 	}
 
 	void handleFloatEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point equal comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (ctx.operand_type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on zero flag: sete r8
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t sete_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(sete_rex);
-		std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x94); // SETE
 	}
 
 	void handleFloatNotEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point not equal comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on zero flag: setne r8
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setne_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(setne_rex);
-		std::array<uint8_t, 3> setneInst = { 0x0F, 0x95, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setneInst.begin(), setneInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x95); // SETNE
 	}
 
 	void handleFloatLessThan(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point less than comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on carry flag: setb r8 (below = less than for floating-point)
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setb_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(setb_rex);
-		std::array<uint8_t, 3> setbInst = { 0x0F, 0x92, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setbInst.begin(), setbInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;  // Update to the boolean result register
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x92); // SETB
 	}
 
 	void handleFloatLessEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point less than or equal comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on flags: setbe r8 (below or equal)
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setbe_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(setbe_rex);
-		std::array<uint8_t, 3> setbeInst = { 0x0F, 0x96, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setbeInst.begin(), setbeInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x96); // SETBE
 	}
 
 	void handleFloatGreaterThan(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point greater than comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on flags: seta r8 (above = greater than for floating-point)
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t seta_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(seta_rex);
-		std::array<uint8_t, 3> setaInst = { 0x0F, 0x97, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setaInst.begin(), setaInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;  // Update to the boolean result register
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x97); // SETA
 	}
 
 	void handleFloatGreaterEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point greater than or equal comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on flags: setae r8 (above or equal)
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setae_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(setae_rex);
-		std::array<uint8_t, 3> setaeInst = { 0x0F, 0x93, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setaeInst.begin(), setaeInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;  // Update to the boolean result register
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x93); // SETAE
 	}
 
 	// Helper: Load operand value (TempVar or variable name) into a register
