@@ -727,8 +727,9 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 
 /**
  * Create a TemplateInstantiationKey from template name and TemplateArgument vector.
- * This bridges the gap between code that works with TemplateArgument
- * and the key system by converting each TemplateArgument to a TypeIndexArg.
+ * Overload of makeInstantiationKey(StringHandle, const std::vector<TemplateTypeArg>&)
+ * that accepts TemplateArgument (the parser-level representation) instead of TemplateTypeArg.
+ * Each TemplateArgument is converted to TypeIndexArg via toTemplateTypeArg().
  */
 namespace FlashCpp {
 inline TemplateInstantiationKey makeInstantiationKey(
@@ -1920,7 +1921,8 @@ inline std::string_view extractBaseTemplateName(std::string_view name) {
 	if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
 		return StringTable::getStringView(type_it->second->baseTemplateName());
 	}
-	// Fallback: split on '$' separator
+	// Centralized fallback: split on '$' separator in the template$hash naming convention.
+	// This is the ONLY find('$') in the codebase — all 12 former call sites delegate here.
 	size_t dollar_pos = name.find('$');
 	if (dollar_pos != std::string_view::npos) {
 		return name.substr(0, dollar_pos);
