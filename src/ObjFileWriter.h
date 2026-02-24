@@ -823,7 +823,7 @@ public:
 		return {"??_R0" + mangled_type_name, mangled_type_name};
 	}
 
-	std::string get_or_create_exception_throw_info(const std::string& type_name, size_t type_size = 0) {
+	std::string get_or_create_exception_throw_info(const std::string& type_name, size_t type_size = 0, bool is_simple_type = false) {
 		if (type_name.empty() || type_name == "void") {
 			return std::string();
 		}
@@ -885,7 +885,7 @@ public:
 				catchable_type_data.push_back(static_cast<char>((v >> 24) & 0xFF));
 			};
 
-			append_u32(0);              // properties
+			append_u32(is_simple_type ? 1 : 0);  // properties (1 = CT_IsSimpleType for scalars)
 			append_u32(0);              // pType (relocated)
 			append_u32(0);              // thisDisplacement.mdisp
 			append_u32(0xFFFFFFFFu);    // thisDisplacement.pdisp

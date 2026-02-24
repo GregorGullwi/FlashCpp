@@ -16444,7 +16444,8 @@ private:
 
 			std::string throw_info_symbol;
 			if (!throw_type_name.empty() && throw_type_name != "void") {
-				throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size);
+				bool is_simple_type = (throw_op.exception_type != Type::Struct);
+				throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type);
 			}
 
 			if (!throw_info_symbol.empty()) {
