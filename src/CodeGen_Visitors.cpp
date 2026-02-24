@@ -65,6 +65,15 @@ public:
 		else if (node.is<ThrowStatementNode>()) {
 			visitThrowStatementNode(node.as<ThrowStatementNode>());
 		}
+		else if (node.is<SehTryExceptStatementNode>()) {
+			visitSehTryExceptStatementNode(node.as<SehTryExceptStatementNode>());
+		}
+		else if (node.is<SehTryFinallyStatementNode>()) {
+			visitSehTryFinallyStatementNode(node.as<SehTryFinallyStatementNode>());
+		}
+		else if (node.is<SehLeaveStatementNode>()) {
+			visitSehLeaveStatementNode(node.as<SehLeaveStatementNode>());
+		}
 		else if (node.is<BlockNode>()) {
 			visitBlockNode(node.as<BlockNode>());
 		}
@@ -2192,8 +2201,55 @@ private:
 			return true;
 		}
 		
+	// Handle Global kind for compound assignments (e.g., g_score += 20)
+		if (lv_info.kind == LValueInfo::Kind::Global) {
+			if (!std::holds_alternative<StringHandle>(lv_info.base)) {
+				FLASH_LOG(Codegen, Debug, "     Global compound assignment: base is not a StringHandle");
+				return false;
+			}
+			StringHandle global_name = std::get<StringHandle>(lv_info.base);
+			FLASH_LOG(Codegen, Debug, "     Global compound assignment op=", op);
+
+			// Map compound assignment operator to the corresponding operation
+			static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
+				{"+=", IrOpcode::Add},
+				{"-=", IrOpcode::Subtract},
+				{"*=", IrOpcode::Multiply},
+				{"/=", IrOpcode::Divide},
+				{"%=", IrOpcode::Modulo},
+				{"&=", IrOpcode::BitwiseAnd},
+				{"|=", IrOpcode::BitwiseOr},
+				{"^=", IrOpcode::BitwiseXor},
+				{"<<=", IrOpcode::ShiftLeft},
+				{">>=", IrOpcode::ShiftRight}
+			};
+			auto op_it = compound_op_map.find(op);
+			if (op_it == compound_op_map.end()) {
+				FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
+				return false;
+			}
+
+			// lhs_temp already holds the loaded value (from GlobalLoad in LHS evaluation)
+			TempVar result_temp = var_counter.next();
+			BinaryOp bin_op;
+			bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
+			bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+			bin_op.lhs.value = lhs_temp;
+			bin_op.rhs = toTypedValue(rhs_operands);
+			bin_op.result = result_temp;
+			ir_.addInstruction(IrInstruction(op_it->second, std::move(bin_op), token));
+
+			// Store result back to global
+			std::vector<IrOperand> store_operands;
+			store_operands.emplace_back(global_name);
+			store_operands.emplace_back(result_temp);
+			ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), token);
+
+			return true;
+		}
+
 		if (lv_info.kind != LValueInfo::Kind::Member) {
-			FLASH_LOG(Codegen, Debug, "     Compound assignment only supports Member, Indirect, or ArrayElement kind, got: ", static_cast<int>(lv_info.kind));
+			FLASH_LOG(Codegen, Debug, "     Compound assignment only supports Member, Indirect, ArrayElement, or Global kind, got: ", static_cast<int>(lv_info.kind));
 			return false;
 		}
 		
@@ -5052,6 +5108,9 @@ private:
 					}
 				}
 				
+				// Call any enclosing __finally funclets before returning
+				emitSehFinallyCallsBeforeReturn(node.return_token());
+
 				// Now return the temporary variable
 				ReturnOp ret_op;
 				ret_op.return_value = temp_var;
@@ -5079,6 +5138,7 @@ private:
 						if (std::holds_alternative<IdentifierNode>(operand_expr)) {
 							const auto& ident = std::get<IdentifierNode>(operand_expr);
 							if (ident.name() == "this") {
+								emitSehFinallyCallsBeforeReturn(node.return_token());
 								ReturnOp ret_op;
 								ret_op.return_value = StringTable::getOrInternStringHandle("this");
 								ret_op.return_type = current_function_return_type_;
@@ -5108,6 +5168,7 @@ private:
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
 				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
+					emitSehFinallyCallsBeforeReturn(node.return_token());
 					ReturnOp ret_op;  // No return value for void
 					ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
 					return;
@@ -5273,9 +5334,12 @@ private:
 				}
 			}
 			
+			// Call any enclosing __finally funclets before returning
+			emitSehFinallyCallsBeforeReturn(node.return_token());
+
 			// Create ReturnOp with the return value
 			ReturnOp ret_op;
-			
+
 			// Check if operands has at least 3 elements before accessing
 			if (operands.size() < 3) {
 				FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed or returned insufficient operands");
@@ -5313,6 +5377,8 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
 		}
 		else {
+			// Call any enclosing __finally funclets before returning
+			emitSehFinallyCallsBeforeReturn(node.return_token());
 			// For void returns, we don't need any operands
 			ReturnOp ret_op;  // No return value for void
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));

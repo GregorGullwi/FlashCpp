@@ -32,6 +32,9 @@ namespace ObjectFileCommon {
 	struct CatchHandlerInfo {
 		uint32_t type_index;      // Type to catch (0 for catch-all)
 		uint32_t handler_offset;  // Code offset of catch handler relative to function start
+		uint32_t handler_end_offset; // Code offset of catch handler end relative to function start
+		uint32_t funclet_entry_offset = 0; // Code offset of catch funclet entry relative to function start
+		uint32_t funclet_end_offset = 0;   // Code offset of catch funclet end relative to function start
 		bool is_catch_all;        // True for catch(...)
 		std::string type_name;    // Name of the caught type (empty for catch-all or when type_index is 0)
 		bool is_const;            // True if caught by const
@@ -51,6 +54,32 @@ namespace ObjectFileCommon {
 		uint32_t try_start_offset;  // Code offset where try block starts
 		uint32_t try_end_offset;    // Code offset where try block ends
 		std::vector<CatchHandlerInfo> catch_handlers;
+	};
+
+	// Windows SEH (Structured Exception Handling) information
+
+	// SEH __except handler information
+	struct SehExceptHandlerInfo {
+		uint32_t handler_offset;  // Code offset of __except handler
+		uint32_t filter_result;   // Filter expression evaluation result (temp var number)
+		bool is_constant_filter;  // True if filter is a compile-time constant
+		int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
+		uint32_t filter_funclet_offset = 0; // Code offset of filter funclet (for non-constant filters)
+	};
+
+	// SEH __finally handler information
+	struct SehFinallyHandlerInfo {
+		uint32_t handler_offset;  // Code offset of __finally handler
+	};
+
+	// SEH try block information
+	struct SehTryBlockInfo {
+		uint32_t try_start_offset;  // Code offset where __try block starts
+		uint32_t try_end_offset;    // Code offset where __try block ends
+		bool has_except_handler;    // True if this has an __except handler
+		bool has_finally_handler;   // True if this has a __finally handler
+		SehExceptHandlerInfo except_handler;   // __except handler (if has_except_handler is true)
+		SehFinallyHandlerInfo finally_handler; // __finally handler (if has_finally_handler is true)
 	};
 
 	// Base class descriptor info for RTTI emission

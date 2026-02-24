@@ -142,6 +142,22 @@ enum class IrOpcode : int_fast16_t {
 	CatchEnd,            // End catch handler
 	Throw,               // Throw exception: [exception_temp, type_index]
 	Rethrow,             // Rethrow current exception (throw; with no argument)
+	// Windows SEH (Structured Exception Handling)
+	SehTryBegin,         // Begin __try block: [label_for_handlers]
+	SehTryEnd,           // End __try block
+	SehExceptBegin,      // Begin __except handler: [filter_result_temp, except_end_label]
+	SehExceptEnd,        // End __except handler
+	SehFinallyBegin,     // Begin __finally handler (funclet entry point)
+	SehFinallyEnd,       // End __finally handler (funclet return)
+	SehFinallyCall,      // Call __finally funclet for normal flow
+	SehFilterBegin,      // Begin filter funclet (RCX=EXCEPTION_POINTERS*, RDX=EstablisherFrame)
+	SehFilterEnd,        // End filter funclet (return filter result in EAX)
+	SehLeave,            // __leave statement: jump to end of __try block
+	SehGetExceptionCode, // GetExceptionCode() intrinsic - reads ExceptionCode from RCX in filter funclet
+	SehGetExceptionInfo, // GetExceptionInformation() intrinsic - returns EXCEPTION_POINTERS* (RCX) in filter funclet
+	SehSaveExceptionCode,     // Save ExceptionCode from filter's [rsp+8] to a parent-frame slot
+	SehGetExceptionCodeBody,  // Read ExceptionCode from parent-frame slot (in __except body)
+	SehAbnormalTermination,   // _abnormal_termination() intrinsic - reads ECX saved in finally funclet prologue
 };
 
 // ============================================================================
@@ -407,7 +423,8 @@ struct LValueInfo {
 		Indirect,      // Through pointer dereference: *ptr
 		Member,        // Struct member access: obj.member
 		ArrayElement,  // Array element access: arr[i]
-		Temporary      // Temporary materialization
+		Temporary,     // Temporary materialization
+		Global         // Global variable: base = StringHandle (global name)
 	};
 	
 	Kind kind;
@@ -1435,10 +1452,16 @@ struct CatchBeginOp {
 	TypeIndex type_index;         // Type index for user-defined types
 	Type exception_type;          // Type enum for built-in types (Int, Double, etc.)
 	std::string_view catch_end_label;  // Label to jump to if not matched
+	std::string_view continuation_label;  // Parent-function continuation label after catch completes
 	bool is_const;                // True if caught by const
 	bool is_reference;            // True if caught by lvalue reference  
 	bool is_rvalue_reference;     // True if caught by rvalue reference
 	bool is_catch_all;            // True for catch(...) - catches all exceptions
+};
+
+// Catch block end marker
+struct CatchEndOp {
+	std::string_view continuation_label;  // Label to continue parent function execution after catch funclet returns
 };
 
 // Throw exception operation
@@ -1448,6 +1471,57 @@ struct ThrowOp {
 	size_t size_in_bytes;         // Size of exception object in bytes
 	IrValue exception_value;      // Value to throw (TempVar, unsigned long long, double, or StringHandle)
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)
+};
+
+// ============================================================================
+// Windows SEH (Structured Exception Handling) Operations
+// ============================================================================
+
+// SEH __except handler begin marker
+struct SehExceptBeginOp {
+	TempVar filter_result;        // Temporary holding the filter expression result (for non-constant filters)
+	bool is_constant_filter;      // True if filter is a compile-time constant
+	int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
+	std::string_view except_end_label;  // Label to jump to after __except block
+};
+
+// SEH __finally funclet call for normal (non-exception) flow
+struct SehFinallyCallOp {
+	std::string_view funclet_label;  // __finally funclet entry label
+	std::string_view end_label;      // Label after __finally (continue execution)
+};
+
+// SEH filter funclet end - return filter result in EAX
+struct SehFilterEndOp {
+	TempVar filter_result;     // Temporary holding the filter expression result (used when !is_constant_result)
+	bool is_constant_result;   // True if the filter result is a compile-time constant
+	int32_t constant_result;   // Constant filter result value (used when is_constant_result)
+};
+
+// SEH __leave operation - jumps to end of current __try block
+struct SehLeaveOp {
+	std::string_view target_label;  // Label to jump to (end of __try block or __finally)
+};
+
+// SEH GetExceptionCode() / GetExceptionInformation() intrinsic result
+struct SehExceptionIntrinsicOp {
+	TempVar result;  // Temporary to store the result
+};
+
+// SEH SehSaveExceptionCode: save ExceptionCode from filter funclet's [rsp+8] to parent frame slot
+struct SehSaveExceptionCodeOp {
+	TempVar saved_var;  // Parent-frame temp var to save exception code into
+};
+
+// SEH SehGetExceptionCodeBody: read exception code from parent-frame slot in __except body
+struct SehGetExceptionCodeBodyOp {
+	TempVar saved_var;  // Parent-frame slot where exception code was saved during filter
+	TempVar result;     // Temporary to store the loaded exception code
+};
+
+// SEH _abnormal_termination() / AbnormalTermination(): reads ECX saved in __finally funclet prologue
+struct SehAbnormalTerminationOp {
+	TempVar result;  // Temporary to store the result (0=normal, non-zero=exception unwind)
 };
 
 // Helper function to format conversion operations for IR output
@@ -2781,8 +2855,15 @@ public:
 		break;
 
 		case IrOpcode::CatchEnd:
-			oss << "catch_end";
-			break;
+		{
+			if (hasTypedPayload()) {
+				const auto& op = getTypedPayload<CatchEndOp>();
+				oss << "catch_end -> @" << op.continuation_label;
+			} else {
+				oss << "catch_end";
+			}
+		}
+		break;
 
 		case IrOpcode::Throw:
 		{
@@ -2807,6 +2888,102 @@ public:
 		case IrOpcode::Rethrow:
 			oss << "rethrow";
 			break;
+
+		// Windows SEH opcodes
+		case IrOpcode::SehTryBegin:
+		{
+			const auto& op = getTypedPayload<BranchOp>();
+			oss << "seh_try_begin @" << op.getTargetLabel();
+		}
+		break;
+
+		case IrOpcode::SehTryEnd:
+			oss << "seh_try_end";
+			break;
+
+		case IrOpcode::SehExceptBegin:
+		{
+			const auto& op = getTypedPayload<SehExceptBeginOp>();
+			oss << "seh_except_begin %" << op.filter_result.var_number;
+			oss << " -> @" << op.except_end_label;
+		}
+		break;
+
+		case IrOpcode::SehExceptEnd:
+			oss << "seh_except_end";
+			break;
+
+		case IrOpcode::SehFinallyBegin:
+			oss << "seh_finally_begin";
+			break;
+
+		case IrOpcode::SehFinallyEnd:
+			oss << "seh_finally_end";
+			break;
+
+		case IrOpcode::SehFinallyCall:
+		{
+			const auto& op = getTypedPayload<SehFinallyCallOp>();
+			oss << "seh_finally_call @" << op.funclet_label << " -> @" << op.end_label;
+		}
+		break;
+
+		case IrOpcode::SehFilterBegin:
+			oss << "seh_filter_begin";
+			break;
+
+		case IrOpcode::SehFilterEnd:
+		{
+			const auto& op = getTypedPayload<SehFilterEndOp>();
+			if (op.is_constant_result) {
+				oss << "seh_filter_end constant=" << op.constant_result;
+			} else {
+				oss << "seh_filter_end %" << op.filter_result.var_number;
+			}
+		}
+		break;
+
+		case IrOpcode::SehLeave:
+		{
+			const auto& op = getTypedPayload<SehLeaveOp>();
+			oss << "seh_leave @" << op.target_label;
+		}
+		break;
+
+		case IrOpcode::SehGetExceptionCode:
+		{
+			const auto& op = getTypedPayload<SehExceptionIntrinsicOp>();
+			oss << "%" << op.result.var_number << " = seh_get_exception_code";
+		}
+		break;
+
+		case IrOpcode::SehGetExceptionInfo:
+		{
+			const auto& op = getTypedPayload<SehExceptionIntrinsicOp>();
+			oss << "%" << op.result.var_number << " = seh_get_exception_info";
+		}
+		break;
+
+		case IrOpcode::SehSaveExceptionCode:
+		{
+			const auto& op = getTypedPayload<SehSaveExceptionCodeOp>();
+			oss << "seh_save_exception_code -> %" << op.saved_var.var_number;
+		}
+		break;
+
+		case IrOpcode::SehGetExceptionCodeBody:
+		{
+			const auto& op = getTypedPayload<SehGetExceptionCodeBodyOp>();
+			oss << "%" << op.result.var_number << " = seh_get_exception_code_body(%" << op.saved_var.var_number << ")";
+		}
+		break;
+
+		case IrOpcode::SehAbnormalTermination:
+		{
+			const auto& op = getTypedPayload<SehAbnormalTerminationOp>();
+			oss << "%" << op.result.var_number << " = seh_abnormal_termination";
+		}
+		break;
 
 		default:
 			FLASH_LOG(Codegen, Error, "Unhandled opcode: ", static_cast<std::underlying_type_t<IrOpcode>>(opcode_));

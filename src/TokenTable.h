@@ -150,6 +150,11 @@ inline constexpr TokenSpelling all_fixed_tokens[] = {
 	{ "__inline",       tok::KW___inline },
 	{ "__forceinline",  tok::KW___forceinline },
 	{ "__declspec",     tok::KW___declspec },
+	// SEH keywords
+	{ "__try",          tok::KW___try },
+	{ "__except",       tok::KW___except },
+	{ "__finally",      tok::KW___finally },
+	{ "__leave",        tok::KW___leave },
 };
 
 // Compile-time lookup: _tok user-defined literal

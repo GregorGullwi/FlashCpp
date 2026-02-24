@@ -3525,6 +3525,52 @@ public:
 			case IrOpcode::Rethrow:
 				handleRethrow(instruction);
 				break;
+			// Windows SEH (Structured Exception Handling)
+			case IrOpcode::SehTryBegin:
+				handleSehTryBegin(instruction);
+				break;
+			case IrOpcode::SehTryEnd:
+				handleSehTryEnd(instruction);
+				break;
+			case IrOpcode::SehExceptBegin:
+				handleSehExceptBegin(instruction);
+				break;
+			case IrOpcode::SehExceptEnd:
+				handleSehExceptEnd(instruction);
+				break;
+			case IrOpcode::SehFinallyBegin:
+				handleSehFinallyBegin(instruction);
+				break;
+			case IrOpcode::SehFinallyEnd:
+				handleSehFinallyEnd(instruction);
+				break;
+			case IrOpcode::SehFinallyCall:
+				handleSehFinallyCall(instruction);
+				break;
+			case IrOpcode::SehFilterBegin:
+				handleSehFilterBegin(instruction);
+				break;
+			case IrOpcode::SehFilterEnd:
+				handleSehFilterEnd(instruction);
+				break;
+			case IrOpcode::SehLeave:
+				handleSehLeave(instruction);
+				break;
+			case IrOpcode::SehGetExceptionCode:
+				handleSehGetExceptionCode(instruction);
+				break;
+			case IrOpcode::SehGetExceptionInfo:
+				handleSehGetExceptionInfo(instruction);
+				break;
+			case IrOpcode::SehSaveExceptionCode:
+				handleSehSaveExceptionCode(instruction);
+				break;
+			case IrOpcode::SehGetExceptionCodeBody:
+				handleSehGetExceptionCodeBody(instruction);
+				break;
+			case IrOpcode::SehAbnormalTermination:
+				handleSehAbnormalTermination(instruction);
+				break;
 			default:
 				throw std::runtime_error("Not implemented yet");
 				break;
@@ -3685,6 +3731,9 @@ private:
 				ObjectFileWriter::CatchHandlerInfo handler_info;
 				handler_info.type_index = static_cast<uint32_t>(handler.type_index);
 				handler_info.handler_offset = handler.handler_offset;
+				handler_info.handler_end_offset = handler.handler_end_offset;
+				handler_info.funclet_entry_offset = handler.funclet_entry_offset;
+				handler_info.funclet_end_offset = handler.funclet_end_offset;
 				handler_info.is_catch_all = handler.is_catch_all;
 				handler_info.is_const = handler.is_const;
 				handler_info.is_reference = handler.is_reference;
@@ -3719,6 +3768,47 @@ private:
 		}
 		
 		return {std::move(try_blocks), std::move(unwind_map)};
+	}
+
+	// Helper to convert internal SEH try blocks to ObjectFileWriter format
+	// Used during function finalization to prepare SEH exception handling information
+	std::vector<ObjectFileWriter::SehTryBlockInfo> convertSehInfoToWriterFormat() {
+		std::vector<ObjectFileWriter::SehTryBlockInfo> seh_try_blocks;
+
+		for (const auto& seh_try_block : current_function_seh_try_blocks_) {
+			ObjectFileWriter::SehTryBlockInfo block_info;
+			block_info.try_start_offset = seh_try_block.try_start_offset;
+			block_info.try_end_offset = seh_try_block.try_end_offset;
+
+			// Check if this try block has an __except handler
+			if (seh_try_block.except_handler.has_value()) {
+				block_info.has_except_handler = true;
+				block_info.except_handler.handler_offset = seh_try_block.except_handler->handler_offset;
+				block_info.except_handler.filter_result = seh_try_block.except_handler->filter_result;
+				block_info.except_handler.is_constant_filter = seh_try_block.except_handler->is_constant_filter;
+				block_info.except_handler.constant_filter_value = seh_try_block.except_handler->constant_filter_value;
+				block_info.except_handler.filter_funclet_offset = seh_try_block.except_handler->filter_funclet_offset;
+			} else {
+				block_info.has_except_handler = false;
+			}
+
+			// Check if this try block has a __finally handler
+			if (seh_try_block.finally_handler.has_value()) {
+				block_info.has_finally_handler = true;
+				block_info.finally_handler.handler_offset = seh_try_block.finally_handler->handler_offset;
+			} else {
+				block_info.has_finally_handler = false;
+			}
+
+			seh_try_blocks.push_back(block_info);
+		}
+
+		// Reverse order: innermost scope entries must come first in the scope table
+		// __C_specific_handler walks entries linearly and for nested __try blocks,
+		// inner handlers (__finally) must be processed before outer handlers (__except)
+		std::reverse(seh_try_blocks.begin(), seh_try_blocks.end());
+
+		return seh_try_blocks;
 	}
 
 	// Shared arithmetic operation context
@@ -4824,7 +4914,16 @@ private:
 
 		// Clear temp_var_sizes for this function
 		temp_var_sizes_.clear();
-		
+
+		// Pre-scan: detect C++ exception handling (try/catch) in this function
+		current_function_has_cpp_eh_ = false;
+		for (const auto& instruction : it->second) {
+			if (instruction.getOpcode() == IrOpcode::TryBegin) {
+				current_function_has_cpp_eh_ = true;
+				break;
+			}
+		}
+
 		// Track maximum outgoing call argument space needed
 		size_t max_outgoing_arg_bytes = 0;
 
@@ -5010,7 +5109,10 @@ private:
 		// Additional parameters are passed on the stack at positive RBP offsets
 		// Local variables start AFTER the parameter home space
 		int param_home_space = std::max(static_cast<int>(param_count), 4) * 8;  // At least 32 bytes for register parameters
-		int_fast32_t stack_offset = -param_home_space;
+		// For C++ EH functions, reserve [rbp-8] for the FH3 unwind help state variable.
+		// Shift parameter home space down by 8 bytes so it starts at [rbp-16].
+		int eh_state_reserve = (current_function_has_cpp_eh_ && !std::is_same_v<TWriterClass, ElfFileWriter>) ? 8 : 0;
+		int_fast32_t stack_offset = -(param_home_space + eh_state_reserve);
 		
 		for (const VarDecl& local_var : local_vars) {
 			// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
@@ -5151,9 +5253,9 @@ private:
 
 		// Extend scope_stack_space if the computed offset exceeds current allocation
 		// This ensures assertions checking scope_stack_space <= offset remain valid
-		// NOTE: offset is the START of the allocation (highest address), but large structs extend downward
-		// A struct at offset -40 with size 120 bytes occupies addresses from -40 down to -160
-		int32_t end_offset = offset - size_in_bytes;  // Struct extends from offset down by size_in_bytes
+		// NOTE: offset is the LOWEST address of the allocation (next_temp_var_offset_ was
+		// already incremented above), so it is itself the end_offset we must track.
+		int32_t end_offset = offset;
 		if (end_offset < variable_scopes.back().scope_stack_space) {
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Extending scope_stack_space from {} to {} for {} (offset={}, size={})",
@@ -5252,6 +5354,29 @@ private:
 	void emitPtrMovFromFrame(X64Register destinationRegister, int32_t offset) {
 		auto opcodes = generatePtrMovFromFrame(destinationRegister, offset);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	}
+
+	// Helper to emit CMP dword [rbp+offset], imm32 for exception selector dispatch
+	void emitCmpFrameImm32(int32_t frame_offset, int32_t imm_value) {
+		// CMP dword [rbp+disp32], imm32: 81 BD <disp32> <imm32>
+		textSectionData.push_back(0x81);
+		textSectionData.push_back(0xBD);  // ModR/M: mod=10, reg=7(/7=CMP), rm=5(rbp)
+		auto disp = std::bit_cast<std::array<uint8_t, 4>>(frame_offset);
+		textSectionData.insert(textSectionData.end(), disp.begin(), disp.end());
+		auto imm = std::bit_cast<std::array<uint8_t, 4>>(imm_value);
+		textSectionData.insert(textSectionData.end(), imm.begin(), imm.end());
+	}
+
+	// Allocate an anonymous stack slot for ELF exception dispatch temporaries
+	int32_t allocateElfTempStackSlot(int size_bytes) {
+		size_bytes = (size_bytes + 7) & ~7;  // 8-byte align
+		next_temp_var_offset_ += size_bytes;
+		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+		int32_t end_offset = offset;
+		if (!variable_scopes.empty() && end_offset < variable_scopes.back().scope_stack_space) {
+			variable_scopes.back().scope_stack_space = end_offset;
+		}
+		return offset;
 	}
 
 	// Helper to generate and emit size-aware MOV from frame
@@ -9116,10 +9241,39 @@ private:
 		
 		// Finalize previous function before starting new one
 		if (current_function_name_.isValid()) {
+			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+			auto seh_try_blocks = convertSehInfoToWriterFormat();
+
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+
+			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
+			// Some catch temp offsets are reserved through EH paths and may not be reflected in
+			// scope_stack_space at this point.
+			for (const auto& try_block : try_blocks) {
+				for (const auto& handler : try_block.catch_handlers) {
+					if (handler.catch_obj_offset < 0) {
+						size_t required_stack = static_cast<size_t>(-handler.catch_obj_offset);
+						if (required_stack > total_stack) {
+							total_stack = required_stack;
+						}
+					}
+				}
+			}
 			
+			// For C++ EH functions with the establisher-frame model (FrameOffset>0),
+			// ensure 32 bytes of shadow/home space at the bottom of the frame.
+			// The CRT's exception processing may clobber the first 32 bytes of the
+			// establisher frame (shadow space for callee use), so all meaningful
+			// variables must be allocated above that region.
+			if (current_function_has_cpp_eh_) {
+				size_t vars_used = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+				if (total_stack < vars_used + 32) {
+					total_stack = vars_used + 32;
+				}
+			}
+
 			// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
 			// System V AMD64 / MS x64: after `push rbp`, RSP is misaligned by 8 bytes.
 			// Subtracting a 16-byte-aligned stack size keeps RSP % 16 == 8 at call sites,
@@ -9136,6 +9290,38 @@ private:
 					textSectionData[patch_offset + i] = bytes[i];
 				}
 			}
+
+			// Patch catch continuation fixup SUB RSP instructions with the same stack size
+			for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[fixup_patch_offset + i] = bytes[i];
+				}
+			}
+			catch_continuation_sub_rsp_patches_.clear();
+
+			// Patch C++ EH prologue LEA RBP, [RSP + total_stack]
+			// The LEA instruction is: 48 8D AC 24 XX XX XX XX
+			// The imm32 starts at eh_prologue_lea_rbp_offset_ + 4
+			if (eh_prologue_lea_rbp_offset_ > 0) {
+				uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[lea_patch_offset + i] = bytes[i];
+				}
+			}
+
+			// Patch catch funclet LEA RBP, [RDX + total_stack] instructions
+			// The LEA instruction is: 48 8D AA XX XX XX XX
+			// The imm32 starts at offset + 3
+			for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
+				uint32_t lea_patch_offset = funclet_lea_offset + 3;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[lea_patch_offset + i] = bytes[i];
+				}
+			}
+			catch_funclet_lea_rbp_patches_.clear();
 			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
@@ -9144,13 +9330,16 @@ private:
 			writer.set_function_debug_range(mangled, 0, 0);	// doesn't seem needed
 
 			// Add exception handling information (required for x64) - uses mangled name
-			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				// Patch ELF catch handler selector filter values before passing to writer.
+				// The filter values must match the LSDA type table ordering.
+				patchElfCatchFilterValues(try_blocks);
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+				elf_catch_filter_patches_.clear();
 			} else {
-				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
 			}
-		
+
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
 			if (!variable_scopes.empty()) {
@@ -9162,9 +9351,24 @@ private:
 			next_temp_var_offset_ = 8;  // Reset TempVar allocation offset
 			current_function_try_blocks_.clear();  // Clear exception tracking for next function
 			current_try_block_ = nullptr;
+			current_catch_handler_ = nullptr;
 			current_function_local_objects_.clear();  // Clear local object tracking
 			current_function_unwind_map_.clear();  // Clear unwind map
 			current_exception_state_ = -1;  // Reset state counter
+			current_function_seh_try_blocks_.clear();  // Clear SEH tracking for next function
+			seh_try_block_stack_.clear();
+			current_seh_filter_funclet_offset_ = 0;
+			in_catch_funclet_ = false;
+			catch_funclet_return_slot_offset_ = 0;
+			catch_funclet_return_flag_slot_offset_ = 0;
+			catch_funclet_return_label_counter_ = 0;
+			catch_funclet_terminated_by_return_ = false;
+			current_catch_continuation_label_ = StringHandle();
+			catch_return_bridges_.clear();
+			catch_continuation_fixup_map_.clear();
+			catch_continuation_sub_rsp_patches_.clear();
+			eh_prologue_lea_rbp_offset_ = 0;
+			catch_funclet_lea_rbp_patches_.clear();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				current_function_cfi_.clear();  // Clear CFI tracking for next function
 			}
@@ -9396,7 +9600,11 @@ private:
 		// Create a new function scope
 		regAlloc.reset();
 
-		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
+		// MSVC-style prologue.
+		// For C++ EH functions (Windows): push rbp; sub rsp, N; lea rbp, [rsp+N]
+		//   This makes establisher_frame = RBP - FrameOffset*16 = RSP_after_prologue,
+		//   so _JumpToContinuation restores RSP to the fully-allocated frame level.
+		// For non-EH functions: push rbp; mov rbp, rsp; sub rsp, N (traditional style).
 		// Always generate prologue - even if total_stack_space is 0, we need RBP for parameter access
 		textSectionData.push_back(0x55); // push rbp
 		
@@ -9408,29 +9616,79 @@ private:
 				0
 			});
 		}
-		
-		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
-		
-		// Track CFI: After mov rbp, rsp, CFA = RBP+16
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			current_function_cfi_.push_back({
-				ElfFileWriter::CFIInstruction::MOV_RSP_RBP,
-				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
-				0
-			});
+
+		bool use_eh_prologue_style = false;
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			use_eh_prologue_style = current_function_has_cpp_eh_;
 		}
 
-		// Always emit SUB RSP with 32-bit immediate (7 bytes total) for patching flexibility
-		// We'll patch the actual value at function end after we know max_temp_var_index
-		current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
-		textSectionData.push_back(0x48); // REX.W
-		textSectionData.push_back(0x81); // SUB with 32-bit immediate
-		textSectionData.push_back(0xEC); // RSP
-		// Placeholder - will be patched with actual stack size
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
+		if (use_eh_prologue_style) {
+			// C++ EH prologue: push rbp(1); sub rsp, N(7); lea rbp, [rsp+N](8)
+			// Total: 16 bytes. RBP = RSP_after_push + N_sub - N_sub + N_lea = S-8.
+			// FrameOffset = N/16 in UNWIND_INFO, establisher = RBP - N = RSP after sub.
+
+			// SUB RSP, imm32 (7 bytes) - placeholder, patched at function end
+			current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x81); // SUB with 32-bit immediate
+			textSectionData.push_back(0xEC); // RSP
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+
+			// LEA RBP, [RSP + imm32] (8 bytes) - placeholder, patched at function end
+			// Encoding: 48 8D AC 24 XX XX XX XX (REX.W LEA RBP, [RSP+disp32])
+			eh_prologue_lea_rbp_offset_ = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8D); // LEA
+			textSectionData.push_back(0xAC); // ModR/M: RBP, [SIB+disp32]
+			textSectionData.push_back(0x24); // SIB: base=RSP, index=none
+			textSectionData.push_back(0x00); // disp32 placeholder
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+		} else {
+			// Traditional prologue: push rbp(1); mov rbp, rsp(3); sub rsp, N(7)
+			textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
+			
+			// Track CFI: After mov rbp, rsp, CFA = RBP+16
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				current_function_cfi_.push_back({
+					ElfFileWriter::CFIInstruction::MOV_RSP_RBP,
+					static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
+					0
+				});
+			}
+
+			// SUB RSP, imm32 (7 bytes) - placeholder, patched at function end
+			current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x81); // SUB with 32-bit immediate
+			textSectionData.push_back(0xEC); // RSP
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+
+			eh_prologue_lea_rbp_offset_ = 0; // Not used for non-EH functions
+		}
+
+		// For C++ EH functions on Windows, initialize the FH3 unwind help state variable at [rbp-8] to -2.
+		// FH3 reads this via dispUnwindHelp; value -2 means "use IP-to-state map" for lookup.
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (current_function_has_cpp_eh_) {
+				// mov qword [rbp-8], -2  (8 bytes: 48 C7 45 F8 FE FF FF FF)
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0xC7); // MOV r/m64, imm32
+				textSectionData.push_back(0x45); // [rbp + disp8]
+				textSectionData.push_back(0xF8); // disp8 = -8
+				textSectionData.push_back(0xFE); // imm32 = 0xFFFFFFFE = -2
+				textSectionData.push_back(0xFF);
+				textSectionData.push_back(0xFF);
+				textSectionData.push_back(0xFF);
+			}
+		}
 
 		// For RBP-relative addressing, we start with negative offset after total allocated space
 		if (variable_scopes.empty()) {
@@ -9573,12 +9831,15 @@ private:
 				variable_scopes.back().variables[param_name_handle].size_in_bits = param_size;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
-				// Also track pointer parameters (T*) since they also contain addresses that need dereferencing
 				// Also track large struct parameters (> 64 bits) which are passed by pointer
-				bool is_passed_by_pointer = is_reference || param_pointer_depth > 0 ||
-				                            (param_type == Type::Struct && param_size > 64);
-				if (is_passed_by_pointer) {
-					setReferenceInfo(offset, param_type, param_size, 
+				// NOTE: Pointer parameters (T*) are NOT tracked here. They hold pointer VALUES directly
+				// on the stack, not references. Accessing a pointer param should yield the pointer value;
+				// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
+				// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
+				bool is_passed_by_reference = is_reference ||
+				                              (param_type == Type::Struct && param_size > 64);
+				if (is_passed_by_reference) {
+					setReferenceInfo(offset, param_type, param_size,
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
 				}
 
@@ -9689,12 +9950,13 @@ private:
 				variable_scopes.back().variables[param.getName()].offset = offset;
 				variable_scopes.back().variables[param.getName()].size_in_bits = param.size_in_bits;
 
-				// Track reference parameters and pointer parameters
-				// Both need pointer dereferencing when accessing their members
+				// Track reference parameters by their stack offset (they need pointer dereferencing)
 				// Also track large struct parameters (> 64 bits) which are passed by pointer
-				bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
-				                            (param.type == Type::Struct && param.size_in_bits > 64);
-				if (is_passed_by_pointer) {
+				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
+				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
+				bool is_passed_by_reference = param.is_reference ||
+				                              (param.type == Type::Struct && param.size_in_bits > 64);
+				if (is_passed_by_reference) {
 					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference);
 				}
 
@@ -9912,6 +10174,23 @@ private:
 		}
 		
 		return default_size;
+	}
+
+	int32_t ensureCatchFuncletReturnSlot() {
+		if (catch_funclet_return_slot_offset_ != 0) {
+			return catch_funclet_return_slot_offset_;
+		}
+
+		if (variable_scopes.empty()) {
+			catch_funclet_return_slot_offset_ = -8;
+			return catch_funclet_return_slot_offset_;
+		}
+
+		StackVariableScope& current_scope = variable_scopes.back();
+		int32_t reserved_slot = static_cast<int32_t>(current_scope.scope_stack_space - 8);
+		current_scope.scope_stack_space = reserved_slot;
+		catch_funclet_return_slot_offset_ = reserved_slot;
+		return catch_funclet_return_slot_offset_;
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
@@ -10486,6 +10765,80 @@ private:
 					// movss/movsd xmm0, [rbp + offset]
 					emitFloatMovFromFrame(X64Register::XMM0, literal_offset, is_float);
 				}
+			}
+		}
+
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (g_enable_exceptions && in_catch_funclet_) {
+				bool has_float_return = false;
+				bool has_return_value = false;
+				if (instruction.hasTypedPayload()) {
+					const auto& catch_return_op = instruction.getTypedPayload<ReturnOp>();
+					has_return_value = catch_return_op.return_value.has_value();
+					has_float_return = catch_return_op.return_type.has_value() &&
+						is_floating_point_type(catch_return_op.return_type.value());
+				}
+				int32_t catch_return_slot = 0;
+				if (!has_float_return && has_return_value) {
+					catch_return_slot = ensureCatchFuncletReturnSlot();
+					emitMovToFrame(X64Register::RAX, catch_return_slot, 64);
+				}
+
+				flushAllDirtyRegisters();
+
+				StringBuilder return_trampoline_sb;
+				return_trampoline_sb.append("__catch_return_trampoline_").append(static_cast<uint64_t>(catch_funclet_return_label_counter_++));
+				StringHandle return_trampoline_handle = StringTable::getOrInternStringHandle(return_trampoline_sb.commit());
+
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x8D);
+				textSectionData.push_back(0x05);
+				uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_branches_.push_back({return_trampoline_handle, lea_patch});
+
+				emitAddRSP(32);
+				emitPopReg(X64Register::RBP);
+				textSectionData.push_back(0xC3);
+
+				uint32_t catch_funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+				if (current_catch_handler_) {
+					current_catch_handler_->handler_end_offset = catch_funclet_end_offset;
+					current_catch_handler_->funclet_end_offset = catch_funclet_end_offset;
+				}
+
+				label_positions_[return_trampoline_handle] = static_cast<uint32_t>(textSectionData.size());
+
+				// After _JumpToContinuation: RSP = establisher = S-8-N (correct frame level)
+				// RBP is corrupted by CRT. Restore it via LEA RBP, [RSP + N].
+				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()) + 4);
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8D); // LEA
+				textSectionData.push_back(0xAC); // ModR/M: mod=10, reg=101(RBP), r/m=100(SIB)
+				textSectionData.push_back(0x24); // SIB: base=RSP, index=none
+				textSectionData.push_back(0x00); // disp32 placeholder (patched with total_stack)
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+
+				if (catch_return_slot != 0) {
+					emitMovFromFrame(X64Register::RAX, catch_return_slot);
+				}
+
+				// Standard epilogue: mov rsp, rbp; pop rbp; ret
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x89);
+				textSectionData.push_back(0xEC);
+				textSectionData.push_back(0x5D);
+				textSectionData.push_back(0xC3);
+
+				catch_funclet_terminated_by_return_ = true;
+
+				in_catch_funclet_ = false;
+				return;
 			}
 		}
 
@@ -13071,6 +13424,42 @@ private:
 			label_positions_[StringTable::getOrInternStringHandle(label_name_str)] = label_offset;
 		}
 
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			StringHandle label_handle = StringTable::getOrInternStringHandle(label_name_str);
+			auto bridge_it = catch_return_bridges_.find(label_handle);
+			if (bridge_it != catch_return_bridges_.end()) {
+				const CatchReturnBridge& bridge = bridge_it->second;
+				emitMovFromFrameBySize(X64Register::RCX, bridge.flag_slot_offset, 64);
+				emitTestRegReg(X64Register::RCX);
+
+				textSectionData.push_back(0x0F);
+				textSectionData.push_back(0x84);
+				uint32_t skip_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+
+				emitXorRegReg(X64Register::RCX);
+				emitMovToFrame(X64Register::RCX, bridge.flag_slot_offset, 64);
+				if (!bridge.is_float) {
+					emitMovFromFrameBySize(X64Register::RAX, bridge.return_slot_offset, bridge.return_size_bits);
+				}
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x89);
+				textSectionData.push_back(0xEC);
+				textSectionData.push_back(0x5D);
+				textSectionData.push_back(0xC3);
+
+				uint32_t skip_target = static_cast<uint32_t>(textSectionData.size());
+				int32_t rel = static_cast<int32_t>(skip_target) - static_cast<int32_t>(skip_patch + 4);
+				textSectionData[skip_patch + 0] = static_cast<uint8_t>(rel & 0xFF);
+				textSectionData[skip_patch + 1] = static_cast<uint8_t>((rel >> 8) & 0xFF);
+				textSectionData[skip_patch + 2] = static_cast<uint8_t>((rel >> 16) & 0xFF);
+				textSectionData[skip_patch + 3] = static_cast<uint8_t>((rel >> 24) & 0xFF);
+			}
+		}
+
 		// Flush all dirty registers at label boundaries to ensure correct state
 		flushAllDirtyRegisters();
 		
@@ -15579,6 +15968,9 @@ private:
 			
 			CatchHandler handler;
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			handler.handler_end_offset = 0;
+			handler.funclet_entry_offset = handler.handler_offset;
+			handler.funclet_end_offset = 0;
 			
 			// Extract data from typed payload
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
@@ -15601,6 +15993,7 @@ private:
 			}
 			
 			try_block.catch_handlers.push_back(handler);
+			current_catch_handler_ = &try_block.catch_handlers.back();
 		}
 		
 		// Platform-specific landing pad code generation
@@ -15609,17 +16002,70 @@ private:
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
 			// Landing pad: call __cxa_begin_catch to get the exception object
 			//
-			// The exception object pointer is in RAX (passed by personality routine)
-			// We need to:
-			// 1. Call __cxa_begin_catch(void* exceptionObject) -> returns adjusted pointer
-			// 2. Extract/cast the exception value
-			// 3. Store it in the catch variable
+			// For try blocks with MULTIPLE catch handlers, the personality routine
+			// enters the landing pad with:
+			//   RAX = exception object pointer
+			//   EDX = selector (type_filter of matched action)
+			// We must save these, dispatch to the correct handler based on selector,
+			// then call __cxa_begin_catch in the matched handler.
 			
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
 			
-			// Call __cxa_begin_catch with exception pointer in RDI
-			// The exception pointer is in RAX from personality routine
-			emitMovRegReg(X64Register::RDI, X64Register::RAX);
+			// Determine handler index within this try block
+			size_t handler_index = 0;
+			bool is_multi_handler = false;
+			if (!current_function_try_blocks_.empty()) {
+				const TryBlock& try_block = current_function_try_blocks_.back();
+				handler_index = try_block.catch_handlers.size() - 1;  // Just added
+				// We don't know total count yet, but if handler_index > 0, we're multi
+				is_multi_handler = (handler_index > 0);
+			}
+			
+			if (handler_index == 0) {
+				// First handler: save RAX (exception ptr) and EDX (selector) to stack
+				// These will be used by subsequent handlers for dispatch.
+				// We allocate two 8-byte slots for these.
+				elf_exc_ptr_offset_ = allocateElfTempStackSlot(8);
+				elf_selector_offset_ = allocateElfTempStackSlot(4);
+				// mov [rbp+exc_ptr_offset], rax
+				emitMovToFrame(X64Register::RAX, elf_exc_ptr_offset_, 64);
+				// mov [rbp+selector_offset], edx (32-bit)
+				emitMovToFrameBySize(X64Register::RDX, elf_selector_offset_, 32);
+			}
+			
+			// For non-last handlers, emit selector comparison + skip jump.
+			// We always emit it (even for potentially-last handlers) because we don't
+			// know if more handlers follow. If this IS the last handler, the personality
+			// routine guarantees the selector matches, so the JNE never fires.
+			if (!catch_op.is_catch_all) {
+				// Load selector from stack and compare with this handler's filter.
+				// The actual filter value will be patched at function finalization.
+				// CMP dword [rbp+offset], imm32
+				emitCmpFrameImm32(elf_selector_offset_, 0);  // placeholder 0
+				// Record patch position: the IMM32 is at the last 4 bytes we just wrote
+				uint32_t filter_patch_pos = static_cast<uint32_t>(textSectionData.size()) - 4;
+				elf_catch_filter_patches_.push_back({filter_patch_pos, current_function_try_blocks_.size() - 1, handler_index});
+				
+				// JNE catch_end_label (skip this handler if selector doesn't match)
+				StringHandle catch_end_handle = StringTable::getOrInternStringHandle(catch_op.catch_end_label);
+				textSectionData.push_back(0x0F);  // Two-byte opcode prefix
+				textSectionData.push_back(0x85);  // JNE rel32
+				uint32_t jne_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_branches_.push_back({catch_end_handle, jne_patch});
+			}
+			
+			// Load exception pointer from saved slot and call __cxa_begin_catch
+			if (is_multi_handler || !catch_op.is_catch_all) {
+				// Multi-handler or typed: use saved exception pointer
+				emitMovFromFrameBySize(X64Register::RDI, elf_exc_ptr_offset_, 64);
+			} else {
+				// Single catch-all handler: RAX still has the exception pointer
+				emitMovRegReg(X64Register::RDI, X64Register::RAX);
+			}
 			emitCall("__cxa_begin_catch");
 			
 			// Result in RAX is pointer to the actual exception object
@@ -15714,17 +16160,58 @@ private:
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
-			// Windows uses SEH which is already handled by existing code
+			// Catch handler is a real FH3 funclet entered with establisher-frame in RDX.
+			// Emit a funclet prologue so the runtime can unwind it as an independent
+			// range and all frame-relative accesses resolve against the parent frame.
+			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+			// Save establisher frame (RDX) to caller's shadow space before push.
+			// Clang emits this and the CRT may rely on it during unwinding.
+			// mov [rsp+10h], rdx  (48 89 54 24 10)
+			textSectionData.push_back(0x48);
+			textSectionData.push_back(0x89);
+			textSectionData.push_back(0x54);
+			textSectionData.push_back(0x24);
+			textSectionData.push_back(0x10);
+			emitPushReg(X64Register::RBP);
+			emitSubRSP(32);
+			// LEA RBP, [RDX + imm32] — RDX is the establisher frame (RSP after parent prologue)
+			// Adding total_stack gives RBP = establisher + N = RSP_after_sub + N = S-8.
+			// This matches the parent function's RBP so frame-relative accesses work.
+			// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
+			catch_funclet_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8D); // LEA
+			textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
+			textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			in_catch_funclet_ = true;
+			catch_funclet_terminated_by_return_ = false;
+			current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
 		}
 	}
 
-	void handleCatchEnd([[maybe_unused]] const IrInstruction& instruction) {
+	void handleCatchEnd(const IrInstruction& instruction) {
 		// Skip exception handling if disabled
 		if (!g_enable_exceptions) {
 			return;
 		}
 		
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (catch_funclet_terminated_by_return_) {
+				catch_funclet_terminated_by_return_ = false;
+				in_catch_funclet_ = false;
+				current_catch_continuation_label_ = StringHandle();
+				current_catch_handler_ = nullptr;
+				return;
+			}
+		}
+
 		// CatchEnd marks the end of a catch handler
+		if (current_catch_handler_) {
+			current_catch_handler_->handler_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+		}
 		
 		// Platform-specific cleanup
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -15737,7 +16224,90 @@ private:
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
-			// Windows SEH cleanup already handled
+			// Return continuation address in RAX, then emit funclet epilogue.
+			// After the funclet ret, emit a fixup stub for the catch continuation path.
+			flushAllDirtyRegisters();
+
+			StringHandle continuation_handle;
+			StringHandle fixup_handle;
+			bool has_continuation = false;
+
+			if (instruction.hasTypedPayload()) {
+				const auto& catch_end_op = instruction.getTypedPayload<CatchEndOp>();
+				continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
+				has_continuation = true;
+
+				// Create a unique fixup label for the catch continuation entry point.
+				std::string fixup_name = "__catch_fixup_" + std::to_string(textSectionData.size());
+				fixup_handle = StringTable::getOrInternStringHandle(fixup_name);
+
+				// LEA RAX, [fixup_label] — return fixup entry address to the CRT
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x8D);
+				textSectionData.push_back(0x05);
+				uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_branches_.push_back({fixup_handle, lea_patch});
+			} else {
+				emitXorRegReg(X64Register::RAX);
+			}
+
+			// Funclet epilogue
+			emitAddRSP(32);
+			emitPopReg(X64Register::RBP);
+			textSectionData.push_back(0xC3);  // ret
+
+			// Record funclet end BEFORE the fixup stub (fixup is parent code, not funclet)
+			if (current_catch_handler_) {
+				current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			}
+
+			// Emit catch continuation entry point (in parent function code space).
+			// With the clang-style EH prologue (push rbp; sub rsp, N; lea rbp, [rsp+N]),
+			// the establisher frame = RSP_after_prologue = S-8-N.
+			// After _JumpToContinuation: RSP = S-8-N (fully allocated frame).
+			// We just need to restore RBP (corrupted by CRT) and jump to normal code.
+			if (has_continuation) {
+				// Define the fixup label position
+				label_positions_[fixup_handle] = static_cast<uint32_t>(textSectionData.size());
+
+				// LEA RBP, [RSP + total_stack] — restore frame pointer
+				// Encoding: 48 8D AC 24 XX XX XX XX (patched at function end with total_stack)
+				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()) + 4);
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8D); // LEA
+				textSectionData.push_back(0xAC); // ModR/M: mod=10, reg=101(RBP), r/m=100(SIB)
+				textSectionData.push_back(0x24); // SIB: base=RSP, index=none
+				textSectionData.push_back(0x00); // disp32 placeholder
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+
+				// jmp continuation_label  (E9 xx xx xx xx) — join normal code path
+				textSectionData.push_back(0xE9);
+				uint32_t jmp_patch = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_branches_.push_back({continuation_handle, jmp_patch});
+			}
+
+			in_catch_funclet_ = false;
+			catch_funclet_terminated_by_return_ = false;
+			current_catch_continuation_label_ = StringHandle();
+		}
+
+		if (current_catch_handler_) {
+			// For ELF, record funclet_end_offset here. For Windows/COFF, it was already
+			// recorded inside the platform-specific block (before the fixup stub).
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			}
+			current_catch_handler_ = nullptr;
 		}
 	}
 
@@ -15878,18 +16448,26 @@ private:
 			// Call _CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo)
 			//
 			// Windows x64 calling convention: RCX, RDX, R8, R9
-			
-			// Calculate stack space needed:
-			// - 32 bytes shadow space (Windows x64 calling convention)
-			// - N bytes for exception object (rounded up to 8-byte alignment)
-			// - Total rounded up to 16-byte alignment
-			size_t total_stack = ((32 + aligned_exception_size) + 15) & ~15;
-			emitSubRSP(static_cast<int32_t>(total_stack));
-			
-			// Copy exception object to stack at [RSP+32]
+
+			// Allocate a frame-relative slot for the exception object.
+			// Using [RSP+32] is unsafe because it can overlap with the saved RBP
+			// when the stack frame is small (e.g., a function that only throws).
+			// Instead, allocate a proper slot via the temp var mechanism.
+			int32_t throw_temp_size = static_cast<int32_t>((aligned_exception_size + 7) & ~7);
+			next_temp_var_offset_ += throw_temp_size;
+			int32_t throw_slot_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+			// Extend scope_stack_space to account for this allocation
+			if (!variable_scopes.empty()) {
+				auto& scope = variable_scopes.back();
+				int32_t required = -(throw_slot_offset);
+				if (required > -scope.scope_stack_space) {
+					scope.scope_stack_space = -required;
+				}
+			}
+
+			// Copy exception object to frame slot at [RBP+throw_slot_offset]
 			if (exception_size <= 8) {
 				// Small object: load into RAX and store
-				// Use IrValue variant to handle TempVar or immediate
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					TempVar temp = std::get<TempVar>(throw_op.exception_value);
 					if (temp.var_number != 0) {
@@ -15914,7 +16492,7 @@ private:
 				} else {
 					emitMovImm64(X64Register::RAX, 0);
 				}
-				emitMovToRSPDisp8(X64Register::RAX, 32);
+				emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
 			} else {
 				// Large object: use memory-to-memory copy (must be TempVar)
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
@@ -15926,22 +16504,43 @@ private:
 						emitXorRegReg(X64Register::RSI);
 					}
 				} else {
-					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 					emitXorRegReg(X64Register::RSI);
 				}
-				emitLeaFromRSPDisp8(X64Register::RDI, 32);
+				emitLeaFromFrame(X64Register::RDI, throw_slot_offset);
 				emitMovImm64(X64Register::RCX, exception_size);
 				emitRepMovsb();
 			}
-			
+
 			// Set up arguments for _CxxThrowException
-			// RCX (first argument) = pointer to exception object = RSP+32
-			emitLeaFromRSPDisp8(X64Register::RCX, 32);
-			// RDX (second argument) = NULL (no throw info)
-			emitXorRegReg(X64Register::RDX);
+			// RCX (first argument) = pointer to exception object on the frame
+			emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
+			// RDX (second argument) = pointer to _ThrowInfo metadata
+			std::string throw_type_name;
+			if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
+				throw_type_name = std::string(StringTable::getStringView(gTypeInfo[throw_op.type_index].name()));
+			} else {
+				throw_type_name = std::string(getTypeName(throw_op.exception_type));
+			}
+
+			std::string throw_info_symbol;
+			if (!throw_type_name.empty() && throw_type_name != "void") {
+				bool is_simple_type = (throw_op.exception_type != Type::Struct);
+				throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type);
+			}
+
+			if (!throw_info_symbol.empty()) {
+				emitLeaRipRelativeWithRelocation(X64Register::RDX, throw_info_symbol);
+			} else {
+				emitXorRegReg(X64Register::RDX);
+			}
 			
 			emitCall("_CxxThrowException");
-			// Note: _CxxThrowException never returns
+			// _CxxThrowException is [[noreturn]], but the call pushes a return address on the stack.
+			// That return address must fall WITHIN this function's PDATA range [begin, end).
+			// Without the int3, return_addr == PDATA_end (exclusive boundary) → the unwinder
+			// cannot find this function's PDATA and skips main's try/catch.
+			// Emitting int 3 extends the function code by 1 byte so return_addr < PDATA_end.
+			textSectionData.push_back(static_cast<char>(0xCC)); // int 3 (unreachable)
 		}
 	}
 
@@ -15968,12 +16567,6 @@ private:
 			// Call _CxxThrowException(NULL, NULL) to rethrow current exception
 			// Windows x64 calling convention: RCX, RDX
 			
-			// Allocate shadow space for Windows x64 calling convention
-			// - Requires 32 bytes shadow space
-			// - Stack must be 16-byte aligned at CALL instruction
-			// Round up to 48 bytes to maintain 16-byte alignment
-			emitSubRSP(48);
-			
 			// Set up arguments for _CxxThrowException to rethrow current exception
 			// RCX (first argument) = NULL (rethrow current exception object)
 			emitXorRegReg(X64Register::RCX);
@@ -15981,8 +16574,384 @@ private:
 			emitXorRegReg(X64Register::RDX);
 			
 			emitCall("_CxxThrowException");
-			// Note: _CxxThrowException never returns
+			// Same PDATA range fix: emit int 3 so the return address is within the function range.
+			textSectionData.push_back(static_cast<char>(0xCC)); // int 3 (unreachable)
 		}
+	}
+
+	// ============================================================================
+	// Windows SEH (Structured Exception Handling) Handlers
+	// ============================================================================
+
+	void handleSehTryBegin([[maybe_unused]] const IrInstruction& instruction) {
+		// SehTryBegin marks the start of a __try block
+		// Create a new SEH try block and record the current code offset
+
+		SehTryBlock seh_try_block;
+		seh_try_block.try_start_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+		seh_try_block.try_end_offset = 0;  // Will be set in handleSehTryEnd
+
+		current_function_seh_try_blocks_.push_back(seh_try_block);
+		seh_try_block_stack_.push_back(current_function_seh_try_blocks_.size() - 1);
+
+		FLASH_LOG(Codegen, Debug, "SEH __try block begin at offset ", seh_try_block.try_start_offset);
+	}
+
+	void handleSehTryEnd([[maybe_unused]] const IrInstruction& instruction) {
+		// SehTryEnd marks the end of a __try block
+		// Record the current code offset as the end of the SEH try block
+
+		if (!seh_try_block_stack_.empty()) {
+			auto& block = current_function_seh_try_blocks_[seh_try_block_stack_.back()];
+			block.try_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+			FLASH_LOG(Codegen, Debug, "SEH __try block end at offset ", block.try_end_offset);
+
+			// Don't pop from stack yet - we need the block for the handler
+		}
+	}
+
+	void handleSehExceptBegin(const IrInstruction& instruction) {
+		// SehExceptBegin marks the start of a __except handler
+		// Record this handler in the most recent SEH try block
+
+		const auto& except_op = instruction.getTypedPayload<SehExceptBeginOp>();
+
+		if (!seh_try_block_stack_.empty()) {
+			auto& block = current_function_seh_try_blocks_[seh_try_block_stack_.back()];
+			SehExceptHandler handler;
+			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			handler.filter_result = except_op.filter_result.var_number;
+			handler.is_constant_filter = except_op.is_constant_filter;
+			handler.constant_filter_value = except_op.constant_filter_value;
+
+			// For non-constant filters, use the most recently recorded filter funclet offset
+			if (!except_op.is_constant_filter) {
+				handler.filter_funclet_offset = current_seh_filter_funclet_offset_;
+			}
+
+			block.except_handler = handler;
+
+			FLASH_LOG(Codegen, Debug, "SEH __except handler begin at offset ", handler.handler_offset,
+			          " is_constant=", handler.is_constant_filter,
+			          " constant_value=", handler.constant_filter_value,
+			          " filter_result=", handler.filter_result,
+			          " filter_funclet=", handler.filter_funclet_offset);
+		}
+	}
+
+	void handleSehExceptEnd([[maybe_unused]] const IrInstruction& instruction) {
+		// SehExceptEnd marks the end of a __except handler
+		// Pop this try block from the stack
+
+		FLASH_LOG(Codegen, Debug, "SEH __except handler end at offset ",
+		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
+
+		if (!seh_try_block_stack_.empty()) {
+			seh_try_block_stack_.pop_back();
+		}
+	}
+
+	void handleSehFinallyCall(const IrInstruction& instruction) {
+		// SehFinallyCall: normal-flow call to the __finally funclet
+		// Emits: xor ecx,ecx; mov rdx,rbp; call funclet_label; jmp end_label
+		// ECX=0 means "normal termination" (AbnormalTermination() returns false)
+		// RDX=frame pointer (establisher frame for the funclet)
+
+		const auto& op = instruction.getTypedPayload<SehFinallyCallOp>();
+
+		FLASH_LOG(Codegen, Debug, "SEH __finally call: funclet=", op.funclet_label, " end=", op.end_label);
+
+		// Flush all dirty registers before the call
+		flushAllDirtyRegisters();
+
+		// xor ecx, ecx (AbnormalTermination = false)
+		// Use 32-bit XOR (no REX.W) since we only need ECX zeroed
+		textSectionData.push_back(0x31); // XOR r/m32, r32
+		textSectionData.push_back(0xC9); // ModR/M: ECX, ECX
+
+		// mov rdx, rbp (establisher frame)
+		emitMovRegReg(X64Register::RDX, X64Register::RBP);
+
+		// call funclet_label (CALL rel32 - patched later)
+		textSectionData.push_back(0xE8);
+		uint32_t call_patch = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		pending_branches_.push_back({StringTable::getOrInternStringHandle(op.funclet_label), call_patch});
+
+		// jmp end_label (JMP rel32 - patched later)
+		textSectionData.push_back(0xE9);
+		uint32_t jmp_patch = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		pending_branches_.push_back({StringTable::getOrInternStringHandle(op.end_label), jmp_patch});
+	}
+
+	void handleSehFinallyBegin([[maybe_unused]] const IrInstruction& instruction) {
+		// SehFinallyBegin marks the start of a __finally funclet
+		// This is both the normal-flow entry and the unwind-phase entry.
+		// __C_specific_handler calls it with: ECX=AbnormalTermination, RDX=EstablisherFrame
+		// Normal flow calls it with: ECX=0, RDX=RBP
+
+		// Record handler offset in the current SEH try block
+		if (!seh_try_block_stack_.empty()) {
+			auto& block = current_function_seh_try_blocks_[seh_try_block_stack_.back()];
+			SehFinallyHandler handler;
+			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+			block.finally_handler = handler;
+
+			FLASH_LOG(Codegen, Debug, "SEH __finally funclet begin at offset ", handler.handler_offset);
+		}
+
+		// Emit funclet prologue:
+		//   push rbp
+		//   sub rsp, 32     (shadow space for any calls within __finally)
+		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		//   mov [rsp+8], ecx  (save AbnormalTermination flag for _abnormal_termination() intrinsic)
+		emitPushReg(X64Register::RBP);
+		emitSubRSP(32);
+		emitMovRegReg(X64Register::RBP, X64Register::RDX);
+
+		// Save AbnormalTermination (ECX) to shadow space slot 2 ([rsp+0x08])
+		// _abnormal_termination() will load it from there.
+		// mov dword ptr [rsp+8], ecx  (89 4C 24 08)
+		textSectionData.push_back(static_cast<char>(0x89));
+		textSectionData.push_back(static_cast<char>(0x4C));
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+	}
+
+	void handleSehFinallyEnd([[maybe_unused]] const IrInstruction& instruction) {
+		// SehFinallyEnd marks the end of a __finally funclet
+		// Emit funclet epilogue + ret
+
+		FLASH_LOG(Codegen, Debug, "SEH __finally funclet end at offset ",
+		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
+
+		// Flush all dirty registers before returning
+		flushAllDirtyRegisters();
+
+		// Emit funclet epilogue:
+		//   add rsp, 32
+		//   pop rbp
+		//   ret
+		emitAddRSP(32);
+		emitPopReg(X64Register::RBP);
+		textSectionData.push_back(0xC3); // RET
+
+		// Pop this try block from the stack
+		if (!seh_try_block_stack_.empty()) {
+			seh_try_block_stack_.pop_back();
+		}
+	}
+
+	void handleSehFilterBegin([[maybe_unused]] const IrInstruction& instruction) {
+		// SehFilterBegin marks the start of a filter funclet
+		// __C_specific_handler calls it with: RCX=EXCEPTION_POINTERS*, RDX=EstablisherFrame
+		// The filter must return the filter result in EAX
+
+		// Record filter funclet offset
+		current_seh_filter_funclet_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+		FLASH_LOG(Codegen, Debug, "SEH filter funclet begin at offset ", current_seh_filter_funclet_offset_);
+
+		// Emit funclet prologue:
+		//   push rbp
+		//   sub rsp, 32     (shadow space)
+		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		emitPushReg(X64Register::RBP);
+		emitSubRSP(32);
+		emitMovRegReg(X64Register::RBP, X64Register::RDX);
+
+		// Save EXCEPTION_POINTERS* (RCX) to shadow space slot 2 ([rsp+0x08])
+		// so GetExceptionCode() / GetExceptionInformation() can load it after RCX may be clobbered.
+		// mov qword ptr [rsp+8], rcx  (48 89 4C 24 08)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x89));
+		textSectionData.push_back(static_cast<char>(0x4C));
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+	}
+
+	void handleSehGetExceptionCode(const IrInstruction& instruction) {
+		// SehGetExceptionCode: GetExceptionCode() intrinsic in filter funclet
+		// EXCEPTION_POINTERS* was saved to [rsp+0x08] in handleSehFilterBegin
+		// EXCEPTION_POINTERS->ExceptionRecord = [RCX+0] (pointer to EXCEPTION_RECORD)
+		// EXCEPTION_RECORD->ExceptionCode     = [ExceptionRecord+0] (DWORD at offset 0)
+		const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
+
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x44);
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+		// mov rax, [rax]        ; ExceptionRecord* (48 8B 00)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x00);
+		// mov eax, [rax]        ; ExceptionCode (DWORD) (8B 00)
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x00);
+
+		// Store 32-bit result to the result temp var (accessible via parent's RBP)
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
+
+		FLASH_LOG(Codegen, Debug, "SehGetExceptionCode: result temp at [rbp+", result_offset, "]");
+	}
+
+	void handleSehGetExceptionInfo(const IrInstruction& instruction) {
+		// SehGetExceptionInfo: GetExceptionInformation() intrinsic in filter funclet
+		// Returns the EXCEPTION_POINTERS* that was saved to [rsp+0x08] in handleSehFilterBegin
+		const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
+
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x44);
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+
+		// Store 64-bit pointer to the result temp var (accessible via parent's RBP)
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 64);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
+
+		FLASH_LOG(Codegen, Debug, "SehGetExceptionInfo: result temp at [rbp+", result_offset, "]");
+	}
+
+	void handleSehFilterEnd(const IrInstruction& instruction) {
+		// SehFilterEnd marks the end of a filter funclet
+		// Move filter result to EAX and return
+
+		const auto& op = instruction.getTypedPayload<SehFilterEndOp>();
+
+		FLASH_LOG(Codegen, Debug, "SEH filter funclet end, result temp=", op.filter_result.var_number,
+		          " is_constant=", op.is_constant_result);
+
+		// Flush all dirty registers to ensure filter result is on the stack
+		flushAllDirtyRegisters();
+
+		// Load the filter result into EAX
+		if (op.is_constant_result) {
+			// Constant filter result (e.g. from a comma expression ending in a literal)
+			// mov eax, imm32
+			emitMovImm32(X64Register::RAX, static_cast<uint32_t>(op.constant_result));
+		} else {
+			// Load the filter result from its stack slot via RBP-relative addressing
+			int32_t filter_offset = getStackOffsetFromTempVar(op.filter_result, 32);
+			emitMovFromFrameBySize(X64Register::RAX, filter_offset, 32);
+		}
+
+		// Emit funclet epilogue:
+		//   add rsp, 32
+		//   pop rbp
+		//   ret
+		emitAddRSP(32);
+		emitPopReg(X64Register::RBP);
+		textSectionData.push_back(0xC3); // RET
+	}
+
+	void handleSehSaveExceptionCode(const IrInstruction& instruction) {
+		// SehSaveExceptionCode: called at start of filter funclet.
+		// EXCEPTION_POINTERS* was saved to [rsp+0x08] in handleSehFilterBegin.
+		// This handler reads ExceptionCode and writes it to a parent-frame slot so
+		// GetExceptionCode() works in the __except body (not just the filter expression).
+		const auto& op = instruction.getTypedPayload<SehSaveExceptionCodeOp>();
+
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x44);
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+		// mov rax, [rax]        ; ExceptionRecord* (48 8B 00)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x00);
+		// mov eax, [rax]        ; ExceptionCode (DWORD) (8B 00)
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x00);
+
+		// Store 32-bit ExceptionCode to the parent-frame slot (accessible via RBP)
+		int32_t saved_offset = getStackOffsetFromTempVar(op.saved_var, 32);
+		emitMovToFrameBySize(X64Register::RAX, saved_offset, 32);
+
+		FLASH_LOG(Codegen, Debug, "SehSaveExceptionCode: saved to [rbp+", saved_offset, "]");
+	}
+
+	void handleSehGetExceptionCodeBody(const IrInstruction& instruction) {
+		// SehGetExceptionCodeBody: load ExceptionCode from parent-frame slot
+		// (the slot was written by handleSehSaveExceptionCode in the filter funclet)
+		const auto& op = instruction.getTypedPayload<SehGetExceptionCodeBodyOp>();
+
+		// Load saved ExceptionCode from parent-frame slot
+		int32_t saved_offset = getStackOffsetFromTempVar(op.saved_var, 32);
+		emitMovFromFrameBySize(X64Register::RAX, saved_offset, 32);
+
+		// Store to result slot
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
+
+		FLASH_LOG(Codegen, Debug, "SehGetExceptionCodeBody: from [rbp+", saved_offset, "] -> result [rbp+", result_offset, "]");
+	}
+
+	void handleSehAbnormalTermination(const IrInstruction& instruction) {
+		// SehAbnormalTermination: _abnormal_termination() / AbnormalTermination() intrinsic
+		// Only valid inside a __finally funclet.
+		// ECX was saved to [rsp+0x08] in handleSehFinallyBegin.
+		// Returns: 0 if __finally running due to normal control flow,
+		//          non-zero if __finally running during exception unwind.
+		const auto& op = instruction.getTypedPayload<SehAbnormalTerminationOp>();
+
+		// mov eax, [rsp+0x08]   ; AbnormalTermination flag (8B 44 24 08)
+		textSectionData.push_back(static_cast<char>(0x8B));
+		textSectionData.push_back(0x44);
+		textSectionData.push_back(0x24);
+		textSectionData.push_back(0x08);
+
+		// Store 32-bit result to result slot
+		int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
+		emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
+
+		FLASH_LOG(Codegen, Debug, "SehAbnormalTermination: result at [rbp+", result_offset, "]");
+	}
+
+	void handleSehLeave(const IrInstruction& instruction) {
+		// SehLeave implements the __leave statement
+		// This should jump to the end of the current __try block (or __finally if present)
+
+		const auto& leave_op = instruction.getTypedPayload<SehLeaveOp>();
+		std::string_view target_label = leave_op.target_label;
+
+		FLASH_LOG(Codegen, Debug, "SEH __leave statement at offset ",
+		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_,
+		          " target=", target_label);
+
+		// Flush all dirty registers before jumping
+		flushAllDirtyRegisters();
+
+		// Generate JMP instruction (E9 + 32-bit relative offset)
+		// We'll use a placeholder offset and fix it up later
+		textSectionData.push_back(0xE9); // JMP rel32
+
+		// Store position where we need to patch the offset
+		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
+
+		// Add placeholder offset (will be patched later)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// Record this jump for later patching (convert string_view to StringHandle)
+		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
 	}
 
 	void finalizeSections() {
@@ -16022,10 +16991,34 @@ private:
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (current_function_name_.isValid()) {
+			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+			auto seh_try_blocks = convertSehInfoToWriterFormat();
+
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+
+			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
+			for (const auto& try_block : try_blocks) {
+				for (const auto& handler : try_block.catch_handlers) {
+					if (handler.catch_obj_offset < 0) {
+						size_t required_stack = static_cast<size_t>(-handler.catch_obj_offset);
+						if (required_stack > total_stack) {
+							total_stack = required_stack;
+						}
+					}
+				}
+			}
 			
+			// For C++ EH functions with the establisher-frame model (FrameOffset>0),
+			// ensure 32 bytes of shadow/home space at the bottom of the frame.
+			if (current_function_has_cpp_eh_) {
+				size_t vars_used = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+				if (total_stack < vars_used + 32) {
+					total_stack = vars_used + 32;
+				}
+			}
+
 			// Stack alignment: After PUSH RBP, RSP is 16-aligned.
 			// SUB RSP, N must keep it 16-aligned for subsequent CALLs.
 			// Both Linux and Windows: Align total_stack to 16n (multiple of 16)
@@ -16041,6 +17034,34 @@ private:
 					textSectionData[patch_offset + i] = bytes[i];
 				}
 			}
+
+			// Patch catch continuation LEA RBP instructions (reuses sub_rsp_patches for LEA)
+			for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[fixup_patch_offset + i] = bytes[i];
+				}
+			}
+			catch_continuation_sub_rsp_patches_.clear();
+
+			// Patch C++ EH prologue LEA RBP, [RSP + total_stack]
+			if (eh_prologue_lea_rbp_offset_ > 0) {
+				uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[lea_patch_offset + i] = bytes[i];
+				}
+			}
+
+			// Patch catch funclet LEA RBP, [RDX + total_stack] instructions
+			for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
+				uint32_t lea_patch_offset = funclet_lea_offset + 3;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[lea_patch_offset + i] = bytes[i];
+				}
+			}
+			catch_funclet_lea_rbp_patches_.clear();
 			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
@@ -16053,16 +17074,25 @@ private:
 			}
 
 			// Add exception handling information (required for x64) - uses mangled name
-			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				patchElfCatchFilterValues(try_blocks);
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+				elf_catch_filter_patches_.clear();
 			} else {
-				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
 			}
 
 			// Clear the current function state
 			current_function_name_ = StringHandle();
 			current_function_offset_ = 0;
+			current_catch_handler_ = nullptr;
+			in_catch_funclet_ = false;
+			catch_funclet_return_slot_offset_ = 0;
+			catch_funclet_return_flag_slot_offset_ = 0;
+			catch_funclet_return_label_counter_ = 0;
+			catch_funclet_terminated_by_return_ = false;
+			current_catch_continuation_label_ = StringHandle();
+			catch_return_bridges_.clear();
 		}
 
 		writer.add_data(textSectionData, SectionType::TEXT);
@@ -16388,6 +17418,69 @@ private:
 		}
 	}
 
+	// Patch ELF catch handler filter values in the generated code.
+	// This is called at function finalization when we know the complete type table.
+	// The filter values must match what the LSDA generator will produce.
+	void patchElfCatchFilterValues(const std::vector<ObjectFileWriter::TryBlockInfo>& try_blocks) {
+		if (elf_catch_filter_patches_.empty()) return;
+
+		// Build the type table in the same order as ElfFileWriter will build it.
+		// This determines the filter values for each handler.
+		std::vector<std::string> type_table;
+		for (const auto& try_block : try_blocks) {
+			for (const auto& handler : try_block.catch_handlers) {
+				if (!handler.is_catch_all && !handler.type_name.empty()) {
+					std::string typeinfo_sym = writer.get_typeinfo_symbol(handler.type_name);
+					if (std::find(type_table.begin(), type_table.end(), typeinfo_sym) == type_table.end()) {
+						type_table.push_back(typeinfo_sym);
+					}
+				}
+			}
+		}
+		// Add NULL entry for catch-all (same as LSDAGenerator's generate() does)
+		bool has_catch_all = false;
+		for (const auto& try_block : try_blocks) {
+			for (const auto& handler : try_block.catch_handlers) {
+				if (handler.is_catch_all) { has_catch_all = true; break; }
+			}
+			if (has_catch_all) break;
+		}
+		if (has_catch_all) {
+			if (std::find(type_table.begin(), type_table.end(), "") == type_table.end()) {
+				type_table.push_back("");
+			}
+		}
+
+		int table_size = static_cast<int>(type_table.size());
+
+		// Now compute filters and patch each CMP instruction
+		for (const auto& patch : elf_catch_filter_patches_) {
+			// Find this handler's type in the correct try block
+			int filter = 0;
+			if (patch.try_block_index < try_blocks.size() &&
+			    patch.handler_index < try_blocks[patch.try_block_index].catch_handlers.size()) {
+				const auto& handler = try_blocks[patch.try_block_index].catch_handlers[patch.handler_index];
+				if (handler.is_catch_all) {
+					auto it = std::find(type_table.begin(), type_table.end(), "");
+					if (it != type_table.end()) {
+						filter = table_size - static_cast<int>(std::distance(type_table.begin(), it));
+					}
+				} else if (!handler.type_name.empty()) {
+					std::string typeinfo_sym = writer.get_typeinfo_symbol(handler.type_name);
+					auto it = std::find(type_table.begin(), type_table.end(), typeinfo_sym);
+					if (it != type_table.end()) {
+						filter = table_size - static_cast<int>(std::distance(type_table.begin(), it));
+					}
+				}
+			}
+			// Patch the IMM32 in textSectionData
+			auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<int32_t>(filter));
+			for (int i = 0; i < 4; i++) {
+				textSectionData[patch.patch_offset + i] = bytes[i];
+			}
+		}
+	}
+
 	// Debug information tracking
 	void addLineMapping(uint32_t line_number, int32_t manual_offset = 0) {
 		if (current_function_name_.isValid()) {
@@ -16518,6 +17611,9 @@ private:
 		TypeIndex type_index;  // Type index for user-defined types
 		Type exception_type;   // Type enum for built-in types (Int, Double, etc.)
 		uint32_t handler_offset;  // Code offset of catch handler
+		uint32_t handler_end_offset;  // Code offset where catch handler ends
+		uint32_t funclet_entry_offset;  // Code offset of catch funclet entry
+		uint32_t funclet_end_offset;  // Code offset where catch funclet ends
 		int32_t catch_obj_stack_offset;  // Pre-computed stack offset for exception object
 		bool is_catch_all;  // True for catch(...)
 		bool is_const;  // True if caught by const
@@ -16546,8 +17642,63 @@ private:
 
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
+	CatchHandler* current_catch_handler_ = nullptr;  // Currently active catch handler being processed
 	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF).
+	bool in_catch_funclet_ = false;  // Tracks whether codegen is currently inside a Windows catch funclet.
+	bool current_function_has_cpp_eh_ = false;  // Pre-scanned: function has C++ try/catch blocks (needs FH3 state variable).
+	int32_t catch_funclet_return_slot_offset_ = 0;  // Parent-frame spill slot used to preserve return value across catch funclet continuation setup.
+	int32_t catch_funclet_return_flag_slot_offset_ = 0;  // Parent-frame flag slot indicating continuation should return using saved catch return value.
+	uint32_t catch_funclet_return_label_counter_ = 0;  // Monotonic counter for synthetic catch return trampoline labels.
+	bool catch_funclet_terminated_by_return_ = false;  // True after a return statement emits a terminating catch-funclet return path.
+	StringHandle current_catch_continuation_label_;  // Current catch continuation label in parent function.
+	struct CatchReturnBridge {
+		int32_t return_slot_offset;
+		int32_t flag_slot_offset;
+		int return_size_bits;
+		bool is_float;
+	};
+	std::unordered_map<StringHandle, CatchReturnBridge> catch_return_bridges_;
+	std::unordered_map<StringHandle, StringHandle> catch_continuation_fixup_map_;  // continuation_label → fixup_label for catch path stack restoration
+	std::vector<uint32_t> catch_continuation_sub_rsp_patches_;  // Offsets of SUB RSP IMM32 in fixup code, patched with total_stack at function end
+	uint32_t eh_prologue_lea_rbp_offset_ = 0;  // Offset of LEA RBP,[RSP+N] in C++ EH prologue, patched with total_stack
+	std::vector<uint32_t> catch_funclet_lea_rbp_patches_;  // Offsets of LEA RBP,[RDX+N] in catch funclets, patched with total_stack
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
+
+	// ELF catch handler selector dispatch tracking
+	// For multi-handler try blocks on Linux, the landing pad needs selector-based dispatch.
+	// We emit CMP instructions with placeholder filter values that get patched at function finalization.
+	struct ElfCatchFilterPatch {
+		uint32_t patch_offset;      // Offset of the IMM32 placeholder in textSectionData
+		size_t try_block_index;     // Index of the originating try block (0-based)
+		size_t handler_index;       // Handler index within its try block (0-based)
+	};
+	std::vector<ElfCatchFilterPatch> elf_catch_filter_patches_;
+	int32_t elf_exc_ptr_offset_ = 0;   // Stack offset for saved exception pointer
+	int32_t elf_selector_offset_ = 0;  // Stack offset for saved selector value
+
+	// Windows SEH (Structured Exception Handling) tracking
+	struct SehExceptHandler {
+		uint32_t handler_offset;  // Code offset of __except handler
+		uint32_t filter_result;   // Filter expression evaluation result (temp var number)
+		bool is_constant_filter;  // True if filter is a compile-time constant
+		int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
+		uint32_t filter_funclet_offset = 0; // Code offset of filter funclet (for non-constant filters)
+	};
+
+	struct SehFinallyHandler {
+		uint32_t handler_offset;  // Code offset of __finally handler
+	};
+
+	struct SehTryBlock {
+		uint32_t try_start_offset;  // Code offset where __try block starts
+		uint32_t try_end_offset;    // Code offset where __try block ends
+		std::optional<SehExceptHandler> except_handler;   // __except handler (if present)
+		std::optional<SehFinallyHandler> finally_handler; // __finally handler (if present)
+	};
+
+	std::vector<SehTryBlock> current_function_seh_try_blocks_;  // SEH try blocks in current function
+	std::vector<size_t> seh_try_block_stack_;  // Stack of indices into current_function_seh_try_blocks_ for nesting
+	uint32_t current_seh_filter_funclet_offset_ = 0;  // Offset of the most recently emitted filter funclet
 }; // End of IrToObjConverter class

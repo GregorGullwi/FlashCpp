@@ -1095,6 +1095,119 @@
 	LambdaContext current_lambda_context_;
 	std::vector<LambdaContext> lambda_context_stack_;
 
+	// SEH (Structured Exception Handling) context tracking
+	// Tracks the current __try block context for __leave statement resolution
+	struct SehContext {
+		std::string_view try_end_label;      // Label at the end of the __try block (where __leave jumps to)
+		std::string_view finally_label;      // Label for __finally handler (empty if no __finally)
+		bool has_finally;                    // True if this __try has a __finally clause
+	};
+	std::vector<SehContext> seh_context_stack_;  // Stack of active SEH contexts
+
+	// Loop-SEH depth tracking: records seh_context_stack_ size at each loop entry
+	// Used by break/continue to know which __finally blocks need calling
+	std::vector<size_t> loop_seh_depth_stack_;
+
+	// SEH filter/except body context tracking for GetExceptionCode() disambiguation
+	bool seh_in_filter_funclet_ = false;       // True while visiting the filter expression inside a filter funclet
+	bool seh_has_saved_exception_code_ = false; // True when a saved exception code var is available
+	TempVar seh_saved_exception_code_var_;     // Temp var holding exception code saved during filter, usable in except body
+
+	// SEH context helper methods
+	void pushSehContext(std::string_view end_label, std::string_view finally_label, bool has_finally) {
+		SehContext ctx;
+		ctx.try_end_label = end_label;
+		ctx.finally_label = finally_label;
+		ctx.has_finally = has_finally;
+		seh_context_stack_.push_back(ctx);
+	}
+
+	void popSehContext() {
+		if (!seh_context_stack_.empty()) {
+			seh_context_stack_.pop_back();
+		}
+	}
+
+	const SehContext* getCurrentSehContext() const {
+		if (seh_context_stack_.empty()) {
+			return nullptr;
+		}
+		return &seh_context_stack_.back();
+	}
+
+	// Emit SehFinallyCall for all enclosing __try/__finally blocks before a return statement.
+	// Walks from innermost to outermost, calling each __finally funclet in order.
+	// Returns true if any finally calls were emitted.
+	bool emitSehFinallyCallsBeforeReturn(const Token& token) {
+		bool emitted = false;
+		// Walk from innermost (back) to outermost (front)
+		for (int i = static_cast<int>(seh_context_stack_.size()) - 1; i >= 0; --i) {
+			const SehContext& ctx = seh_context_stack_[i];
+			if (ctx.has_finally) {
+				// Generate a unique post-finally label for this return point
+				static size_t seh_return_finally_counter = 0;
+				size_t id = seh_return_finally_counter++;
+
+				StringBuilder post_sb;
+				post_sb.append("__seh_ret_finally_").append(id);
+				std::string_view post_label = post_sb.commit();
+
+				SehFinallyCallOp call_op;
+				call_op.funclet_label = ctx.finally_label;
+				call_op.end_label = post_label;
+				ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), token));
+
+				// Emit the post-finally label so execution continues here after the funclet returns
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(post_label)}, token));
+
+				emitted = true;
+			}
+		}
+		return emitted;
+	}
+
+	// Track SEH context depth when entering/leaving loops
+	void pushLoopSehDepth() {
+		loop_seh_depth_stack_.push_back(seh_context_stack_.size());
+	}
+
+	void popLoopSehDepth() {
+		if (!loop_seh_depth_stack_.empty()) {
+			loop_seh_depth_stack_.pop_back();
+		}
+	}
+
+	// Emit SehFinallyCall for __try/__finally blocks between break/continue and the enclosing loop.
+	// Only calls finally blocks that were pushed AFTER the loop began (i.e., inside the loop body).
+	bool emitSehFinallyCallsBeforeBreakContinue(const Token& token) {
+		if (loop_seh_depth_stack_.empty()) return false;
+
+		size_t loop_seh_depth = loop_seh_depth_stack_.back();
+		bool emitted = false;
+		// Walk from innermost SEH context down to (but not including) the loop's entry depth
+		for (int i = static_cast<int>(seh_context_stack_.size()) - 1; i >= static_cast<int>(loop_seh_depth); --i) {
+			const SehContext& ctx = seh_context_stack_[i];
+			if (ctx.has_finally) {
+				static size_t seh_break_finally_counter = 0;
+				size_t id = seh_break_finally_counter++;
+
+				StringBuilder post_sb;
+				post_sb.append("__seh_brk_finally_").append(id);
+				std::string_view post_label = post_sb.commit();
+
+				SehFinallyCallOp call_op;
+				call_op.funclet_label = ctx.finally_label;
+				call_op.end_label = post_label;
+				ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), token));
+
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(post_label)}, token));
+
+				emitted = true;
+			}
+		}
+		return emitted;
+	}
+
 	// Generate just the function declaration for a template instantiation (without body)
 	// This is called immediately when a template call is detected, so the IR converter
 	// knows the full function signature before the call is converted to object code

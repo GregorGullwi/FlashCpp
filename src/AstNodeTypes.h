@@ -4146,6 +4146,118 @@ private:
 };
 
 // ============================================================================
+// Windows SEH (Structured Exception Handling) Support
+// ============================================================================
+
+// SEH filter expression node: the expression in __except(filter_expression)
+// Returns EXCEPTION_EXECUTE_HANDLER (1), EXCEPTION_CONTINUE_SEARCH (0), or EXCEPTION_CONTINUE_EXECUTION (-1)
+class SehFilterExpressionNode {
+public:
+	explicit SehFilterExpressionNode(ASTNode expression, Token except_token)
+		: expression_(expression), except_token_(except_token) {}
+
+	const ASTNode& expression() const { return expression_; }
+	const Token& except_token() const { return except_token_; }
+
+private:
+	ASTNode expression_;     // The filter expression
+	Token except_token_;     // For error reporting
+};
+
+// SEH __except clause node: __except(filter) { block }
+class SehExceptClauseNode {
+public:
+	explicit SehExceptClauseNode(
+		ASTNode filter_expression,  // SehFilterExpressionNode
+		ASTNode body,               // BlockNode
+		Token except_token = Token())
+		: filter_expression_(filter_expression),
+		  body_(body),
+		  except_token_(except_token) {}
+
+	const ASTNode& filter_expression() const { return filter_expression_; }
+	const ASTNode& body() const { return body_; }
+	const Token& except_token() const { return except_token_; }
+
+private:
+	ASTNode filter_expression_;  // SehFilterExpressionNode for the filter
+	ASTNode body_;               // BlockNode for the __except block body
+	Token except_token_;         // For error reporting
+};
+
+// SEH __finally clause node: __finally { block }
+class SehFinallyClauseNode {
+public:
+	explicit SehFinallyClauseNode(
+		ASTNode body,
+		Token finally_token = Token())
+		: body_(body),
+		  finally_token_(finally_token) {}
+
+	const ASTNode& body() const { return body_; }
+	const Token& finally_token() const { return finally_token_; }
+
+private:
+	ASTNode body_;           // BlockNode for the __finally block body
+	Token finally_token_;    // For error reporting
+};
+
+// SEH try-except statement node: __try { block } __except(filter) { block }
+class SehTryExceptStatementNode {
+public:
+	explicit SehTryExceptStatementNode(
+		ASTNode try_block,
+		ASTNode except_clause,  // SehExceptClauseNode
+		Token try_token = Token())
+		: try_block_(try_block),
+		  except_clause_(except_clause),
+		  try_token_(try_token) {}
+
+	const ASTNode& try_block() const { return try_block_; }
+	const ASTNode& except_clause() const { return except_clause_; }
+	const Token& try_token() const { return try_token_; }
+
+private:
+	ASTNode try_block_;      // BlockNode for the __try block
+	ASTNode except_clause_;  // SehExceptClauseNode
+	Token try_token_;        // For error reporting
+};
+
+// SEH try-finally statement node: __try { block } __finally { block }
+class SehTryFinallyStatementNode {
+public:
+	explicit SehTryFinallyStatementNode(
+		ASTNode try_block,
+		ASTNode finally_clause,  // SehFinallyClauseNode
+		Token try_token = Token())
+		: try_block_(try_block),
+		  finally_clause_(finally_clause),
+		  try_token_(try_token) {}
+
+	const ASTNode& try_block() const { return try_block_; }
+	const ASTNode& finally_clause() const { return finally_clause_; }
+	const Token& try_token() const { return try_token_; }
+
+private:
+	ASTNode try_block_;        // BlockNode for the __try block
+	ASTNode finally_clause_;   // SehFinallyClauseNode
+	Token try_token_;          // For error reporting
+};
+
+// SEH __leave statement node: __leave;
+// Exits the current __try block and jumps to the __finally or after __except
+class SehLeaveStatementNode {
+public:
+	explicit SehLeaveStatementNode(Token leave_token)
+		: leave_token_(leave_token) {}
+
+	const Token& leave_token() const { return leave_token_; }
+
+private:
+	Token leave_token_;  // For error reporting
+};
+
+// ============================================================================
 // C++20 Concepts Support
 // ============================================================================
 
