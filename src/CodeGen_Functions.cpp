@@ -459,20 +459,20 @@
 				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
 				if (!struct_info) continue;
 				// Skip pattern structs (templates) - they shouldn't be used for code generation
-				std::string_view struct_type_name = StringTable::getStringView(name_handle);
-				if (struct_type_name.find("_pattern_") != std::string_view::npos) continue;
-				if (struct_type_name.find("_unknown") != std::string_view::npos) continue;
-				// Skip template patterns — if the struct was registered as a class template,
-				// it is an uninstantiated pattern and must not be used for codegen.
-				// isClassTemplate() uses the exact StringHandle (no string scan, no
-				// unqualified-name fallback) so it never accidentally matches a non-template
-				// struct that shares an unqualified name with a template in another namespace.
-				if (struct_type_name.find('$') == std::string_view::npos) {
+				if (gTemplateRegistry.isPatternStructName(name_handle)) continue;
+				if (type_info_ptr->is_incomplete_instantiation_) continue;
+				// Skip uninstantiated class template patterns — if the struct was registered
+				// as a class template but is NOT a template instantiation, it is an
+				// uninstantiated pattern and must not be used for codegen.
+				// Template instantiations (isTemplateInstantiation) are concrete types
+				// and should NOT be skipped.
+				if (!type_info_ptr->isTemplateInstantiation()) {
 					if (gTemplateRegistry.isClassTemplate(name_handle)) {
 						continue;
 					}
 				}
 				
+				std::string_view struct_type_name = StringTable::getStringView(name_handle);
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
@@ -482,7 +482,7 @@
 							// Use the struct type name for mangling (not parent_struct_name which
 							// may reference a template pattern)
 							std::string_view parent_for_mangling = func_decl.parent_struct_name();
-							if (parent_for_mangling.find("_pattern_") != std::string_view::npos) {
+							if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(parent_for_mangling))) {
 								parent_for_mangling = struct_type_name;
 							}
 							if (func_decl.has_mangled_name()) {
@@ -2019,7 +2019,7 @@
 						}
 						
 						// Generate the mangled name
-						[[maybe_unused]] std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
+						[[maybe_unused]] std::string_view mangled_func_name = gTemplateRegistry.mangleTemplateName(func_name, template_args);
 						
 						// Template instantiation now happens during parsing
 						// The instantiated function should already be in the AST
@@ -2181,7 +2181,7 @@
 					});
 					
 					// Generate the mangled name
-					std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
+					std::string_view mangled_func_name = gTemplateRegistry.mangleTemplateName(func_name, template_args);
 					
 					// Build qualified function name with mangled template name
 					function_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(mangled_func_name));

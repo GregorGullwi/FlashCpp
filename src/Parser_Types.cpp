@@ -1088,6 +1088,7 @@ ParseResult Parser::parse_type_specifier()
 											placeholder_type.type_index_ = gTypeInfo.size() - 1;
 											placeholder_type.type_size_ = 0;
 											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+											placeholder_type.updateIncompleteInstantiationFlag();
 											gTypesByName[placeholder_type.name_] = &placeholder_type;
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
 												Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
@@ -1233,6 +1234,7 @@ ParseResult Parser::parse_type_specifier()
 								placeholder_type.type_index_ = gTypeInfo.size() - 1;
 								placeholder_type.type_size_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+								placeholder_type.updateIncompleteInstantiationFlag();
 								gTypesByName[placeholder_type.name_] = &placeholder_type;
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
@@ -1294,6 +1296,7 @@ ParseResult Parser::parse_type_specifier()
 							placeholder_type.type_index_ = gTypeInfo.size() - 1;
 							placeholder_type.type_size_ = 0;
 							placeholder_type.name_ = type_handle;
+							placeholder_type.updateIncompleteInstantiationFlag();
 							gTypesByName[type_handle] = &placeholder_type;
 							type_idx = placeholder_type.type_index_;
 							FLASH_LOG(Templates, Debug, "Created placeholder for dependent nested type: ", dependent_type_name);
@@ -1663,6 +1666,7 @@ ParseResult Parser::parse_type_specifier()
 							type_info.type_index_ = gTypeInfo.size() - 1;
 							type_info.type_size_ = 0;  // Unknown size for dependent type
 							type_info.name_ = type_idx;
+							type_info.updateIncompleteInstantiationFlag();
 							gTypesByName[type_idx] = &type_info;
 							
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -1875,9 +1879,13 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 					
-					// If we're in a template body and the instantiated name contains "_unknown",
-					// this is likely a template-dependent nested type that can't be resolved yet
-					if (parsing_template_body_ && instantiated_name.find("_unknown") != std::string::npos) {
+					// If we're in a template body and the instantiated name is an incomplete instantiation,
+					// this is likely a template-dependent nested type that can't be resolved yet.
+					StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+					auto inst_type_it = gTypesByName.find(inst_name_handle);
+					bool inst_is_incomplete = inst_type_it != gTypesByName.end()
+						&& inst_type_it->second->is_incomplete_instantiation_;
+					if (parsing_template_body_ && inst_is_incomplete) {
 						// Create a placeholder UserDefined type for template-dependent nested types
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							Type::UserDefined, 0, 0, type_name_token, cv_qualifier));
@@ -1930,6 +1938,7 @@ ParseResult Parser::parse_type_specifier()
 					type_info.type_index_ = gTypeInfo.size() - 1;
 					type_info.type_size_ = 0;  // Unknown size for dependent type
 					type_info.name_ = type_idx;
+					type_info.updateIncompleteInstantiationFlag();
 					gTypesByName[type_idx] = &type_info;
 					
 					// Set template instantiation metadata so isTemplateInstantiation() returns true
@@ -2100,6 +2109,7 @@ ParseResult Parser::parse_type_specifier()
 						type_info.type_index_ = gTypeInfo.size() - 1;
 						type_info.type_size_ = 0;  // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
+						type_info.updateIncompleteInstantiationFlag();
 						gTypesByName[type_name_handle] = &type_info;
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));

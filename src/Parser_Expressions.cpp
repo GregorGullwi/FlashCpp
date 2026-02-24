@@ -3078,8 +3078,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 							class_scope_builder.append(std::string_view(namespaces[i]));
 						}
 						std::string_view class_scope = class_scope_builder.commit();
-						if (class_scope.find('$') != std::string_view::npos) {
-							StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_scope);
+						StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_scope);
+						auto class_type_it = gTypesByName.find(class_name_handle);
+						if (class_type_it != gTypesByName.end() && class_type_it->second->isTemplateInstantiation()) {
 							StringHandle member_name_handle = final_identifier.handle();
 							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
 								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
@@ -5069,8 +5070,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						if (member_lookup.has_value() && member_lookup->is<FunctionDeclarationNode>()) {
 							const FunctionDeclarationNode& func_decl = member_lookup->as<FunctionDeclarationNode>();
-							if (!func_decl.get_definition().has_value() && instantiated_name.find('$') != std::string_view::npos) {
-								StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+							StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+							auto inst_type_it = gTypesByName.find(class_name_handle);
+							if (!func_decl.get_definition().has_value() && inst_type_it != gTypesByName.end() && inst_type_it->second->isTemplateInstantiation()) {
 								StringHandle member_name_handle = member_token.handle();
 								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
 									auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
@@ -5918,8 +5920,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					if (!func_decl.get_definition().has_value()) {
 						std::string_view qualified_scope = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
-						if (qualified_scope.find('$') != std::string_view::npos) {
-							StringHandle class_name_handle = StringTable::getOrInternStringHandle(qualified_scope);
+						StringHandle class_name_handle = StringTable::getOrInternStringHandle(qualified_scope);
+						auto scope_type_it = gTypesByName.find(class_name_handle);
+						if (scope_type_it != gTypesByName.end() && scope_type_it->second->isTemplateInstantiation()) {
 							StringHandle member_name_handle = qual_id.identifier_token().handle();
 							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
 								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);

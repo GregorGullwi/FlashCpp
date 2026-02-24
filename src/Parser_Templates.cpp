@@ -733,7 +733,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Check if the target type is a template instantiation with unresolved parameters
 		// This happens when parsing things like: template<bool B> using bool_constant = integral_constant<bool, B>
-		// The integral_constant<bool, B> gets instantiated as "integral_constant_bool_unknown"
+		// The integral_constant<bool, B> gets instantiated with "$unresolved" in the name
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
@@ -743,10 +743,10 @@ ParseResult Parser::parse_template_declaration() {
 			const TypeInfo& ti = gTypeInfo[type_spec.type_index()];
 			std::string_view type_name = StringTable::getStringView(ti.name());
 
-			// Check for "_unknown" suffix indicating unresolved template parameters
-			if (type_name.find("_unknown") != std::string_view::npos) {
+			// Check for incomplete instantiation indicating unresolved template parameters
+			if (ti.is_incomplete_instantiation_) {
 				has_unresolved_params = true;
-				FLASH_LOG(Parser, Debug, "Alias target type '", type_name, "' has unresolved parameters - using deferred instantiation");
+				FLASH_LOG(Parser, Debug, "Alias target type '", StringTable::getStringView(ti.name()), "' has unresolved parameters - using deferred instantiation");
 			}
 			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
 			// Check if this is a template instantiation (hash-based naming)
@@ -827,7 +827,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 				
-				// Note: We already consumed the tokens, so type_spec still points to the _unknown type
+				// Note: We already consumed the tokens, so type_spec still points to the unresolved type
 				// We don't need to re-parse again - just use the existing type_spec
 			}
 		}
@@ -2518,6 +2518,9 @@ ParseResult Parser::parse_template_declaration() {
 				}
 			}
 			auto instantiated_name = StringTable::getOrInternStringHandle(pattern_name_builder);
+			
+			// Register this as a pattern struct name for O(1) lookup
+			gTemplateRegistry.registerPatternStructName(instantiated_name);
 			
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -6185,6 +6188,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
 			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name_str));
 		
+		// Register this as a pattern struct name for O(1) lookup
+		gTemplateRegistry.registerPatternStructName(qualified_pattern_name);
+		
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
 			qualified_pattern_name,
@@ -8433,7 +8439,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// A type is dependent if:
 		// 1. Its type name is in current_template_param_names_ (it IS a template parameter), AND
 		//    we're NOT in SFINAE context (during SFINAE, template params are substituted)
-		// 2. Its type name contains "_unknown" (composite type with template parameters)
+		// 2. Its is_incomplete_instantiation_ flag is set (composite type with unresolved template parameters)
 		// 3. It's a UserDefined type with type_index=0 (placeholder)
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
 		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
@@ -8491,7 +8497,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					}
 				}
 				
-				if (is_template_param || type_name.find("_unknown") != std::string_view::npos) {
+				if (is_template_param || (idx < gTypeInfo.size() && gTypeInfo[idx].is_incomplete_instantiation_)) {
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
@@ -8970,7 +8976,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Instantiate the template (same logic as try_instantiate_template)
 	// Generate mangled name first - it now includes reference qualifiers
-	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
 	// Check if we already have this instantiation using the mangled name as key
 	// This ensures that int, int&, and int&& are treated as distinct instantiations
@@ -9571,7 +9577,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Full AST cloning and substitution will be implemented later
 
 	// Generate mangled name for the instantiation
-	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
 	// For now, we'll create a simple wrapper that references the original function
 	// This is a temporary solution - proper instantiation requires:
@@ -9750,13 +9756,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
 				std::string_view type_name = StringTable::getStringView(orig_type_info.name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", type_name);
-				// Re-parse if type contains _unknown (legacy template-dependent marker)
+				// Re-parse if type is incomplete instantiation (has unresolved template params)
 				// OR if type name contains template parameter markers like _T or ::type (typename member access)
-				// This is more robust than just checking for _unknown
-				bool has_unknown = type_name.find("_unknown") != std::string::npos;
+				bool has_unresolved = orig_type_info.is_incomplete_instantiation_;
 				bool has_template_param = type_name.find("_T") != std::string::npos || 
 				                          type_name.find("::type") != std::string::npos;
-				should_reparse = has_unknown || has_template_param;
+				should_reparse = has_unresolved || has_template_param;
 				if (should_reparse) {
 					FLASH_LOG(Templates, Debug, "Return type appears template-dependent - will re-parse");
 				}
@@ -9816,7 +9821,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0);	// Placeholder size
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
-			// instead of staying as UserDefined, which would cause toString() to return "unknown"
+			// instead of staying as UserDefined, which would cause toString() to return "$unresolved"
 			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
 				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
@@ -9874,7 +9879,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// but the type doesn't actually have a ::type member
 		//
 		// NOTE: This validation is limited - it can detect simple cases where the type
-		// name contains "_unknown" (template-dependent placeholder), but cannot evaluate
+		// is an incomplete instantiation (has unresolved template parameters), but cannot evaluate
 		// complex constant expressions like "is_int<T>::value" in template arguments.
 		// Full SFINAE support would require implementing constant expression evaluation
 		// during template instantiation.
@@ -9885,7 +9890,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 				
 				// Check for placeholder/unknown types that indicate failed resolution
-				if (StringTable::getStringView(type_info.name()).find("_unknown") != std::string::npos) {
+				if (type_info.is_incomplete_instantiation_) {
 					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
 					return std::nullopt;  // Substitution failure
 				}
@@ -10522,7 +10527,8 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		template_name = template_name.substr(last_colon + 2);
 	}
-	return FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
+	auto result = FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
+	return result;
 }
 
 // Helper function to instantiate base class template and register it in the AST
@@ -11048,8 +11054,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				
 				// Generate unique name for this instantiation using hash-based naming
 				std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
-				
-				// Check if already instantiated
+			
+			// Check if already instantiated
 				if (gSymbolTable.lookup(persistent_name).has_value()) {
 					return gSymbolTable.lookup(persistent_name);
 				}
@@ -12330,13 +12336,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 			
-			// WORKAROUND: If the base class name ends with "_unknown", it was instantiated
+			// WORKAROUND: If the base class name is an incomplete template instantiation, it was instantiated
 			// during pattern parsing with template parameters. We need to re-instantiate
 			// it with the concrete template arguments.
-			if (base_name_str.ends_with("_unknown")) {
-				// Extract the template name (before "_unknown")
-				size_t pos = base_name_str.find("_unknown");
-				std::string base_template_name = base_name_str.substr(0, pos);
+			// Use TypeInfo metadata to detect incomplete instantiations and extract the base template name.
+			StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_name_str);
+			auto incomplete_type_it = gTypesByName.find(base_name_handle);
+			bool base_is_incomplete = incomplete_type_it != gTypesByName.end()
+				&& incomplete_type_it->second->is_incomplete_instantiation_;
+			if (base_is_incomplete && incomplete_type_it->second->isTemplateInstantiation()) {
+				std::string_view base_template_name = StringTable::getStringView(
+					incomplete_type_it->second->baseTemplateName());
 				
 				// For partial specialization like Tuple<First, Rest...> : Tuple<Rest...>
 				// The base class uses Rest... (the variadic pack), which corresponds to
@@ -17593,7 +17603,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
 
 	// Generate mangled name for the instantiation
-	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(member_name, template_args);
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(member_name, template_args);
 
 	// Get the original function's declaration
 	const DeclarationNode& orig_decl = func_decl.decl_node();

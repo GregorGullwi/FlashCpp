@@ -1266,8 +1266,9 @@
 					FLASH_LOG(Codegen, Debug, "findStaticMemberRecursive result: static_member=", (static_member != nullptr), ", owner_struct=", (owner_struct != nullptr));
 					if (static_member && owner_struct) {
 						// Check if the owner struct is an incomplete template instantiation
-						std::string_view owner_name = StringTable::getStringView(owner_struct->getName());
-						if (owner_name.find("_unknown") != std::string_view::npos) {
+						auto owner_type_it = gTypesByName.find(owner_struct->getName());
+						if (owner_type_it != gTypesByName.end() && owner_type_it->second->is_incomplete_instantiation_) {
+							std::string_view owner_name = StringTable::getStringView(owner_struct->getName());
 							FLASH_LOG(Codegen, Error, "Cannot access static member '", qualifiedIdNode.name(), 
 							          "' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad

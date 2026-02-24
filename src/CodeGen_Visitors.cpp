@@ -311,15 +311,13 @@ public:
 				continue;
 			}
 			// Skip pattern structs - they're templates and shouldn't generate code
-			std::string_view type_name_view = StringTable::getStringView(type_name);
-			if (type_name_view.find("_pattern_") != std::string::npos) {
+			if (gTemplateRegistry.isPatternStructName(type_name)) {
 				continue;
 			}
 			
-			// Skip structs with "_unknown" in their name - they're incomplete template instantiations
-			// from type alias parsing where template parameters weren't yet known
-			if (type_name_view.find("_unknown") != std::string::npos) {
-				FLASH_LOG(Codegen, Debug, "Skipping struct '", type_name_view, "' with _unknown in name (incomplete instantiation)");
+			// Skip structs with incomplete instantiation - they have unresolved template params
+			if (type_info->is_incomplete_instantiation_) {
+				FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(type_name), "' (incomplete instantiation)");
 				continue;
 			}
 			
@@ -771,14 +769,13 @@ public:
 			}
 			
 			// Skip pattern structs
-			std::string_view type_name_view2 = StringTable::getStringView(type_name);
-			if (type_name_view2.find("_pattern_") != std::string::npos) {
+			if (gTemplateRegistry.isPatternStructName(type_name)) {
 				continue;
 			}
 			
-			// Skip structs with "_unknown" in their name - they're incomplete template instantiations
-			if (type_name_view2.find("_unknown") != std::string::npos) {
-				FLASH_LOG(Codegen, Debug, "Skipping trivial constructor for '", type_name_view2, "' with _unknown in name (incomplete instantiation)");
+			// Skip structs with incomplete instantiation - they have unresolved template params
+			if (type_info->is_incomplete_instantiation_) {
+				FLASH_LOG(Codegen, Debug, "Skipping trivial constructor for '", StringTable::getStringView(type_name), "' (incomplete instantiation)");
 				continue;
 			}
 			
@@ -2899,7 +2896,7 @@ private:
 			std::string_view parent_name = node.parent_struct_name();
 			// If parent_struct_name is a template pattern but we have a valid struct context
 			// from visitStructDeclarationNode, keep the struct context (instantiated name)
-			if (!parent_name.empty() && parent_name.find("_pattern_") == std::string_view::npos) {
+			if (!parent_name.empty() && !gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(parent_name))) {
 				current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
 			}
 			// else: keep current_struct_name_ from visitStructDeclarationNode context
@@ -3727,18 +3724,20 @@ private:
 
 
 		// Skip pattern structs - they're templates and shouldn't generate code
-		// Pattern structs have "_pattern_" in their name
-		std::string_view struct_name = StringTable::getStringView(node.name());
-		if (struct_name.find("_pattern_") != std::string_view::npos) {
+		if (gTemplateRegistry.isPatternStructName(node.name())) {
 			return;
 		}
 		
-		// Skip structs with "_unknown" in their name - they're incomplete template instantiations
-		// from type alias parsing where template parameters weren't yet known
-		if (struct_name.find("_unknown") != std::string_view::npos) {
-			FLASH_LOG(Codegen, Debug, "Skipping struct '", struct_name, "' with _unknown in name (incomplete instantiation)");
-			return;
+		// Skip structs with incomplete instantiation - they have unresolved template params
+		{
+			auto incomplete_it = gTypesByName.find(node.name());
+			if (incomplete_it != gTypesByName.end() && incomplete_it->second->is_incomplete_instantiation_) {
+				FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()), "' (incomplete instantiation)");
+				return;
+			}
 		}
+
+		std::string_view struct_name = StringTable::getStringView(node.name());
 
 		// Generate member functions for both global and local structs
 		// Save the enclosing function context so member function visits don't clobber it

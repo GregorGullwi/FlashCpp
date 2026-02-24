@@ -372,10 +372,10 @@ struct TemplateTypeArg {
 					if (type_index < gTypeInfo.size()) {
 						result += StringTable::getStringView(gTypeInfo[type_index].name());
 					} else {
-						result += "unknown";
+						result += "$unresolved";
 					}
 					break;
-				default: result += "unknown"; break;
+				default: result += "$unresolved"; break;
 			}
 		}
 
@@ -1409,7 +1409,7 @@ public:
 			case Type::UnsignedLongLong: return "ulonglong";
 			case Type::UnsignedShort: return "ushort";
 			case Type::UnsignedChar: return "uchar";
-			default: return "unknown";
+			default: return "$unresolved";
 		}
 	}
 
@@ -1433,8 +1433,9 @@ public:
 
 	// Generate a mangled name for a template instantiation using hash-based naming
 	// Example: max<int> -> max$a1b2c3d4, max<int, 5> -> max$e5f6g7h8
+	// Build a unique hash-based name for a template instantiation and register it.
 	// This avoids collisions from underscore-based naming (e.g., type names with underscores)
-	static std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
+	std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
 		// Convert TemplateArgument to TemplateTypeArg for hash-based naming
 		std::vector<TemplateTypeArg> type_args;
 		type_args.reserve(args.size());
@@ -1463,7 +1464,8 @@ public:
 			type_args.push_back(ta);
 		}
 		
-		return FlashCpp::generateInstantiatedNameFromArgs(base_name, type_args);
+		auto result = FlashCpp::generateInstantiatedNameFromArgs(base_name, type_args);
+		return result;
 	}
 
 	// Register an out-of-line template member function definition (StringHandle overload)
@@ -1824,16 +1826,30 @@ public:
 		deduction_guides_.clear();
 		instantiation_to_pattern_.clear();
 		class_template_names_.clear();
+		pattern_struct_names_.clear();
 		outer_template_bindings_.clear();
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
 	std::unordered_map<StringHandle, std::vector<TemplatePattern>, TransparentStringHash, TransparentStringEqual> specialization_patterns_;
 	
+	// Register a pattern struct name (for partial specializations)
+	void registerPatternStructName(StringHandle pattern_name) {
+		pattern_struct_names_.insert(pattern_name);
+	}
+
+	// Returns true if 'name' was registered as a pattern struct name
+	// (partial specialization pattern like "Container_pattern_TP")
+	bool isPatternStructName(StringHandle name) const {
+		return pattern_struct_names_.count(name) > 0;
+	}
+
 	// Register mapping from instantiated name to pattern name (for partial specializations)
 	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name) {
 		instantiation_to_pattern_[instantiated_name] = pattern_name;
+		pattern_struct_names_.insert(pattern_name);
 	}
+
 	
 	// Look up which pattern was used for an instantiation
 	std::optional<StringHandle> get_instantiation_pattern(StringHandle instantiated_name) const {
@@ -1907,6 +1923,12 @@ private:
 	// Used by isClassTemplate() for O(1) exact-name lookup, avoiding substring searches
 	// and false positives from unqualified-name fallbacks in lookupTemplate().
 	std::unordered_set<StringHandle, StringHandleHash> class_template_names_;
+
+	// Set of StringHandles that are pattern struct names (partial specialization patterns).
+	// Used by isPatternStructName() for O(1) lookup, replacing find("_pattern_") substring searches.
+	std::unordered_set<StringHandle, StringHandleHash> pattern_struct_names_;
+
+
 };
 
 // Global template registry
