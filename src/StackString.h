@@ -10,7 +10,7 @@
 // Performance measurement switch
 // Set to 1 to use old std::string approach, 0 to use StackString
 #ifndef USE_OLD_STRING_APPROACH
-#define USE_OLD_STRING_APPROACH 1
+#define USE_OLD_STRING_APPROACH 0
 #endif
 
 // Performance tracking for StackString

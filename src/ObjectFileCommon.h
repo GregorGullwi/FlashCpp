@@ -115,4 +115,33 @@ namespace ObjectFileCommon {
 		buf.insert(buf.end(), count, 0);
 	}
 
+	/// C++20 concept documenting the duck-type interface shared by ObjectFileWriter and ElfFileWriter.
+	/// Both file writers are used as template parameters to IrToObjConverter<TWriterClass>.
+	template<typename T>
+	concept FileWriter = requires(T writer,
+	                              std::string_view name,
+	                              uint32_t offset,
+	                              uint32_t size,
+	                              uint64_t reloc_offset,
+	                              uint32_t reloc_type,
+	                              Linkage linkage,
+	                              const std::vector<TryBlockInfo>& try_blocks,
+	                              const std::vector<UnwindMapEntryInfo>& unwind_map,
+	                              const std::vector<SehTryBlockInfo>& seh_try_blocks) {
+		// Core function management
+		writer.add_function_symbol(name, offset, size, linkage);
+		writer.finalize_current_function();
+		writer.finalize_debug_info();
+
+		// Relocation support
+		writer.add_relocation(reloc_offset, name);
+		writer.add_relocation(reloc_offset, name, reloc_type);
+
+		// Exception handling
+		writer.add_function_exception_info(name, offset, size, try_blocks, unwind_map, seh_try_blocks, size);
+
+		// Global data
+		writer.add_global_variable_data(name, size_t{0}, size_t{0}, std::span<const uint8_t>{}, false, false);
+	};
+
 } // namespace ObjectFileCommon
