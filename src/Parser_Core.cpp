@@ -605,50 +605,29 @@ void Parser::discard_saved_token(SaveHandle handle) {
 }
 
 void Parser::skip_balanced_braces() {
-	// Expect the current token to be '{'
-	if (peek() != "{"_tok) {
-		return;
-	}
-	
-	int brace_depth = 0;
-	size_t token_count = 0;
-	const size_t MAX_TOKENS = 10000;  // Safety limit to prevent infinite loops
-
-	while (!peek().is_eof() && token_count < MAX_TOKENS) {
-		auto kind = peek();
-		if (kind == "{"_tok) {
-			brace_depth++;
-		} else if (kind == "}"_tok) {
-			brace_depth--;
-			if (brace_depth == 0) {
-				// Consume the closing '}' and exit
-				advance();
-				break;
-			}
-		}
-		advance();
-		token_count++;
-	}
+	skip_balanced_delimiters("{"_tok, "}"_tok);
 }
 
 void Parser::skip_balanced_parens() {
-	// Expect the current token to be '('
-	if (peek() != "("_tok) {
+	skip_balanced_delimiters("("_tok, ")"_tok);
+}
+
+void Parser::skip_balanced_delimiters(TokenKind open, TokenKind close) {
+	if (peek() != open) {
 		return;
 	}
 	
-	int paren_depth = 0;
+	int depth = 0;
 	size_t token_count = 0;
 	const size_t MAX_TOKENS = 10000;  // Safety limit to prevent infinite loops
 
 	while (!peek().is_eof() && token_count < MAX_TOKENS) {
 		auto kind = peek();
-		if (kind == "("_tok) {
-			paren_depth++;
-		} else if (kind == ")"_tok) {
-			paren_depth--;
-			if (paren_depth == 0) {
-				// Consume the closing ')' and exit
+		if (kind == open) {
+			depth++;
+		} else if (kind == close) {
+			depth--;
+			if (depth == 0) {
 				advance();
 				break;
 			}

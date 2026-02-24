@@ -72,6 +72,20 @@ public:
 	using SehTryBlockInfo = ObjectFileCommon::SehTryBlockInfo;
 	using BaseClassDescriptorInfo = ObjectFileCommon::BaseClassDescriptorInfo;
 
+	// Helper: Add a COFF section auxiliary symbol (format 5) to a symbol
+	static void addSectionAuxSymbol(COFFI::symbol* sym, COFFI::section* section) {
+		COFFI::auxiliary_symbol_record_5 aux = {};
+		aux.length = 0;
+		aux.number_of_relocations = 0;
+		aux.number_of_linenumbers = 0;
+		aux.check_sum = 0;
+		aux.number = static_cast<uint16_t>(section->get_index() + 1);
+		aux.selection = 0;
+		COFFI::auxiliary_symbol_record aux_record;
+		std::memcpy(aux_record.value, &aux, sizeof(aux));
+		sym->get_auxiliary_symbols().push_back(aux_record);
+	}
+
 	ObjectFileWriter() {
 		if (g_enable_debug_output) std::cerr << "Creating simplified ObjectFileWriter for debugging..." << std::endl;
 
@@ -100,17 +114,7 @@ public:
 		symbol_text_main->set_value(0);
 
 		// Add auxiliary symbol for .text section (format 5)
-		COFFI::auxiliary_symbol_record_5 aux_text = {};
-		aux_text.length = 0; // Will be set later when we know the section size
-		aux_text.number_of_relocations = 0;
-		aux_text.number_of_linenumbers = 0;
-		aux_text.check_sum = 0;
-		aux_text.number = static_cast<uint16_t>(section_text->get_index() + 1);
-		aux_text.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_text;
-		std::memcpy(aux_record_text.value, &aux_text, sizeof(aux_text));
-		symbol_text_main->get_auxiliary_symbols().push_back(aux_record_text);
+		addSectionAuxSymbol(symbol_text_main, section_text);
 
 		auto section_drectve = add_section(".drectve", IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE, SectionType::DRECTVE);
 		section_drectve->append_data(" /DEFAULTLIB:\"LIBCMT\" /DEFAULTLIB:\"OLDNAMES\""); // MSVC also contains '/DEFAULTLIB:\"OLDNAMES\" ', but it doesn't seem to be needed?
@@ -121,17 +125,7 @@ public:
 		symbol_drectve->set_value(0);
 
 		// Add auxiliary symbol for .drectve section
-		COFFI::auxiliary_symbol_record_5 aux_drectve = {};
-		aux_drectve.length = 0;
-		aux_drectve.number_of_relocations = 0;
-		aux_drectve.number_of_linenumbers = 0;
-		aux_drectve.check_sum = 0;
-		aux_drectve.number = static_cast<uint16_t>(section_drectve->get_index() + 1);
-		aux_drectve.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_drectve;
-		std::memcpy(aux_record_drectve.value, &aux_drectve, sizeof(aux_drectve));
-		symbol_drectve->get_auxiliary_symbols().push_back(aux_record_drectve);
+		addSectionAuxSymbol(symbol_drectve, section_drectve);
 
 		// Add .data section
 		auto section_data = add_section(".data", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES, SectionType::DATA);
@@ -142,17 +136,7 @@ public:
 		symbol_data->set_value(0);
 
 		// Add auxiliary symbol for .data section
-		COFFI::auxiliary_symbol_record_5 aux_data = {};
-		aux_data.length = 0;
-		aux_data.number_of_relocations = 0;
-		aux_data.number_of_linenumbers = 0;
-		aux_data.check_sum = 0;
-		aux_data.number = static_cast<uint16_t>(section_data->get_index() + 1);
-		aux_data.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_data;
-		std::memcpy(aux_record_data.value, &aux_data, sizeof(aux_data));
-		symbol_data->get_auxiliary_symbols().push_back(aux_record_data);
+		addSectionAuxSymbol(symbol_data, section_data);
 
 		// Add .bss section
 		auto section_bss = add_section(".bss", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_UNINITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES, SectionType::BSS);
@@ -163,17 +147,7 @@ public:
 		symbol_bss->set_value(0);
 
 		// Add auxiliary symbol for .bss section
-		COFFI::auxiliary_symbol_record_5 aux_bss = {};
-		aux_bss.length = 0;
-		aux_bss.number_of_relocations = 0;
-		aux_bss.number_of_linenumbers = 0;
-		aux_bss.check_sum = 0;
-		aux_bss.number = static_cast<uint16_t>(section_bss->get_index() + 1);
-		aux_bss.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_bss;
-		std::memcpy(aux_record_bss.value, &aux_bss, sizeof(aux_bss));
-		symbol_bss->get_auxiliary_symbols().push_back(aux_record_bss);
+		addSectionAuxSymbol(symbol_bss, section_bss);
 
 		// Add .rdata section (read-only data for string literals and constants)
 		auto section_rdata = add_section(".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_16BYTES, SectionType::RDATA);
@@ -184,17 +158,7 @@ public:
 		symbol_rdata->set_value(0);
 
 		// Add auxiliary symbol for .rdata section
-		COFFI::auxiliary_symbol_record_5 aux_rdata = {};
-		aux_rdata.length = 0;
-		aux_rdata.number_of_relocations = 0;
-		aux_rdata.number_of_linenumbers = 0;
-		aux_rdata.check_sum = 0;
-		aux_rdata.number = static_cast<uint16_t>(section_rdata->get_index() + 1);
-		aux_rdata.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_rdata;
-		std::memcpy(aux_record_rdata.value, &aux_rdata, sizeof(aux_rdata));
-		symbol_rdata->get_auxiliary_symbols().push_back(aux_record_rdata);
+		addSectionAuxSymbol(symbol_rdata, section_rdata);
 
 		// Add debug sections to match Clang order
 		auto section_debug_s = coffi_.add_section(".debug$S");
@@ -210,17 +174,7 @@ public:
 		symbol_debug_s->set_value(0);
 
 		// Add auxiliary symbol for .debug$S section
-		COFFI::auxiliary_symbol_record_5 aux_debug_s = {};
-		aux_debug_s.length = 0;
-		aux_debug_s.number_of_relocations = 0;
-		aux_debug_s.number_of_linenumbers = 0;
-		aux_debug_s.check_sum = 0;
-		aux_debug_s.number = static_cast<uint16_t>(section_debug_s->get_index() + 1);
-		aux_debug_s.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_debug_s;
-		std::memcpy(aux_record_debug_s.value, &aux_debug_s, sizeof(aux_debug_s));
-		symbol_debug_s->get_auxiliary_symbols().push_back(aux_record_debug_s);
+		addSectionAuxSymbol(symbol_debug_s, section_debug_s);
 
 		auto section_debug_t = coffi_.add_section(".debug$T");
 		section_debug_t->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES | IMAGE_SCN_MEM_DISCARDABLE);
@@ -235,17 +189,7 @@ public:
 		symbol_debug_t->set_value(0);
 
 		// Add auxiliary symbol for .debug$T section
-		COFFI::auxiliary_symbol_record_5 aux_debug_t = {};
-		aux_debug_t.length = 0;
-		aux_debug_t.number_of_relocations = 0;
-		aux_debug_t.number_of_linenumbers = 0;
-		aux_debug_t.check_sum = 0;
-		aux_debug_t.number = static_cast<uint16_t>(section_debug_t->get_index() + 1);
-		aux_debug_t.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_debug_t;
-		std::memcpy(aux_record_debug_t.value, &aux_debug_t, sizeof(aux_debug_t));
-		symbol_debug_t->get_auxiliary_symbols().push_back(aux_record_debug_t);
+		addSectionAuxSymbol(symbol_debug_t, section_debug_t);
 
 		// Add .xdata section (exception handling data)
 		auto section_xdata = add_section(".xdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES, SectionType::XDATA);
@@ -256,17 +200,7 @@ public:
 		symbol_xdata->set_value(0);
 
 		// Add auxiliary symbol for .xdata section
-		COFFI::auxiliary_symbol_record_5 aux_xdata = {};
-		aux_xdata.length = 0;
-		aux_xdata.number_of_relocations = 0;
-		aux_xdata.number_of_linenumbers = 0;
-		aux_xdata.check_sum = 0;
-		aux_xdata.number = static_cast<uint16_t>(section_xdata->get_index() + 1);
-		aux_xdata.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_xdata;
-		std::memcpy(aux_record_xdata.value, &aux_xdata, sizeof(aux_xdata));
-		symbol_xdata->get_auxiliary_symbols().push_back(aux_record_xdata);
+		addSectionAuxSymbol(symbol_xdata, section_xdata);
 
 		// Add .pdata section (procedure data for exception handling)
 		auto section_pdata = add_section(".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES, SectionType::PDATA);
@@ -277,17 +211,7 @@ public:
 		symbol_pdata->set_value(0);
 
 		// Add auxiliary symbol for .pdata section
-		COFFI::auxiliary_symbol_record_5 aux_pdata = {};
-		aux_pdata.length = 0;
-		aux_pdata.number_of_relocations = 0;
-		aux_pdata.number_of_linenumbers = 0;
-		aux_pdata.check_sum = 0;
-		aux_pdata.number = static_cast<uint16_t>(section_pdata->get_index() + 1);
-		aux_pdata.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_pdata;
-		std::memcpy(aux_record_pdata.value, &aux_pdata, sizeof(aux_pdata));
-		symbol_pdata->get_auxiliary_symbols().push_back(aux_record_pdata);
+		addSectionAuxSymbol(symbol_pdata, section_pdata);
 
 		// Add .llvm_addrsig section (LLVM address significance table)
 		auto section_llvm_addrsig = add_section(".llvm_addrsig", IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_ALIGN_1BYTES, SectionType::LLVM_ADDRSIG);
@@ -298,17 +222,7 @@ public:
 		symbol_llvm_addrsig->set_value(0);
 
 		// Add auxiliary symbol for .llvm_addrsig section
-		COFFI::auxiliary_symbol_record_5 aux_llvm_addrsig = {};
-		aux_llvm_addrsig.length = 0;
-		aux_llvm_addrsig.number_of_relocations = 0;
-		aux_llvm_addrsig.number_of_linenumbers = 0;
-		aux_llvm_addrsig.check_sum = 0;
-		aux_llvm_addrsig.number = static_cast<uint16_t>(section_llvm_addrsig->get_index() + 1);
-		aux_llvm_addrsig.selection = 0;
-
-		COFFI::auxiliary_symbol_record aux_record_llvm_addrsig;
-		std::memcpy(aux_record_llvm_addrsig.value, &aux_llvm_addrsig, sizeof(aux_llvm_addrsig));
-		symbol_llvm_addrsig->get_auxiliary_symbols().push_back(aux_record_llvm_addrsig);
+		addSectionAuxSymbol(symbol_llvm_addrsig, section_llvm_addrsig);
 
 		if (g_enable_debug_output) std::cerr << "Simplified ObjectFileWriter created successfully" << std::endl;
 	}
@@ -2328,10 +2242,11 @@ public:
 		std::string type_desc_symbol = "??_R0" + mangled_class_name;
 		
 		std::vector<char> type_desc_data;
+		type_desc_data.reserve(16 + mangled_class_name.size() + 1);  // 8+8 header + name + null
 		// vtable pointer (8 bytes) - null
-		for (int i = 0; i < 8; ++i) type_desc_data.push_back(0);
+		ObjectFileCommon::appendZeros(type_desc_data, 8);
 		// spare pointer (8 bytes) - null
-		for (int i = 0; i < 8; ++i) type_desc_data.push_back(0);
+		ObjectFileCommon::appendZeros(type_desc_data, 8);
 		// mangled name (null-terminated)
 		for (char c : mangled_class_name) type_desc_data.push_back(c);
 		type_desc_data.push_back(0);
@@ -2355,20 +2270,21 @@ public:
 		uint32_t self_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 		std::string self_bcd_symbol = "??_R1" + mangled_class_name + "8";  // "8" suffix for self
 		std::vector<char> self_bcd_data;
+		self_bcd_data.reserve(28);  // 8 + 5*4 = 28 bytes total
 		
 		// type_descriptor pointer (8 bytes) - will add relocation
-		for (int i = 0; i < 8; ++i) self_bcd_data.push_back(0);
+		ObjectFileCommon::appendZeros(self_bcd_data, 8);
 		// num_contained_bases (4 bytes)
 		uint32_t num_contained = static_cast<uint32_t>(base_class_names.size());
-		for (int i = 0; i < 4; ++i) self_bcd_data.push_back((num_contained >> (i * 8)) & 0xFF);
+		ObjectFileCommon::appendLE(self_bcd_data, num_contained);
 		// mdisp (4 bytes) - 0 for self
-		for (int i = 0; i < 4; ++i) self_bcd_data.push_back(0);
+		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
 		// pdisp (4 bytes) - -1 for non-virtual
-		for (int i = 0; i < 4; ++i) self_bcd_data.push_back(0xFF);
+		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0xFFFFFFFF));
 		// vdisp (4 bytes) - 0
-		for (int i = 0; i < 4; ++i) self_bcd_data.push_back(0);
+		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
 		// attributes (4 bytes) - 0 for self
-		for (int i = 0; i < 4; ++i) self_bcd_data.push_back(0);
+		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
 		
 		add_data(self_bcd_data, SectionType::RDATA);
 		auto self_bcd_sym = coffi_.add_symbol(self_bcd_symbol);
@@ -2401,29 +2317,29 @@ public:
 			std::vector<char> base_bcd_data;
 			
 			// type_descriptor pointer (8 bytes) - will add relocation
-			for (int j = 0; j < 8; ++j) base_bcd_data.push_back(0);
+			ObjectFileCommon::appendZeros(base_bcd_data, 8);
 			
 			// num_contained_bases (4 bytes) - actual value from base class info
 			uint32_t base_num_contained = bci.num_contained_bases;
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((base_num_contained >> (j * 8)) & 0xFF);
+			ObjectFileCommon::appendLE(base_bcd_data, base_num_contained);
 			
 			// mdisp (4 bytes) - offset of base in derived class
 			uint32_t mdisp = bci.offset;
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((mdisp >> (j * 8)) & 0xFF);
+			ObjectFileCommon::appendLE(base_bcd_data, mdisp);
 			
 			// pdisp (4 bytes) - vbtable displacement
 			// -1 for non-virtual bases (not applicable)
 			// 0+ for virtual bases (offset into vbtable)
 			int32_t pdisp = bci.is_virtual ? 0 : -1;
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((pdisp >> (j * 8)) & 0xFF);
+			ObjectFileCommon::appendLE(base_bcd_data, pdisp);
 			
 			// vdisp (4 bytes) - displacement inside vbtable (0 for simplicity)
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
+			ObjectFileCommon::appendLE(base_bcd_data, uint32_t(0));
 			
 			// attributes (4 bytes) - flags
 			// Bit 0: virtual base (1 if virtual, 0 if non-virtual)
 			uint32_t attributes = bci.is_virtual ? 1 : 0;
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((attributes >> (j * 8)) & 0xFF);
+			ObjectFileCommon::appendLE(base_bcd_data, attributes);
 			
 			add_data(base_bcd_data, SectionType::RDATA);
 			auto base_bcd_sym = coffi_.add_symbol(base_bcd_symbol);
@@ -2449,12 +2365,7 @@ public:
 		// ??_R2 - Base Class Array (pointers to all BCDs)
 		uint32_t bca_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 		std::string bca_symbol = "??_R2" + mangled_class_name + "8";
-		std::vector<char> bca_data;
-		
-		// Array of pointers to BCDs
-		for (size_t i = 0; i < bcd_offsets.size(); ++i) {
-			for (int j = 0; j < 8; ++j) bca_data.push_back(0);
-		}
+		std::vector<char> bca_data(bcd_offsets.size() * 8, 0);
 		
 		add_data(bca_data, SectionType::RDATA);
 		auto bca_sym = coffi_.add_symbol(bca_symbol);
@@ -2482,14 +2393,14 @@ public:
 		std::vector<char> chd_data;
 		
 		// signature (4 bytes) - 0
-		for (int i = 0; i < 4; ++i) chd_data.push_back(0);
+		ObjectFileCommon::appendLE(chd_data, uint32_t(0));
 		// attributes (4 bytes) - 0 (can be extended for multiple/virtual inheritance)
-		for (int i = 0; i < 4; ++i) chd_data.push_back(0);
+		ObjectFileCommon::appendLE(chd_data, uint32_t(0));
 		// num_base_classes (4 bytes) - total including self
 		uint32_t total_bases = static_cast<uint32_t>(bcd_offsets.size());
-		for (int i = 0; i < 4; ++i) chd_data.push_back((total_bases >> (i * 8)) & 0xFF);
+		ObjectFileCommon::appendLE(chd_data, total_bases);
 		// base_class_array pointer (8 bytes) - will add relocation
-		for (int i = 0; i < 8; ++i) chd_data.push_back(0);
+		ObjectFileCommon::appendZeros(chd_data, 8);
 		
 		add_data(chd_data, SectionType::RDATA);
 		auto chd_sym = coffi_.add_symbol(chd_symbol);
@@ -2515,16 +2426,15 @@ public:
 		std::vector<char> col_data;
 		
 		// signature (4 bytes) - 1 for 64-bit
-		col_data.push_back(1);
-		for (int i = 1; i < 4; ++i) col_data.push_back(0);
+		ObjectFileCommon::appendLE(col_data, uint32_t(1));
 		// offset (4 bytes) - 0 for primary vtable
-		for (int i = 0; i < 4; ++i) col_data.push_back(0);
+		ObjectFileCommon::appendLE(col_data, uint32_t(0));
 		// cd_offset (4 bytes) - 0
-		for (int i = 0; i < 4; ++i) col_data.push_back(0);
+		ObjectFileCommon::appendLE(col_data, uint32_t(0));
 		// type_descriptor pointer (8 bytes) - relocation added at offset+12
-		for (int i = 0; i < 8; ++i) col_data.push_back(0);
+		ObjectFileCommon::appendZeros(col_data, 8);
 		// hierarchy pointer (8 bytes) - relocation added at offset+20
-		for (int i = 0; i < 8; ++i) col_data.push_back(0);
+		ObjectFileCommon::appendZeros(col_data, 8);
 		
 		add_data(col_data, SectionType::RDATA);
 		auto col_sym = coffi_.add_symbol(col_symbol);
@@ -2750,15 +2660,25 @@ public:
 		return throw_info_symbol;
 	}
 
-	// Helper: get or create symbol index for a function name
+	// Helper: get or create symbol index for a function name (cached for O(1) repeated lookups)
 	uint32_t get_or_create_symbol_index(const std::string& symbol_name) {
-		// First, check if symbol already exists
+		// Check cache first
+		auto cache_it = symbol_index_cache_.find(symbol_name);
+		if (cache_it != symbol_index_cache_.end()) {
+			if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Cache hit for '" << symbol_name 
+			          << "' at file index " << cache_it->second << std::endl;
+			return cache_it->second;
+		}
+
+		// Check if symbol already exists in COFFI
 		auto symbols = coffi_.get_symbols();
 		for (size_t i = 0; i < symbols->size(); ++i) {
 			if ((*symbols)[i].get_name() == symbol_name) {
+				uint32_t file_index = (*symbols)[i].get_index();
 				if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Found existing symbol '" << symbol_name 
-				          << "' at array index " << i << ", file index " << (*symbols)[i].get_index() << std::endl;
-				return (*symbols)[i].get_index();
+				          << "' at array index " << i << ", file index " << file_index << std::endl;
+				symbol_index_cache_[symbol_name] = file_index;
+				return file_index;
 			}
 		}
 		
@@ -2772,6 +2692,7 @@ public:
 		
 		// Return the index from COFFI (which includes aux entries)
 		uint32_t file_index = symbol->get_index();
+		symbol_index_cache_[symbol_name] = file_index;
 		if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Created new symbol at file index " << file_index 
 		          << " for '" << symbol_name << "'" << std::endl;
 		return file_index;
@@ -2800,6 +2721,9 @@ protected:
 
 	// Track generated throw-info symbols by type name
 	std::unordered_map<std::string, std::string> throw_info_symbols_;
+
+	// Cache for symbol name → file index lookups (avoids O(n) linear scan)
+	std::unordered_map<std::string, uint32_t> symbol_index_cache_;
 
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;

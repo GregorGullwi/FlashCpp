@@ -1,5 +1,6 @@
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
+		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 
 		const auto& decl_node = functionCallNode.function_declaration();
 		std::string_view func_name_view = decl_node.identifier_token().value();
@@ -51,10 +52,7 @@
 									
 									// Get type info from the identifier
 									StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
-									std::optional<ASTNode> symbol = symbol_table.lookup(id_handle);
-									if (!symbol.has_value() && global_symbol_table_) {
-										symbol = global_symbol_table_->lookup(id_handle);
-									}
+									std::optional<ASTNode> symbol = lookupSymbol(id_handle);
 									
 									Type operand_type = Type::Int;  // Default
 									int operand_size = 32;
@@ -627,10 +625,7 @@
 		} else {
 			// Try to get from the function declaration stored in FunctionCallNode
 			// Look up the function in symbol table to get full declaration with parameters
-			auto local_func_symbol = symbol_table.lookup(func_decl_node.identifier_token().value());
-			if (!local_func_symbol.has_value() && global_symbol_table_) {
-				local_func_symbol = global_symbol_table_->lookup(func_decl_node.identifier_token().value());
-			}
+			auto local_func_symbol = lookupSymbol(func_decl_node.identifier_token().value());
 			if (local_func_symbol.has_value() && local_func_symbol->is<FunctionDeclarationNode>()) {
 				const auto& resolved_func_decl = local_func_symbol->as<FunctionDeclarationNode>();
 				param_nodes = resolved_func_decl.parameter_nodes();
@@ -680,10 +675,7 @@
 			if (param_is_ref_like &&
 			    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier.name());
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 				if (symbol.has_value()) {
 					const DeclarationNode* decl_ptr = nullptr;
 					if (symbol->is<DeclarationNode>()) {
@@ -855,14 +847,7 @@
 								// For member function calls, first argument is 'this' pointer
 								if (std::holds_alternative<StringHandle>(source_value)) {
 									// It's a variable - take its address
-									TempVar this_ptr = var_counter.next();
-									AddressOfOp addr_op;
-									addr_op.result = this_ptr;
-									addr_op.operand.type = arg_type;
-									addr_op.operand.size_in_bits = arg_size;
-									addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-									addr_op.operand.value = std::get<StringHandle>(source_value);
-									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+									TempVar this_ptr = emitAddressOf(arg_type, arg_size, IrValue(std::get<StringHandle>(source_value)));
 									
 									// Add 'this' as first argument
 									TypedValue this_arg;
@@ -902,10 +887,7 @@
 			// For identifiers that returned local variable references (string_view), handle specially
 			if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier.name());
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 				if (!symbol.has_value()) {
 					FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");
 					FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
@@ -951,16 +933,8 @@
 				if (decl_node.is_array()) {
 					// For arrays, we need to pass the address of the first element
 					// Create a temporary for the address
-					TempVar addr_var = var_counter.next();
-
 					// Generate AddressOf IR instruction to get the address of the array
-					AddressOfOp addr_op;
-					addr_op.result = addr_var;
-					addr_op.operand.type = type_node.type();
-					addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-					addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-					addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+					TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 					// Add the pointer (address) to the function call operands
 					// For now, we use the element type with 64-bit size to indicate it's a pointer
@@ -978,15 +952,7 @@
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
 						// Argument is a value - take its address
-						TempVar addr_var = var_counter.next();
-
-						AddressOfOp addr_op;
-						addr_op.result = addr_var;
-						addr_op.operand.type = type_node.type();
-						addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-						addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+						TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
 						irOperands.emplace_back(type_node.type());
@@ -1056,14 +1022,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 						
 						// Now take the address of the temporary
-						TempVar addr_var = var_counter.next();
-						AddressOfOp addr_op;
-						addr_op.result = addr_var;
-						addr_op.operand.type = literal_type;
-						addr_op.operand.size_in_bits = literal_size;
-						addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-						addr_op.operand.value = temp_var;
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 						
 						// Pass the address
 						irOperands.emplace_back(literal_type);
@@ -1103,16 +1062,7 @@
 								irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
 							} else {
 								// Need to take address of the value
-								TempVar addr_var = var_counter.next();
-								AddressOfOp addr_op;
-								addr_op.result = addr_var;
-								addr_op.operand.type = expr_type;
-								addr_op.operand.size_in_bits = expr_size;
-								// pointer_depth is 0 because we're taking the address of a value (not a pointer)
-								// The TempVar holds a direct value (e.g., constructed object), not a pointer
-								addr_op.operand.pointer_depth = 0;
-								addr_op.operand.value = expr_var;
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 								
 								irOperands.emplace_back(expr_type);
 								irOperands.emplace_back(64);  // Pointer size
@@ -1165,18 +1115,15 @@
 		
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 		// Exclude references - they return a pointer, not a struct by value
-		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-		int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
-		bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
-		if (needs_hidden_return_param) {
+		bool returns_struct = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
+		bool needs_hidden_ret = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
+		if (needs_hidden_ret) {
 			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 			
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 				function_name, return_type.size_in_bits(), ret_var.var_number);
-		} else if (returns_struct_by_value) {
+		} else if (returns_struct) {
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Function call {} returns small struct by value (size={} bits) - will return in RAX",
 				function_name, return_type.size_in_bits());
@@ -1266,6 +1213,7 @@
 
 	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
 		std::vector<IrOperand> irOperands;
+		irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4);  // ret + name + this + ~4 per arg
 
 		FLASH_LOG(Codegen, Debug, "=== generateMemberFunctionCallIr START ===");
 		
@@ -2336,15 +2284,12 @@
 			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 			
 			// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)
-			// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-			// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-			bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-			int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
-			bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
+			bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
+			bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
 			
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
-				returns_struct_by_value, return_type.size_in_bits(), struct_return_threshold, needs_hidden_return_param);
+				returns_struct_by_value, return_type.size_in_bits(), getStructReturnThreshold(context_->isLLP64()), needs_hidden_return_param);
 			
 			if (needs_hidden_return_param) {
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
@@ -2451,15 +2396,7 @@
 								});
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = var_counter.next();
-						
-								AddressOfOp addr_op;
-								addr_op.result = addr_var;
-								addr_op.operand.type = type_node.type();
-								addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 						
 								// Pass the address with pointer size
 								call_op.args.push_back(TypedValue{
@@ -2497,15 +2434,7 @@
 								});
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = var_counter.next();
-						
-								AddressOfOp addr_op;
-								addr_op.result = addr_var;
-								addr_op.operand.type = type_node.type();
-								addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 						
 								// Pass the address with pointer size
 								call_op.args.push_back(TypedValue{
@@ -2570,14 +2499,7 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 							
 							// Now take the address of the temporary
-							TempVar addr_var = var_counter.next();
-							AddressOfOp addr_op;
-							addr_op.result = addr_var;
-							addr_op.operand.type = literal_type;
-							addr_op.operand.size_in_bits = literal_size;
-							addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-							addr_op.operand.value = temp_var;
-							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+							TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 							
 							// Pass the address
 							call_op.args.push_back(TypedValue{
@@ -2593,14 +2515,7 @@
 								int expr_size = std::get<int>(argumentIrOperands[1]);
 								TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
 								
-								TempVar addr_var = var_counter.next();
-								AddressOfOp addr_op;
-								addr_op.result = addr_var;
-								addr_op.operand.type = expr_type;
-								addr_op.operand.size_in_bits = expr_size;
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = expr_var;
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 								
 								call_op.args.push_back(TypedValue{
 									.type = expr_type,
@@ -2779,10 +2694,7 @@
 			result.base_array_name = base_ident.name();
 			
 			// Look up the declaration
-			std::optional<ASTNode> symbol = symbol_table.lookup(result.base_array_name);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(result.base_array_name);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(result.base_array_name);
 			if (symbol.has_value()) {
 				if (symbol->is<DeclarationNode>()) {
 					result.base_decl = &symbol->as<DeclarationNode>();
@@ -3183,10 +3095,7 @@
 		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
 			const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
-			std::optional<ASTNode> symbol = symbol_table.lookup(arr_ident.name());
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(arr_ident.name());
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(arr_ident.name());
 			if (symbol.has_value()) {
 				const DeclarationNode* decl_ptr = nullptr;
 				if (symbol->is<DeclarationNode>()) {
@@ -3585,10 +3494,7 @@
 		if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident->name());
 			
-			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(identifier_handle);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
 			
 			if (symbol.has_value()) {
 				const TypeSpecifierNode* type_node = nullptr;
@@ -4103,10 +4009,7 @@
 				std::string_view identifier = type_spec.token().value();
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier);
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(identifier);
 				
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -4185,10 +4088,7 @@
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(id_node.name());
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
 				
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -4246,10 +4146,7 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(member_access): object_name=", id_node.name());
 						
 						// Look up the identifier to get its type
-						std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-						if (!symbol.has_value() && global_symbol_table_) {
-							symbol = global_symbol_table_->lookup(id_node.name());
-						}
+						std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
 						
 						if (symbol.has_value()) {
 							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -4333,10 +4230,7 @@
 						const IdentifierNode& id_node = std::get<IdentifierNode>(array_expr);
 						
 						// Look up the array identifier in the symbol table
-						std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-						if (!symbol.has_value() && global_symbol_table_) {
-							symbol = global_symbol_table_->lookup(id_node.name());
-						}
+						std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
 						
 						if (symbol.has_value()) {
 							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -4498,10 +4392,7 @@
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(id_node.name());
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
 				
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);

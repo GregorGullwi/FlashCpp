@@ -333,58 +333,71 @@ StringBuilder (ChunkedString.h lines 354-361) grows by 16x. For strings >1MB thi
 
 ### Phase 1: Quick Wins (Low risk, high ROI)
 
-| # | Change | Files | Est. Lines Saved | Effort |
+| # | Change | Files | Est. Lines Saved | Status |
 |---|--------|-------|-------------------|--------|
-| 1 | Extract `lookupSymbol()` / `getStructInfo()` helpers | CodeGen_*.cpp | ~200 | 1h |
-| 2 | Extract `encodeDisplacement()` / `buildRexPrefix()` | IRConverter.h | ~300 | 2h |
-| 3 | Extract byte-packing helpers (`appendLE`, `addSectionSymbol`) | ObjFileWriter.h | ~400 | 2h |
-| 4 | Parameterize float comparison handlers | IRConverter.h | ~500 | 1h |
-| 5 | Parameterize binary arithmetic handlers | IRConverter.h | ~200 | 1h |
-| 6 | Define named REX/ABI constants | IRConverter.h, CodeGen | ~0 (readability) | 30m |
-| 7 | Add section cache to ElfFileWriter | ElfFileWriter.h | ~0 (perf) | 30m |
-| 8 | Add symbol lookup cache to ObjFileWriter | ObjFileWriter.h | ~0 (perf) | 30m |
+| 1 | Extract `lookupSymbol()` / `getStructInfo()` helpers | CodeGen_*.cpp | ~200 | TODO |
+| 2 | Extract `encodeDisplacement()` / `buildRexPrefix()` | IRConverter.h | ~300 | TODO |
+| 3 | Extract byte-packing helpers (`appendLE`, `appendZeros`) | ObjectFileCommon.h, ObjFileWriter.h | ~400 | ✅ Done |
+| 4 | Parameterize float comparison handlers | IRConverter.h | ~170 | ✅ Done |
+| 5 | Parameterize binary arithmetic handlers | IRConverter.h | ~35 | ✅ Done |
+| 6 | Define named REX/ABI constants | IRConverter.h, CodeGen.h | ~0 (readability) | ✅ Done |
+| 7 | Add section cache to ElfFileWriter | ElfFileWriter.h | ~0 (perf) | ✅ Done |
+| 8 | Add symbol lookup cache to ObjFileWriter | ObjFileWriter.h | ~0 (perf) | ✅ Done |
 
 ### Phase 2: Medium Refactoring
 
-| # | Change | Files | Est. Lines Saved | Effort |
+| # | Change | Files | Est. Lines Saved | Status |
 |---|--------|-------|-------------------|--------|
-| 9 | Merge SSE instruction generators | IRConverter.h | ~100 | 2h |
-| 10 | Dispatch table for `parse_top_level_node()` | Parser_Declarations.cpp | ~150 | 3h |
-| 11 | Template `skip_balanced_delimiters<>()` | Parser_Core.cpp | ~55 | 1h |
-| 12 | Extract `emitAddressOf()` / `emitDereference()` helpers | CodeGen_Functions.cpp | ~100 | 2h |
-| 13 | Extract auxiliary symbol helper | ObjFileWriter.h | ~100 | 1h |
-| 14 | Extract `parse_static_member_initializer()` | Parser_Declarations.cpp | ~100 | 2h |
-| 15 | Reserve vector capacity in argument building | CodeGen_Functions.cpp | ~0 (perf) | 1h |
+| 9 | Merge SSE instruction generators | IRConverter.h | ~100 | ✅ Done |
+| 10 | Dispatch table for `parse_top_level_node()` | Parser_Declarations.cpp | ~150 | TODO |
+| 11 | Extract `skip_balanced_delimiters()` generic helper | Parser_Core.cpp | ~25 | ✅ Done |
+| 12 | Extract `emitAddressOf()` / `emitDereference()` helpers | CodeGen_Functions.cpp | ~100 | TODO |
+| 13 | Extract `addSectionAuxSymbol()` helper | ObjFileWriter.h | ~100 | ✅ Done |
+| 14 | Extract `parse_static_member_initializer()` | Parser_Declarations.cpp | ~100 | TODO |
+| 15 | Reserve vector capacity in argument building | CodeGen_Functions.cpp | ~0 (perf) | TODO |
 
 ### Phase 3: Larger Refactoring
 
-| # | Change | Files | Impact | Effort |
+| # | Change | Files | Impact | Status |
 |---|--------|-------|--------|--------|
-| 16 | Convert expression dispatch to `std::visit()` | CodeGen_Expressions.cpp | Readability + perf | 8h |
-| 17 | Split `generateFunctionCallIr()` into 3-4 functions | CodeGen_Functions.cpp | Readability | 12h |
-| 18 | Split `add_function_exception_info()` | ObjFileWriter.h | Readability | 6h |
-| 19 | Split `handleFunctionCall()` in IRConverter | IRConverter.h | Readability | 8h |
-| 20 | Flatten variable scope lookups | IRConverter.h | Performance | 6h |
-| 21 | Replace `std::string` map keys with `string_view`-compatible | Multiple | Perf (352+ allocs) | 8h |
+| 16 | Convert expression dispatch to `std::visit()` | CodeGen_Expressions.cpp | Readability + perf | TODO |
+| 17 | Split `generateFunctionCallIr()` into 3-4 functions | CodeGen_Functions.cpp | Readability | TODO |
+| 18 | Split `add_function_exception_info()` | ObjFileWriter.h | Readability | TODO |
+| 19 | Split `handleFunctionCall()` in IRConverter | IRConverter.h | Readability | TODO |
+| 20 | Flatten variable scope lookups | IRConverter.h | Performance | TODO |
+| 21 | Replace `std::string` map keys with `string_view`-compatible | Multiple | Perf (352+ allocs) | TODO |
 
 ### Phase 4: Architectural (Optional)
 
-| # | Change | Impact | Effort |
+| # | Change | Impact | Status |
 |---|--------|--------|--------|
-| 22 | Create `SymbolResolver` abstraction | Testability, separation | 8h |
-| 23 | Create shared `FileWriter` base class | Code sharing ELF/COFF | 10h |
-| 24 | TempVar pooling/arena | Memory performance | 6h |
-| 25 | Evaluate/enable StackString optimization | Memory performance | 2h |
+| 22 | Create `SymbolResolver` abstraction | Testability, separation | TODO |
+| 23 | Create shared `FileWriter` base class | Code sharing ELF/COFF | TODO |
+| 24 | TempVar pooling/arena | Memory performance | TODO |
+| 25 | Evaluate/enable StackString optimization | Memory performance | TODO |
 
 ---
 
+### Implementation Progress
+
+**Completed (as of commit ef090d3):**
+- **IRConverter.h:** `emitFloatComparisonInstruction()`, `handleBinaryArithmetic()`, `handleBitwiseArithmetic()`, REX named constants, unified `generateSSEInstructionWithPrefix()`
+- **ElfFileWriter.h:** `section_name_cache_` for O(1) `getSectionByName()` lookups
+- **ObjFileWriter.h:** `symbol_index_cache_` for O(1) `get_or_create_symbol_index()`, `addSectionAuxSymbol()` helper
+- **ObjectFileCommon.h:** `appendLE<T>()` and `appendZeros()` byte-packing helpers
+- **Parser_Core.cpp:** `skip_balanced_delimiters()` generic helper
+- **CodeGen.h:** `POINTER_SIZE_BITS`, `SYSV_STRUCT_RETURN_THRESHOLD`, `WIN64_STRUCT_RETURN_THRESHOLD`, `getStructReturnThreshold()` replacing 7 magic-number occurrences
+
+**Net lines reduced:** ~530 lines across 9 files
+
 ### Estimated Total Impact
 
-- **Lines of code reduced:** ~2,500-3,500 through deduplication (Phases 1-2)
+- **Lines of code reduced:** ~530 so far through deduplication (Phases 1-2 partial)
 - **Readability:** Significant improvement from shorter functions, named constants, less nesting
-- **Performance:** 5-15% faster compilation for complex inputs (fewer allocations, better cache behavior, hash lookups replacing linear scans)
+- **Performance:** O(1) caches replacing O(n) linear scans in ElfFileWriter and ObjFileWriter
 - **Maintenance:** Easier to add new IR opcodes, parse constructs, and file format features
 
 ---
 
 *Generated by automated codebase audit. All line numbers reference the codebase as of commit 24adeca3.*
+*Last updated with implementation progress as of commit ef090d3.*

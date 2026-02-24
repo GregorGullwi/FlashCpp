@@ -90,4 +90,20 @@ namespace ObjectFileCommon {
 		bool is_virtual;             // Whether this is a virtual base
 	};
 
+	// Byte-packing helpers for RTTI/vtable data construction
+	// Replaces 30+ inline for-loops with clean one-liners
+
+	/// Append a value in little-endian byte order to a char vector
+	template<typename T>
+	inline void appendLE(std::vector<char>& buf, T value) {
+		for (size_t i = 0; i < sizeof(T); ++i) {
+			buf.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+		}
+	}
+
+	/// Append N zero bytes to a char vector
+	inline void appendZeros(std::vector<char>& buf, size_t count) {
+		buf.insert(buf.end(), count, 0);
+	}
+
 } // namespace ObjectFileCommon

@@ -140,6 +140,28 @@ enum class ExpressionContext {
 	LValueAddress   // Evaluate to get the address without loading (lvalue context for assignment)
 };
 
+// Named constants for ABI-specific values used throughout code generation
+static constexpr int POINTER_SIZE_BITS = 64;
+static constexpr int SYSV_STRUCT_RETURN_THRESHOLD = 128;  // Linux/SysV ABI: structs > 16 bytes returned via hidden pointer
+static constexpr int WIN64_STRUCT_RETURN_THRESHOLD = 64;  // Windows x64: structs > 8 bytes returned via hidden pointer
+
+/// Get the struct return threshold for the current platform (bits)
+inline int getStructReturnThreshold(bool is_llp64) {
+	return is_llp64 ? WIN64_STRUCT_RETURN_THRESHOLD : SYSV_STRUCT_RETURN_THRESHOLD;
+}
+
+/// Check if a struct return type requires a hidden return parameter (for RVO)
+/// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger use hidden param
+/// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger use hidden param
+inline bool returnsStructByValue(Type type, int pointer_depth, bool is_reference) {
+	return type == Type::Struct && pointer_depth == 0 && !is_reference;
+}
+
+inline bool needsHiddenReturnParam(Type type, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {
+	return returnsStructByValue(type, pointer_depth, is_reference) &&
+	       (size_in_bits > getStructReturnThreshold(is_llp64));
+}
+
 
 // The AstToIr class is split across multiple files for maintainability.
 // All parts are included here to form the complete class definition.

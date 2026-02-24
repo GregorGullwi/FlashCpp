@@ -1720,10 +1720,7 @@
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
 			
 			// Look up the identifier
-			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(identifier_handle);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
 			if (!symbol.has_value()) {
 				return std::nullopt;  // Can't find identifier
 			}
@@ -1825,10 +1822,7 @@
 			// Calculate actual element size from array declaration
 			if (std::holds_alternative<StringHandle>(array_operands[2])) {
 				StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-				std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(array_name);
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(array_name);
 				
 				const DeclarationNode* decl_ptr = getDeclarationFromSymbol(symbol);
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
@@ -1923,10 +1917,7 @@
 				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
 				StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
 				
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier_handle);
-				}
+				std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
 				
 				if (symbol.has_value()) {
 					const TypeSpecifierNode* type_node = nullptr;
@@ -2027,10 +2018,7 @@
 				return true;
 			}
 
-			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(identifier_handle);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
 			if (!symbol.has_value()) {
 				return false;
 			}
@@ -2110,10 +2098,7 @@
 							// We need to calculate the actual element size from the array declaration
 							if (std::holds_alternative<StringHandle>(array_operands[2])) {
 								StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-								std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
-								if (!symbol.has_value() && global_symbol_table_) {
-									symbol = global_symbol_table_->lookup(array_name);
-								}
+								std::optional<ASTNode> symbol = lookupSymbol(array_name);
 								if (symbol.has_value()) {
 									const DeclarationNode* decl_ptr = nullptr;
 									if (symbol->is<DeclarationNode>()) {
@@ -2391,10 +2376,7 @@
 				// We need to calculate the actual element size from the array declaration
 				if (std::holds_alternative<StringHandle>(array_operands[2])) {
 					StringHandle array_name = std::get<StringHandle>(array_operands[2]);
-					std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
-					if (!symbol.has_value() && global_symbol_table_) {
-						symbol = global_symbol_table_->lookup(array_name);
-					}
+					std::optional<ASTNode> symbol = lookupSymbol(array_name);
 					if (symbol.has_value()) {
 						const DeclarationNode* decl_ptr = nullptr;
 						if (symbol->is<DeclarationNode>()) {
@@ -2594,10 +2576,7 @@
 						auto object_name = StringTable::getOrInternStringHandle(object_ident.name());
 						
 						// Look up the struct in symbol table
-						std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-						if (!symbol.has_value() && global_symbol_table_) {
-							symbol = global_symbol_table_->lookup(object_name);
-						}
+						std::optional<ASTNode> symbol = lookupSymbol(object_name);
 						
 						if (symbol.has_value()) {
 							const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
@@ -3766,11 +3745,8 @@
 					call_op.is_member_function = true;  // This is a member function call
 					
 					// Detect if returning struct by value (needs hidden return parameter for RVO)
-					// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-					// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-					bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-					int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
-					bool needs_hidden_return_param = returns_struct_by_value && (actual_return_size > struct_return_threshold);
+					bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
+					bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), actual_return_size, context_->isLLP64());
 					
 					if (needs_hidden_return_param) {
 						call_op.return_slot = result_var;
@@ -3970,15 +3946,12 @@
 							call_op.is_variadic = func_decl.is_variadic();
 							
 							// Determine if return slot is needed (same logic as generateFunctionCallIr)
-							// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-							// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-							bool returns_struct_by_value = (return_type == Type::Struct && return_type_node.pointer_depth() == 0 && !return_type_node.is_reference());
-							int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
-							bool needs_hidden_return_param = returns_struct_by_value && (return_size > struct_return_threshold);
+							bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());
+							bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size, context_->isLLP64());
 							
 							FLASH_LOG_FORMAT(Codegen, Debug,
 								"Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
-								return_size, struct_return_threshold, returns_struct_by_value, needs_hidden_return_param);
+								return_size, getStructReturnThreshold(context_->isLLP64()), returns_struct_by_value, needs_hidden_return_param);
 							
 							if (needs_hidden_return_param) {
 								call_op.return_slot = result_var;
@@ -4810,9 +4783,6 @@
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
 	
-	// Helper constant for pointer size detection
-	static constexpr int POINTER_SIZE_BITS = 64;
-	
 	// Helper function to detect if a va_list argument is a simple pointer type
 	// (e.g., typedef char* va_list;) vs the proper System V AMD64 va_list structure
 	// Returns true if va_list is a pointer type, false otherwise
@@ -5572,14 +5542,7 @@
 			// We just need to assign the address of the va_list structure to the user's va_list variable.
 			
 			// Get address of the va_list structure
-			TempVar va_list_struct_addr = var_counter.next();
-			AddressOfOp struct_addr_op;
-			struct_addr_op.result = va_list_struct_addr;
-			struct_addr_op.operand.type = Type::Char;
-			struct_addr_op.operand.size_in_bits = 8;
-			struct_addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-			struct_addr_op.operand.value = StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv);
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(struct_addr_op), functionCallNode.called_from()));
+			TempVar va_list_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 			
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 			// Get the va_list variable from arg0_ir[2]
@@ -5629,14 +5592,7 @@
 				// This enables proper overflow support when >5 variadic int args are passed
 				
 				// Get address of va_list structure
-				TempVar va_struct_addr = var_counter.next();
-				AddressOfOp va_struct_op;
-				va_struct_op.result = va_struct_addr;
-				va_struct_op.operand.type = Type::Char;
-				va_struct_op.operand.size_in_bits = 8;
-				va_struct_op.operand.pointer_depth = 0;
-				va_struct_op.operand.value = StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv);
-				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(va_struct_op), functionCallNode.called_from()));
+				TempVar va_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 				
 				// Assign to va_list variable
 				AssignmentOp assign_op;

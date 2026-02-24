@@ -44,10 +44,42 @@ extern bool g_enable_exceptions;
 // - SSE float mov: Prefix (1) + REX (1) + Opcode (2) + ModR/M (1) + Disp32 (4) = 9 bytes
 static constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 9;
 
+// x86-64 REX prefix byte constants
+// REX format: 0100WRXB
+// W = 64-bit operand size, R = ModR/M reg extension, X = SIB index extension, B = ModR/M r/m extension
+static constexpr uint8_t REX_BASE = 0x40;  // REX prefix with no bits set (enables uniform byte regs)
+static constexpr uint8_t REX_B    = 0x41;  // REX.B - extends r/m or base register to R8-R15
+static constexpr uint8_t REX_X    = 0x42;  // REX.X - extends SIB index register
+static constexpr uint8_t REX_R    = 0x44;  // REX.R - extends ModR/M reg field to R8-R15
+static constexpr uint8_t REX_W    = 0x48;  // REX.W - 64-bit operand size
+static constexpr uint8_t REX_WB   = 0x49;  // REX.W + REX.B
+static constexpr uint8_t REX_WR   = 0x4C;  // REX.W + REX.R
+
 struct OpCodeWithSize {
 	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes{};  // Zero-initialize
 	size_t size_in_bytes = 0;
 };
+
+/// Calculate the ModR/M mod field for RBP-relative addressing.
+/// RBP always needs at least a disp8 (even for offset 0), so mod=0x00 is never used.
+inline uint8_t calcModField(int32_t offset) {
+	return (offset >= -128 && offset <= 127) ? 0x01 : 0x02;
+}
+
+/// Encode displacement bytes into the instruction buffer.
+/// For disp8 (mod=0x01): 1 byte. For disp32 (mod=0x02): 4 bytes little-endian.
+inline void encodeDisplacement(uint8_t*& ptr, size_t& size, int32_t offset, uint8_t mod_field) {
+	if (mod_field == 0x01) {
+		*ptr++ = static_cast<uint8_t>(offset);
+		size++;
+	} else {
+		*ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		size += 4;
+	}
+}
 
 /**
  * @brief Converts an XMM register enum value to its 0-based encoding for ModR/M bytes.
@@ -75,166 +107,80 @@ inline bool xmm_needs_rex(X64Register xmm_reg) {
 }
 
 /**
- * @brief Generates a properly encoded SSE instruction for XMM register operations.
+ * @brief Generates a properly encoded SSE instruction with an optional prefix byte.
  * 
- * This function handles the REX prefix for XMM8-XMM15 registers. For SSE instructions,
- * the REX prefix format is: 0100WRXB where:
+ * Unified SSE instruction encoder that handles all three encoding forms:
+ * - With mandatory prefix (F3/F2): prefix [REX] 0F opcode ModR/M  (e.g., addss, addsd)
+ * - Without prefix:                [REX] 0F opcode ModR/M          (e.g., comiss)
+ * - With 0x66 override:            66 [REX] 0F opcode ModR/M       (e.g., comisd)
+ * 
+ * REX prefix format: 0100WRXB where:
  * - W is 0 for most SSE ops (legacy SSE, not 64-bit extension)
  * - R extends the ModR/M reg field (for xmm_dst >= XMM8)
  * - X extends the SIB index field (not used for reg-reg ops)
  * - B extends the ModR/M r/m field (for xmm_src >= XMM8)
  * 
- * @param prefix1 First prefix byte (e.g., 0xF3 for single-precision, 0xF2 for double-precision)
+ * @param prefix Optional prefix byte (0xF3, 0xF2, 0x66, or 0 for none)
  * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
- * @param opcode2 Second opcode byte (e.g., 0x58 for addss/addsd)
+ * @param opcode2 Second opcode byte (e.g., 0x58 for addss/addsd, 0x2F for comiss/comisd)
  * @param xmm_dst Destination XMM register
  * @param xmm_src Source XMM register
  * @return An OpCodeWithSize struct containing the instruction bytes
  */
+inline OpCodeWithSize generateSSEInstructionWithPrefix(uint8_t prefix, uint8_t opcode1, uint8_t opcode2, 
+                                                        X64Register xmm_dst, X64Register xmm_src) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* ptr = result.op_codes.data();
+	
+	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
+	uint8_t src_index = xmm_modrm_bits(xmm_src);
+	
+	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
+	
+	// Emit prefix byte if present (comes before REX)
+	if (prefix != 0) {
+		*ptr++ = prefix;
+		result.size_in_bytes++;
+	}
+	
+	// REX prefix comes after any prefix but before opcode bytes
+	if (needs_rex) {
+		uint8_t rex = REX_BASE;
+		if (dst_index >= 8) rex |= 0x04;  // REX.R
+		if (src_index >= 8) rex |= 0x01;  // REX.B
+		*ptr++ = rex;
+		result.size_in_bytes++;
+	}
+	
+	// Emit opcode bytes
+	*ptr++ = opcode1;
+	result.size_in_bytes++;
+	*ptr++ = opcode2;
+	result.size_in_bytes++;
+	
+	// ModR/M byte: 11 reg r/m (register-to-register mode)
+	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
+	*ptr++ = modrm;
+	result.size_in_bytes++;
+	
+	return result;
+}
+
+// Convenience wrappers for backward compatibility
 inline OpCodeWithSize generateSSEInstruction(uint8_t prefix1, uint8_t opcode1, uint8_t opcode2, 
                                               X64Register xmm_dst, X64Register xmm_src) {
-	OpCodeWithSize result;
-	result.size_in_bytes = 0;
-	uint8_t* ptr = result.op_codes.data();
-	
-	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
-	uint8_t src_index = xmm_modrm_bits(xmm_src);
-	
-	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
-	
-	// Always emit the mandatory prefix (F3 or F2)
-	*ptr++ = prefix1;
-	result.size_in_bytes++;
-	
-	// REX prefix must come after F3/F2 but before 0F for SSE instructions
-	if (needs_rex) {
-		uint8_t rex = 0x40;  // Base REX prefix
-		if (dst_index >= 8) {
-			rex |= 0x04;  // REX.R - extends ModR/M reg field
-		}
-		if (src_index >= 8) {
-			rex |= 0x01;  // REX.B - extends ModR/M r/m field
-		}
-		*ptr++ = rex;
-		result.size_in_bytes++;
-	}
-	
-	// Emit opcode bytes
-	*ptr++ = opcode1;
-	result.size_in_bytes++;
-	*ptr++ = opcode2;
-	result.size_in_bytes++;
-	
-	// ModR/M byte: 11 reg r/m (register-to-register mode)
-	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
-	*ptr++ = modrm;
-	result.size_in_bytes++;
-	
-	return result;
+	return generateSSEInstructionWithPrefix(prefix1, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
-/**
- * @brief Generates a properly encoded SSE instruction without mandatory prefix (like comiss).
- * 
- * This function handles the REX prefix for XMM8-XMM15 registers. For SSE instructions
- * without mandatory prefix (F3/F2), the format is: [REX] 0F opcode ModR/M
- * 
- * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
- * @param opcode2 Second opcode byte (e.g., 0x2F for comiss)
- * @param xmm_dst Destination XMM register
- * @param xmm_src Source XMM register
- * @return An OpCodeWithSize struct containing the instruction bytes
- */
 inline OpCodeWithSize generateSSEInstructionNoPrefix(uint8_t opcode1, uint8_t opcode2, 
                                                       X64Register xmm_dst, X64Register xmm_src) {
-	OpCodeWithSize result;
-	result.size_in_bytes = 0;
-	uint8_t* ptr = result.op_codes.data();
-	
-	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
-	uint8_t src_index = xmm_modrm_bits(xmm_src);
-	
-	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
-	
-	// REX prefix must come before opcode for SSE instructions without mandatory prefix
-	if (needs_rex) {
-		uint8_t rex = 0x40;  // Base REX prefix
-		if (dst_index >= 8) {
-			rex |= 0x04;  // REX.R - extends ModR/M reg field
-		}
-		if (src_index >= 8) {
-			rex |= 0x01;  // REX.B - extends ModR/M r/m field
-		}
-		*ptr++ = rex;
-		result.size_in_bytes++;
-	}
-	
-	// Emit opcode bytes
-	*ptr++ = opcode1;
-	result.size_in_bytes++;
-	*ptr++ = opcode2;
-	result.size_in_bytes++;
-	
-	// ModR/M byte: 11 reg r/m (register-to-register mode)
-	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
-	*ptr++ = modrm;
-	result.size_in_bytes++;
-	
-	return result;
+	return generateSSEInstructionWithPrefix(0, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
-/**
- * @brief Generates a properly encoded double-precision SSE instruction with 0x66 prefix.
- * 
- * This function handles double-precision scalar instructions like comisd, ucomisd that use
- * the 0x66 operand-size override prefix. The format is: 66 [REX] 0F opcode ModR/M
- * 
- * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
- * @param opcode2 Second opcode byte (e.g., 0x2F for comisd)
- * @param xmm_dst Destination XMM register
- * @param xmm_src Source XMM register
- * @return An OpCodeWithSize struct containing the instruction bytes
- */
 inline OpCodeWithSize generateSSEInstructionDouble(uint8_t opcode1, uint8_t opcode2, 
                                                     X64Register xmm_dst, X64Register xmm_src) {
-	OpCodeWithSize result;
-	result.size_in_bytes = 0;
-	uint8_t* ptr = result.op_codes.data();
-	
-	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
-	uint8_t src_index = xmm_modrm_bits(xmm_src);
-	
-	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
-	
-	// 0x66 operand-size override prefix comes FIRST
-	*ptr++ = 0x66;
-	result.size_in_bytes++;
-	
-	// REX prefix comes AFTER 0x66 but BEFORE opcode
-	if (needs_rex) {
-		uint8_t rex = 0x40;  // Base REX prefix
-		if (dst_index >= 8) {
-			rex |= 0x04;  // REX.R - extends ModR/M reg field
-		}
-		if (src_index >= 8) {
-			rex |= 0x01;  // REX.B - extends ModR/M r/m field
-		}
-		*ptr++ = rex;
-		result.size_in_bytes++;
-	}
-	
-	// Emit opcode bytes
-	*ptr++ = opcode1;
-	result.size_in_bytes++;
-	*ptr++ = opcode2;
-	result.size_in_bytes++;
-	
-	// ModR/M byte: 11 reg r/m (register-to-register mode)
-	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
-	*ptr++ = modrm;
-	result.size_in_bytes++;
-	
-	return result;
+	return generateSSEInstructionWithPrefix(0x66, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
 /**
@@ -276,16 +222,7 @@ OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, int32_t 
 	uint8_t modrm_byte;
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
-	}
-	else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement)
-	}
-	else {
-		mod_field = 0x02; // Mod = 10b (32-bit displacement)
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
@@ -293,19 +230,7 @@ OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, int32_t 
 	result.size_in_bytes++;
 
 	// --- Displacement ---
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		// 8-bit signed displacement (even for offset 0 with RBP)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	}
-	else {
-		// 32-bit signed displacement (little-endian format)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -343,33 +268,14 @@ OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, int32_t o
 	// ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP always needs displacement
-	}
-	else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	}
-	else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	}
-	else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -390,21 +296,12 @@ OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t off
 	result.size_in_bytes++;
 
 	uint8_t reg_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field = (offset >= -128 && offset <= 127) ? 0x01 : 0x02;
+	uint8_t mod_field = calcModField(offset);
 	uint8_t modrm = static_cast<uint8_t>((mod_field << 6) | (reg_bits << 3) | 0x05); // Base = RBP
 	*current_byte_ptr++ = modrm;
 	result.size_in_bytes++;
 
-	if (mod_field == 0x01) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -437,30 +334,14 @@ OpCodeWithSize generateMovzxFromFrame16(X64Register destinationRegister, int32_t
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -493,30 +374,14 @@ OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, int32_t 
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -551,30 +416,14 @@ OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegister, int
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -609,30 +458,14 @@ OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegister, in
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -666,30 +499,14 @@ OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, i
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1096,24 +913,12 @@ OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_
 	result.size_in_bytes += 2;
 
 	// ModR/M byte - use only low 3 bits of xmm register
-	if (offset >= -128 && offset <= 127) {
-		// 8-bit displacement
-		uint8_t modrm = 0x45 | ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
-		*current_byte_ptr++ = modrm;
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes += 2;
-	} else {
-		// 32-bit displacement
-		uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
-		*current_byte_ptr++ = modrm;
-		result.size_in_bytes++;
-		
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	uint8_t mod_field = calcModField(offset);
+	uint8_t modrm = (mod_field << 6) | ((xmm_reg & 0x07) << 3) | 0x05; // Reg=XMM, R/M=101 (RBP)
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
+
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1152,24 +957,12 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
 	result.size_in_bytes += 2;
 
 	// ModR/M byte - use only low 3 bits of xmm register
-	if (offset >= -128 && offset <= 127) {
-		// 8-bit displacement
-		uint8_t modrm = 0x45 | ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
-		*current_byte_ptr++ = modrm;
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes += 2;
-	} else {
-		// 32-bit displacement
-		uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
-		*current_byte_ptr++ = modrm;
-		result.size_in_bytes++;
+	uint8_t mod_field = calcModField(offset);
+	uint8_t modrm = (mod_field << 6) | ((xmm_reg & 0x07) << 3) | 0x05; // Reg=XMM, R/M=101 (RBP)
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
 
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1262,14 +1055,7 @@ OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset)
 	uint8_t modrm_byte;
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement)
-	} else {
-		mod_field = 0x02; // Mod = 10b (32-bit displacement)
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
@@ -1277,18 +1063,7 @@ OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset)
 	result.size_in_bytes++;
 
 	// --- Displacement ---
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		// 8-bit signed displacement (even for offset 0 with RBP)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		// 32-bit signed displacement (little-endian format)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1331,14 +1106,7 @@ OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) 
 	// --- ModR/M byte (Mod | Reg | R/M) ---
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement)
-	} else {
-		mod_field = 0x02; // Mod = 10b (32-bit displacement)
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
@@ -1346,18 +1114,7 @@ OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) 
 	result.size_in_bytes++;
 
 	// --- Displacement ---
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		// 8-bit signed displacement (even for offset 0 with RBP)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		// 32-bit signed displacement (little-endian format)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1396,30 +1153,14 @@ OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t offset) {
 
 	// ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1458,30 +1199,14 @@ OpCodeWithSize generateMovToFrame16(X64Register sourceRegister, int32_t offset) 
 
 	// ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -3964,6 +3689,40 @@ private:
 		auto movzx_encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.result_physical_reg);
 		std::array<uint8_t, 4> movzxInst = { movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	// Helper function to emit a floating-point comparison instruction (comiss/comisd + SETcc)
+	// Consolidates the repeated pattern across handleFloatEqual, handleFloatNotEqual, etc.
+	void emitFloatComparisonInstruction(ArithmeticOperationContext& ctx, uint8_t setcc_opcode) {
+		// Use SSE comiss/comisd for comparison
+		// Properly handles XMM8-XMM15 registers with REX prefix
+		if (ctx.operand_type == Type::Float) {
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+		} else if (ctx.operand_type == Type::Double) {
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+		}
+
+		// Allocate a general-purpose register for the boolean result
+		X64Register bool_reg = allocateRegisterWithSpilling();
+
+		// Set result based on condition flags: SETcc r8
+		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
+		uint8_t setcc_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? REX_B : REX_BASE;
+		textSectionData.push_back(setcc_rex);
+		std::array<uint8_t, 3> setccInst = { 0x0F, setcc_opcode, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
+		textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
+
+		// Update context for boolean result (1 byte)
+		ctx.result_value.type = Type::Bool;
+		ctx.result_value.size_in_bits = 8;
+		ctx.result_physical_reg = bool_reg;
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -10917,36 +10676,19 @@ private:
 		current_scope.variables[instruction.getOperandAs<std::string_view>(2)].offset = stack_offset;*/
 	}
 
-	void handleAdd(const IrInstruction& instruction) {
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "addition");
-
-		// Perform the addition operation: ADD dst, src (opcode 0x01)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x01, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
+	void handleBinaryArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
+		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
-
-		// Release the RHS register (we're done with it)
 		regAlloc.release(ctx.rhs_physical_reg);
-		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
-		// that will be used by subsequent operations
+	}
+
+	void handleAdd(const IrInstruction& instruction) {
+		handleBinaryArithmetic(instruction, 0x01, "addition"); // ADD dst, src
 	}
 
 	void handleSubtract(const IrInstruction& instruction) {
-		// Setup and load operands
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtraction");
-
-		// Perform the subtraction operation: SUB dst, src (opcode 0x29)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x29, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
-
-		// Release the RHS register (we're done with it)
-		regAlloc.release(ctx.rhs_physical_reg);
-		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
+		handleBinaryArithmetic(instruction, 0x29, "subtraction"); // SUB dst, src
 	}
 
 	void handleMultiply(const IrInstruction& instruction) {
@@ -11119,40 +10861,23 @@ private:
 		storeArithmeticResult(ctx);
 	}
 
-	void handleBitwiseAnd(const IrInstruction& instruction) {
-		// Setup and load operands
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise AND");
-
-		// Perform the bitwise AND operation: AND dst, src (opcode 0x21)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x21, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
+	void handleBitwiseArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
+		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
+		regAlloc.release(ctx.rhs_physical_reg);
+	}
+
+	void handleBitwiseAnd(const IrInstruction& instruction) {
+		handleBitwiseArithmetic(instruction, 0x21, "bitwise AND"); // AND dst, src
 	}
 
 	void handleBitwiseOr(const IrInstruction& instruction) {
-		// Setup and load operands
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise OR");
-
-		// Perform the bitwise OR operation: OR dst, src (opcode 0x09)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x09, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		handleBitwiseArithmetic(instruction, 0x09, "bitwise OR"); // OR dst, src
 	}
 
 	void handleBitwiseXor(const IrInstruction& instruction) {
-		// Setup and load operands
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise XOR");
-
-		// Perform the bitwise XOR operation: XOR dst, src (opcode 0x31)
-		// Use the operand size to determine whether to use 32-bit or 64-bit operation
-		emitBinaryOpInstruction(0x31, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		handleBitwiseArithmetic(instruction, 0x31, "bitwise XOR"); // XOR dst, src
 	}
 
 	void handleModulo(const IrInstruction& instruction) {
@@ -11422,218 +11147,33 @@ private:
 	}
 
 	void handleFloatEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point equal comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (ctx.operand_type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on zero flag: sete r8
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t sete_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(sete_rex);
-		std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x94); // SETE
 	}
 
 	void handleFloatNotEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point not equal comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on zero flag: setne r8
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setne_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(setne_rex);
-		std::array<uint8_t, 3> setneInst = { 0x0F, 0x95, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setneInst.begin(), setneInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x95); // SETNE
 	}
 
 	void handleFloatLessThan(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point less than comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on carry flag: setb r8 (below = less than for floating-point)
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setb_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(setb_rex);
-		std::array<uint8_t, 3> setbInst = { 0x0F, 0x92, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setbInst.begin(), setbInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;  // Update to the boolean result register
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x92); // SETB
 	}
 
 	void handleFloatLessEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point less than or equal comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on flags: setbe r8 (below or equal)
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setbe_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(setbe_rex);
-		std::array<uint8_t, 3> setbeInst = { 0x0F, 0x96, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setbeInst.begin(), setbeInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x96); // SETBE
 	}
 
 	void handleFloatGreaterThan(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point greater than comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on flags: seta r8 (above = greater than for floating-point)
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t seta_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(seta_rex);
-		std::array<uint8_t, 3> setaInst = { 0x0F, 0x97, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setaInst.begin(), setaInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;  // Update to the boolean result register
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x97); // SETA
 	}
 
 	void handleFloatGreaterEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point greater than or equal comparison");
-
-		// Use SSE comiss/comisd for comparison
-		// Now properly handles XMM8-XMM15 registers with REX prefix
-		Type type = ctx.operand_type; // Use operand type instead of result type
-		if (type == Type::Float) {
-			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
-			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
-			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
-			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		}
-
-		// Allocate a general-purpose register for the boolean result
-		X64Register bool_reg = allocateRegisterWithSpilling();
-
-		// Set result based on flags: setae r8 (above or equal)
-		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setae_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
-		textSectionData.push_back(setae_rex);
-		std::array<uint8_t, 3> setaeInst = { 0x0F, 0x93, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
-		textSectionData.insert(textSectionData.end(), setaeInst.begin(), setaeInst.end());
-
-		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
-		ctx.result_physical_reg = bool_reg;  // Update to the boolean result register
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitFloatComparisonInstruction(ctx, 0x93); // SETAE
 	}
 
 	// Helper: Load operand value (TempVar or variable name) into a register

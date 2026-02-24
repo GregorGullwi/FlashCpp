@@ -586,11 +586,8 @@
 		
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this
-		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-		bool returns_struct_by_value = (lambda_info.return_type == Type::Struct && !lambda_info.returns_reference);
-		int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
-		bool needs_hidden_return_param = returns_struct_by_value && (lambda_info.return_size > struct_return_threshold);
+		bool returns_struct_by_value = returnsStructByValue(lambda_info.return_type, 0, lambda_info.returns_reference);
+		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.return_type, 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track hidden return parameter flag for current function context
@@ -771,11 +768,8 @@
 		func_decl_op.is_variadic = false;
 		
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-		bool returns_struct_by_value = (lambda_info.return_type == Type::Struct && !lambda_info.returns_reference);
-		int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
-		bool needs_hidden_return_param = returns_struct_by_value && (lambda_info.return_size > struct_return_threshold);
+		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
+		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.return_type, 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track hidden return parameter flag for current function context
@@ -966,6 +960,35 @@
 		}
 	}
 
+	/// Unified symbol lookup: searches local scope first, then falls back to global scope
+	std::optional<ASTNode> lookupSymbol(StringHandle handle) const {
+		auto symbol = symbol_table.lookup(handle);
+		if (!symbol.has_value() && global_symbol_table_) {
+			symbol = global_symbol_table_->lookup(handle);
+		}
+		return symbol;
+	}
+
+	std::optional<ASTNode> lookupSymbol(std::string_view name) const {
+		auto symbol = symbol_table.lookup(name);
+		if (!symbol.has_value() && global_symbol_table_) {
+			symbol = global_symbol_table_->lookup(name);
+		}
+		return symbol;
+	}
+
+	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
+	TempVar emitAddressOf(Type type, int size_in_bits, IrValue source, Token token = Token()) {
+		TempVar addr_var = var_counter.next();
+		AddressOfOp addr_op;
+		addr_op.result = addr_var;
+		addr_op.operand.type = type;
+		addr_op.operand.size_in_bits = size_in_bits;
+		addr_op.operand.pointer_depth = 0;
+		addr_op.operand.value = source;
+		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
+		return addr_var;
+	}
 
 	Ir ir_;
 	TempVar var_counter{ 0 };

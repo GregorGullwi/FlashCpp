@@ -1777,10 +1777,7 @@ private:
 		if (std::holds_alternative<IdentifierNode>(base_expr)) {
 			// Simple identifier - look it up in the symbol table
 			const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
-			std::optional<ASTNode> symbol = symbol_table.lookup(base_ident.name());
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(base_ident.name());
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(base_ident.name());
 			if (!symbol.has_value()) {
 				return false;
 			}
@@ -2269,10 +2266,7 @@ private:
 			std::string_view base_name = StringTable::getStringView(base_name_handle);
 			
 			// Look up the base object in symbol table
-			std::optional<ASTNode> symbol = symbol_table.lookup(base_name);
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(base_name);
-			}
+			std::optional<ASTNode> symbol = lookupSymbol(base_name);
 			
 			if (symbol.has_value()) {
 				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
@@ -3033,11 +3027,8 @@ private:
 		
 		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
-		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-		bool returns_struct_by_value = (ret_type.type() == Type::Struct && ret_type.pointer_depth() == 0 && !ret_type.is_reference());
-		int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
-		bool needs_hidden_return_param = returns_struct_by_value && (actual_return_size > struct_return_threshold);
+		bool returns_struct_by_value = returnsStructByValue(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference());
+		bool needs_hidden_return_param = needsHiddenReturnParam(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference(), actual_return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track return type index and hidden parameter flag for current function context
