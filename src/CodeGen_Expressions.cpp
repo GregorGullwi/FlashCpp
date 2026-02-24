@@ -2040,30 +2040,30 @@
 							if (std::holds_alternative<StringHandle>(array_operands[2])) {
 								StringHandle array_name = std::get<StringHandle>(array_operands[2]);
 								const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
-									if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
-										// This is an array - calculate element size
-										const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-										if (type_node.pointer_depth() > 0) {
-											// Array of pointers
-											element_size_bits = 64;
-										} else if (type_node.type() == Type::Struct) {
-											// Array of structs
-											TypeIndex type_index_from_decl = type_node.type_index();
-											if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
-												const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
-												const StructTypeInfo* struct_info = type_info.getStructInfo();
-												if (struct_info) {
-													element_size_bits = static_cast<int>(struct_info->total_size * 8);
-												}
-											}
-										} else {
-											// Regular array - use type size
-											element_size_bits = static_cast<int>(type_node.size_in_bits());
-											if (element_size_bits == 0) {
-												element_size_bits = get_type_size_bits(type_node.type());
+								if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+									// This is an array - calculate element size
+									const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+									if (type_node.pointer_depth() > 0) {
+										// Array of pointers
+										element_size_bits = 64;
+									} else if (type_node.type() == Type::Struct) {
+										// Array of structs
+										TypeIndex type_index_from_decl = type_node.type_index();
+										if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
+											const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
+											const StructTypeInfo* struct_info = type_info.getStructInfo();
+											if (struct_info) {
+												element_size_bits = static_cast<int>(struct_info->total_size * 8);
 											}
 										}
+									} else {
+										// Regular array - use type size
+										element_size_bits = static_cast<int>(type_node.size_in_bits());
+										if (element_size_bits == 0) {
+											element_size_bits = get_type_size_bits(type_node.type());
+										}
 									}
+								}
 							}
 							
 							// Get the struct type index (4th element of array_operands contains type_index for struct types)
@@ -2309,30 +2309,30 @@
 				if (std::holds_alternative<StringHandle>(array_operands[2])) {
 					StringHandle array_name = std::get<StringHandle>(array_operands[2]);
 					const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
-						if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
-							// This is an array - calculate element size
-							const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-							if (type_node.pointer_depth() > 0) {
-								// Array of pointers
-								element_size_bits = 64;
-							} else if (type_node.type() == Type::Struct) {
-								// Array of structs
-								TypeIndex type_index = type_node.type_index();
-								if (type_index > 0 && type_index < gTypeInfo.size()) {
-									const TypeInfo& type_info = gTypeInfo[type_index];
-									const StructTypeInfo* struct_info = type_info.getStructInfo();
-									if (struct_info) {
-										element_size_bits = static_cast<int>(struct_info->total_size * 8);
-									}
-								}
-							} else {
-								// Regular array - use type size
-								element_size_bits = static_cast<int>(type_node.size_in_bits());
-								if (element_size_bits == 0) {
-									element_size_bits = get_type_size_bits(type_node.type());
+					if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+						// This is an array - calculate element size
+						const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+						if (type_node.pointer_depth() > 0) {
+							// Array of pointers
+							element_size_bits = 64;
+						} else if (type_node.type() == Type::Struct) {
+							// Array of structs
+							TypeIndex type_index = type_node.type_index();
+							if (type_index > 0 && type_index < gTypeInfo.size()) {
+								const TypeInfo& type_info = gTypeInfo[type_index];
+								const StructTypeInfo* struct_info = type_info.getStructInfo();
+								if (struct_info) {
+									element_size_bits = static_cast<int>(struct_info->total_size * 8);
 								}
 							}
+						} else {
+							// Regular array - use type size
+							element_size_bits = static_cast<int>(type_node.size_in_bits());
+							if (element_size_bits == 0) {
+								element_size_bits = get_type_size_bits(type_node.type());
+							}
 						}
+					}
 				}
 				
 				// Create temporary for the address
