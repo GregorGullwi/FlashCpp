@@ -4000,7 +4000,7 @@ private:
 
 		// Set result based on condition flags: SETcc r8
 		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
-		uint8_t setcc_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? 0x41 : 0x40;
+		uint8_t setcc_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? REX_B : REX_BASE;
 		textSectionData.push_back(setcc_rex);
 		std::array<uint8_t, 3> setccInst = { 0x0F, setcc_opcode, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07)) };
 		textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
