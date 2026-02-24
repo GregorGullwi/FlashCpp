@@ -1222,7 +1222,7 @@ struct TypeInfo
 	Type type_;
 	TypeIndex type_index_;
 
-	// True if this type was created with unresolved template args (name contains "_unknown")
+	// True if this type was created with unresolved template args (name contains "$unresolved")
 	bool is_incomplete_instantiation_ = false;
 
 	// For struct types, store additional information
@@ -1277,7 +1277,7 @@ struct TypeInfo
 	// Update is_incomplete_instantiation_ flag based on current name
 	void updateIncompleteInstantiationFlag() {
 		if (name_.isValid()) {
-			is_incomplete_instantiation_ = StringTable::getStringView(name_).find("_unknown") != std::string_view::npos;
+			is_incomplete_instantiation_ = StringTable::getStringView(name_).find("$unresolved") != std::string_view::npos;
 		}
 	}
 	

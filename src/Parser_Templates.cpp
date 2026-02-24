@@ -733,7 +733,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Check if the target type is a template instantiation with unresolved parameters
 		// This happens when parsing things like: template<bool B> using bool_constant = integral_constant<bool, B>
-		// The integral_constant<bool, B> gets instantiated as "integral_constant_bool_unknown"
+		// The integral_constant<bool, B> gets instantiated with "$unresolved" in the name
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
@@ -827,7 +827,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 				
-				// Note: We already consumed the tokens, so type_spec still points to the _unknown type
+				// Note: We already consumed the tokens, so type_spec still points to the unresolved type
 				// We don't need to re-parse again - just use the existing type_spec
 			}
 		}
@@ -8436,7 +8436,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// A type is dependent if:
 		// 1. Its type name is in current_template_param_names_ (it IS a template parameter), AND
 		//    we're NOT in SFINAE context (during SFINAE, template params are substituted)
-		// 2. Its type name contains "_unknown" (composite type with template parameters)
+		// 2. Its is_incomplete_instantiation_ flag is set (composite type with unresolved template parameters)
 		// 3. It's a UserDefined type with type_index=0 (placeholder)
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
 		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
@@ -9753,13 +9753,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
 				std::string_view type_name = StringTable::getStringView(orig_type_info.name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", type_name);
-				// Re-parse if type is incomplete instantiation (legacy template-dependent marker)
+				// Re-parse if type is incomplete instantiation (has unresolved template params)
 				// OR if type name contains template parameter markers like _T or ::type (typename member access)
-				// This is more robust than just checking for _unknown
-				bool has_unknown = orig_type_info.is_incomplete_instantiation_;
+				bool has_unresolved = orig_type_info.is_incomplete_instantiation_;
 				bool has_template_param = type_name.find("_T") != std::string::npos || 
 				                          type_name.find("::type") != std::string::npos;
-				should_reparse = has_unknown || has_template_param;
+				should_reparse = has_unresolved || has_template_param;
 				if (should_reparse) {
 					FLASH_LOG(Templates, Debug, "Return type appears template-dependent - will re-parse");
 				}
@@ -9819,7 +9818,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0);	// Placeholder size
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
-			// instead of staying as UserDefined, which would cause toString() to return "unknown"
+			// instead of staying as UserDefined, which would cause toString() to return "$unresolved"
 			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
 				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
@@ -9877,7 +9876,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// but the type doesn't actually have a ::type member
 		//
 		// NOTE: This validation is limited - it can detect simple cases where the type
-		// name contains "_unknown" (template-dependent placeholder), but cannot evaluate
+		// is an incomplete instantiation (has unresolved template parameters), but cannot evaluate
 		// complex constant expressions like "is_int<T>::value" in template arguments.
 		// Full SFINAE support would require implementing constant expression evaluation
 		// during template instantiation.
@@ -12341,17 +12340,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// during pattern parsing with template parameters. We need to re-instantiate
 			// it with the concrete template arguments.
 			// String fallback: base_name_str may come from TemplateTypeArg::toString() which
-			// appends "_unknown" before the TypeInfo is registered in gTypesByName.
+			// appends "$unresolved" before the TypeInfo is registered in gTypesByName.
 			bool base_is_incomplete = false;
 			{
 				StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_name_str);
 				auto incomplete_check_it = gTypesByName.find(base_name_handle);
 				base_is_incomplete = (incomplete_check_it != gTypesByName.end() && incomplete_check_it->second->is_incomplete_instantiation_)
-					|| base_name_str.ends_with("_unknown");
+					|| base_name_str.find("$unresolved") != std::string::npos;
 			}
 			if (base_is_incomplete) {
-				// Extract the template name (before "_unknown")
-				size_t pos = base_name_str.find("_unknown");
+				// Extract the template name (before the "$unresolved" or "_$unresolved" marker)
+				size_t pos = base_name_str.find("$unresolved");
+				// Also strip trailing underscore separator if present (e.g., "Tuple_$unresolved" -> "Tuple")
+				if (pos > 0 && base_name_str[pos - 1] == '_') {
+					pos--;
+				}
 				std::string base_template_name = base_name_str.substr(0, pos);
 				
 				// For partial specialization like Tuple<First, Rest...> : Tuple<Rest...>

@@ -372,10 +372,10 @@ struct TemplateTypeArg {
 					if (type_index < gTypeInfo.size()) {
 						result += StringTable::getStringView(gTypeInfo[type_index].name());
 					} else {
-						result += "unknown";
+						result += "$unresolved";
 					}
 					break;
-				default: result += "unknown"; break;
+				default: result += "$unresolved"; break;
 			}
 		}
 
@@ -1409,7 +1409,7 @@ public:
 			case Type::UnsignedLongLong: return "ulonglong";
 			case Type::UnsignedShort: return "ushort";
 			case Type::UnsignedChar: return "uchar";
-			default: return "unknown";
+			default: return "$unresolved";
 		}
 	}
 
