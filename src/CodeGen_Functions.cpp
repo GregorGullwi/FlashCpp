@@ -462,23 +462,15 @@
 				std::string_view struct_type_name = StringTable::getStringView(name_handle);
 				if (struct_type_name.find("_pattern_") != std::string_view::npos) continue;
 				if (struct_type_name.find("_unknown") != std::string_view::npos) continue;
-				// Skip template patterns (structs without $ hash suffix that have template parameters)
-				// Template instantiations always have a hash like "Holder$bb125dafdd4970ce"
-				// If a struct has no $ but appears in template registry, it's a pattern
+				// Skip template patterns — if the struct was registered as a class template,
+				// it is an uninstantiated pattern and must not be used for codegen.
+				// isClassTemplate() uses the exact StringHandle (no string scan, no
+				// unqualified-name fallback) so it never accidentally matches a non-template
+				// struct that shares an unqualified name with a template in another namespace.
 				if (struct_type_name.find('$') == std::string_view::npos) {
-					// Check if this is a registered template by looking for it in template registry
-					// For now, we'll use a simpler heuristic: if any instantiation of this template
-					// exists (with same base name but with $), skip the pattern
-					bool has_instantiation = false;
-					// Look for any struct with the same namespace prefix and a $ suffix
-					for (const auto& [other_name_handle, other_type_ptr] : gTypesByName) {
-						std::string_view other_name = StringTable::getStringView(other_name_handle);
-						if (other_name.starts_with(struct_type_name) && other_name.size() > struct_type_name.size() && other_name[struct_type_name.size()] == '$') {
-							has_instantiation = true;
-							break;
-						}
+					if (gTemplateRegistry.isClassTemplate(name_handle)) {
+						continue;
 					}
-					if (has_instantiation) continue;
 				}
 				
 				for (const auto& member_func : struct_info->member_functions) {

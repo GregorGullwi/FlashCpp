@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 #include <algorithm>
 
@@ -1153,6 +1154,20 @@ public:
 
 	void registerTemplate(StringHandle name, ASTNode template_node) {
 		templates_[name].push_back(template_node);
+		// Track class template names separately so callers can ask "is this name a class
+		// template?" without matching unrelated function templates that share the same
+		// unqualified name.
+		if (template_node.is<TemplateClassDeclarationNode>()) {
+			class_template_names_.insert(name);
+		}
+	}
+
+	// Returns true if 'name' (exact StringHandle) was registered as a class template.
+	// Used in codegen to skip uninstantiated class template pattern structs in
+	// gTypesByName without accidentally skipping non-template structs that share an
+	// unqualified name with a template in a different namespace.
+	bool isClassTemplate(StringHandle name) const {
+		return class_template_names_.count(name) > 0;
 	}
 
 	// Register a template using QualifiedIdentifier (Phase 2).
@@ -1808,6 +1823,7 @@ public:
 		variable_templates_.clear();
 		deduction_guides_.clear();
 		instantiation_to_pattern_.clear();
+		class_template_names_.clear();
 		outer_template_bindings_.clear();
 	}
 
@@ -1886,6 +1902,11 @@ private:
 	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
 	// This allows looking up member aliases from the correct specialization
 	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> instantiation_to_pattern_;
+
+	// Set of StringHandles that were registered as class templates (TemplateClassDeclarationNode).
+	// Used by isClassTemplate() for O(1) exact-name lookup, avoiding substring searches
+	// and false positives from unqualified-name fallbacks in lookupTemplate().
+	std::unordered_set<StringHandle, StringHandleHash> class_template_names_;
 };
 
 // Global template registry
