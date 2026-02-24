@@ -10760,7 +10760,7 @@ private:
 				flushAllDirtyRegisters();
 
 				StringBuilder return_trampoline_sb;
-				return_trampoline_sb.append("__catch_return_trampoline_").append(static_cast<unsigned long long>(catch_funclet_return_label_counter_++));
+				return_trampoline_sb.append("__catch_return_trampoline_").append(static_cast<uint64_t>(catch_funclet_return_label_counter_++));
 				StringHandle return_trampoline_handle = StringTable::getOrInternStringHandle(return_trampoline_sb.commit());
 
 				uint32_t catch_return_entry_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
