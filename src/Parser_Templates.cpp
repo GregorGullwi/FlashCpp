@@ -12339,23 +12339,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// WORKAROUND: If the base class name is an incomplete template instantiation, it was instantiated
 			// during pattern parsing with template parameters. We need to re-instantiate
 			// it with the concrete template arguments.
-			// String fallback: base_name_str may come from TemplateTypeArg::toString() which
-			// appends "$unresolved" before the TypeInfo is registered in gTypesByName.
-			bool base_is_incomplete = false;
-			{
-				StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_name_str);
-				auto incomplete_check_it = gTypesByName.find(base_name_handle);
-				base_is_incomplete = (incomplete_check_it != gTypesByName.end() && incomplete_check_it->second->is_incomplete_instantiation_)
-					|| base_name_str.find("$unresolved") != std::string::npos;
-			}
+			StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_name_str);
+			auto incomplete_type_it = gTypesByName.find(base_name_handle);
+			bool base_is_incomplete = (incomplete_type_it != gTypesByName.end() && incomplete_type_it->second->is_incomplete_instantiation_)
+				|| base_name_str.find("$unresolved") != std::string::npos;
 			if (base_is_incomplete) {
-				// Extract the template name (before the "$unresolved" or "_$unresolved" marker)
-				size_t pos = base_name_str.find("$unresolved");
-				// Also strip trailing underscore separator if present (e.g., "Tuple_$unresolved" -> "Tuple")
-				if (pos > 0 && base_name_str[pos - 1] == '_') {
-					pos--;
+				// Extract the base template name — prefer TypeInfo metadata (no string parsing needed)
+				std::string base_template_name;
+				if (incomplete_type_it != gTypesByName.end() && incomplete_type_it->second->isTemplateInstantiation()) {
+					base_template_name = std::string(StringTable::getStringView(incomplete_type_it->second->baseTemplateName()));
+				} else {
+					// Fallback: extract template name by finding '$' sentinel
+					size_t pos = base_name_str.find('$');
+					base_template_name = (pos != std::string::npos) ? base_name_str.substr(0, pos) : base_name_str;
 				}
-				std::string base_template_name = base_name_str.substr(0, pos);
 				
 				// For partial specialization like Tuple<First, Rest...> : Tuple<Rest...>
 				// The base class uses Rest... (the variadic pack), which corresponds to
