@@ -3766,11 +3766,8 @@
 					call_op.is_member_function = true;  // This is a member function call
 					
 					// Detect if returning struct by value (needs hidden return parameter for RVO)
-					// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-					// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-					bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-					int struct_return_threshold = getStructReturnThreshold(context_->isLLP64());
-					bool needs_hidden_return_param = returns_struct_by_value && (actual_return_size > struct_return_threshold);
+					bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
+					bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), actual_return_size, context_->isLLP64());
 					
 					if (needs_hidden_return_param) {
 						call_op.return_slot = result_var;
@@ -3970,15 +3967,12 @@
 							call_op.is_variadic = func_decl.is_variadic();
 							
 							// Determine if return slot is needed (same logic as generateFunctionCallIr)
-							// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-							// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-							bool returns_struct_by_value = (return_type == Type::Struct && return_type_node.pointer_depth() == 0 && !return_type_node.is_reference());
-							int struct_return_threshold = getStructReturnThreshold(context_->isLLP64());
-							bool needs_hidden_return_param = returns_struct_by_value && (return_size > struct_return_threshold);
+							bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());
+							bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size, context_->isLLP64());
 							
 							FLASH_LOG_FORMAT(Codegen, Debug,
 								"Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
-								return_size, struct_return_threshold, returns_struct_by_value, needs_hidden_return_param);
+								return_size, getStructReturnThreshold(context_->isLLP64()), returns_struct_by_value, needs_hidden_return_param);
 							
 							if (needs_hidden_return_param) {
 								call_op.return_slot = result_var;

@@ -2242,6 +2242,7 @@ public:
 		std::string type_desc_symbol = "??_R0" + mangled_class_name;
 		
 		std::vector<char> type_desc_data;
+		type_desc_data.reserve(16 + mangled_class_name.size() + 1);  // 8+8 header + name + null
 		// vtable pointer (8 bytes) - null
 		ObjectFileCommon::appendZeros(type_desc_data, 8);
 		// spare pointer (8 bytes) - null
@@ -2269,6 +2270,7 @@ public:
 		uint32_t self_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 		std::string self_bcd_symbol = "??_R1" + mangled_class_name + "8";  // "8" suffix for self
 		std::vector<char> self_bcd_data;
+		self_bcd_data.reserve(28);  // 8 + 5*4 = 28 bytes total
 		
 		// type_descriptor pointer (8 bytes) - will add relocation
 		ObjectFileCommon::appendZeros(self_bcd_data, 8);
@@ -2363,12 +2365,7 @@ public:
 		// ??_R2 - Base Class Array (pointers to all BCDs)
 		uint32_t bca_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 		std::string bca_symbol = "??_R2" + mangled_class_name + "8";
-		std::vector<char> bca_data;
-		
-		// Array of pointers to BCDs
-		for (size_t i = 0; i < bcd_offsets.size(); ++i) {
-			ObjectFileCommon::appendZeros(bca_data, 8);
-		}
+		std::vector<char> bca_data(bcd_offsets.size() * 8, 0);
 		
 		add_data(bca_data, SectionType::RDATA);
 		auto bca_sym = coffi_.add_symbol(bca_symbol);

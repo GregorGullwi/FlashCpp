@@ -1165,18 +1165,15 @@
 		
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 		// Exclude references - they return a pointer, not a struct by value
-		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-		int struct_return_threshold = getStructReturnThreshold(context_->isLLP64());
-		bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
-		if (needs_hidden_return_param) {
+		bool returns_struct = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
+		bool needs_hidden_ret = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
+		if (needs_hidden_ret) {
 			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 			
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 				function_name, return_type.size_in_bits(), ret_var.var_number);
-		} else if (returns_struct_by_value) {
+		} else if (returns_struct) {
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Function call {} returns small struct by value (size={} bits) - will return in RAX",
 				function_name, return_type.size_in_bits());
@@ -2336,15 +2333,12 @@
 			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 			
 			// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)
-			// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
-			// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
-			bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-			int struct_return_threshold = getStructReturnThreshold(context_->isLLP64());
-			bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
+			bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
+			bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
 			
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
-				returns_struct_by_value, return_type.size_in_bits(), struct_return_threshold, needs_hidden_return_param);
+				returns_struct_by_value, return_type.size_in_bits(), getStructReturnThreshold(context_->isLLP64()), needs_hidden_return_param);
 			
 			if (needs_hidden_return_param) {
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
