@@ -8973,7 +8973,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Instantiate the template (same logic as try_instantiate_template)
 	// Generate mangled name first - it now includes reference qualifiers
-	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
 	// Check if we already have this instantiation using the mangled name as key
 	// This ensures that int, int&, and int&& are treated as distinct instantiations
@@ -9574,7 +9574,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Full AST cloning and substitution will be implemented later
 
 	// Generate mangled name for the instantiation
-	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
 	// For now, we'll create a simple wrapper that references the original function
 	// This is a temporary solution - proper instantiation requires:
@@ -10525,7 +10525,9 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		template_name = template_name.substr(last_colon + 2);
 	}
-	return FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
+	auto result = FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
+	gTemplateRegistry.registerInstantiatedName(StringTable::getOrInternStringHandle(result));
+	return result;
 }
 
 // Helper function to instantiate base class template and register it in the AST
@@ -11051,6 +11053,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				
 				// Generate unique name for this instantiation using hash-based naming
 				std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
+				gTemplateRegistry.registerInstantiatedName(StringTable::getOrInternStringHandle(persistent_name));
 				
 				// Check if already instantiated
 				if (gSymbolTable.lookup(persistent_name).has_value()) {
@@ -11105,6 +11108,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	// Generate unique name for the instantiation using hash-based naming
 	// This ensures consistent naming with class template instantiations
 	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
+	gTemplateRegistry.registerInstantiatedName(StringTable::getOrInternStringHandle(persistent_name));
 	
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {
@@ -17603,7 +17607,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
 
 	// Generate mangled name for the instantiation
-	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(member_name, template_args);
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(member_name, template_args);
 
 	// Get the original function's declaration
 	const DeclarationNode& orig_decl = func_decl.decl_node();

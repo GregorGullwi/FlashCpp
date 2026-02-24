@@ -466,13 +466,14 @@
 				// isClassTemplate() uses the exact StringHandle (no string scan, no
 				// unqualified-name fallback) so it never accidentally matches a non-template
 				// struct that shares an unqualified name with a template in another namespace.
-				std::string_view struct_type_name = StringTable::getStringView(name_handle);
-				if (struct_type_name.find('$') == std::string_view::npos) {
+				// Template instantiations (isTemplateInstantiation) are concrete types, not patterns.
+				if (!type_info_ptr->isTemplateInstantiation()) {
 					if (gTemplateRegistry.isClassTemplate(name_handle)) {
 						continue;
 					}
 				}
 				
+				std::string_view struct_type_name = StringTable::getStringView(name_handle);
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
@@ -2019,7 +2020,7 @@
 						}
 						
 						// Generate the mangled name
-						[[maybe_unused]] std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
+						[[maybe_unused]] std::string_view mangled_func_name = gTemplateRegistry.mangleTemplateName(func_name, template_args);
 						
 						// Template instantiation now happens during parsing
 						// The instantiated function should already be in the AST
@@ -2181,7 +2182,7 @@
 					});
 					
 					// Generate the mangled name
-					std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
+					std::string_view mangled_func_name = gTemplateRegistry.mangleTemplateName(func_name, template_args);
 					
 					// Build qualified function name with mangled template name
 					function_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(mangled_func_name));
