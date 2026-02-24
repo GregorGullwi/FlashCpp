@@ -16044,7 +16044,7 @@ private:
 				emitCmpFrameImm32(elf_selector_offset_, 0);  // placeholder 0
 				// Record patch position: the IMM32 is at the last 4 bytes we just wrote
 				uint32_t filter_patch_pos = static_cast<uint32_t>(textSectionData.size()) - 4;
-				elf_catch_filter_patches_.push_back({filter_patch_pos, handler_index});
+				elf_catch_filter_patches_.push_back({filter_patch_pos, current_function_try_blocks_.size() - 1, handler_index});
 				
 				// JNE catch_end_label (skip this handler if selector doesn't match)
 				StringHandle catch_end_handle = StringTable::getOrInternStringHandle(catch_op.catch_end_label);
@@ -17454,10 +17454,11 @@ private:
 
 		// Now compute filters and patch each CMP instruction
 		for (const auto& patch : elf_catch_filter_patches_) {
-			// Find this handler's type in the type table
+			// Find this handler's type in the correct try block
 			int filter = 0;
-			if (patch.handler_index < try_blocks.back().catch_handlers.size()) {
-				const auto& handler = try_blocks.back().catch_handlers[patch.handler_index];
+			if (patch.try_block_index < try_blocks.size() &&
+			    patch.handler_index < try_blocks[patch.try_block_index].catch_handlers.size()) {
+				const auto& handler = try_blocks[patch.try_block_index].catch_handlers[patch.handler_index];
 				if (handler.is_catch_all) {
 					auto it = std::find(type_table.begin(), type_table.end(), "");
 					if (it != type_table.end()) {
@@ -17669,6 +17670,7 @@ private:
 	// We emit CMP instructions with placeholder filter values that get patched at function finalization.
 	struct ElfCatchFilterPatch {
 		uint32_t patch_offset;      // Offset of the IMM32 placeholder in textSectionData
+		size_t try_block_index;     // Index of the originating try block (0-based)
 		size_t handler_index;       // Handler index within its try block (0-based)
 	};
 	std::vector<ElfCatchFilterPatch> elf_catch_filter_patches_;
