@@ -460,13 +460,13 @@
 				if (!struct_info) continue;
 				// Skip pattern structs (templates) - they shouldn't be used for code generation
 				if (gTemplateRegistry.isPatternStructName(name_handle)) continue;
-				std::string_view struct_type_name = StringTable::getStringView(name_handle);
-				if (struct_type_name.find("_unknown") != std::string_view::npos) continue;
+				if (type_info_ptr->is_incomplete_instantiation_) continue;
 				// Skip template patterns — if the struct was registered as a class template,
 				// it is an uninstantiated pattern and must not be used for codegen.
 				// isClassTemplate() uses the exact StringHandle (no string scan, no
 				// unqualified-name fallback) so it never accidentally matches a non-template
 				// struct that shares an unqualified name with a template in another namespace.
+				std::string_view struct_type_name = StringTable::getStringView(name_handle);
 				if (struct_type_name.find('$') == std::string_view::npos) {
 					if (gTemplateRegistry.isClassTemplate(name_handle)) {
 						continue;

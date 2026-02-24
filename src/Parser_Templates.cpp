@@ -743,10 +743,10 @@ ParseResult Parser::parse_template_declaration() {
 			const TypeInfo& ti = gTypeInfo[type_spec.type_index()];
 			std::string_view type_name = StringTable::getStringView(ti.name());
 
-			// Check for "_unknown" suffix indicating unresolved template parameters
-			if (type_name.find("_unknown") != std::string_view::npos) {
+			// Check for incomplete instantiation indicating unresolved template parameters
+			if (ti.is_incomplete_instantiation_) {
 				has_unresolved_params = true;
-				FLASH_LOG(Parser, Debug, "Alias target type '", type_name, "' has unresolved parameters - using deferred instantiation");
+				FLASH_LOG(Parser, Debug, "Alias target type '", StringTable::getStringView(ti.name()), "' has unresolved parameters - using deferred instantiation");
 			}
 			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
 			// Check if this is a template instantiation (hash-based naming)
@@ -8494,7 +8494,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					}
 				}
 				
-				if (is_template_param || type_name.find("_unknown") != std::string_view::npos) {
+				if (is_template_param || (idx < gTypeInfo.size() && gTypeInfo[idx].is_incomplete_instantiation_)) {
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
@@ -9753,10 +9753,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
 				std::string_view type_name = StringTable::getStringView(orig_type_info.name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", type_name);
-				// Re-parse if type contains _unknown (legacy template-dependent marker)
+				// Re-parse if type is incomplete instantiation (legacy template-dependent marker)
 				// OR if type name contains template parameter markers like _T or ::type (typename member access)
 				// This is more robust than just checking for _unknown
-				bool has_unknown = type_name.find("_unknown") != std::string::npos;
+				bool has_unknown = orig_type_info.is_incomplete_instantiation_;
 				bool has_template_param = type_name.find("_T") != std::string::npos || 
 				                          type_name.find("::type") != std::string::npos;
 				should_reparse = has_unknown || has_template_param;
@@ -9888,7 +9888,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 				
 				// Check for placeholder/unknown types that indicate failed resolution
-				if (StringTable::getStringView(type_info.name()).find("_unknown") != std::string::npos) {
+				if (type_info.is_incomplete_instantiation_) {
 					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
 					return std::nullopt;  // Substitution failure
 				}
@@ -12333,10 +12333,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 			
-			// WORKAROUND: If the base class name ends with "_unknown", it was instantiated
+			// WORKAROUND: If the base class name is an incomplete template instantiation, it was instantiated
 			// during pattern parsing with template parameters. We need to re-instantiate
 			// it with the concrete template arguments.
-			if (base_name_str.ends_with("_unknown")) {
+			bool base_is_incomplete = false;
+			{
+				StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_name_str);
+				auto incomplete_check_it = gTypesByName.find(base_name_handle);
+				base_is_incomplete = (incomplete_check_it != gTypesByName.end() && incomplete_check_it->second->is_incomplete_instantiation_)
+					|| base_name_str.ends_with("_unknown");
+			}
+			if (base_is_incomplete) {
 				// Extract the template name (before "_unknown")
 				size_t pos = base_name_str.find("_unknown");
 				std::string base_template_name = base_name_str.substr(0, pos);

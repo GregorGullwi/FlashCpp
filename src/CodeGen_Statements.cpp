@@ -2419,10 +2419,9 @@
 			if (type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index];
 				
-				// Skip incomplete template instantiations (with "_unknown" in name)
-				std::string_view type_name = StringTable::getStringView(type_info.name());
-				if (type_name.find("_unknown") != std::string_view::npos) {
-					FLASH_LOG(Codegen, Debug, "Skipping constructor call for '", type_name, "' with _unknown in name (incomplete instantiation)");
+				// Skip incomplete template instantiations
+				if (type_info.is_incomplete_instantiation_) {
+					FLASH_LOG(Codegen, Debug, "Skipping constructor call for '", StringTable::getStringView(type_info.name()), "' (incomplete instantiation)");
 					// Don't generate constructor calls for incomplete template instantiations
 					// Just treat them as plain data (no initialization)
 					// The variable declaration was already emitted above

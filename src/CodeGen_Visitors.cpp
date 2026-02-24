@@ -315,11 +315,9 @@ public:
 				continue;
 			}
 			
-			// Skip structs with "_unknown" in their name - they're incomplete template instantiations
-			// from type alias parsing where template parameters weren't yet known
-			std::string_view type_name_view = StringTable::getStringView(type_name);
-			if (type_name_view.find("_unknown") != std::string::npos) {
-				FLASH_LOG(Codegen, Debug, "Skipping struct '", type_name_view, "' with _unknown in name (incomplete instantiation)");
+			// Skip structs with incomplete instantiation - they have unresolved template params
+			if (type_info->is_incomplete_instantiation_) {
+				FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(type_name), "' (incomplete instantiation)");
 				continue;
 			}
 			
@@ -775,10 +773,9 @@ public:
 				continue;
 			}
 			
-			// Skip structs with "_unknown" in their name - they're incomplete template instantiations
-			std::string_view type_name_view2 = StringTable::getStringView(type_name);
-			if (type_name_view2.find("_unknown") != std::string::npos) {
-				FLASH_LOG(Codegen, Debug, "Skipping trivial constructor for '", type_name_view2, "' with _unknown in name (incomplete instantiation)");
+			// Skip structs with incomplete instantiation - they have unresolved template params
+			if (type_info->is_incomplete_instantiation_) {
+				FLASH_LOG(Codegen, Debug, "Skipping trivial constructor for '", StringTable::getStringView(type_name), "' (incomplete instantiation)");
 				continue;
 			}
 			
@@ -3731,13 +3728,16 @@ private:
 			return;
 		}
 		
-		// Skip structs with "_unknown" in their name - they're incomplete template instantiations
-		// from type alias parsing where template parameters weren't yet known
-		std::string_view struct_name = StringTable::getStringView(node.name());
-		if (struct_name.find("_unknown") != std::string_view::npos) {
-			FLASH_LOG(Codegen, Debug, "Skipping struct '", struct_name, "' with _unknown in name (incomplete instantiation)");
-			return;
+		// Skip structs with incomplete instantiation - they have unresolved template params
+		{
+			auto incomplete_it = gTypesByName.find(node.name());
+			if (incomplete_it != gTypesByName.end() && incomplete_it->second->is_incomplete_instantiation_) {
+				FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()), "' (incomplete instantiation)");
+				return;
+			}
 		}
+
+		std::string_view struct_name = StringTable::getStringView(node.name());
 
 		// Generate member functions for both global and local structs
 		// Save the enclosing function context so member function visits don't clobber it
