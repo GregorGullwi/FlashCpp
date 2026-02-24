@@ -977,6 +977,18 @@
 		return symbol;
 	}
 
+	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
+	TempVar emitAddressOf(Type type, int size_in_bits, IrValue source, Token token = Token()) {
+		TempVar addr_var = var_counter.next();
+		AddressOfOp addr_op;
+		addr_op.result = addr_var;
+		addr_op.operand.type = type;
+		addr_op.operand.size_in_bits = size_in_bits;
+		addr_op.operand.pointer_depth = 0;
+		addr_op.operand.value = source;
+		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
+		return addr_var;
+	}
 
 	Ir ir_;
 	TempVar var_counter{ 0 };

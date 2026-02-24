@@ -1,5 +1,6 @@
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
+		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 
 		const auto& decl_node = functionCallNode.function_declaration();
 		std::string_view func_name_view = decl_node.identifier_token().value();
@@ -846,14 +847,7 @@
 								// For member function calls, first argument is 'this' pointer
 								if (std::holds_alternative<StringHandle>(source_value)) {
 									// It's a variable - take its address
-									TempVar this_ptr = var_counter.next();
-									AddressOfOp addr_op;
-									addr_op.result = this_ptr;
-									addr_op.operand.type = arg_type;
-									addr_op.operand.size_in_bits = arg_size;
-									addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-									addr_op.operand.value = std::get<StringHandle>(source_value);
-									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+									TempVar this_ptr = emitAddressOf(arg_type, arg_size, IrValue(std::get<StringHandle>(source_value)));
 									
 									// Add 'this' as first argument
 									TypedValue this_arg;
@@ -939,16 +933,8 @@
 				if (decl_node.is_array()) {
 					// For arrays, we need to pass the address of the first element
 					// Create a temporary for the address
-					TempVar addr_var = var_counter.next();
-
 					// Generate AddressOf IR instruction to get the address of the array
-					AddressOfOp addr_op;
-					addr_op.result = addr_var;
-					addr_op.operand.type = type_node.type();
-					addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-					addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-					addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+					TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 					// Add the pointer (address) to the function call operands
 					// For now, we use the element type with 64-bit size to indicate it's a pointer
@@ -966,15 +952,7 @@
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
 						// Argument is a value - take its address
-						TempVar addr_var = var_counter.next();
-
-						AddressOfOp addr_op;
-						addr_op.result = addr_var;
-						addr_op.operand.type = type_node.type();
-						addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-						addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+						TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
 						irOperands.emplace_back(type_node.type());
@@ -1044,14 +1022,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 						
 						// Now take the address of the temporary
-						TempVar addr_var = var_counter.next();
-						AddressOfOp addr_op;
-						addr_op.result = addr_var;
-						addr_op.operand.type = literal_type;
-						addr_op.operand.size_in_bits = literal_size;
-						addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-						addr_op.operand.value = temp_var;
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 						
 						// Pass the address
 						irOperands.emplace_back(literal_type);
@@ -1091,16 +1062,7 @@
 								irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
 							} else {
 								// Need to take address of the value
-								TempVar addr_var = var_counter.next();
-								AddressOfOp addr_op;
-								addr_op.result = addr_var;
-								addr_op.operand.type = expr_type;
-								addr_op.operand.size_in_bits = expr_size;
-								// pointer_depth is 0 because we're taking the address of a value (not a pointer)
-								// The TempVar holds a direct value (e.g., constructed object), not a pointer
-								addr_op.operand.pointer_depth = 0;
-								addr_op.operand.value = expr_var;
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 								
 								irOperands.emplace_back(expr_type);
 								irOperands.emplace_back(64);  // Pointer size
@@ -1251,6 +1213,7 @@
 
 	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
 		std::vector<IrOperand> irOperands;
+		irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4);  // ret + name + this + ~4 per arg
 
 		FLASH_LOG(Codegen, Debug, "=== generateMemberFunctionCallIr START ===");
 		
@@ -2433,15 +2396,7 @@
 								});
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = var_counter.next();
-						
-								AddressOfOp addr_op;
-								addr_op.result = addr_var;
-								addr_op.operand.type = type_node.type();
-								addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 						
 								// Pass the address with pointer size
 								call_op.args.push_back(TypedValue{
@@ -2479,15 +2434,7 @@
 								});
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = var_counter.next();
-						
-								AddressOfOp addr_op;
-								addr_op.result = addr_var;
-								addr_op.operand.type = type_node.type();
-								addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 						
 								// Pass the address with pointer size
 								call_op.args.push_back(TypedValue{
@@ -2552,14 +2499,7 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 							
 							// Now take the address of the temporary
-							TempVar addr_var = var_counter.next();
-							AddressOfOp addr_op;
-							addr_op.result = addr_var;
-							addr_op.operand.type = literal_type;
-							addr_op.operand.size_in_bits = literal_size;
-							addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-							addr_op.operand.value = temp_var;
-							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+							TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 							
 							// Pass the address
 							call_op.args.push_back(TypedValue{
@@ -2575,14 +2515,7 @@
 								int expr_size = std::get<int>(argumentIrOperands[1]);
 								TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
 								
-								TempVar addr_var = var_counter.next();
-								AddressOfOp addr_op;
-								addr_op.result = addr_var;
-								addr_op.operand.type = expr_type;
-								addr_op.operand.size_in_bits = expr_size;
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = expr_var;
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 								
 								call_op.args.push_back(TypedValue{
 									.type = expr_type,

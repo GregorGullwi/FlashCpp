@@ -5542,14 +5542,7 @@
 			// We just need to assign the address of the va_list structure to the user's va_list variable.
 			
 			// Get address of the va_list structure
-			TempVar va_list_struct_addr = var_counter.next();
-			AddressOfOp struct_addr_op;
-			struct_addr_op.result = va_list_struct_addr;
-			struct_addr_op.operand.type = Type::Char;
-			struct_addr_op.operand.size_in_bits = 8;
-			struct_addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-			struct_addr_op.operand.value = StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv);
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(struct_addr_op), functionCallNode.called_from()));
+			TempVar va_list_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 			
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 			// Get the va_list variable from arg0_ir[2]
@@ -5599,14 +5592,7 @@
 				// This enables proper overflow support when >5 variadic int args are passed
 				
 				// Get address of va_list structure
-				TempVar va_struct_addr = var_counter.next();
-				AddressOfOp va_struct_op;
-				va_struct_op.result = va_struct_addr;
-				va_struct_op.operand.type = Type::Char;
-				va_struct_op.operand.size_in_bits = 8;
-				va_struct_op.operand.pointer_depth = 0;
-				va_struct_op.operand.value = StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv);
-				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(va_struct_op), functionCallNode.called_from()));
+				TempVar va_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 				
 				// Assign to va_list variable
 				AssignmentOp assign_op;
