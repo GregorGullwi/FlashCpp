@@ -733,7 +733,7 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Check if the target type is a template instantiation with unresolved parameters
 		// This happens when parsing things like: template<bool B> using bool_constant = integral_constant<bool, B>
-		// The integral_constant<bool, B> gets instantiated with "$unresolved" in the name
+		// The integral_constant<bool, B> gets instantiated with "?" placeholder in the name
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
@@ -9809,7 +9809,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0);	// Placeholder size
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
-			// instead of staying as UserDefined, which would cause toString() to return "$unresolved"
+			// instead of staying as UserDefined, which would cause toString() to return "?"
 			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
 				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
