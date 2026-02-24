@@ -1824,15 +1824,28 @@ public:
 		deduction_guides_.clear();
 		instantiation_to_pattern_.clear();
 		class_template_names_.clear();
+		pattern_struct_names_.clear();
 		outer_template_bindings_.clear();
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
 	std::unordered_map<StringHandle, std::vector<TemplatePattern>, TransparentStringHash, TransparentStringEqual> specialization_patterns_;
 	
+	// Register a pattern struct name (for partial specializations)
+	void registerPatternStructName(StringHandle pattern_name) {
+		pattern_struct_names_.insert(pattern_name);
+	}
+
+	// Returns true if 'name' was registered as a pattern struct name
+	// (partial specialization pattern like "Container_pattern_TP")
+	bool isPatternStructName(StringHandle name) const {
+		return pattern_struct_names_.count(name) > 0;
+	}
+
 	// Register mapping from instantiated name to pattern name (for partial specializations)
 	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name) {
 		instantiation_to_pattern_[instantiated_name] = pattern_name;
+		pattern_struct_names_.insert(pattern_name);
 	}
 	
 	// Look up which pattern was used for an instantiation
@@ -1907,6 +1920,10 @@ private:
 	// Used by isClassTemplate() for O(1) exact-name lookup, avoiding substring searches
 	// and false positives from unqualified-name fallbacks in lookupTemplate().
 	std::unordered_set<StringHandle, StringHandleHash> class_template_names_;
+
+	// Set of StringHandles that are pattern struct names (partial specialization patterns).
+	// Used by isPatternStructName() for O(1) lookup, replacing find("_pattern_") substring searches.
+	std::unordered_set<StringHandle, StringHandleHash> pattern_struct_names_;
 };
 
 // Global template registry

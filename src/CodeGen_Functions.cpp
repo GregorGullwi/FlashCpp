@@ -459,8 +459,8 @@
 				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
 				if (!struct_info) continue;
 				// Skip pattern structs (templates) - they shouldn't be used for code generation
+				if (gTemplateRegistry.isPatternStructName(name_handle)) continue;
 				std::string_view struct_type_name = StringTable::getStringView(name_handle);
-				if (struct_type_name.find("_pattern_") != std::string_view::npos) continue;
 				if (struct_type_name.find("_unknown") != std::string_view::npos) continue;
 				// Skip template patterns — if the struct was registered as a class template,
 				// it is an uninstantiated pattern and must not be used for codegen.
@@ -482,7 +482,7 @@
 							// Use the struct type name for mangling (not parent_struct_name which
 							// may reference a template pattern)
 							std::string_view parent_for_mangling = func_decl.parent_struct_name();
-							if (parent_for_mangling.find("_pattern_") != std::string_view::npos) {
+							if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(parent_for_mangling))) {
 								parent_for_mangling = struct_type_name;
 							}
 							if (func_decl.has_mangled_name()) {

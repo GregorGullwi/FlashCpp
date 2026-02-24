@@ -2519,6 +2519,9 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			auto instantiated_name = StringTable::getOrInternStringHandle(pattern_name_builder);
 			
+			// Register this as a pattern struct name for O(1) lookup
+			gTemplateRegistry.registerPatternStructName(instantiated_name);
+			
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
 				instantiated_name,
