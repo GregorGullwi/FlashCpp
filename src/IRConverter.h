@@ -60,6 +60,27 @@ struct OpCodeWithSize {
 	size_t size_in_bytes = 0;
 };
 
+/// Calculate the ModR/M mod field for RBP-relative addressing.
+/// RBP always needs at least a disp8 (even for offset 0), so mod=0x00 is never used.
+inline uint8_t calcModField(int32_t offset) {
+	return (offset >= -128 && offset <= 127) ? 0x01 : 0x02;
+}
+
+/// Encode displacement bytes into the instruction buffer.
+/// For disp8 (mod=0x01): 1 byte. For disp32 (mod=0x02): 4 bytes little-endian.
+inline void encodeDisplacement(uint8_t*& ptr, size_t& size, int32_t offset, uint8_t mod_field) {
+	if (mod_field == 0x01) {
+		*ptr++ = static_cast<uint8_t>(offset);
+		size++;
+	} else {
+		*ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		size += 4;
+	}
+}
+
 /**
  * @brief Converts an XMM register enum value to its 0-based encoding for ModR/M bytes.
  * 
@@ -201,16 +222,7 @@ OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, int32_t 
 	uint8_t modrm_byte;
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
-	}
-	else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement)
-	}
-	else {
-		mod_field = 0x02; // Mod = 10b (32-bit displacement)
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
@@ -218,19 +230,7 @@ OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, int32_t 
 	result.size_in_bytes++;
 
 	// --- Displacement ---
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		// 8-bit signed displacement (even for offset 0 with RBP)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	}
-	else {
-		// 32-bit signed displacement (little-endian format)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -268,33 +268,14 @@ OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, int32_t o
 	// ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP always needs displacement
-	}
-	else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	}
-	else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	}
-	else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -315,21 +296,12 @@ OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t off
 	result.size_in_bytes++;
 
 	uint8_t reg_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field = (offset >= -128 && offset <= 127) ? 0x01 : 0x02;
+	uint8_t mod_field = calcModField(offset);
 	uint8_t modrm = static_cast<uint8_t>((mod_field << 6) | (reg_bits << 3) | 0x05); // Base = RBP
 	*current_byte_ptr++ = modrm;
 	result.size_in_bytes++;
 
-	if (mod_field == 0x01) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -362,30 +334,14 @@ OpCodeWithSize generateMovzxFromFrame16(X64Register destinationRegister, int32_t
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -418,30 +374,14 @@ OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, int32_t 
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -476,30 +416,14 @@ OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegister, int
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -534,30 +458,14 @@ OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegister, in
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -591,30 +499,14 @@ OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, i
 
 	// ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1021,24 +913,12 @@ OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_
 	result.size_in_bytes += 2;
 
 	// ModR/M byte - use only low 3 bits of xmm register
-	if (offset >= -128 && offset <= 127) {
-		// 8-bit displacement
-		uint8_t modrm = 0x45 | ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
-		*current_byte_ptr++ = modrm;
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes += 2;
-	} else {
-		// 32-bit displacement
-		uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
-		*current_byte_ptr++ = modrm;
-		result.size_in_bytes++;
-		
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	uint8_t mod_field = calcModField(offset);
+	uint8_t modrm = (mod_field << 6) | ((xmm_reg & 0x07) << 3) | 0x05; // Reg=XMM, R/M=101 (RBP)
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
+
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1077,24 +957,12 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
 	result.size_in_bytes += 2;
 
 	// ModR/M byte - use only low 3 bits of xmm register
-	if (offset >= -128 && offset <= 127) {
-		// 8-bit displacement
-		uint8_t modrm = 0x45 | ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
-		*current_byte_ptr++ = modrm;
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes += 2;
-	} else {
-		// 32-bit displacement
-		uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
-		*current_byte_ptr++ = modrm;
-		result.size_in_bytes++;
+	uint8_t mod_field = calcModField(offset);
+	uint8_t modrm = (mod_field << 6) | ((xmm_reg & 0x07) << 3) | 0x05; // Reg=XMM, R/M=101 (RBP)
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
 
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1187,14 +1055,7 @@ OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset)
 	uint8_t modrm_byte;
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement)
-	} else {
-		mod_field = 0x02; // Mod = 10b (32-bit displacement)
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
@@ -1202,18 +1063,7 @@ OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset)
 	result.size_in_bytes++;
 
 	// --- Displacement ---
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		// 8-bit signed displacement (even for offset 0 with RBP)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		// 32-bit signed displacement (little-endian format)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1256,14 +1106,7 @@ OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) 
 	// --- ModR/M byte (Mod | Reg | R/M) ---
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // Mod = 01b (8-bit displacement)
-	} else {
-		mod_field = 0x02; // Mod = 10b (32-bit displacement)
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
@@ -1271,18 +1114,7 @@ OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) 
 	result.size_in_bytes++;
 
 	// --- Displacement ---
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		// 8-bit signed displacement (even for offset 0 with RBP)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		// 32-bit signed displacement (little-endian format)
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1321,30 +1153,14 @@ OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t offset) {
 
 	// ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
@@ -1383,30 +1199,14 @@ OpCodeWithSize generateMovToFrame16(X64Register sourceRegister, int32_t offset) 
 
 	// ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
-	uint8_t mod_field;
-	if (offset == 0) {
-		mod_field = 0x01; // RBP needs displacement even for 0
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
+	uint8_t mod_field = calcModField(offset);
 
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
 	// Displacement
-	if (offset == 0 || (offset >= -128 && offset <= 127)) {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes++;
-	} else {
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
 }
