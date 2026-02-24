@@ -11675,8 +11675,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		normalized_template_name = template_name.substr(last_colon + 2);
 	}
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
-	auto inst_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args);
-	auto cached = gTemplateRegistry.getInstantiation(inst_key);
+	auto cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args);
+	auto cached = gTemplateRegistry.getInstantiation(cache_key);
 	if (cached.has_value()) {
 		FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
 		return std::nullopt;  // Already instantiated - return nullopt to indicate success
@@ -13307,7 +13307,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 		
 		// Register in cache for O(1) lookup on future instantiations
-		gTemplateRegistry.registerInstantiation(inst_key, instantiated_struct);
+		gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
 		
 		return instantiated_struct;  // Return the struct node for code generation
 		}
@@ -17256,7 +17256,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 	
 	// Register in cache for O(1) lookup on future instantiations
-	gTemplateRegistry.registerInstantiation(inst_key, instantiated_struct);
+	gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
 	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
