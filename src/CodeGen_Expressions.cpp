@@ -3769,7 +3769,7 @@
 					// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
 					// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 					bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-					int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+					int struct_return_threshold = getStructReturnThreshold(context_->isLLP64());
 					bool needs_hidden_return_param = returns_struct_by_value && (actual_return_size > struct_return_threshold);
 					
 					if (needs_hidden_return_param) {
@@ -3973,7 +3973,7 @@
 							// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
 							// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 							bool returns_struct_by_value = (return_type == Type::Struct && return_type_node.pointer_depth() == 0 && !return_type_node.is_reference());
-							int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+							int struct_return_threshold = getStructReturnThreshold(context_->isLLP64());
 							bool needs_hidden_return_param = returns_struct_by_value && (return_size > struct_return_threshold);
 							
 							FLASH_LOG_FORMAT(Codegen, Debug,
@@ -4809,9 +4809,6 @@
 		
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
-	
-	// Helper constant for pointer size detection
-	static constexpr int POINTER_SIZE_BITS = 64;
 	
 	// Helper function to detect if a va_list argument is a simple pointer type
 	// (e.g., typedef char* va_list;) vs the proper System V AMD64 va_list structure

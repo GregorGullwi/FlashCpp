@@ -3036,7 +3036,7 @@ private:
 		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
 		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 		bool returns_struct_by_value = (ret_type.type() == Type::Struct && ret_type.pointer_depth() == 0 && !ret_type.is_reference());
-		int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+		int struct_return_threshold = getStructReturnThreshold(context_->isLLP64());
 		bool needs_hidden_return_param = returns_struct_by_value && (actual_return_size > struct_return_threshold);
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
