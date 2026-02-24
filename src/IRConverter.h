@@ -2902,6 +2902,14 @@ public:
 		// High-level timing (always enabled when show_timing=true)
 		auto convert_start = std::chrono::high_resolution_clock::now();
 
+		// Pre-allocate text section buffer based on IR instruction count.
+		// Empirical worst case: ~33 bytes of machine code per IR instruction
+		// (variadic functions with complex calling conventions).
+		// Use 36 bytes/instr to guarantee no reallocations during codegen.
+		const size_t ir_count = ir.getInstructions().size();
+		constexpr size_t BYTES_PER_IR_INSTRUCTION = 36;
+		textSectionData.reserve(ir_count * BYTES_PER_IR_INSTRUCTION);
+
 		// Group instructions by function for stack space calculation
 		{
 			ProfilingTimer timer("Group instructions by function", show_timing);
@@ -3391,6 +3399,15 @@ public:
 		if (show_timing) {
 			auto ir_duration = std::chrono::duration_cast<std::chrono::microseconds>(ir_processing_end - ir_processing_start);
 			printf("    IR instruction processing: %8.3f ms\n", ir_duration.count() / 1000.0);
+			printf("    Text section: %zu bytes generated, %zu reserved (%.1f%% utilization, %zu IR instructions, %.1f bytes/instr)\n",
+				textSectionData.size(), textSectionData.capacity(),
+				textSectionData.capacity() > 0 ? (100.0 * textSectionData.size() / textSectionData.capacity()) : 0.0,
+				ir_count,
+				ir_count > 0 ? (double)textSectionData.size() / ir_count : 0.0);
+			if (textSectionData.size() > ir_count * BYTES_PER_IR_INSTRUCTION) {
+				printf("    WARNING: textSectionData exceeded reserve! Consider increasing BYTES_PER_IR_INSTRUCTION (currently %zu)\n",
+					BYTES_PER_IR_INSTRUCTION);
+			}
 		}
 
 		#if ENABLE_DETAILED_PROFILING
