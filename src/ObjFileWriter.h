@@ -1074,11 +1074,15 @@ public:
 		std::vector<uint8_t> unwind_codes;
 		uint8_t prolog_size;
 		uint8_t frame_reg_and_offset;
+		// When FrameOffset is capped at 15, the unwinder computes EstablisherFrame = RBP - FrameOffset*16,
+		// which differs from RBP - stack_frame_size. All EH displacements must use this capped value.
+		uint32_t effective_frame_size = stack_frame_size;
 
 		if (is_cpp) {
 			// C++ EH prologue: push rbp(1) + sub rsp(7) + lea rbp(8) = 16
 			prolog_size = 16;
 			uint8_t frame_offset = static_cast<uint8_t>(std::min(stack_frame_size / 16, uint32_t(15)));
+			effective_frame_size = static_cast<uint32_t>(frame_offset) * 16;
 			frame_reg_and_offset = static_cast<uint8_t>((frame_offset << 4) | 0x05); // RBP=5
 
 			// UWOP_SET_FPREG at offset 16 (after lea rbp, [rsp+N])
@@ -1420,12 +1424,12 @@ public:
 			xdata.push_back(0x00);
 
 			// dispUnwindHelp - displacement from establisher frame to the state variable.
-			// With clang-style EH prologue: establisher = RBP - FrameOffset*16 = RSP_after_prologue.
-			// State variable at [rbp-8]. RBP = S-8, establisher = S-8-N.
-			// So dispUnwindHelp = (S-16) - (S-8-N) = N - 8 = stack_frame_size - 8.
+			// EstablisherFrame = RBP - FrameOffset*16 (= RBP - effective_frame_size).
+			// State variable at [rbp-8].
+			// So dispUnwindHelp = (rbp-8) - (RBP - effective_frame_size) = effective_frame_size - 8.
 			// Only present when magic >= 0x19930521.
 			if (use_disp_unwind_help) {
-				int32_t disp_unwind_help = static_cast<int32_t>(stack_frame_size) - 8;
+				int32_t disp_unwind_help = static_cast<int32_t>(effective_frame_size) - 8;
 				xdata.push_back(static_cast<char>(disp_unwind_help & 0xFF));
 				xdata.push_back(static_cast<char>((disp_unwind_help >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((disp_unwind_help >> 16) & 0xFF));
@@ -1696,13 +1700,13 @@ public:
 					
 					// catchObjOffset (dispCatchObj).
 					// The CRT copies the exception object to [EstablisherFrame + dispCatchObj].
-					// With FrameOffset=N/16, EstablisherFrame = RBP - N (= RSP after prologue).
+					// EstablisherFrame = RBP - effective_frame_size.
 					// The catch variable is at [rbp + catch_obj_offset] (catch_obj_offset is negative).
-					// So: (RBP - N) + dispCatchObj = RBP + catch_obj_offset
-					//     dispCatchObj = catch_obj_offset + N = catch_obj_offset + stack_frame_size
+					// So: (RBP - effective_frame_size) + dispCatchObj = RBP + catch_obj_offset
+					//     dispCatchObj = catch_obj_offset + effective_frame_size
 					int32_t catch_offset = handler.catch_obj_offset;
 					if (is_cpp && catch_offset != 0) {
-						catch_offset += static_cast<int32_t>(stack_frame_size);
+						catch_offset += static_cast<int32_t>(effective_frame_size);
 					}
 					xdata.push_back(static_cast<char>(catch_offset & 0xFF));
 					xdata.push_back(static_cast<char>((catch_offset >> 8) & 0xFF));
@@ -1724,10 +1728,12 @@ public:
 					// frame pointer. On x64 FH3 (magic >= 0x19930522), HandlerType has 5 fields
 					// (20 bytes). The CRT computes frame_ptr = EstablisherFrame + dispFrame and
 					// passes it as RDX to the catch funclet.
-					// With FrameOffset=N/16: EstablisherFrame = RBP - N.
-					// The funclet does: lea rbp, [rdx + N], so rbp = (RBP-N) + dispFrame + N.
-					// For rbp to equal parent's RBP, dispFrame must be 0.
-					int32_t disp_frame = 0;
+					// EstablisherFrame = RBP - effective_frame_size.
+					// The funclet does: lea rbp, [rdx + stack_frame_size].
+					// rbp = (RBP - effective_frame_size) + dispFrame + stack_frame_size.
+					// For rbp to equal parent's RBP: dispFrame = effective_frame_size - stack_frame_size.
+					// When not capped this is 0; when capped it's negative.
+					int32_t disp_frame = static_cast<int32_t>(effective_frame_size) - static_cast<int32_t>(stack_frame_size);
 					xdata.push_back(static_cast<char>(disp_frame & 0xFF));
 					xdata.push_back(static_cast<char>((disp_frame >> 8) & 0xFF));
 					xdata.push_back(static_cast<char>((disp_frame >> 16) & 0xFF));
