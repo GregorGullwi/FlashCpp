@@ -2964,6 +2964,65 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		if (peek().is_punctuator() && peek() == "::"_tok) {
 			// Handle namespace::member or class::static_member syntax
 			// We have an identifier (in result), now parse :: and the member name
+			
+			// Special case: obj.Base::member() - qualified member access through base class
+			// When result is a MemberAccessNode, the :: is qualifying the member, not
+			// the expression. Rewrite as member access with the final qualified name.
+			if (result->is<ExpressionNode>()) {
+				const ExpressionNode& expr = result->as<ExpressionNode>();
+				if (std::holds_alternative<MemberAccessNode>(expr)) {
+					const auto& member_access = std::get<MemberAccessNode>(expr);
+					ASTNode object = member_access.object();
+					bool is_arrow = member_access.is_arrow();
+					
+					advance(); // consume '::'
+					
+					// Skip 'template' keyword if present (dependent context disambiguator)
+					if (peek() == "template"_tok) advance();
+					
+					// Consume all remaining qualified parts: Base::Inner::member
+					while (peek().is_identifier()) {
+						Token qualified_member_token = peek_info();
+						advance();
+						
+						if (peek() == "::"_tok) {
+							advance(); // consume '::'
+							if (peek() == "template"_tok) advance();
+							continue; // keep consuming qualified parts
+						}
+						
+						// This is the final member name
+						// Check if it's a member function call
+						if (peek() == "("_tok) {
+							advance(); // consume '('
+							auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+								.handle_pack_expansion = true,
+								.collect_types = true,
+								.expand_simple_packs = false
+							});
+							if (!args_result.success) {
+								return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+							}
+							ChunkedVector<ASTNode> args = std::move(args_result.args);
+							if (!consume(")"_tok)) {
+								return ParseResult::error("Expected ')' after qualified member function call", current_token_);
+							}
+							auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, qualified_member_token);
+							auto& member_decl = emplace_node<DeclarationNode>(type_spec, qualified_member_token).as<DeclarationNode>();
+							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+							result = emplace_node<ExpressionNode>(
+								MemberFunctionCallNode(object, func_decl_node, std::move(args), qualified_member_token));
+						} else {
+							// Simple qualified member access
+							result = emplace_node<ExpressionNode>(
+								MemberAccessNode(object, qualified_member_token, is_arrow));
+						}
+						break;
+					}
+					continue;
+				}
+			}
+
 			advance(); // consume '::'
 			
 			// Expect an identifier after ::

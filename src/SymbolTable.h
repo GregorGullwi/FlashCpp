@@ -948,15 +948,17 @@ private:
 
 		// Try resolving relative to the current namespace first (C++ unqualified lookup).
 		// E.g., inside namespace outer, "inner::type" should resolve to "outer::inner::type".
+		// Walk up the namespace hierarchy: in std::__cxx11, try std::__cxx11::inner, then std::inner.
 		// Skip this for explicitly global-qualified names (::ns::identifier).
 		if (!force_global) {
 			NamespaceHandle current_ns = get_current_namespace_handle();
-			if (!current_ns.isGlobal()) {
-				StringHandle first_handle = StringTable::getOrInternStringHandle(first_component);
+			StringHandle first_handle = StringTable::getOrInternStringHandle(first_component);
+			while (!current_ns.isGlobal()) {
 				NamespaceHandle child = gNamespaceRegistry.lookupNamespace(current_ns, first_handle);
 				if (child.isValid()) {
 					return append_namespace_components(child, namespaces, 1);
 				}
+				current_ns = gNamespaceRegistry.getParent(current_ns);
 			}
 		}
 
