@@ -52,22 +52,13 @@
 									
 									// Get type info from the identifier
 									StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
-									std::optional<ASTNode> symbol = lookupSymbol(id_handle);
-									
 									Type operand_type = Type::Int;  // Default
 									int operand_size = 32;
-									if (symbol.has_value()) {
-										if (symbol->is<DeclarationNode>()) {
-											const TypeSpecifierNode& type = symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-											operand_type = type.type();
-											operand_size = static_cast<int>(type.size_in_bits());
-											if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
-										} else if (symbol->is<VariableDeclarationNode>()) {
-											const TypeSpecifierNode& type = symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-											operand_type = type.type();
-											operand_size = static_cast<int>(type.size_in_bits());
-											if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
-										}
+									if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
+										const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
+										operand_type = type.type();
+										operand_size = static_cast<int>(type.size_in_bits());
+										if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
 									}
 									
 									op.operand.type = operand_type;
@@ -636,26 +627,18 @@
 			if (param_is_ref_like &&
 			    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
-				if (symbol.has_value()) {
-					const DeclarationNode* decl_ptr = nullptr;
-					if (symbol->is<DeclarationNode>()) {
-						decl_ptr = &symbol->as<DeclarationNode>();
-					} else if (symbol->is<VariableDeclarationNode>()) {
-						decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-					}
-					if (decl_ptr) {
-						const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-							// Argument is a reference variable being passed to a reference parameter
-							// Pass the identifier name directly - the IRConverter will use MOV to
-							// load the address stored in the reference variable
-							irOperands.emplace_back(type_node.type());
-							irOperands.emplace_back(64);  // References are stored as 64-bit pointers
-							irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
-							arg_index++;
-							return;  // Skip the rest of the processing
-						}
+				const DeclarationNode* decl_ptr = lookupDeclaration(identifier.name());
+				if (decl_ptr) {
+					const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+						// Argument is a reference variable being passed to a reference parameter
+						// Pass the identifier name directly - the IRConverter will use MOV to
+						// load the address stored in the reference variable
+						irOperands.emplace_back(type_node.type());
+						irOperands.emplace_back(64);  // References are stored as 64-bit pointers
+						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
+						arg_index++;
+						return;  // Skip the rest of the processing
 					}
 				}
 			}
@@ -848,19 +831,7 @@
 			// For identifiers that returned local variable references (string_view), handle specially
 			if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
-				if (!symbol.has_value()) {
-					FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");
-					FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
-					throw std::runtime_error("Missing symbol for function argument");
-				}
-
-				const DeclarationNode* decl_ptr = nullptr;
-				if (symbol->is<DeclarationNode>()) {
-					decl_ptr = &symbol->as<DeclarationNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-				}
+				const DeclarationNode* decl_ptr = lookupDeclaration(identifier.name());
 
 				if (!decl_ptr) {
 					FLASH_LOG(Codegen, Error, "Function argument '", identifier.name(), "' is not a DeclarationNode");
@@ -2648,14 +2619,7 @@
 			result.base_array_name = base_ident.name();
 			
 			// Look up the declaration
-			std::optional<ASTNode> symbol = lookupSymbol(result.base_array_name);
-			if (symbol.has_value()) {
-				if (symbol->is<DeclarationNode>()) {
-					result.base_decl = &symbol->as<DeclarationNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					result.base_decl = &symbol->as<VariableDeclarationNode>().declaration();
-				}
-			}
+			result.base_decl = lookupDeclaration(result.base_array_name);
 			
 			// Reverse the indices so they're in order from outermost to innermost
 			// For arr[i][j], we collected [j, i], now reverse to [i, j]
@@ -3049,15 +3013,7 @@
 		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
 			const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
-			std::optional<ASTNode> symbol = lookupSymbol(arr_ident.name());
-			if (symbol.has_value()) {
-				const DeclarationNode* decl_ptr = nullptr;
-				if (symbol->is<DeclarationNode>()) {
-					decl_ptr = &symbol->as<DeclarationNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-				}
-				
+			const DeclarationNode* decl_ptr = lookupDeclaration(arr_ident.name());
 				if (decl_ptr) {
 					const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
 					
@@ -3110,7 +3066,6 @@
 						is_pointer_to_array = true;  // This is a pointer or reference, not an actual array
 					}
 				}
-			}
 		}
 		
 		// Fix element size for array members accessed through TempVar (e.g., vls.values[i])
@@ -3448,15 +3403,10 @@
 		if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident->name());
 			
-			std::optional<ASTNode> symbol = lookupSymbol(identifier_handle);
-			
-			if (symbol.has_value()) {
-				const TypeSpecifierNode* type_node = nullptr;
-				if (symbol->is<DeclarationNode>()) {
-					type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-				}
+			const TypeSpecifierNode* type_node = nullptr;
+			if (const DeclarationNode* decl = lookupDeclaration(identifier_handle)) {
+				type_node = &decl->type_node().as<TypeSpecifierNode>();
+			}
 				
 				// Check if it's a struct with operator-> overload
 				if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
@@ -3524,7 +3474,6 @@
 						}
 					}
 				}
-			}
 		}
 
 		// Resolve the base object — single dispatch chain regardless of ExpressionNode wrapping
@@ -3963,23 +3912,19 @@
 				std::string_view identifier = type_spec.token().value();
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = lookupSymbol(identifier);
-				
-				if (symbol.has_value()) {
-					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-					if (decl) {
-						auto array_size = calculateArraySize(*decl);
-						if (array_size.has_value()) {
-							// Return sizeof result for array
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
-						}
+				const DeclarationNode* decl = lookupDeclaration(identifier);
+				if (decl) {
+					auto array_size = calculateArraySize(*decl);
+					if (array_size.has_value()) {
+						// Return sizeof result for array
+						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
 					}
 				}
 				
 				// Handle template parameters in member functions with trailing requires clauses
 				// When sizeof(T) is used in a template class member function, T is a template parameter
 				// that should be resolved from the instantiated class's template arguments
-				if (!symbol.has_value() && current_struct_name_.isValid()) {
+				if (!decl && current_struct_name_.isValid()) {
 					// We're in a member function - try to resolve the template parameter
 					std::string_view struct_name = StringTable::getStringView(current_struct_name_);
 					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
@@ -4042,11 +3987,8 @@
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 				
 				// Look up the identifier in the symbol table
-				std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
-				
-				if (symbol.has_value()) {
-					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-					if (decl) {
+				const DeclarationNode* decl = lookupDeclaration(id_node.name());
+				if (decl) {
 						// Check if it's an array
 						auto array_size = calculateArraySize(*decl);
 						if (array_size.has_value()) {
@@ -4083,7 +4025,6 @@
 							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 						}
 					}
-				}
 			}
 			// Special handling for member access: sizeof(s.member) where member is an array
 			else if (std::holds_alternative<MemberAccessNode>(expr)) {
@@ -4100,11 +4041,8 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(member_access): object_name=", id_node.name());
 						
 						// Look up the identifier to get its type
-						std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
-						
-						if (symbol.has_value()) {
-							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-							if (decl) {
+						const DeclarationNode* decl = lookupDeclaration(id_node.name());
+						if (decl) {
 								const TypeSpecifierNode& obj_type = decl->type_node().as<TypeSpecifierNode>();
 								FLASH_LOG(Codegen, Debug, "sizeof(member_access): obj_type=", (int)obj_type.type(), " type_index=", obj_type.type_index());
 								if (obj_type.type() == Type::Struct) {
@@ -4167,7 +4105,6 @@
 									}
 								}
 							}
-						}
 					}
 				}
 			}
@@ -4184,11 +4121,8 @@
 						const IdentifierNode& id_node = std::get<IdentifierNode>(array_expr);
 						
 						// Look up the array identifier in the symbol table
-						std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
-						
-						if (symbol.has_value()) {
-							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-							if (decl) {
+						const DeclarationNode* decl = lookupDeclaration(id_node.name());
+						if (decl) {
 								const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
 								
 								// Get the base element type size
@@ -4250,7 +4184,6 @@
 								// Return the size without generating runtime IR
 								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 							}
-						}
 						
 						fallback_to_ir:
 						
