@@ -149,18 +149,10 @@ static std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::str
 		}
 	}
 	
-	// Fallback: check for hash-based naming (template$hash pattern)
+	// Fallback: check via extractBaseTemplateName (TypeInfo metadata)
 	std::string_view base_name = extractBaseTemplateName(type_name);
 	if (!base_name.empty()) {
 		return {true, base_name};
-	}
-	
-	// Fallback: check for old-style _void suffix
-	if (type_name.ends_with("_void")) {
-		size_t underscore_pos = type_name.find('_');
-		if (underscore_pos != std::string_view::npos) {
-			return {true, type_name.substr(0, underscore_pos)};
-		}
 	}
 	
 	return {false, {}};

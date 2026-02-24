@@ -11264,25 +11264,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						
 						FLASH_LOG(Templates, Debug, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
 						
-						// The struct name might be a mangled template instantiation
-						// Old format: "is_pointer_impl_T" (underscore-based)
-						// New format: "is_pointer_impl$47b270a920ee3ffb" (hash-based)
-						// We need to extract the template name by removing the suffix
+						// The struct name might be a mangled template instantiation (hash-based)
+						// Extract the base template name from metadata
 						std::string_view template_name_to_lookup = struct_name_view;
 						std::string_view base_name = extractBaseTemplateName(struct_name_view);
 						if (!base_name.empty()) {
 							template_name_to_lookup = base_name;
 							FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
-						} else {
-							// Fallback: underscore-based naming
-							size_t separator_pos = struct_name_view.rfind('_');
-							if (separator_pos != std::string_view::npos) {
-								std::string_view suffix = struct_name_view.substr(separator_pos + 1);
-								if (suffix.length() == 1 || suffix == "typename") {
-									template_name_to_lookup = struct_name_view.substr(0, separator_pos);
-									FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
-								}
-							}
 						}
 						
 						// Try to instantiate the struct/class referenced in the qualified identifier
@@ -11663,6 +11651,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& arg : template_args) {
 		if (arg.is_dependent) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Skipping instantiation of {} - template arguments are dependent", template_name);
+			
+			// Register a placeholder TypeInfo for the dependent instantiated name
+			// so that extractBaseTemplateName() can identify it via TypeInfo metadata
+			// without needing string parsing (find('$')).
+			std::string_view inst_name = get_instantiated_class_name(template_name, template_args);
+			StringHandle inst_handle = StringTable::getOrInternStringHandle(inst_name);
+			if (gTypesByName.find(inst_handle) == gTypesByName.end()) {
+				auto& type_info = gTypeInfo.emplace_back();
+				type_info.type_ = Type::UserDefined;
+				type_info.type_index_ = gTypeInfo.size() - 1;
+				type_info.type_size_ = 0;
+				type_info.name_ = inst_handle;
+				auto template_args_info = convertToTemplateArgInfo(template_args);
+				type_info.setTemplateInstantiationInfo(
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+					template_args_info);
+				gTypesByName[inst_handle] = &type_info;
+				FLASH_LOG_FORMAT(Templates, Debug, "Registered dependent placeholder '{}' with base template '{}'", inst_name, template_name);
+			}
+			
 			// Return success (nullopt) but don't actually instantiate
 			// The type will be resolved during actual template instantiation
 			return std::nullopt;

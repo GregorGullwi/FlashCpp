@@ -1909,23 +1909,15 @@ extern TemplateRegistry gTemplateRegistry;
 /**
  * Extract the base template name from an instantiated name.
  *
- * 1. First checks gTypesByName for the name — if the TypeInfo has
- *    isTemplateInstantiation() metadata, returns baseTemplateName() directly.
- * 2. Falls back to splitting on '$' (the hash separator).
- * 3. Returns empty string_view if the name is not a template instantiation.
+ * Checks gTypesByName for the name — if the TypeInfo has
+ * isTemplateInstantiation() metadata, returns baseTemplateName() directly.
+ * Returns empty string_view if the name is not a template instantiation.
  */
 inline std::string_view extractBaseTemplateName(std::string_view name) {
-	// Try TypeInfo metadata first (O(1) via hash lookup)
 	auto name_handle = StringTable::getOrInternStringHandle(name);
 	auto type_it = gTypesByName.find(name_handle);
 	if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
 		return StringTable::getStringView(type_it->second->baseTemplateName());
-	}
-	// Centralized fallback: split on '$' separator in the template$hash naming convention.
-	// This is the ONLY find('$') in the codebase — all 12 former call sites delegate here.
-	size_t dollar_pos = name.find('$');
-	if (dollar_pos != std::string_view::npos) {
-		return name.substr(0, dollar_pos);
 	}
 	return {};
 }
