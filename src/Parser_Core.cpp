@@ -150,9 +150,9 @@ static std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::str
 	}
 	
 	// Fallback: check for hash-based naming (template$hash pattern)
-	size_t dollar_pos = type_name.find('$');
-	if (dollar_pos != std::string_view::npos) {
-		return {true, type_name.substr(0, dollar_pos)};
+	std::string_view base_name = extractBaseTemplateName(type_name);
+	if (!base_name.empty()) {
+		return {true, base_name};
 	}
 	
 	// Fallback: check for old-style _void suffix

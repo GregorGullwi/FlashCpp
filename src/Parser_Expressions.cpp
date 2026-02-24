@@ -10869,9 +10869,8 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		// try to find the correct instantiation by looking up gTypesByName for a matching
 		// template instantiation with the same base template name.
 		if (!instantiated_func.has_value()) {
-			size_t dollar_pos = instantiated_class_name.find('$');
-			if (dollar_pos != std::string_view::npos) {
-				std::string_view base_tmpl = instantiated_class_name.substr(0, dollar_pos);
+			std::string_view base_tmpl = extractBaseTemplateName(instantiated_class_name);
+			if (!base_tmpl.empty()) {
 				// Search all types to find a matching template instantiation
 				for (const auto& [name_handle, type_info_ptr] : gTypesByName) {
 					if (type_info_ptr->isTemplateInstantiation() &&
@@ -11436,12 +11435,11 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				auto sep_pos = type_name.find("::");
 				std::string_view base_part_sv = type_name.substr(0, sep_pos);
 				std::string_view member_part = type_name.substr(sep_pos + 2);
-				// '$' in the base part indicates a hash-based mangled template name
+				// Hash-based mangled template name in base part
 				// (e.g., "Wrapper$a1b2c3d4" for dependent Wrapper<T>)
-				auto dollar_pos = base_part_sv.find('$');
+				std::string_view base_template_name = extractBaseTemplateName(base_part_sv);
 				
-				if (dollar_pos != std::string_view::npos) {
-					std::string_view base_template_name = base_part_sv.substr(0, dollar_pos);
+				if (!base_template_name.empty()) {
 					
 					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {

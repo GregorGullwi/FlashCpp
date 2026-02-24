@@ -1522,11 +1522,8 @@ private:
 			if (name_a == name_b) return true;
 			// Strip '$hash' suffix only
 			auto stripHash = [](std::string_view name) -> std::string_view {
-				auto dollar_pos = name.find('$');
-				if (dollar_pos != std::string_view::npos) {
-					name = name.substr(0, dollar_pos);
-				}
-				return name;
+				std::string_view base = extractBaseTemplateName(name);
+				return base.empty() ? name : base;
 			};
 			std::string_view base_a = stripHash(name_a);
 			std::string_view base_b = stripHash(name_b);

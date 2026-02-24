@@ -11268,19 +11268,20 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						// Old format: "is_pointer_impl_T" (underscore-based)
 						// New format: "is_pointer_impl$47b270a920ee3ffb" (hash-based)
 						// We need to extract the template name by removing the suffix
-						size_t separator_pos = struct_name_view.find('$');
-						if (separator_pos == std::string_view::npos) {
-							separator_pos = struct_name_view.rfind('_');
-						}
-						
 						std::string_view template_name_to_lookup = struct_name_view;
-						if (separator_pos != std::string_view::npos) {
-							std::string_view suffix = struct_name_view.substr(separator_pos + 1);
-							// For hash-based: always extract base name (hash is always after $)
-							// For underscore-based: check if suffix looks like a template parameter
-							if (struct_name_view[separator_pos] == '$' || suffix.length() == 1 || suffix == "typename") {
-								template_name_to_lookup = struct_name_view.substr(0, separator_pos);
-								FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
+						std::string_view base_name = extractBaseTemplateName(struct_name_view);
+						if (!base_name.empty()) {
+							template_name_to_lookup = base_name;
+							FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
+						} else {
+							// Fallback: underscore-based naming
+							size_t separator_pos = struct_name_view.rfind('_');
+							if (separator_pos != std::string_view::npos) {
+								std::string_view suffix = struct_name_view.substr(separator_pos + 1);
+								if (suffix.length() == 1 || suffix == "typename") {
+									template_name_to_lookup = struct_name_view.substr(0, separator_pos);
+									FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
+								}
 							}
 						}
 						
@@ -17280,9 +17281,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
 	// try the base template class name (e.g., has_foo::method)
 	if (!template_opt.has_value()) {
-		size_t dollar_pos = struct_name.rfind('$');
-		if (dollar_pos != std::string_view::npos) {
-			std::string_view base_name = struct_name.substr(0, dollar_pos);
+		std::string_view base_name = extractBaseTemplateName(struct_name);
+		if (!base_name.empty()) {
 			StringBuilder base_qualified_name_sb;
 			base_qualified_name_sb.append(base_name).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
@@ -17445,9 +17445,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
 	// try the base template class name (e.g., has_foo::method)
 	if (!all_templates || all_templates->empty()) {
-		size_t dollar_pos = struct_name.rfind('$');
-		if (dollar_pos != std::string_view::npos) {
-			std::string_view base_class_name = struct_name.substr(0, dollar_pos);
+		std::string_view base_class_name = extractBaseTemplateName(struct_name);
+		if (!base_class_name.empty()) {
 			StringBuilder base_qualified_name_sb;
 			base_qualified_name_sb.append(base_class_name).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
@@ -19475,10 +19474,12 @@ ASTNode Parser::substituteTemplateParameters(
 			// that needs to be resolved with concrete template arguments
 			std::string_view func_name = func_call.called_from().value();
 			if (func_name.empty()) func_name = func_call.function_declaration().identifier_token().value();
-			size_t dollar_pos = func_name.empty() ? std::string_view::npos : func_name.find('$');
 			size_t scope_pos = func_name.empty() ? std::string_view::npos : func_name.find("::");
-			if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
-				std::string_view base_template_name = func_name.substr(0, dollar_pos);
+			std::string_view base_template_name;
+			if (scope_pos != std::string_view::npos) {
+				base_template_name = extractBaseTemplateName(func_name.substr(0, scope_pos));
+			}
+			if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
 				std::string_view member_name = func_name.substr(scope_pos + 2);
 				
 				// Build concrete template arguments from the substitution context
@@ -19765,9 +19766,9 @@ ASTNode Parser::substituteTemplateParameters(
 						};
 
 						add_base_name_to_try(struct_name);
-						size_t hash_pos = struct_name.find('$');
-						if (hash_pos != std::string_view::npos) {
-							add_base_name_to_try(struct_name.substr(0, hash_pos));
+						std::string_view base_tmpl_name = extractBaseTemplateName(struct_name);
+						if (!base_tmpl_name.empty()) {
+							add_base_name_to_try(base_tmpl_name);
 						}
 						for (std::string_view base_name : base_names_to_try) {
 							add_name_to_try(base_name);

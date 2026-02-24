@@ -516,10 +516,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 	// Pattern: Base$dependentHash::member(args) — needs re-instantiation with concrete types
 	// This happens when a template body is re-parsed: Base<T>::member() creates Base$hash1::member
 	// during initial template parsing, but the actual instantiation is Base$hash2.
-	size_t dollar_pos = func_name.find('$');
 	size_t scope_pos = func_name.find("::");
-	if (dollar_pos != std::string_view::npos && scope_pos != std::string_view::npos && dollar_pos < scope_pos) {
-		std::string_view base_template_name = func_name.substr(0, dollar_pos);
+	std::string_view base_template_name;
+	if (scope_pos != std::string_view::npos) {
+		base_template_name = extractBaseTemplateName(func_name.substr(0, scope_pos));
+	}
+	if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
 		std::string_view member_name = func_name.substr(scope_pos + 2);
 		
 		// Collect concrete template arguments from param_map_
@@ -769,28 +771,23 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	}
 	
 	// Check if the namespace name contains template parameters
-	// Old format: has underscore (e.g., "R1_T")
 	// New format: has dollar sign + hash (e.g., "R1$3b360731384e1358")
-	size_t separator_pos = ns_name.find('$');
-	bool is_hash_based = (separator_pos != std::string_view::npos);
+	// Old format: has underscore (e.g., "R1_T")
+	std::string_view base_template_name = extractBaseTemplateName(ns_name);
+	bool is_hash_based = !base_template_name.empty();
 	
 	if (!is_hash_based) {
-		separator_pos = ns_name.find('_');
+		size_t separator_pos = ns_name.find('_');
 		if (separator_pos == std::string_view::npos) {
 			// No template parameters, return as-is
 			FLASH_LOG(Templates, Debug, "  No template parameters in namespace, returning as-is");
 			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 			return ASTNode(&new_expr);
 		}
+		base_template_name = ns_name.substr(0, separator_pos);
 	}
-	
-	// Extract the base template name (e.g., "R1")
-	std::string_view base_template_name = ns_name.substr(0, separator_pos);
 
-	if (IS_FLASH_LOG_ENABLED(Templates, Debug)) {
-		std::string_view param_part = ns_name.substr(separator_pos + 1);
-		FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name, ", param part: ", param_part, ", is_hash_based: ", is_hash_based);
-	}
+	FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name, ", is_hash_based: ", is_hash_based);
 
 	// For hash-based names, the namespace already contains the fully instantiated name
 	// We just need to ensure the template is instantiated with the concrete type arguments
@@ -854,7 +851,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	}
 
 	// Old underscore-based name - look up by parameter name
-	std::string_view param_part = ns_name.substr(separator_pos + 1);
+	size_t underscore_pos = ns_name.find('_');
+	std::string_view param_part = (underscore_pos != std::string_view::npos) ? ns_name.substr(underscore_pos + 1) : ns_name;
 	auto param_it = param_map_.find(param_part);
 	if (param_it == param_map_.end()) {
 		// Parameter not found in substitution map, return as-is
