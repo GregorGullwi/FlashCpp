@@ -10044,18 +10044,11 @@ private:
 								int base_offset = 0;
 								if (std::holds_alternative<StringHandle>(base)) {
 									auto base_name = std::get<StringHandle>(base);
-									const StackVariableScope* scope_with_var = nullptr;
-									for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
-										auto var_it = scope_it->variables.find(base_name);
-										if (var_it != scope_it->variables.end()) {
-											scope_with_var = &(*scope_it);
-											base_offset = var_it->second.offset;
-											break;
-										}
-									}
-									if (scope_with_var == nullptr) {
+									auto offset_opt = findIdentifierStackOffset(base_name);
+									if (!offset_opt.has_value()) {
 										return false;
 									}
+									base_offset = offset_opt.value();
 								} else {
 									base_offset = getStackOffsetFromTempVar(std::get<TempVar>(base));
 								}
@@ -11282,15 +11275,19 @@ private:
 		return reg;
 	}
 
-	std::optional<int32_t> findIdentifierStackOffset(StringHandle name) const {
+	const VariableInfo* findVariableInfo(StringHandle name) const {
 		for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
-			const auto& scope = *scope_it;
-			auto found = scope.variables.find(name);
-			if (found != scope.variables.end()) {
-				return found->second.offset;
+			auto found = scope_it->variables.find(name);
+			if (found != scope_it->variables.end()) {
+				return &found->second;
 			}
 		}
-		return std::nullopt;
+		return nullptr;
+	}
+
+	std::optional<int32_t> findIdentifierStackOffset(StringHandle name) const {
+		const VariableInfo* info = findVariableInfo(name);
+		return info ? std::optional<int32_t>(info->offset) : std::nullopt;
 	}
 
 	enum class IncDecKind { PreIncrement, PostIncrement, PreDecrement, PostDecrement };
@@ -15210,14 +15207,7 @@ private:
 
 			// Search from innermost to outermost scope so branch conditions can reference
 			// parameters/locals declared in parent scopes.
-			const VariableInfo* var_info = nullptr;
-			for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
-				auto it = scope_it->variables.find(var_name);
-				if (it != scope_it->variables.end()) {
-					var_info = &it->second;
-					break;
-				}
-			}
+			const VariableInfo* var_info = findVariableInfo(var_name);
 
 			if (var_info) {
 				// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)

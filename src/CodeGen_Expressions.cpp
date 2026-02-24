@@ -305,16 +305,7 @@
 				member_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(ptr_operands[3]));
 			}
 			
-			TempVar result_var = var_counter.next();
-			DereferenceOp deref_op;
-			deref_op.result = result_var;
-			deref_op.pointer = TypedValue{
-				.type = member_type,
-				.size_in_bits = member_size,
-				.value = member_addr,
-				.pointer_depth = 1  // We're dereferencing a pointer
-			};
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), ptmNode.operator_token()));
+			TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
 			
 			// Return the dereferenced member value
 			return { member_type, member_size, result_var, static_cast<unsigned long long>(member_type_index) };
@@ -413,14 +404,7 @@
 							const TypeSpecifierNode& orig_type = capture_type_it->second;
 
 							// Generate Dereference to load the value
-							TempVar result_temp = var_counter.next();
-							std::vector<IrOperand> deref_operands;
-							DereferenceOp deref_op;
-							deref_op.result = result_temp;
-							deref_op.pointer.type = orig_type.type();
-							deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-							deref_op.pointer.value = ptr_temp;
-							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+							TempVar result_temp = emitDereference(orig_type.type(), 64, 0, ptr_temp);
 							
 							// Mark as lvalue with Indirect metadata for unified assignment handler
 							// This represents dereferencing a pointer: *ptr
@@ -895,9 +879,6 @@
 				}
 				
 				// For non-array references in Load context, we need to dereference to get the value
-				TempVar result_temp = var_counter.next();
-				DereferenceOp deref_op;
-				deref_op.result = result_temp;
 				
 				// For auto types, default to int (32 bits) since the mangling also defaults to int
 				// This matches the behavior in NameMangling.h which falls through to 'H' (int)
@@ -919,11 +900,9 @@
 					}
 				}
 				
-				deref_op.pointer.type = pointee_type;
-				deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-				deref_op.pointer.pointer_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;  // References are like pointers
-				deref_op.pointer.value = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference parameter holds the address
-				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
+				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
+					StringTable::getOrInternStringHandle(identifierNode.name()));
 				
 				// Mark as lvalue with Indirect metadata for unified assignment handler
 				// This allows compound assignments (like x *= 2) to work on dereferenced references
@@ -1074,9 +1053,6 @@
 					}
 					
 					// For Load context (reading the value), dereference to get the value
-					TempVar result_temp = var_counter.next();
-					DereferenceOp deref_op;
-					deref_op.result = result_temp;
 					
 					// For auto types, default to int (32 bits) since the mangling also defaults to int
 					// This matches the behavior in NameMangling.h which falls through to 'H' (int)
@@ -1087,11 +1063,9 @@
 						pointee_size = 32;
 					}
 					
-					deref_op.pointer.type = pointee_type;
-					deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-					deref_op.pointer.pointer_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;  // References are like pointers
-					deref_op.pointer.value = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference variable holds the address
-					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+					int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
+					TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
+						StringTable::getOrInternStringHandle(identifierNode.name()));
 					
 					// Mark as lvalue with Indirect metadata for unified assignment handler
 					// This allows compound assignments (like x *= 2) to work on dereferenced references
@@ -2464,14 +2438,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 				
 				// Load current value through pointer
-				TempVar current_val = var_counter.next();
-				DereferenceOp deref_op;
-				deref_op.result = current_val;
-				deref_op.pointer.type = member->type;
-				deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-				deref_op.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-				deref_op.pointer.value = ptr_temp;
-				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
+				TempVar current_val = emitDereference(member->type, 64, 1, ptr_temp, token);
 				
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{

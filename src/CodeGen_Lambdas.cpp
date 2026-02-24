@@ -990,6 +990,19 @@
 		return addr_var;
 	}
 
+	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
+	TempVar emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token()) {
+		TempVar result_var = var_counter.next();
+		DereferenceOp deref_op;
+		deref_op.result = result_var;
+		deref_op.pointer.type = pointee_type;
+		deref_op.pointer.size_in_bits = pointer_size_bits;
+		deref_op.pointer.pointer_depth = pointer_depth;
+		deref_op.pointer.value = pointer_value;
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
+		return result_var;
+	}
+
 	Ir ir_;
 	TempVar var_counter{ 0 };
 	SymbolTable symbol_table;

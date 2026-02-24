@@ -961,15 +961,8 @@
 					}
 				} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
-					TempVar deref_var = var_counter.next();
-
-					DereferenceOp deref_op;
-					deref_op.result = deref_var;
-					deref_op.pointer.type = type_node.type();
-					deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-					deref_op.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-					deref_op.pointer.value = StringTable::getOrInternStringHandle(identifier.name());
-					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+					TempVar deref_var = emitDereference(type_node.type(), 64, 1,
+						StringTable::getOrInternStringHandle(identifier.name()));
 					
 					// Pass the dereferenced value
 					irOperands.emplace_back(type_node.type());
