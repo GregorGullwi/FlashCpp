@@ -701,12 +701,13 @@ public:
 		debug_current_func_.vars.push_back(std::move(v));
 	}
 
-	void update_function_length([[maybe_unused]] const std::string_view mangled_name, uint32_t code_length) {
-		if (debug_has_current_) {
+	void update_function_length(const std::string_view mangled_name, uint32_t code_length) {
+		if (debug_has_current_ && debug_current_func_.name == mangled_name) {
 			debug_current_func_.length = code_length;
-			// Update the symbol size using the current function's own name
-			updateSymbolSize(debug_current_func_.name, code_length);
 		}
+		// Always update the symbol size using the actual mangled name
+		updateSymbolSize(std::string(mangled_name), code_length);
+	}
 	}
 
 	void set_function_debug_range([[maybe_unused]] const std::string_view manged_name, [[maybe_unused]] uint32_t prologue_size, [[maybe_unused]] uint32_t epilogue_size) {
