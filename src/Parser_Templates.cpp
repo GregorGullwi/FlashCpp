@@ -8703,7 +8703,7 @@ std::optional<QualifiedIdParseResult> Parser::parse_qualified_identifier_with_te
 }
 
 // Try to instantiate a template with explicit template arguments
-std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types) {
+std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, explicit_types);
@@ -8727,6 +8727,23 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+
+	// Filter by call argument count if known (SIZE_MAX means unknown)
+	// Only reject if caller provides MORE args than the function has params
+	// (fewer args might use defaults, so we allow call_arg_count <= func_param_count)
+	if (call_arg_count != SIZE_MAX && !func_decl.is_variadic()) {
+		size_t func_param_count = func_decl.parameter_nodes().size();
+		bool has_variadic_func_pack = false;
+		for (const auto& p : func_decl.parameter_nodes()) {
+			if (p.is<DeclarationNode>() && p.as<DeclarationNode>().is_parameter_pack()) {
+				has_variadic_func_pack = true;
+				break;
+			}
+		}
+		if (!has_variadic_func_pack && call_arg_count > func_param_count) {
+			continue;  // Too many arguments for this overload
+		}
+	}
 
 	// Check if template has a variadic parameter pack
 	bool has_variadic_pack = false;
@@ -9172,10 +9189,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			~BodyParseGuard() { set.erase(key); }
 		} body_guard{body_parse_in_progress, cycle_key};
 
+		// Set current_template_param_names_ so the expression parser can find
+		// non-type template parameters (e.g., N in "x * N") via template_param_substitutions_
+		std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& pn : param_names) {
+			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+		}
+
 		// Parse the function body
 		auto block_result = parse_block();
 		
-		// Restore the template parameter substitutions
+		// Restore the template parameter substitutions and param names
+		current_template_param_names_ = std::move(saved_template_param_names);
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
