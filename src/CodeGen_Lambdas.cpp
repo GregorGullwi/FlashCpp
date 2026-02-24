@@ -1104,6 +1104,10 @@
 	};
 	std::vector<SehContext> seh_context_stack_;  // Stack of active SEH contexts
 
+	// Loop-SEH depth tracking: records seh_context_stack_ size at each loop entry
+	// Used by break/continue to know which __finally blocks need calling
+	std::vector<size_t> loop_seh_depth_stack_;
+
 	// SEH filter/except body context tracking for GetExceptionCode() disambiguation
 	bool seh_in_filter_funclet_ = false;       // True while visiting the filter expression inside a filter funclet
 	bool seh_has_saved_exception_code_ = false; // True when a saved exception code var is available
@@ -1154,6 +1158,48 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), token));
 
 				// Emit the post-finally label so execution continues here after the funclet returns
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(post_label)}, token));
+
+				emitted = true;
+			}
+		}
+		return emitted;
+	}
+
+	// Track SEH context depth when entering/leaving loops
+	void pushLoopSehDepth() {
+		loop_seh_depth_stack_.push_back(seh_context_stack_.size());
+	}
+
+	void popLoopSehDepth() {
+		if (!loop_seh_depth_stack_.empty()) {
+			loop_seh_depth_stack_.pop_back();
+		}
+	}
+
+	// Emit SehFinallyCall for __try/__finally blocks between break/continue and the enclosing loop.
+	// Only calls finally blocks that were pushed AFTER the loop began (i.e., inside the loop body).
+	bool emitSehFinallyCallsBeforeBreakContinue(const Token& token) {
+		if (loop_seh_depth_stack_.empty()) return false;
+
+		size_t loop_seh_depth = loop_seh_depth_stack_.back();
+		bool emitted = false;
+		// Walk from innermost SEH context down to (but not including) the loop's entry depth
+		for (int i = static_cast<int>(seh_context_stack_.size()) - 1; i >= static_cast<int>(loop_seh_depth); --i) {
+			const SehContext& ctx = seh_context_stack_[i];
+			if (ctx.has_finally) {
+				static size_t seh_break_finally_counter = 0;
+				size_t id = seh_break_finally_counter++;
+
+				StringBuilder post_sb;
+				post_sb.append("__seh_brk_finally_").append(id);
+				std::string_view post_label = post_sb.commit();
+
+				SehFinallyCallOp call_op;
+				call_op.funclet_label = ctx.finally_label;
+				call_op.end_label = post_label;
+				ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), token));
+
 				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(post_label)}, token));
 
 				emitted = true;

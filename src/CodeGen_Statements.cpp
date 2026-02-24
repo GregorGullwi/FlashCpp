@@ -154,6 +154,7 @@
 		}
 
 		// Mark loop begin for break/continue support
+		pushLoopSehDepth();
 		LoopBeginOp loop_begin;
 		loop_begin.loop_start_label = loop_start_label;
 		loop_begin.loop_end_label = loop_end_label;
@@ -199,7 +200,8 @@
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
-		
+		popLoopSehDepth();
+
 		// Exit the for loop scope
 		exitScope();
 		symbol_table.exit_scope();
@@ -217,6 +219,7 @@
 		
 		// Mark loop begin for break/continue support
 		// For while loops, continue jumps to loop_start (re-evaluate condition)
+		pushLoopSehDepth();
 		LoopBeginOp loop_begin;
 		loop_begin.loop_start_label = loop_start_label;
 		loop_begin.loop_end_label = loop_end_label;
@@ -256,6 +259,7 @@
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+		popLoopSehDepth();
 	}
 
 	void visitDoWhileStatementNode(const DoWhileStatementNode& node) {
@@ -270,6 +274,7 @@
 		
 		// Mark loop begin for break/continue support
 		// For do-while loops, continue jumps to condition check (not body start)
+		pushLoopSehDepth();
 		LoopBeginOp loop_begin;
 		loop_begin.loop_start_label = loop_start_label;
 		loop_begin.loop_end_label = loop_end_label;
@@ -302,6 +307,7 @@
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+		popLoopSehDepth();
 	}
 
 	void visitSwitchStatementNode(const SwitchStatementNode& node) {
@@ -320,6 +326,7 @@
 
 		// Mark switch begin for break support (switch acts like a loop for break)
 		// Continue is not allowed in switch, but break is
+		pushLoopSehDepth();
 		LoopBeginOp loop_begin;
 		loop_begin.loop_start_label = switch_end_label;
 		loop_begin.loop_end_label = switch_end_label;
@@ -450,6 +457,7 @@
 
 		// Mark switch end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+		popLoopSehDepth();
 	}
 
 	void visitRangedForStatementNode(const RangedForStatementNode& node) {
@@ -648,6 +656,7 @@
 		visit(end_var_decl_node);
 
 		// Mark loop begin for break/continue support
+		pushLoopSehDepth();
 		LoopBeginOp loop_begin;
 		loop_begin.loop_start_label = loop_start_label;
 		loop_begin.loop_end_label = loop_end_label;
@@ -724,6 +733,7 @@
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+		popLoopSehDepth();
 	}
 
 	void visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
@@ -822,6 +832,7 @@
 		visit(end_var_decl_node);
 
 		// Mark loop begin for break/continue support
+		pushLoopSehDepth();
 		LoopBeginOp loop_begin;
 		loop_begin.loop_start_label = loop_start_label;
 		loop_begin.loop_end_label = loop_end_label;
@@ -910,14 +921,19 @@
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+		popLoopSehDepth();
 	}
 
 	void visitBreakStatementNode(const BreakStatementNode& node) {
+		// If inside __try/__finally within a loop, call __finally before breaking
+		emitSehFinallyCallsBeforeBreakContinue(node.break_token());
 		// Generate Break IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Break, {}, node.break_token());
 	}
 
 	void visitContinueStatementNode(const ContinueStatementNode& node) {
+		// If inside __try/__finally within a loop, call __finally before continuing
+		emitSehFinallyCallsBeforeBreakContinue(node.continue_token());
 		// Generate Continue IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Continue, {}, node.continue_token());
 	}
