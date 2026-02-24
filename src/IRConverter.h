@@ -5253,9 +5253,9 @@ private:
 
 		// Extend scope_stack_space if the computed offset exceeds current allocation
 		// This ensures assertions checking scope_stack_space <= offset remain valid
-		// NOTE: offset is the START of the allocation (highest address), but large structs extend downward
-		// A struct at offset -40 with size 120 bytes occupies addresses from -40 down to -160
-		int32_t end_offset = offset - size_in_bytes;  // Struct extends from offset down by size_in_bytes
+		// NOTE: offset is the LOWEST address of the allocation (next_temp_var_offset_ was
+		// already incremented above), so it is itself the end_offset we must track.
+		int32_t end_offset = offset;
 		if (end_offset < variable_scopes.back().scope_stack_space) {
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Extending scope_stack_space from {} to {} for {} (offset={}, size={})",
@@ -5372,7 +5372,7 @@ private:
 		size_bytes = (size_bytes + 7) & ~7;  // 8-byte align
 		next_temp_var_offset_ += size_bytes;
 		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
-		int32_t end_offset = offset - size_bytes;
+		int32_t end_offset = offset;
 		if (!variable_scopes.empty() && end_offset < variable_scopes.back().scope_stack_space) {
 			variable_scopes.back().scope_stack_space = end_offset;
 		}
