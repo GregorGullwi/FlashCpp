@@ -2094,20 +2094,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 			}
 			
-			// Update the static member's initializer in the struct
-			// Cast away const since we need to update the initializer
-			StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
-			mutable_member->initializer = *init_result.node();
-			
-			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member variable definition: ",
-			          class_name.view(), "::", function_name_token.value());
-			
-			// Return success with a placeholder node (the static member is already registered in the struct)
-			ASTNode return_type_node = decl_node.type_node();
-			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
-			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_result.node());
-			
-			return saved_position.success(var_node);
+			return finalize_static_member_init(static_member, *init_result.node(), decl_node, function_name_token, saved_position);
 		}
 		
 		// Check if this is an out-of-line static member variable definition with brace initializer
@@ -2142,44 +2129,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 			}
 			
-			// Update the static member's initializer in the struct if we have one
-			// Update the static member's initializer in the struct
-			StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
-			if (init_expr.has_value()) {
-				mutable_member->initializer = *init_expr;
-			}
-			
-			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member brace init: ",
-			          class_name.view(), "::", function_name_token.value());
-			
-			// Return success with a properly initialized node
-			ASTNode return_type_node = decl_node.type_node();
-			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
-			if (init_expr.has_value()) {
-				auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_expr);
-				return saved_position.success(var_node);
-			} else {
-				// Default (empty) brace init - create zero literal matching the static member's type
-				Type member_type = static_member->type;
-				unsigned char member_size_bits = static_cast<unsigned char>(static_member->size * 8);
-				// Use sensible defaults if size is unknown
-				if (member_size_bits == 0) {
-					member_size_bits = 32;
-				}
-				NumericLiteralValue zero_value;
-				std::string_view zero_str;
-				if (member_type == Type::Float || member_type == Type::Double || member_type == Type::LongDouble) {
-					zero_value = 0.0;
-					zero_str = "0.0"sv;
-				} else {
-					zero_value = 0ULL;
-					zero_str = "0"sv;
-				}
-				Token zero_token(Token::Type::Literal, zero_str, 0, 0, 0);
-				auto literal = emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, zero_value, member_type, TypeQualifier::None, member_size_bits));
-				auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, literal);
-				return saved_position.success(var_node);
-			}
+			// Finalize the static member initializer (handling empty brace-init) and return the variable node
+			return finalize_static_member_init(static_member, init_expr, decl_node, function_name_token, saved_position);
 		}
 		
 		// Check if this is an out-of-line static member variable definition with copy initializer
@@ -2204,19 +2155,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 			}
 			
-			// Update the static member's initializer in the struct
-			StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
-			mutable_member->initializer = *init_result.node();
-			
-			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member = init: ",
-			          class_name.view(), "::", function_name_token.value());
-			
-			// Return success with a properly initialized node
-			ASTNode return_type_node = decl_node.type_node();
-			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
-			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_result.node());
-			
-			return saved_position.success(var_node);
+			return finalize_static_member_init(static_member, *init_result.node(), decl_node, function_name_token, saved_position);
 		}
 		
 		// Create a new declaration node with the function name
@@ -10470,4 +10409,40 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 	auto decl_node = emplace_node<UsingDeclarationNode>(namespace_handle, identifier_token, using_token);
 	return saved_position.success(decl_node);
+}
+
+ParseResult Parser::finalize_static_member_init(const StructStaticMember* static_member,
+                                                 std::optional<ASTNode> init_expr,
+                                                 DeclarationNode& decl_node,
+                                                 const Token& name_token,
+                                                 ScopedTokenPosition& saved_position) {
+	StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
+	ASTNode return_type_node = decl_node.type_node();
+	auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, name_token);
+
+	if (init_expr.has_value()) {
+		mutable_member->initializer = *init_expr;
+		auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_expr);
+		return saved_position.success(var_node);
+	}
+
+	// Empty brace init - create a zero literal matching the static member's type
+	Type member_type = static_member->type;
+	unsigned char member_size_bits = static_cast<unsigned char>(static_member->size * 8);
+	if (member_size_bits == 0) {
+		member_size_bits = 32;
+	}
+	NumericLiteralValue zero_value;
+	std::string_view zero_str;
+	if (member_type == Type::Float || member_type == Type::Double || member_type == Type::LongDouble) {
+		zero_value = 0.0;
+		zero_str = "0.0"sv;
+	} else {
+		zero_value = 0ULL;
+		zero_str = "0"sv;
+	}
+	Token zero_token(Token::Type::Literal, zero_str, 0, 0, 0);
+	auto literal = emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, zero_value, member_type, TypeQualifier::None, member_size_bits));
+	auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, literal);
+	return saved_position.success(var_node);
 }

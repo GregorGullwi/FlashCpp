@@ -1090,7 +1090,16 @@ public:  // Public methods for template instantiation
         void skip_balanced_delimiters(TokenKind open, TokenKind close);  // Generic balanced delimiter skip
         void skip_template_arguments();  // Skip over template arguments <...>
         void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
-        
+
+        // Finalize an out-of-line static member variable definition.
+        // Sets the initializer on the member and returns a VariableDeclarationNode.
+        // When init_expr is std::nullopt, creates a zero literal from the member's type (empty brace init).
+        ParseResult finalize_static_member_init(const StructStaticMember* static_member,
+                                                std::optional<ASTNode> init_expr,
+                                                DeclarationNode& decl_node,
+                                                const Token& name_token,
+                                                ScopedTokenPosition& saved_position);
+
         // Parse a function type parameter list for template argument parsing
         // Parses types separated by commas, handling pack expansion (...), C-style varargs,
         // and pointer/reference modifiers. Used for bare function types and function pointer types.
