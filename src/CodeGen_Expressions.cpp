@@ -1,339 +1,215 @@
 	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 
 	                                            ExpressionContext context = ExpressionContext::Load) {
-		if (std::holds_alternative<IdentifierNode>(exprNode)) {
-			const auto& expr = std::get<IdentifierNode>(exprNode);
-			return generateIdentifierIr(expr, context);
-		}
-		else if (std::holds_alternative<QualifiedIdentifierNode>(exprNode)) {
-			const auto& expr = std::get<QualifiedIdentifierNode>(exprNode);
-			return generateQualifiedIdentifierIr(expr);
-		}
-		else if (std::holds_alternative<BoolLiteralNode>(exprNode)) {
-			const auto& expr = std::get<BoolLiteralNode>(exprNode);
-			// Convert boolean to integer for IR (true=1, false=0)
-			// Return format: [type, size_in_bits, value, 0ULL]
-			return { Type::Bool, 8, expr.value() ? 1ULL : 0ULL, 0ULL };
-		}
-		else if (std::holds_alternative<NumericLiteralNode>(exprNode)) {
-			const auto& expr = std::get<NumericLiteralNode>(exprNode);
-			return generateNumericLiteralIr(expr);
-		}
-		else if (std::holds_alternative<StringLiteralNode>(exprNode)) {
-			const auto& expr = std::get<StringLiteralNode>(exprNode);
-			return generateStringLiteralIr(expr);
-		}
-		else if (std::holds_alternative<BinaryOperatorNode>(exprNode)) {
-			const auto& expr = std::get<BinaryOperatorNode>(exprNode);
-			return generateBinaryOperatorIr(expr);
-		}
-		else if (std::holds_alternative<UnaryOperatorNode>(exprNode)) {
-			const auto& expr = std::get<UnaryOperatorNode>(exprNode);
-			return generateUnaryOperatorIr(expr, context);
-		}
-		else if (std::holds_alternative<TernaryOperatorNode>(exprNode)) {
-			const auto& expr = std::get<TernaryOperatorNode>(exprNode);
-			return generateTernaryOperatorIr(expr);
-		}
-		else if (std::holds_alternative<FunctionCallNode>(exprNode)) {
-			const auto& expr = std::get<FunctionCallNode>(exprNode);
-			return generateFunctionCallIr(expr);
-		}
-		else if (std::holds_alternative<MemberFunctionCallNode>(exprNode)) {
-			const auto& expr = std::get<MemberFunctionCallNode>(exprNode);
-			return generateMemberFunctionCallIr(expr);
-		}
-		else if (std::holds_alternative<ArraySubscriptNode>(exprNode)) {
-			const auto& expr = std::get<ArraySubscriptNode>(exprNode);
-			return generateArraySubscriptIr(expr, context);
-		}
-		else if (std::holds_alternative<MemberAccessNode>(exprNode)) {
-			const auto& expr = std::get<MemberAccessNode>(exprNode);
-			return generateMemberAccessIr(expr, context);
-		}
-		else if (std::holds_alternative<SizeofExprNode>(exprNode)) {
-			const auto& sizeof_node = std::get<SizeofExprNode>(exprNode);
-			
-			// Try to evaluate as a constant expression first
-			auto const_result = tryEvaluateAsConstExpr(sizeof_node);
-			if (!const_result.empty()) {
-				return const_result;
+		return std::visit([this, context](const auto& expr) -> std::vector<IrOperand> {
+			using T = std::decay_t<decltype(expr)>;
+			if constexpr (std::is_same_v<T, IdentifierNode>) {
+				return generateIdentifierIr(expr, context);
+			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+				return generateQualifiedIdentifierIr(expr);
+			} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
+				return { Type::Bool, 8, expr.value() ? 1ULL : 0ULL, 0ULL };
+			} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+				return generateNumericLiteralIr(expr);
+			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+				return generateStringLiteralIr(expr);
+			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+				return generateBinaryOperatorIr(expr);
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				return generateUnaryOperatorIr(expr, context);
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				return generateTernaryOperatorIr(expr);
+			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+				return generateFunctionCallIr(expr);
+			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+				return generateMemberFunctionCallIr(expr);
+			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+				return generateArraySubscriptIr(expr, context);
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				return generateMemberAccessIr(expr, context);
+			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+				auto const_result = tryEvaluateAsConstExpr(expr);
+				return const_result.empty() ? generateSizeofIr(expr) : const_result;
+			} else if constexpr (std::is_same_v<T, SizeofPackNode>) {
+				FLASH_LOG(Codegen, Error, "sizeof... operator found during code generation - should have been substituted during template instantiation");
+				return {};
+			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
+				auto const_result = tryEvaluateAsConstExpr(expr);
+				return const_result.empty() ? generateAlignofIr(expr) : const_result;
+			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
+				return generateNoexceptExprIr(expr);
+			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
+				return generateOffsetofIr(expr);
+			} else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
+				return generateTypeTraitIr(expr);
+			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
+				return generateNewExpressionIr(expr);
+			} else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
+				return generateDeleteExpressionIr(expr);
+			} else if constexpr (std::is_same_v<T, StaticCastNode>) {
+				return generateStaticCastIr(expr);
+			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
+				return generateDynamicCastIr(expr);
+			} else if constexpr (std::is_same_v<T, ConstCastNode>) {
+				return generateConstCastIr(expr);
+			} else if constexpr (std::is_same_v<T, ReinterpretCastNode>) {
+				return generateReinterpretCastIr(expr);
+			} else if constexpr (std::is_same_v<T, TypeidNode>) {
+				return generateTypeidIr(expr);
+			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
+				return generateLambdaExpressionIr(expr);
+			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+				return generateConstructorCallIr(expr);
+			} else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
+				return generateTemplateParameterReferenceIr(expr);
+			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
+				FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
+				return {};
+			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
+				return generatePseudoDestructorCallIr(expr);
+			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+				return generatePointerToMemberAccessIr(expr);
+			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
+				FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
+				return {};
+			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+				return generateInitializerListConstructionIr(expr);
+			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
+				FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
+				return {};
+			} else {
+				static_assert(!std::is_same_v<T, T>, "Unhandled ExpressionNode variant");
 			}
-			
-			// Fall back to IR generation if constant evaluation failed
-			return generateSizeofIr(sizeof_node);
+		}, exprNode);
+	}
+
+	std::vector<IrOperand> generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
+		bool is_noexcept = true;
+		if (noexcept_node.expr().is<ExpressionNode>()) {
+			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
 		}
-		else if (std::holds_alternative<SizeofPackNode>(exprNode)) {
-			[[maybe_unused]] const auto& sizeof_pack_expr = std::get<SizeofPackNode>(exprNode);
-			// sizeof... should have been replaced with a constant during template instantiation
-			// If we reach here, it means sizeof... wasn't properly substituted
-			// This is an error - sizeof... can only appear in template contexts
-			FLASH_LOG(Codegen, Error, "sizeof... operator found during code generation - should have been substituted during template instantiation");
-			return {};
-		}
-		else if (std::holds_alternative<AlignofExprNode>(exprNode)) {
-			const auto& alignof_node = std::get<AlignofExprNode>(exprNode);
-			
-			// Try to evaluate as a constant expression first
-			auto const_result = tryEvaluateAsConstExpr(alignof_node);
-			if (!const_result.empty()) {
-				return const_result;
-			}
-			
-			// Fall back to IR generation if constant evaluation failed
-			return generateAlignofIr(alignof_node);
-		}
-		else if (std::holds_alternative<NoexceptExprNode>(exprNode)) {
-			const auto& noexcept_node = std::get<NoexceptExprNode>(exprNode);
-			// noexcept(expr) returns true if expr doesn't throw, false otherwise
-			// Analyze the expression to determine if it can throw
-			bool is_noexcept = true;  // Default assumption
-			
-			if (noexcept_node.expr().is<ExpressionNode>()) {
-				is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
-			}
-			
-			// Return a compile-time constant boolean
-			return { Type::Bool, 8, is_noexcept ? 1ULL : 0ULL, 0ULL };
-		}
-		else if (std::holds_alternative<OffsetofExprNode>(exprNode)) {
-			const auto& expr = std::get<OffsetofExprNode>(exprNode);
-			return generateOffsetofIr(expr);
-		}
-		else if (std::holds_alternative<TypeTraitExprNode>(exprNode)) {
-			const auto& expr = std::get<TypeTraitExprNode>(exprNode);
-			return generateTypeTraitIr(expr);
-		}
-		else if (std::holds_alternative<NewExpressionNode>(exprNode)) {
-			const auto& expr = std::get<NewExpressionNode>(exprNode);
-			return generateNewExpressionIr(expr);
-		}
-		else if (std::holds_alternative<DeleteExpressionNode>(exprNode)) {
-			const auto& expr = std::get<DeleteExpressionNode>(exprNode);
-			return generateDeleteExpressionIr(expr);
-		}
-		else if (std::holds_alternative<StaticCastNode>(exprNode)) {
-			const auto& expr = std::get<StaticCastNode>(exprNode);
-			return generateStaticCastIr(expr);
-		}
-		else if (std::holds_alternative<DynamicCastNode>(exprNode)) {
-			const auto& expr = std::get<DynamicCastNode>(exprNode);
-			return generateDynamicCastIr(expr);
-		}
-		else if (std::holds_alternative<ConstCastNode>(exprNode)) {
-			const auto& expr = std::get<ConstCastNode>(exprNode);
-			return generateConstCastIr(expr);
-		}
-		else if (std::holds_alternative<ReinterpretCastNode>(exprNode)) {
-			const auto& expr = std::get<ReinterpretCastNode>(exprNode);
-			return generateReinterpretCastIr(expr);
-		}
-		else if (std::holds_alternative<TypeidNode>(exprNode)) {
-			const auto& expr = std::get<TypeidNode>(exprNode);
-			return generateTypeidIr(expr);
-		}
-		else if (std::holds_alternative<LambdaExpressionNode>(exprNode)) {
-			const auto& expr = std::get<LambdaExpressionNode>(exprNode);
-			return generateLambdaExpressionIr(expr);
-		}
-		else if (std::holds_alternative<ConstructorCallNode>(exprNode)) {
-			const auto& expr = std::get<ConstructorCallNode>(exprNode);
-			return generateConstructorCallIr(expr);
-		}
-		else if (std::holds_alternative<TemplateParameterReferenceNode>(exprNode)) {
-			const auto& expr = std::get<TemplateParameterReferenceNode>(exprNode);
-			return generateTemplateParameterReferenceIr(expr);
-		}
-		else if (std::holds_alternative<FoldExpressionNode>(exprNode)) {
-			// Fold expressions should have been expanded during template instantiation
-			// If we reach here, it means the fold wasn't properly substituted
-			FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
-			return {};
-		}
-		else if (std::holds_alternative<PseudoDestructorCallNode>(exprNode)) {
-			// Explicit destructor call: obj.~Type() or ptr->~Type()
-			// For class types, this calls the destructor
-			// For non-class types (like int), this is a no-op
-			const auto& dtor = std::get<PseudoDestructorCallNode>(exprNode);
-			std::string_view type_name = dtor.has_qualified_name() 
-				? std::string_view(dtor.qualified_type_name()) 
-				: dtor.type_name();
-			FLASH_LOG(Codegen, Debug, "Generating explicit destructor call for type: ", type_name);
-			
-			// Get the object expression
-			ASTNode object_node = dtor.object();
-			
-			// Try to determine if this is a struct type that needs destructor call
-			std::string_view object_name;
-			const DeclarationNode* object_decl = nullptr;
-			TypeSpecifierNode object_type(Type::Void, TypeQualifier::None, 0);
-			
-			if (object_node.is<ExpressionNode>()) {
-				const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
-				
-				if (std::holds_alternative<IdentifierNode>(object_expr)) {
-					const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
-					object_name = object_ident.name();
-					
-					// Look up the object in symbol table
-					const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-					if (symbol.has_value()) {
-						object_decl = get_decl_from_symbol(*symbol);
-						if (object_decl) {
-							object_type = object_decl->type_node().as<TypeSpecifierNode>();
-							
-							// Handle arrow access (ptr->~Type)
-							if (dtor.is_arrow_access() && object_type.pointer_levels().size() > 0) {
-								object_type.remove_pointer_level();
-							}
+		return { Type::Bool, 8, is_noexcept ? 1ULL : 0ULL, 0ULL };
+	}
+
+	std::vector<IrOperand> generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
+		std::string_view type_name = dtor.has_qualified_name() 
+			? std::string_view(dtor.qualified_type_name()) 
+			: dtor.type_name();
+		FLASH_LOG(Codegen, Debug, "Generating explicit destructor call for type: ", type_name);
+		
+		ASTNode object_node = dtor.object();
+		std::string_view object_name;
+		const DeclarationNode* object_decl = nullptr;
+		TypeSpecifierNode object_type(Type::Void, TypeQualifier::None, 0);
+		
+		if (object_node.is<ExpressionNode>()) {
+			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(object_expr)) {
+				const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
+				object_name = object_ident.name();
+				const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+				if (symbol.has_value()) {
+					object_decl = get_decl_from_symbol(*symbol);
+					if (object_decl) {
+						object_type = object_decl->type_node().as<TypeSpecifierNode>();
+						if (dtor.is_arrow_access() && object_type.pointer_levels().size() > 0) {
+							object_type.remove_pointer_level();
 						}
 					}
 				}
 			}
-			
-			// Only generate destructor call for struct types
-			if (is_struct_type(object_type.type())) {
-				size_t struct_type_index = object_type.type_index();
-				if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[struct_type_index];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					
-					// Check if struct has a destructor
-					if (struct_info && struct_info->hasDestructor()) {
-						FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ", 
-						         StringTable::getStringView(struct_info->getName()));
-						
-						// Generate destructor call IR
-						DestructorCallOp dtor_op;
-						dtor_op.struct_name = struct_info->getName();
-						dtor_op.object = StringTable::getOrInternStringHandle(object_name);
-						ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), dtor.type_name_token()));
-					} else {
-						FLASH_LOG(Codegen, Debug, "Struct ", type_name, " has no destructor, skipping call");
-					}
-				}
-			} else {
-				// For non-class types (int, etc.), explicit destructor call is a no-op
-				FLASH_LOG(Codegen, Debug, "Non-class type ", type_name, " - destructor call is no-op");
-			}
-			
-			// Destructor calls return void
-			return {};
 		}
-		else if (std::holds_alternative<PointerToMemberAccessNode>(exprNode)) {
-			// Pointer-to-member operator: obj.*ptr or obj->*ptr
-			// This accesses a member through a pointer-to-member offset
-			const PointerToMemberAccessNode& ptmNode = std::get<PointerToMemberAccessNode>(exprNode);
-			
-			// Visit the object expression (LHS)
-			auto object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
-			if (object_operands.empty()) {
-				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
-				return {};
-			}
-			
-			// Visit the member pointer expression (RHS) - this should be the offset
-			auto ptr_operands = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
-			if (ptr_operands.empty()) {
-				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
-				return {};
-			}
-			
-			// Get object base address
-			TempVar object_addr = var_counter.next();
-			if (ptmNode.is_arrow()) {
-				// For ->*, object is a pointer - use it as the address
-				if (std::holds_alternative<StringHandle>(object_operands[2])) {
-					// Object is a named pointer variable - its value is the address we need
-					// Use Assignment to load it into a temp var
-					StringHandle obj_ptr_name = std::get<StringHandle>(object_operands[2]);
-					AssignmentOp assign_op;
-					assign_op.result = object_addr;
-					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
-					assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, obj_ptr_name};
-					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-				} else if (std::holds_alternative<TempVar>(object_operands[2])) {
-					// Object is already a temp var containing the address
-					object_addr = std::get<TempVar>(object_operands[2]);
+		
+		if (is_struct_type(object_type.type())) {
+			size_t struct_type_index = object_type.type_index();
+			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[struct_type_index];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info && struct_info->hasDestructor()) {
+					FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ", 
+					         StringTable::getStringView(struct_info->getName()));
+					DestructorCallOp dtor_op;
+					dtor_op.struct_name = struct_info->getName();
+					dtor_op.object = StringTable::getOrInternStringHandle(object_name);
+					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), dtor.type_name_token()));
 				} else {
-					FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for ->*");
-					return {};
-				}
-			} else {
-				// For .*, object is a value - take its address
-				// If object is in LValueAddress context, object_operands[2] might be the address
-				if (std::holds_alternative<StringHandle>(object_operands[2])) {
-					// Object is a named variable - compute its address
-					StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
-					AddressOfOp addr_op;
-					addr_op.result = object_addr;
-					addr_op.operand = TypedValue{
-						.type = std::get<Type>(object_operands[0]),
-						.size_in_bits = std::get<int>(object_operands[1]),
-						.value = obj_name,
-						.pointer_depth = 0
-					};
-					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-				} else if (std::holds_alternative<TempVar>(object_operands[2])) {
-					// Object is a temp var - might already be an address or need address-of
-					object_addr = std::get<TempVar>(object_operands[2]);
-				} else {
-					FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for .*");
-					return {};
+					FLASH_LOG(Codegen, Debug, "Struct ", type_name, " has no destructor, skipping call");
 				}
 			}
-			
-			// Validate ptr_operands before using
-			if (ptr_operands.size() < 2) {
-				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer operands incomplete (size=", ptr_operands.size(), ")");
-				return {};
-			}
-			
-			// Add the offset to the object address
-			TempVar member_addr = var_counter.next();
-			BinaryOp add_op;
-			add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
-			add_op.rhs = toTypedValue(ptr_operands); // The offset value
-			add_op.result = member_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
-			
-			// Dereference to get the member value
-			// The member type should be in ptr_operands[0]
-			Type member_type = std::get<Type>(ptr_operands[0]);
-			int member_size = std::get<int>(ptr_operands[1]);
-			TypeIndex member_type_index = 0;
-			if (ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
-				member_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(ptr_operands[3]));
-			}
-			
-			TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
-			
-			// Return the dereferenced member value
-			return { member_type, member_size, result_var, static_cast<unsigned long long>(member_type_index) };
-		}
-		else if (std::holds_alternative<PackExpansionExprNode>(exprNode)) {
-			// Pack expansion: expr...
-			// Should have been expanded during template instantiation
-			// If we reach here, it means the pack wasn't properly substituted
-			FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
-			return {};
-		}
-		else if (std::holds_alternative<InitializerListConstructionNode>(exprNode)) {
-			// Compiler-generated initializer_list construction
-			// This is the "compiler magic" for std::initializer_list
-			const auto& init_list = std::get<InitializerListConstructionNode>(exprNode);
-			return generateInitializerListConstructionIr(init_list);
-		}
-		else if (std::holds_alternative<ThrowExpressionNode>(exprNode)) {
-			// Throw expression - like ThrowStatementNode but appears in expression context
-			// For now, just skip code generation since throw expressions have type void
-			// and their main effect is control flow which isn't compiled yet
-			FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
-			return {};
-		}
-		else {
-			throw std::runtime_error("Not implemented yet");
+		} else {
+			FLASH_LOG(Codegen, Debug, "Non-class type ", type_name, " - destructor call is no-op");
 		}
 		return {};
+	}
+
+	std::vector<IrOperand> generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
+		auto object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
+		if (object_operands.empty()) {
+			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
+			return {};
+		}
+		
+		auto ptr_operands = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
+		if (ptr_operands.empty()) {
+			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
+			return {};
+		}
+		
+		TempVar object_addr = var_counter.next();
+		if (ptmNode.is_arrow()) {
+			if (std::holds_alternative<StringHandle>(object_operands[2])) {
+				StringHandle obj_ptr_name = std::get<StringHandle>(object_operands[2]);
+				AssignmentOp assign_op;
+				assign_op.result = object_addr;
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, obj_ptr_name};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+			} else if (std::holds_alternative<TempVar>(object_operands[2])) {
+				object_addr = std::get<TempVar>(object_operands[2]);
+			} else {
+				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for ->*");
+				return {};
+			}
+		} else {
+			if (std::holds_alternative<StringHandle>(object_operands[2])) {
+				StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
+				AddressOfOp addr_op;
+				addr_op.result = object_addr;
+				addr_op.operand = TypedValue{
+					.type = std::get<Type>(object_operands[0]),
+					.size_in_bits = std::get<int>(object_operands[1]),
+					.value = obj_name,
+					.pointer_depth = 0
+				};
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+			} else if (std::holds_alternative<TempVar>(object_operands[2])) {
+				object_addr = std::get<TempVar>(object_operands[2]);
+			} else {
+				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for .*");
+				return {};
+			}
+		}
+		
+		if (ptr_operands.size() < 2) {
+			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer operands incomplete (size=", ptr_operands.size(), ")");
+			return {};
+		}
+		
+		TempVar member_addr = var_counter.next();
+		BinaryOp add_op;
+		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
+		add_op.rhs = toTypedValue(ptr_operands);
+		add_op.result = member_addr;
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
+		
+		Type member_type = std::get<Type>(ptr_operands[0]);
+		int member_size = std::get<int>(ptr_operands[1]);
+		TypeIndex member_type_index = 0;
+		if (ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
+			member_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(ptr_operands[3]));
+		}
+		
+		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
+		return { member_type, member_size, result_var, static_cast<unsigned long long>(member_type_index) };
 	}
 
 	// Helper function to calculate size_bits for local variables with proper fallback handling
