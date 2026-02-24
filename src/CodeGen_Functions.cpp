@@ -3924,7 +3924,7 @@
 				// Handle template parameters in member functions with trailing requires clauses
 				// When sizeof(T) is used in a template class member function, T is a template parameter
 				// that should be resolved from the instantiated class's template arguments
-				if (!decl && current_struct_name_.isValid()) {
+				if (!decl && !lookupSymbol(identifier).has_value() && current_struct_name_.isValid()) {
 					// We're in a member function - try to resolve the template parameter
 					std::string_view struct_name = StringTable::getStringView(current_struct_name_);
 					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
