@@ -5,6 +5,6 @@ int multiply_by_n(int x) {
 }
 
 int main() {
-    return 0;
+    return multiply_by_n<2>(5);
 }
 
