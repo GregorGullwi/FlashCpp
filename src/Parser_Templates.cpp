@@ -16539,12 +16539,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Substitute outer class template parameters in function parameter types
 			// so that e.g. _Sent becomes sentinel_t when the class is instantiated
 			bool needs_substitution = false;
-			for (const auto& param : func_decl.parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					const auto& ptype = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					if (ptype.type() == Type::UserDefined) {
-						needs_substitution = true;
-						break;
+			// Check return type
+			{
+				const auto& rtype = decl_node.type_node().as<TypeSpecifierNode>();
+				if (rtype.type() == Type::UserDefined) {
+					needs_substitution = true;
+				}
+			}
+			// Check parameter types
+			if (!needs_substitution) {
+				for (const auto& param : func_decl.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& ptype = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						if (ptype.type() == Type::UserDefined) {
+							needs_substitution = true;
+							break;
+						}
 					}
 				}
 			}
