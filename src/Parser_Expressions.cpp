@@ -2975,22 +2975,18 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					ASTNode object = member_access.object();
 					bool is_arrow = member_access.is_arrow();
 					
-					// Save position so we can restore if next token isn't an identifier
-					// (e.g., obj.Base::~Base() or obj.Base::operator==())
+					// Save position before consuming any tokens so we can restore the
+					// entire chain if we hit a non-identifier after any '::' in the chain
+					// (e.g., obj.Base::~Base(), obj.Base::Inner::~Inner(), obj.Base::operator==())
 					auto saved_pos = save_token_position();
 					advance(); // consume '::'
 					
 					// Skip 'template' keyword if present (dependent context disambiguator)
 					if (peek() == "template"_tok) advance();
 					
-					// If next token isn't an identifier, restore and let the outer :: handler deal with it
-					if (!peek().is_identifier()) {
-						restore_token_position(saved_pos);
-						// Fall through to the normal :: handling below
-					} else {
-					discard_saved_token(saved_pos);
-					
-					// Consume all remaining qualified parts: Base::Inner::member
+					// Consume all qualified parts: Base::Inner::member
+					// Each iteration consumes one identifier; if followed by :: we loop again
+					bool handled = false;
 					while (peek().is_identifier()) {
 						Token qualified_member_token = peek_info();
 						advance();
@@ -3027,10 +3023,18 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 							result = emplace_node<ExpressionNode>(
 								MemberAccessNode(object, qualified_member_token, is_arrow));
 						}
+						handled = true;
 						break;
 					}
-					continue;
-					} // end else (identifier follows ::)
+					
+					if (handled) {
+						discard_saved_token(saved_pos);
+						continue;
+					}
+					
+					// Non-identifier after :: (e.g., ~, operator) — restore entire chain
+					// and fall through to the normal :: handler
+					restore_token_position(saved_pos);
 				}
 			}
 
