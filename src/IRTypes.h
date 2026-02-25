@@ -1257,6 +1257,7 @@ struct FunctionDeclOp {
 	bool is_variadic = false;
 	bool has_hidden_return_param = false;  // True if function uses hidden return parameter (struct return)
 	bool is_inline = false;  // True if function is inline or implicitly inline (e.g., defined in class body)
+	bool is_static_member = false;  // True if this is a static member function (no 'this' pointer)
 	StringHandle mangled_name;  // Pure StringHandle
 	std::vector<FunctionParam> parameters;
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)

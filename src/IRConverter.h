@@ -9113,8 +9113,8 @@ private:
 		// Calculate param_count BEFORE calling calculateFunctionStackSpace so it can allocate
 		// local variables/temp vars AFTER the parameter home space
 		size_t param_count = parameter_types.size();
-		if (!struct_name.empty()) {
-			param_count++;  // Count 'this' pointer for member functions
+		if (!struct_name.empty() && !func_decl.is_static_member) {
+			param_count++;  // Count 'this' pointer for non-static member functions
 		}
 
 		// Function debug info is now added in add_function_symbol() with length 0
@@ -9468,10 +9468,11 @@ private:
 				func_name, return_slot_offset, static_cast<int>(return_slot_reg));
 		}
 		
-		// For member functions, add 'this' pointer parameter
+		// For non-static member functions, add 'this' pointer parameter
 		// This comes after hidden return parameter (if present)
+		// Static member functions have no 'this' pointer
 		int this_offset_saved = 0;  // Will be set if this is a member function
-		if (!struct_name.empty()) {
+		if (!struct_name.empty() && !func_decl.is_static_member) {
 			// 'this' offset depends on whether there's a hidden return parameter
 			int this_offset = (param_offset_adjustment + 1) * -8;
 			this_offset_saved = this_offset;  // Save for later reference_stack_info_ registration
@@ -9507,7 +9508,7 @@ private:
 			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
-			if (!struct_name.empty()) {
+			if (!struct_name.empty() && !func_decl.is_static_member) {
 				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
 				reference_stack_info_[this_offset_saved].holds_address_only = true;
 			}
@@ -9631,7 +9632,7 @@ private:
 			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
-			if (!struct_name.empty()) {
+			if (!struct_name.empty() && !func_decl.is_static_member) {
 				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
 				reference_stack_info_[this_offset_saved].holds_address_only = true;
 			}

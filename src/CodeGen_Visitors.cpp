@@ -2910,8 +2910,9 @@ private:
 		}
 
 		// Reset the temporary variable counter for each new function
-		// For member functions, reserve TempVar(1) for the implicit 'this' parameter
-		var_counter = node.is_member_function() ? TempVar(2) : TempVar();
+		// For non-static member functions, reserve TempVar(1) for the implicit 'this' parameter
+		// Static member functions have no 'this' pointer
+		var_counter = (node.is_member_function() && !node.is_static()) ? TempVar(2) : TempVar();
 
 		// Clear global TempVar metadata to prevent stale data from bleeding into this function
 		GlobalTempVarMetadataStorage::instance().clear();
@@ -3067,6 +3068,7 @@ private:
 		// Linkage and variadic flag
 		func_decl_op.linkage = node.linkage();
 		func_decl_op.is_variadic = node.is_variadic();
+		func_decl_op.is_static_member = node.is_static();
 		
 		// Member functions defined inside the class body are implicitly inline (C++ standard)
 		// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
@@ -3588,8 +3590,9 @@ private:
 
 		symbol_table.enter_scope(ScopeType::Function);
 
-		// For member functions, add implicit 'this' pointer to symbol table
-		if (node.is_member_function()) {
+		// For non-static member functions, add implicit 'this' pointer to symbol table
+		// Static member functions have no 'this' pointer
+		if (node.is_member_function() && !node.is_static()) {
 			// Look up the struct type to get its type index and size
 			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 			if (type_it != gTypesByName.end()) {
@@ -3864,19 +3867,52 @@ private:
 					if (func_decl.is<FunctionDeclarationNode>()) {
 						visitFunctionDeclarationNode(func_decl.as<FunctionDeclarationNode>());
 					} else if (func_decl.is<ConstructorDeclarationNode>()) {
-						visitConstructorDeclarationNode(func_decl.as<ConstructorDeclarationNode>());
+						const auto& ctor = func_decl.as<ConstructorDeclarationNode>();
+						// Skip constructors with unresolved auto parameters (member function templates)
+						// These will be instantiated when called with concrete types
+						bool ctor_has_auto = false;
+						for (const auto& p : ctor.parameter_nodes()) {
+							if (p.is<DeclarationNode>()) {
+								const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								if (pt.type() == Type::Auto) {
+									ctor_has_auto = true;
+									break;
+								}
+							}
+						}
+						if (!ctor_has_auto) {
+							visitConstructorDeclarationNode(ctor);
+						} else {
+							FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping template constructor with auto params (will be instantiated on call)");
+						}
 					} else if (func_decl.is<DestructorDeclarationNode>()) {
 						visitDestructorDeclarationNode(func_decl.as<DestructorDeclarationNode>());
 					} else if (func_decl.is<TemplateFunctionDeclarationNode>()) {
 						// For member functions of class template instantiations that are wrapped in
 						// TemplateFunctionDeclarationNode. If the inner function has a definition,
-						// it's a regular member of a class template (not a member function template).
-						// Generate code for it.
+						// check if all parameter types are resolved. If any parameter still has
+						// Type::Auto, this is a member function template (e.g., abbreviated template
+						// from constrained auto) that should only be instantiated when called.
 						const auto& tmpl = func_decl.as<TemplateFunctionDeclarationNode>();
 						if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
 							const auto& inner_func = tmpl.function_declaration().as<FunctionDeclarationNode>();
 							if (inner_func.get_definition().has_value()) {
-								visitFunctionDeclarationNode(inner_func);
+								// Check if any parameter has unresolved Auto type
+								bool has_auto_param = false;
+								for (const auto& p : inner_func.parameter_nodes()) {
+									if (p.is<DeclarationNode>()) {
+										const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+										if (pt.type() == Type::Auto) {
+											has_auto_param = true;
+											break;
+										}
+									}
+								}
+								if (!has_auto_param) {
+									visitFunctionDeclarationNode(inner_func);
+								} else {
+									FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping member function template with auto params (will be instantiated on call)");
+								}
 							}
 						}
 					}
