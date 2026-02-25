@@ -177,9 +177,6 @@ $expectedLinkFailures = @(
 	# ABI tests that require external C helper files to be compiled and linked
 	"test_external_abi.cpp"
 	"test_external_abi_simple.cpp"
-	# Self-contained ABI tests (link on Linux but fail on Windows)
-	"test_mixed_abi.cpp"
-	"test_linux_abi.cpp"	# Tests 6 integer params (Linux ABI specific)
 )
 
 # Results tracking
