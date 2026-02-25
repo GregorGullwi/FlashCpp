@@ -9272,7 +9272,26 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
-			new_func_ref.set_definition(orig_body.value());
+			// Substitute template parameters in the body (e.g., non-type params like _Size)
+			// The body was already parsed but still contains TemplateParameterReferenceNodes
+			// that need to be replaced with concrete values.
+			std::vector<TemplateArgument> converted_template_args;
+			converted_template_args.reserve(template_args.size());
+			for (const auto& arg : template_args) {
+				if (arg.kind == TemplateArgument::Kind::Type) {
+					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
+				} else if (arg.kind == TemplateArgument::Kind::Value) {
+					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
+				} else {
+					converted_template_args.push_back(arg);
+				}
+			}
+			ASTNode substituted_body = substituteTemplateParameters(
+				*orig_body,
+				template_params,
+				converted_template_args
+			);
+			new_func_ref.set_definition(substituted_body);
 		}
 	}
 
@@ -18026,6 +18045,7 @@ if (param_decl.has_default_value()) {
 		// Use the already-parsed definition
 		body_to_substitute = func_decl.get_definition();
 	} else if (func_decl.has_template_body_position()) {
+		FLASH_LOG(Templates, Debug, "Lazy member function body: re-parsing from saved position");
 		// Re-parse the function body from saved position
 		// This is needed for member struct templates where body parsing is deferred
 		
@@ -18056,6 +18076,12 @@ if (param_decl.has_default_value()) {
 		// Save current position and parsing context
 		SaveHandle current_pos = save_token_position();
 		const FunctionDeclarationNode* saved_current_function = current_function_;
+		
+		// When re-parsing a lazy member function body with concrete types,
+		// we're no longer in a dependent template context. Set parsing_template_body_
+		// to false so that constant expressions like sizeof(int) are evaluated.
+		bool saved_parsing_template_body = parsing_template_body_;
+		parsing_template_body_ = false;
 
 		// Restore to the function body start
 		restore_lexer_position_only(func_decl.template_body_position());
@@ -18080,6 +18106,7 @@ if (param_decl.has_default_value()) {
 		}
 		
 		// Clean up context
+		parsing_template_body_ = saved_parsing_template_body;
 		current_function_ = saved_current_function;
 		gSymbolTable.exit_scope();
 
@@ -19503,6 +19530,13 @@ ASTNode Parser::substituteTemplateParameters(
 				if (tparam.name() == param_name) {
 					const TemplateArgument& arg = template_args[i];
 
+					// When a non-type param (e.g., _Size) receives a Type argument due to
+					// dependent expressions like sizeof(_Tp), skip the substitution to avoid
+					// creating broken identifiers like "user_defined".
+					if (tparam.kind() == TemplateParameterKind::NonType && arg.kind != TemplateArgument::Kind::Value) {
+						break;  // Leave unsubstituted
+					}
+
 					if (arg.kind == TemplateArgument::Kind::Type) {
 						// Create an identifier node for the concrete type
 						Token type_token(Token::Type::Identifier, get_type_name(arg.type_value),
@@ -19538,6 +19572,11 @@ ASTNode Parser::substituteTemplateParameters(
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == id_name) {
 					const TemplateArgument& arg = template_args[i];
+					
+					// Skip substitution when non-type param gets a dependent Type argument
+					if (tparam.kind() == TemplateParameterKind::NonType && arg.kind != TemplateArgument::Kind::Value) {
+						break;  // Leave unsubstituted
+					}
 					
 					if (arg.kind == TemplateArgument::Kind::Type) {
 						// Create an identifier node for the concrete type
