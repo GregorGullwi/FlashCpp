@@ -4816,8 +4816,13 @@ ParseResult Parser::parse_template_parameter() {
 			param_name = param_name_token.value();
 			advance(); // consume parameter name
 		} else {
-			// Generate a synthetic name for unnamed parameter
-			param_name = "";
+			// Generate a unique synthetic name for unnamed template template parameter.
+			// This avoids collisions when multiple unnamed template template parameters
+			// appear in the same declaration (e.g., template<template<class> class, template<class> class>).
+			// Without unique names, substitution maps would overwrite earlier bindings.
+			static int anonymous_template_template_counter = 0;
+			param_name = StringBuilder().append("__anon_ttp_"sv).append(static_cast<int64_t>(anonymous_template_template_counter++)).commit();
+			param_name_token = current_token_;
 		}
 
 		// Create template template parameter node
