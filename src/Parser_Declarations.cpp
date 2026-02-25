@@ -2258,9 +2258,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			
 			// Note: const qualification is handled by the member function's StructMemberFunction entry
 			
-			// Register in StructTypeInfo so subsequent lookups find it
 			struct_info->addMemberFunction(function_name_token.handle(), func_node,
 				AccessSpecifier::Public, false, false, false, false);
+			// Propagate const/volatile qualifiers to the newly added member
+			if (!struct_info->member_functions.empty()) {
+				struct_info->member_functions.back().is_const = member_quals.is_const;
+				struct_info->member_functions.back().is_volatile = member_quals.is_volatile;
+			}
 
 			// Check for declaration only (;) or function definition ({)
 			if (consume(";"_tok)) {
