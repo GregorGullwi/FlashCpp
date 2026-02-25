@@ -10255,6 +10255,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (orig_param_type.type() == Type::Auto && arg_type_index < arg_types.size()) {
 					// Abbreviated function template parameter (concept auto / auto):
 					// use the deduced argument type as the concrete instantiated parameter type.
+					//
+					// For plain `auto value` called with int: deduced type is int, no pointer levels.
+					// For `auto* p` called with int*: orig has 1 pointer level from the declaration,
+					// and deduced_arg_type has 1 pointer level from the argument. The deduced type
+					// already accounts for the full type (int*), so we use its pointer levels.
+					// However, if the original declaration adds EXTRA pointer levels beyond what
+					// deduction provides (e.g., `auto** pp` called with int*), we must preserve
+					// those additional levels from orig_param_type.
 					const TypeSpecifierNode& deduced_arg_type = arg_types[arg_type_index];
 					CVQualifier cv = static_cast<CVQualifier>(
 						static_cast<uint8_t>(deduced_arg_type.cv_qualifier()) |
@@ -10267,8 +10275,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						cv
 					);
 					param_type.as<TypeSpecifierNode>().set_type_index(deduced_arg_type.type_index());
+					// Copy pointer levels from the deduced argument type
 					for (const auto& ptr_level : deduced_arg_type.pointer_levels()) {
 						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					}
+					// If the original declaration has MORE pointer levels than the deduced type
+					// (e.g., `auto** pp` where deduced type is int*), append the extra levels.
+					// This handles patterns like `concept auto* p` or `auto** pp`.
+					if (orig_param_type.pointer_depth() > deduced_arg_type.pointer_depth()) {
+						const auto& orig_levels = orig_param_type.pointer_levels();
+						for (size_t pl = deduced_arg_type.pointer_depth(); pl < orig_param_type.pointer_depth(); ++pl) {
+							param_type.as<TypeSpecifierNode>().add_pointer_level(orig_levels[pl].cv_qualifier);
+						}
 					}
 				} else {
 					auto [subst_type, subst_type_index] = substitute_template_parameter(
