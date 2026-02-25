@@ -2259,7 +2259,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// Note: const qualification is handled by the member function's StructMemberFunction entry
 			
 			struct_info->addMemberFunction(function_name_token.handle(), func_node,
-				AccessSpecifier::Public, false, false, false, false);
+				AccessSpecifier::Public,
+				/*is_virtual=*/false,
+				/*is_pure_virtual=*/false,
+				/*is_override=*/false,
+				/*is_final_func=*/false);
 			// Propagate const/volatile qualifiers to the newly added member
 			if (!struct_info->member_functions.empty()) {
 				struct_info->member_functions.back().is_const = member_quals.is_const;
@@ -2318,18 +2322,18 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			skip_balanced_braces();
 			
 			delayed_function_bodies_.push_back({
-				&func_ref,
-				body_start,
-				{},
-				class_name,
-				type_info->type_index_,
-				nullptr,
-				false,
-				false,
-				false,
-				nullptr,
-				nullptr,
-				{}
+				&func_ref,                  // func_node
+				body_start,                 // body_start
+				{},                         // initializer_list_start (not used)
+				class_name,                 // struct_name
+				type_info->type_index_,     // struct_type_index
+				nullptr,                    // struct_node (not available for out-of-line defs)
+				false,                      // has_initializer_list
+				false,                      // is_constructor
+				false,                      // is_destructor
+				nullptr,                    // ctor_node
+				nullptr,                    // dtor_node
+				{}                          // template_param_names (empty for non-template)
 			});
 			
 			member_function_context_stack_.pop_back();

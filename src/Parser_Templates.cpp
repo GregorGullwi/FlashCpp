@@ -1873,14 +1873,13 @@ ParseResult Parser::parse_template_declaration() {
 				if (found_constructor) continue;
 
 				// Check for destructor (~StructName followed by '(')
-				// Consume leading specifiers like 'virtual', 'constexpr', 'inline' before '~'
-				bool dtor_is_virtual = false;
-				while (peek() == "virtual"_tok || peek() == "constexpr"_tok || peek() == "consteval"_tok || peek() == "inline"_tok) {
-					if (peek() == "virtual"_tok) dtor_is_virtual = true;
-					advance();
-				}
-				(void)dtor_is_virtual;  // TODO: use when virtual destructor tracking is needed
+				// Use save/restore so specifiers are not lost if this is NOT a destructor
+				{
+				SaveHandle dtor_saved_pos = save_token_position();
+				auto dtor_leading_specs = parse_member_leading_specifiers();
+				bool dtor_is_virtual = !!(dtor_leading_specs & FlashCpp::MLS_Virtual);
 				if (peek() == "~"_tok) {
+				discard_saved_token(dtor_saved_pos);
 					advance();  // consume '~'
 					
 					auto name_token_opt = advance();
@@ -1963,9 +1962,13 @@ ParseResult Parser::parse_template_declaration() {
 						return ParseResult::error("Expected '{' or ';' after destructor declaration", peek_info());
 					}
 					
-					struct_ref.add_destructor(dtor_node, current_access);
+					struct_ref.add_destructor(dtor_node, current_access, dtor_is_virtual);
 					continue;
+				} else {
+					// Not a destructor - restore position so specifiers are not lost
+					restore_token_position(dtor_saved_pos);
 				}
+				} // end destructor check scope
 
 				// Special handling for conversion operators: operator type()
 				// Conversion operators don't have a return type, so we need to detect them early
