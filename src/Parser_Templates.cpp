@@ -72,6 +72,16 @@ ParseResult Parser::parse_template_declaration() {
 			Token name_token = peek_info();
 			advance(); // consume template name
 			
+			// Handle namespace-qualified names (e.g., __cxx11::numpunct)
+			while (peek() == "::"_tok) {
+				advance(); // consume '::'
+				if (peek().is_eof()) {
+					return ParseResult::error("Expected identifier after '::'", current_token_);
+				}
+				name_token = peek_info();
+				advance(); // consume next identifier
+			}
+			
 			// Parse template arguments: Name<Args>
 			std::optional<std::vector<TemplateTypeArg>> template_args;
 			if (peek() == "<"_tok) {
