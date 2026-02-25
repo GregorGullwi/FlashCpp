@@ -1535,7 +1535,6 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers()
 {
 	FlashCpp::DeclarationSpecifiers specs;
-	
 	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), __cdecl, etc.)
 	AttributeInfo attr_info = parse_attributes();
 	specs.linkage = attr_info.linkage;
@@ -4082,7 +4081,10 @@ ParseResult Parser::parse_struct_declaration()
 	// e.g., struct [[__deprecated__]] is_literal_type
 	// Also skips GCC attributes like __attribute__((__aligned__))
 	// e.g., struct __attribute__((__aligned__)) { }
+	// Also skips Microsoft __declspec attributes
+	// e.g., class __declspec(dllimport) _Lockit { }
 	skip_cpp_attributes();
+	parse_declspec_attributes();
 
 	// Parse struct name (optional for anonymous structs)
 	auto name_token = advance();

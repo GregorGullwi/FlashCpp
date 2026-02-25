@@ -607,6 +607,10 @@ ParseResult Parser::parse_type_specifier()
 		// Handle "struct TypeName", "class TypeName", "union TypeName", and qualified names like "class std::type_info"
 		advance(); // consume 'struct', 'class', or 'union'
 
+		// Skip __declspec(...) between class/struct keyword and name (MSVC extension)
+		// Example: class __declspec(dllimport) _Lockit { ... }
+		parse_declspec_attributes();
+
 		// Get the type name
 		if (!peek().is_identifier()) {
 			return ParseResult::error("Expected type name after 'struct', 'class', or 'union'",
