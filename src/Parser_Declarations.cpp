@@ -4721,6 +4721,7 @@ ParseResult Parser::parse_struct_declaration()
 		if (peek() == ";"_tok) {
 			// Forward declaration - just register the type and return
 			advance(); // consume ';'
+			struct_ref.set_is_forward_declaration(true);
 			return saved_position.success(struct_node);
 		}
 	}

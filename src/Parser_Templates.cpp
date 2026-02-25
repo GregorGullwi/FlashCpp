@@ -6098,6 +6098,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			is_class,
 			is_union
 		);
+		forward_struct_node.as<StructDeclarationNode>().set_is_forward_declaration(true);
 		
 		// Create template struct node for the forward declaration
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
