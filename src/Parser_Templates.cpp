@@ -8214,13 +8214,18 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		if (peek() == "("_tok) {
 			SaveHandle paren_saved_pos = save_token_position();
 			advance(); // consume '('
-			
+
+			// Skip optional calling convention before ptr-operator, consistent with
+			// parse_declarator() and parse_type_and_name() which call parse_calling_convention()
+			// at the same position. Handles patterns like: _Ret (__cdecl _Arg0::*)(_Types...)
+			parse_calling_convention();
+
 			// Detect what's inside: *, &, &&, or _Class::* (member pointer)
 			bool is_ptr = false;
 			bool is_lvalue_ref = false;
 			bool is_rvalue_ref = false;
 			bool is_member_ptr = false;
-			
+
 			if (!peek().is_eof()) {
 				if (peek() == "*"_tok) {
 					is_ptr = true;

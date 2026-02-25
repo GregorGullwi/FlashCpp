@@ -301,6 +301,54 @@ int main_impl(int argc, char *argv[]) {
                 context.addIncludeDir(dir);
             }
         }
+    #else
+        // On Windows, add MSVC STL and UCRT include directories
+        // Discover MSVC toolset version dynamically
+        {
+            const std::filesystem::path msvc_base = "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC";
+            if (std::filesystem::exists(msvc_base)) {
+                // Find the latest toolset version directory
+                std::string latest_version;
+                for (const auto& entry : std::filesystem::directory_iterator(msvc_base)) {
+                    if (entry.is_directory()) {
+                        std::string name = entry.path().filename().string();
+                        if (latest_version.empty() || name > latest_version) {
+                            latest_version = name;
+                        }
+                    }
+                }
+                if (!latest_version.empty()) {
+                    auto include_dir = msvc_base / latest_version / "include";
+                    if (std::filesystem::exists(include_dir)) {
+                        context.addIncludeDir(include_dir.string());
+                    }
+                }
+            }
+
+            // Add UCRT include directory
+            const std::filesystem::path winsdk_base = "C:/Program Files (x86)/Windows Kits/10/Include";
+            if (std::filesystem::exists(winsdk_base)) {
+                std::string latest_version;
+                for (const auto& entry : std::filesystem::directory_iterator(winsdk_base)) {
+                    if (entry.is_directory()) {
+                        std::string name = entry.path().filename().string();
+                        if (latest_version.empty() || name > latest_version) {
+                            latest_version = name;
+                        }
+                    }
+                }
+                if (!latest_version.empty()) {
+                    auto ucrt_dir = winsdk_base / latest_version / "ucrt";
+                    if (std::filesystem::exists(ucrt_dir)) {
+                        context.addIncludeDir(ucrt_dir.string());
+                    }
+                    auto shared_dir = winsdk_base / latest_version / "shared";
+                    if (std::filesystem::exists(shared_dir)) {
+                        context.addIncludeDir(shared_dir.string());
+                    }
+                }
+            }
+        }
     #endif
 
     // Collect timing data silently
