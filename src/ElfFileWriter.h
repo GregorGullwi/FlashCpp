@@ -12,6 +12,7 @@
 #include <span>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <fstream>
 #include <set>
@@ -133,7 +134,9 @@ public:
 
 		// Convert string_view to std::string to ensure null-termination for C API
 		std::string mangled_name_str(mangled_name);
-		accessor->add_symbol(*string_accessor_, mangled_name_str.c_str(), value, size, bind, type, other, section_index);
+		ELFIO::Elf_Word sym_idx = accessor->add_symbol(*string_accessor_, mangled_name_str.c_str(), value, size, bind, type, other, section_index);
+		// Keep symbol cache in sync for O(1) lookups in finalize phase
+		symbol_index_cache_[mangled_name_str] = sym_idx;
 
 		// Track for debug info
 		debug_pending_text_offset_ = section_offset;
@@ -748,20 +751,18 @@ public:
 	                                 uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {},
 	                                 [[maybe_unused]] const std::vector<UnwindMapEntryInfo>& unwind_map = {},
 	                                 const std::vector<CFIInstruction>& cfi_instructions = {}) {
-		// Check if exception info has already been added for this function
-		for (const auto& existing : added_exception_functions_) {
-			if (existing == mangled_name) {
-				if (g_enable_debug_output) std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
-				return;
-			}
+		// Check if exception info has already been added for this function (O(1) with unordered_set)
+		std::string mangled_name_str(mangled_name);
+		if (!added_exception_functions_.insert(mangled_name_str).second) {
+			if (g_enable_debug_output) std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
+			return;
 		}
-		added_exception_functions_.push_back(std::string(mangled_name));
 
 		// Add FDE for this function (all functions get an FDE for proper unwinding)
 		FDEInfo fde_info;
 		fde_info.function_start_offset = function_start;
 		fde_info.function_length = function_size;
-		fde_info.function_symbol.assign(mangled_name.begin(), mangled_name.end());
+		fde_info.function_symbol = std::move(mangled_name_str);
 		fde_info.has_exception_handling = !try_blocks.empty();
 		fde_info.cfi_instructions = cfi_instructions;  // Store CFI instructions
 		
@@ -1236,90 +1237,45 @@ public:
 		);
 		
 		// Add relocations for each FDE's PC begin field
+		// Build symbol cache once before the loop to avoid O(N²) symbol lookups
+		buildSymbolIndexCache();
+		// Cache the .gcc_except_table symbol index (looked up at most once)
+		ELFIO::Elf_Word gcc_except_table_sym_index = 0;
+		bool found_except_table = false;
+
 		for (const auto& fde_info : functions_with_fdes_) {
 			// R_X86_64_PC32: PC-relative 32-bit signed (S + A - P)
 			// where S = symbol value, A = addend, P = place (offset being relocated)
-			rela_accessor->add_entry(fde_info.pc_begin_offset, 
-			                        0,  // Symbol index (will be set below)
+			// Look up the symbol index via cache (O(1)) instead of O(N) scan
+			ELFIO::Elf_Word sym_idx = lookupSymbolIndex(fde_info.function_symbol);
+			rela_accessor->add_entry(fde_info.pc_begin_offset,
+			                        sym_idx,
 			                        ELFIO::R_X86_64_PC32,
 			                        0);  // Addend (0 for PC-relative to function start)
 			
-			// Now we need to update the symbol index
-			// Find the symbol index for this function
-			auto* accessor = getSymbolAccessor();
-			if (accessor) {
-				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
-				for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
-					std::string sym_name;
-					ELFIO::Elf64_Addr sym_value;
-					ELFIO::Elf_Xword sym_size;
-					unsigned char sym_bind, sym_type;
-					ELFIO::Elf_Half sym_section;
-					unsigned char sym_other;
-					
-					accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, 
-					                    sym_type, sym_section, sym_other);
-					
-					if (sym_name == fde_info.function_symbol) {
-						// Update the relocation we just added
-						ELFIO::Elf64_Addr r_offset;
-						ELFIO::Elf_Word r_symbol;  // Use Elf_Word (32-bit)
-						unsigned r_type;
-						ELFIO::Elf_Sxword r_addend;
-						
-						// Get the last relocation we added
-						ELFIO::Elf_Xword rel_count = rela_accessor->get_entries_num();
-						if (rel_count > 0) {
-							rela_accessor->get_entry(rel_count - 1, r_offset, r_symbol, 
-							                        r_type, r_addend);
-							// Update symbol index
-							rela_accessor->set_entry(rel_count - 1, r_offset, 
-							                        static_cast<ELFIO::Elf_Word>(i), 
-							                        r_type, r_addend);
-						}
-						break;
-					}
-				}
-			}
-			
 			// Add LSDA relocation if function has exception handling
 			if (fde_info.has_exception_handling && fde_info.lsda_pointer_offset > 0) {
-				// Add .gcc_except_table section symbol if needed
-				// First check if it exists
-				ELFIO::Elf_Xword gcc_except_table_sym_index = 0;
-				bool found_except_table = false;
-				
-				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
-				for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
-					std::string sym_name;
-					ELFIO::Elf64_Addr sym_value;
-					ELFIO::Elf_Xword sym_size;
-					unsigned char sym_bind, sym_type;
-					ELFIO::Elf_Half sym_section;
-					unsigned char sym_other;
-					
-					accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind,
-					                    sym_type, sym_section, sym_other);
-					
-					if (sym_name == ".gcc_except_table") {
-						gcc_except_table_sym_index = i;
-						found_except_table = true;
-						break;
-					}
-				}
-				
+				// Locate .gcc_except_table symbol index (cached after first lookup)
 				if (!found_except_table) {
-					// Add section symbol for .gcc_except_table
-					auto* except_section = getSectionByName(".gcc_except_table");
-					if (except_section) {
-						// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
-						accessor->add_symbol(*string_accessor_, ".gcc_except_table",
-						                    0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION,
-						                    ELFIO::STV_DEFAULT, except_section->get_index());
-						gcc_except_table_sym_index = accessor->get_symbols_num() - 1;
+					gcc_except_table_sym_index = lookupSymbolIndex(".gcc_except_table");
+					if (gcc_except_table_sym_index != 0) {
+						found_except_table = true;
+					} else {
+						// Add section symbol for .gcc_except_table
+						auto* except_section = getSectionByName(".gcc_except_table");
+						if (except_section) {
+							auto* accessor = getSymbolAccessor();
+							// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
+							accessor->add_symbol(*string_accessor_, ".gcc_except_table",
+							                    0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION,
+							                    ELFIO::STV_DEFAULT, except_section->get_index());
+							gcc_except_table_sym_index = static_cast<ELFIO::Elf_Word>(accessor->get_symbols_num() - 1);
+							symbol_index_cache_[".gcc_except_table"] = gcc_except_table_sym_index;
+							found_except_table = true;
+						}
 					}
 				}
-				
+
 				// Add R_X86_64_PC32 relocation for LSDA pointer (pcrel|sdata4 encoding)
 				if (g_enable_debug_output) {
 					std::cerr << "[DEBUG] LSDA relocation for " << fde_info.function_symbol
@@ -1509,37 +1465,23 @@ public:
 			);
 
 			uint32_t data_offset = 0;
+			// Build symbol cache once before the loop to avoid O(N²) typeinfo symbol lookups
+			buildSymbolIndexCache();
 			for (const auto& [lsda_offset, symbol] : all_type_table_relocations) {
-				// Find or add the typeinfo symbol
-				bool found = false;
+				// Find or add the typeinfo symbol using cache (O(1))
 				ELFIO::Elf_Xword typeinfo_sym_index = 0;
 
 				if (sym_accessor) {
-					ELFIO::Elf_Xword sym_count = sym_accessor->get_symbols_num();
-					for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
-						std::string sym_name;
-						ELFIO::Elf64_Addr sym_value;
-						ELFIO::Elf_Xword sym_size;
-						unsigned char sym_bind, sym_type;
-						ELFIO::Elf_Half sym_section;
-						unsigned char sym_other;
-
-						sym_accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind,
-						                        sym_type, sym_section, sym_other);
-
-						if (sym_name == symbol) {
-							typeinfo_sym_index = i;
-							found = true;
-							break;
-						}
-					}
-
-					if (!found) {
+					auto cache_it = symbol_index_cache_.find(symbol);
+					if (cache_it != symbol_index_cache_.end()) {
+						typeinfo_sym_index = cache_it->second;
+					} else {
 						// Add as undefined external symbol
 						sym_accessor->add_symbol(*string_accessor_, symbol.c_str(),
 						                        0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
 						                        ELFIO::STV_DEFAULT, 0);
 						typeinfo_sym_index = sym_accessor->get_symbols_num() - 1;
+						symbol_index_cache_[symbol] = static_cast<ELFIO::Elf_Word>(typeinfo_sym_index);
 					}
 
 					// Add R_X86_64_64 relocation from .data to typeinfo symbol
@@ -1597,8 +1539,12 @@ private:
 	// Function signatures for name mangling
 	std::unordered_map<std::string, FunctionSignature, ObjectFileCommon::StringViewHash, std::equal_to<>> function_signatures_;
 
-	// Track functions that already have exception info to avoid duplicates
-	std::vector<std::string> added_exception_functions_;
+	// Track functions that already have exception info to avoid duplicates (O(1) lookup)
+	std::unordered_set<std::string> added_exception_functions_;
+
+	// Cache for symbol name → symbol index lookups (avoids O(n) iteration per lookup)
+	std::unordered_map<std::string, ELFIO::Elf_Word> symbol_index_cache_;
+	bool symbol_index_cache_dirty_ = true;  // invalidated whenever symbols are added
 
 	// ===== DWARF4 debug info data =====
 	struct DebugLineEntry {
@@ -1798,66 +1744,42 @@ private:
 	ELFIO::Elf_Word getOrCreateSymbol(std::string_view name, unsigned char type, unsigned char bind,
 	                                   ELFIO::Elf_Half section_index = ELFIO::SHN_UNDEF,
 	                                   ELFIO::Elf64_Addr value = 0, ELFIO::Elf_Xword size = 0) {
-		// Check if symbol already exists
-		auto* accessor = getSymbolAccessor();
-		ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
-		
-		for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
+		// Check cache first (O(1)).
+		// Invariant: every symbol added to ELFIO is also added to symbol_index_cache_,
+		// so a cache miss means the symbol truly does not yet exist.
+		auto cache_it = symbol_index_cache_.find(std::string(name));
+		if (cache_it != symbol_index_cache_.end()) {
+			ELFIO::Elf_Word i = cache_it->second;
+			// If existing symbol is undefined and we're providing a definition, update it
+			auto* accessor = getSymbolAccessor();
 			std::string sym_name;
 			ELFIO::Elf64_Addr sym_value;
 			ELFIO::Elf_Xword sym_size;
-			unsigned char sym_bind, sym_type;
+			unsigned char sym_bind, sym_type, sym_other;
 			ELFIO::Elf_Half sym_section;
-			unsigned char sym_other;
-
 			accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
-			
-			if (sym_name == name) {
-				// Symbol exists - check if we need to update it
-				// If the existing symbol is undefined (SHN_UNDEF) and we're providing a definition,
-				// we need to update it
-				if (sym_section == ELFIO::SHN_UNDEF && section_index != ELFIO::SHN_UNDEF) {
-					// Update the existing undefined symbol with the definition
-					// ELFIO doesn't provide a direct update method, so we need to work around it
-					// by modifying the symbol table data directly
-					ELFIO::section* symtab_sec = getSectionByName(".symtab");
-					if (symtab_sec) {
-						// Calculate offset to this symbol's entry
-						size_t entry_size = symtab_sec->get_entry_size();
-						size_t offset = i * entry_size;
-						
-						// Get mutable access to symbol table data
-						char* data = const_cast<char*>(symtab_sec->get_data());
-						
-						// Symbol table entry layout (64-bit):
-						// Offset | Size | Field
-						// -------|------|-------
-						// 0      | 4    | st_name (string table index)
-						// 4      | 1    | st_info (bind << 4 | type)
-						// 5      | 1    | st_other
-						// 6      | 2    | st_shndx (section index)
-						// 8      | 8    | st_value
-						// 16     | 8    | st_size
-						
-						// Update st_info (bind and type)
-						data[offset + 4] = (bind << 4) | (type & 0x0F);
-						
-						// Update st_shndx (section index)
-						*reinterpret_cast<ELFIO::Elf_Half*>(&data[offset + 6]) = section_index;
-						
-						// Update st_value
-						*reinterpret_cast<ELFIO::Elf64_Addr*>(&data[offset + 8]) = value;
-						
-						// Update st_size
-						*reinterpret_cast<ELFIO::Elf_Xword*>(&data[offset + 16]) = size;
-					}
+			if (sym_section == ELFIO::SHN_UNDEF && section_index != ELFIO::SHN_UNDEF) {
+				ELFIO::section* symtab_sec = getSectionByName(".symtab");
+				if (symtab_sec) {
+					size_t entry_size = symtab_sec->get_entry_size();
+					size_t offset = i * entry_size;
+					char* data = const_cast<char*>(symtab_sec->get_data());
+					// Symbol table entry layout (64-bit):
+					// 0:4=st_name, 4:1=st_info, 5:1=st_other, 6:2=st_shndx, 8:8=st_value, 16:8=st_size
+					data[offset + 4] = (bind << 4) | (type & 0x0F);
+					*reinterpret_cast<ELFIO::Elf_Half*>(&data[offset + 6]) = section_index;
+					*reinterpret_cast<ELFIO::Elf64_Addr*>(&data[offset + 8]) = value;
+					*reinterpret_cast<ELFIO::Elf_Xword*>(&data[offset + 16]) = size;
 				}
-				return i;  // Return existing symbol index
 			}
+			return i;
 		}
 
-		// Symbol doesn't exist, create it
-		return accessor->add_symbol(*string_accessor_, name.data(), value, size, bind, type, ELFIO::STV_DEFAULT, section_index);
+		// Cache miss → symbol doesn't exist; create it and add to cache
+		auto* accessor = getSymbolAccessor();
+		ELFIO::Elf_Word new_idx = accessor->add_symbol(*string_accessor_, name.data(), value, size, bind, type, ELFIO::STV_DEFAULT, section_index);
+		symbol_index_cache_[std::string(name)] = new_idx;
+		return new_idx;
 	}
 
 	/**
@@ -1959,29 +1881,55 @@ private:
 
 	// ===== DWARF4 helper methods =====
 
+	// Build (or rebuild) the symbol name→index cache from the current symbol table.
+	// Called lazily before any bulk symbol lookup to amortise the O(n) scan to O(1) per lookup.
+	void buildSymbolIndexCache() {
+		if (!symbol_index_cache_dirty_) return;
+		symbol_index_cache_.clear();
+		auto* accessor = getSymbolAccessor();
+		if (!accessor) { symbol_index_cache_dirty_ = false; return; }
+		ELFIO::Elf_Xword count = accessor->get_symbols_num();
+		symbol_index_cache_.reserve(count);
+		for (ELFIO::Elf_Xword i = 0; i < count; ++i) {
+			std::string sym_name;
+			ELFIO::Elf64_Addr sv; ELFIO::Elf_Xword ss;
+			unsigned char sb, st, so; ELFIO::Elf_Half sec;
+			accessor->get_symbol(i, sym_name, sv, ss, sb, st, sec, so);
+			symbol_index_cache_.emplace(std::move(sym_name), static_cast<ELFIO::Elf_Word>(i));
+		}
+		symbol_index_cache_dirty_ = false;
+	}
+
+	// Look up a symbol index by name using the cache.  Builds the cache on first use.
+	// Returns 0 (null symbol) if not found.
+	ELFIO::Elf_Word lookupSymbolIndex(const std::string& name) {
+		buildSymbolIndexCache();
+		auto it = symbol_index_cache_.find(name);
+		return it != symbol_index_cache_.end() ? it->second : 0;
+	}
+
 	// Update the st_size field of a FUNC symbol by name
 	void updateSymbolSize(const std::string& name, uint32_t size) {
 		auto* accessor = getSymbolAccessor();
 		if (!accessor) return;
-		ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
-		for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
-			std::string sym_name;
-			ELFIO::Elf64_Addr sym_value;
-			ELFIO::Elf_Xword sym_size;
-			unsigned char sym_bind, sym_type, sym_other;
-			ELFIO::Elf_Half sym_section;
-			accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
-			if (sym_name == name && sym_type == ELFIO::STT_FUNC) {
-				ELFIO::section* symtab_sec = getSectionByName(".symtab");
-				if (symtab_sec) {
-					size_t entry_size = symtab_sec->get_entry_size();
-					char* data = const_cast<char*>(symtab_sec->get_data());
-					// st_size is at offset 16 in a 64-bit ELF symbol entry
-					*reinterpret_cast<ELFIO::Elf_Xword*>(&data[i * entry_size + 16]) = size;
-				}
-				return;
-			}
-		}
+		buildSymbolIndexCache();
+		auto it = symbol_index_cache_.find(name);
+		if (it == symbol_index_cache_.end()) return;
+		ELFIO::Elf_Xword i = it->second;
+		ELFIO::section* symtab_sec = getSectionByName(".symtab");
+		if (!symtab_sec) return;
+		// Verify it's a FUNC symbol before patching
+		std::string sym_name;
+		ELFIO::Elf64_Addr sym_value;
+		ELFIO::Elf_Xword sym_size;
+		unsigned char sym_bind, sym_type, sym_other;
+		ELFIO::Elf_Half sym_section;
+		accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
+		if (sym_type != ELFIO::STT_FUNC) return;
+		size_t entry_size = symtab_sec->get_entry_size();
+		char* data = const_cast<char*>(symtab_sec->get_data());
+		// st_size is at offset 16 in a 64-bit ELF symbol entry
+		*reinterpret_cast<ELFIO::Elf_Xword*>(&data[i * entry_size + 16]) = size;
 	}
 
 	// Map CodeView x64 register code to DWARF x86-64 register number (System V AMD64)
@@ -2056,19 +2004,16 @@ private:
 	// Create or look up a symbol index needed for DWARF relocations.
 	// Returns the existing symbol index if found, otherwise creates an undefined entry.
 	ELFIO::Elf_Word dwarfSymbolIndex(const std::string& name) {
-		auto* accessor = getSymbolAccessor();
-		ELFIO::Elf_Xword count = accessor->get_symbols_num();
-		for (ELFIO::Elf_Xword i = 0; i < count; ++i) {
-			std::string sym_name;
-			ELFIO::Elf64_Addr sv; ELFIO::Elf_Xword ss;
-			unsigned char sb, st, so; ELFIO::Elf_Half sec;
-			accessor->get_symbol(i, sym_name, sv, ss, sb, st, sec, so);
-			if (sym_name == name) return static_cast<ELFIO::Elf_Word>(i);
-		}
+		buildSymbolIndexCache();
+		auto it = symbol_index_cache_.find(name);
+		if (it != symbol_index_cache_.end()) return it->second;
 		// Not found – add a placeholder (will be resolved at link time)
-		return accessor->add_symbol(*string_accessor_, name.c_str(), 0, 0,
+		auto* accessor = getSymbolAccessor();
+		ELFIO::Elf_Word idx = accessor->add_symbol(*string_accessor_, name.c_str(), 0, 0,
 		                            ELFIO::STB_GLOBAL, ELFIO::STT_FUNC,
 		                            ELFIO::STV_DEFAULT, ELFIO::SHN_UNDEF);
+		symbol_index_cache_[name] = idx;
+		return idx;
 	}
 
 	// Generate all DWARF4 debug sections
