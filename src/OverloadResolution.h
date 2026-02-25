@@ -235,8 +235,17 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		// Note: pointer_levels_[0].cv_qualifier is cv on the pointer itself (e.g., T* const),
 		// not on the pointee. Top-level pointer cv must not affect pointee constness.
 		auto pointee_is_const = [](const TypeSpecifierNode& type_spec) -> bool {
-			if (type_spec.pointer_depth() == 0) return false;
-			return type_spec.is_const();
+			size_t depth = type_spec.pointer_depth();
+			if (depth == 0) return false;
+			if (depth == 1) {
+				// Single-level pointer (e.g., const char*): pointee constness is on the base type
+				return type_spec.is_const();
+			}
+			// Multi-level pointer (e.g., char* const*): pointee constness is on the
+			// second-to-last pointer level. For depth N, the outermost pointer's pointee
+			// is the type at depth N-1, whose cv is stored in pointer_levels_[depth-2].
+			const auto& levels = type_spec.pointer_levels();
+			return (static_cast<uint8_t>(levels[depth - 2].cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
 		};
 		
 		bool from_pointee_is_const = pointee_is_const(from);
