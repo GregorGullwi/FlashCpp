@@ -4142,6 +4142,13 @@ private:
 			ctor_decl_op.parameters.push_back(func_param);
 		}
 
+		// Skip duplicate constructor definitions (e.g. when a static member call queues all struct members)
+		if (generated_function_names_.count(ctor_decl_op.mangled_name) > 0) {
+			FLASH_LOG(Codegen, Debug, "Skipping duplicate constructor definition: ", StringTable::getStringView(ctor_decl_op.mangled_name));
+			return;
+		}
+		generated_function_names_.insert(ctor_decl_op.mangled_name);
+
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), node.name_token()));
 		
 		symbol_table.enter_scope(ScopeType::Function);
