@@ -5664,7 +5664,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						false,  // is_destructor
 						&ctor_ref,  // ctor_node
 						nullptr,   // dtor_node
-						template_param_name_handles  // template_param_names for template constructors
+						template_param_name_handles,  // template_param_names for template constructors
+						true   // is_member_function_template
 					});
 				} else if (!consume(";"_tok)) {
 					current_template_param_names_ = std::move(saved_template_param_names);

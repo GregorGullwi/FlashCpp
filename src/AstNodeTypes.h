@@ -2506,6 +2506,15 @@ public:
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
+	// Template body position: for member function template constructors whose bodies
+	// are deferred to instantiation time (two-phase lookup, C++ §13.9.2).
+	void set_template_body_position(SaveHandle handle) {
+		has_template_body_ = true;
+		template_body_position_handle_ = handle;
+	}
+	bool has_template_body_position() const { return has_template_body_; }
+	SaveHandle template_body_position() const { return template_body_position_handle_; }
+
 private:
 	StringHandle struct_name_;
 	StringHandle name_;
@@ -2520,6 +2529,8 @@ private:
 	bool is_constexpr_ = false;  // constexpr specifier
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	std::optional<ASTNode> requires_clause_;  // C++20 trailing requires clause
+	bool has_template_body_ = false;
+	SaveHandle template_body_position_handle_;  // Handle to saved position for template body
 };
 
 // Destructor declaration node
