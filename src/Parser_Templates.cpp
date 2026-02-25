@@ -9105,6 +9105,22 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	}
 
 	// Handle the function body
+	// Helper: substitute template parameters in a function body node
+	auto substituteBodyWithArgs = [&](const ASTNode& body) -> ASTNode {
+		std::vector<TemplateArgument> converted_template_args;
+		converted_template_args.reserve(template_args.size());
+		for (const auto& arg : template_args) {
+			if (arg.kind == TemplateArgument::Kind::Type) {
+				converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
+			} else if (arg.kind == TemplateArgument::Kind::Value) {
+				converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
+			} else {
+				converted_template_args.push_back(arg);
+			}
+		}
+		return substituteTemplateParameters(body, template_params, converted_template_args);
+	};
+
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
 		// Re-parse the function body with template parameters substituted
@@ -9234,26 +9250,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
-			// After parsing, we need to substitute template parameters in the body
-			// This is essential for features like fold expressions that need AST transformation
-			// Convert template_args to TemplateArgument format for substitution
-			std::vector<TemplateArgument> converted_template_args;
-			converted_template_args.reserve(template_args.size());
-			for (const auto& arg : template_args) {
-				if (arg.kind == TemplateArgument::Kind::Type) {
-					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
-				} else if (arg.kind == TemplateArgument::Kind::Value) {
-					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
-				}
-			}
-		
-			ASTNode substituted_body = substituteTemplateParameters(
-				*block_result.node(),
-				template_params,
-				converted_template_args
-			);
-		
-			new_func_ref.set_definition(substituted_body);
+			new_func_ref.set_definition(substituteBodyWithArgs(*block_result.node()));
 		}
 		
 		// Clean up context
@@ -9272,26 +9269,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
-			// Substitute template parameters in the body (e.g., non-type params like _Size)
-			// The body was already parsed but still contains TemplateParameterReferenceNodes
-			// that need to be replaced with concrete values.
-			std::vector<TemplateArgument> converted_template_args;
-			converted_template_args.reserve(template_args.size());
-			for (const auto& arg : template_args) {
-				if (arg.kind == TemplateArgument::Kind::Type) {
-					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
-				} else if (arg.kind == TemplateArgument::Kind::Value) {
-					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
-				} else {
-					converted_template_args.push_back(arg);
-				}
-			}
-			ASTNode substituted_body = substituteTemplateParameters(
-				*orig_body,
-				template_params,
-				converted_template_args
-			);
-			new_func_ref.set_definition(substituted_body);
+			new_func_ref.set_definition(substituteBodyWithArgs(*orig_body));
 		}
 	}
 
@@ -16159,6 +16137,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_parsing_context_stack_.pop_back();
 					FLASH_LOG(Templates, Debug, "Popped struct context");
 				}
+
+				// Copy function specifiers from original
+				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
+				new_func_ref.set_is_consteval(func_decl.is_consteval());
+				new_func_ref.set_is_constinit(func_decl.is_constinit());
+				new_func_ref.set_noexcept(func_decl.is_noexcept());
+				new_func_ref.set_is_variadic(func_decl.is_variadic());
+				new_func_ref.set_is_static(func_decl.is_static());
+				new_func_ref.set_linkage(func_decl.linkage());
+				new_func_ref.set_calling_convention(func_decl.calling_convention());
+				new_func_ref.set_is_implicit(func_decl.is_implicit());
 
 				// Add the substituted function to the instantiated struct
 				if (mem_func.is_operator_overload) {
