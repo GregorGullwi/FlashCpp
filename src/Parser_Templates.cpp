@@ -5664,7 +5664,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						false,  // is_destructor
 						&ctor_ref,  // ctor_node
 						nullptr,   // dtor_node
-						template_param_name_handles  // template_param_names for template constructors
+						template_param_name_handles,  // template_param_names for template constructors
+						true   // is_member_function_template
 					});
 				} else if (!consume(";"_tok)) {
 					current_template_param_names_ = std::move(saved_template_param_names);
@@ -6098,6 +6099,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			is_class,
 			is_union
 		);
+		forward_struct_node.as<StructDeclarationNode>().set_is_forward_declaration(true);
 		
 		// Create template struct node for the forward declaration
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(

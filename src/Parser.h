@@ -397,6 +397,8 @@ private:
                 ConstructorDeclarationNode* ctor_node;   // For constructors (nullptr for regular functions)
                 DestructorDeclarationNode* dtor_node;    // For destructors (nullptr for regular functions)
                 std::vector<StringHandle> template_param_names; // For template member functions
+                bool is_member_function_template = false; // True when this is a member function template (template<T> void f())
+                                                          // as opposed to a regular member of a template class
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 

@@ -1144,13 +1144,34 @@ public:
 	}
 
 	void registerTemplate(StringHandle name, ASTNode template_node) {
-		templates_[name].push_back(template_node);
 		// Track class template names separately so callers can ask "is this name a class
 		// template?" without matching unrelated function templates that share the same
 		// unqualified name.
 		if (template_node.is<TemplateClassDeclarationNode>()) {
 			class_template_names_.insert(name);
+
+			// When registering a class template full definition, replace any existing
+			// forward declaration (empty body) for the same name instead of appending.
+			// This ensures lookupTemplate returns the full definition, not the forward decl.
+			auto& entries = templates_[name];
+			if (!entries.empty() && isClassTemplateForwardDecl(template_node) == false) {
+				for (size_t i = 0; i < entries.size(); ++i) {
+					if (entries[i].is<TemplateClassDeclarationNode>() && isClassTemplateForwardDecl(entries[i])) {
+						entries[i] = template_node;
+						return;
+					}
+				}
+			}
 		}
+		templates_[name].push_back(template_node);
+	}
+
+	// Returns true if the given node is a TemplateClassDeclarationNode whose
+	// underlying StructDeclarationNode was parsed from a forward declaration
+	// like `template<typename T> struct Foo;` (semicolon instead of body).
+	static bool isClassTemplateForwardDecl(const ASTNode& node) {
+		if (!node.is<TemplateClassDeclarationNode>()) return false;
+		return node.as<TemplateClassDeclarationNode>().class_decl_node().is_forward_declaration();
 	}
 
 	// Returns true if 'name' (exact StringHandle) was registered as a class template.
