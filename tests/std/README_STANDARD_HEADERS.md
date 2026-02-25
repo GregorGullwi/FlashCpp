@@ -125,3 +125,45 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 4. **Namespace-scope identifier fallback in codegen**: Added global-qualified fallback lookup for unresolved identifiers during code generation (including parent-namespace lookup and unique namespace-qualified fallback). This resolved `<latch>` failures on `memory_order_relaxed` and `__memory_order_mask` and exposed the remaining `_Size` non-type template substitution gap.
 
 5. **GCC atomic predefined macros**: Added missing predefined macros (`__GCC_ATOMIC_*` and `__GCC_ATOMIC_TEST_AND_SET_TRUEVAL`) in GCC/Clang compatibility mode to match libstdc++ expectations and avoid unresolved macro identifiers during `<atomic>/<latch>` compilation paths.
+
+### MSVC Status Sweep (2026-02-25)
+
+This README is primarily GCC/Clang-oriented; the following is a dedicated MSVC snapshot from running `tests/std/test_*.cpp` with detected MSVC + Windows SDK include paths.
+
+#### MSVC compile results (tests/std)
+
+- **Total test files:** 30
+- **Compiled:** 2
+	- `test_cstddef.cpp` (~119ms)
+	- `test_std_compare_ret42.cpp` (~45ms)
+- **Failed:** 28 (all parser-stage in this sweep)
+
+#### Updated MSVC timings (selected)
+
+| Test file | Status | Time | First concrete failure |
+|---|---:|---:|---|
+| `test_std_type_traits.cpp` | ❌ | ~352ms | `corecrt_wstring.h:144:8: error: Expected identifier token` |
+| `test_std_utility.cpp` | ❌ | ~347ms | `corecrt_wstring.h:144:8: error: Expected identifier token` |
+| `test_std_any.cpp` | ❌ | ~1047ms | `corecrt_wstring.h:144:8: error: Expected identifier token` |
+| `test_std_algorithm.cpp` | ❌ | ~1183ms | `yvals.h:366:30: error: Expected type name after 'struct', 'class', or 'union'` |
+| `test_std_limits.cpp` | ❌ | ~490ms | `corecrt_wstdio.h:309:40: error: No matching function for call to '__stdio_common_vfwprintf'` |
+| `test_std_chrono.cpp` | ❌ | ~2456ms | parser failure in MSVC/UCRT include chain |
+| `test_std_iostream.cpp` | ❌ | ~1657ms | parser failure in MSVC/UCRT include chain |
+
+#### Newly fixed blockers (MSVC-focused)
+
+1. **Pointer object constness vs pointee constness in overload resolution**
+	- Fixed incorrect treatment of `T* const` as `const T*` during overload matching.
+	- This removed false negatives for C-runtime style calls where local pointer objects are const-qualified and passed by value.
+	- Regression test: `tests/test_const_pointer_value_conversion_ret42.cpp`.
+
+2. **Constrained/abbreviated `auto` parameter type materialization during template instantiation (codegen blocker)**
+	- Instantiated function parameters now use the deduced concrete argument type instead of keeping `Type::Auto`.
+	- This prevents zero-size `auto` parameters from reaching codegen.
+	- Regression test: `tests/test_constrained_auto_u64_codegen_ret1.cpp`.
+
+#### Current top MSVC blockers after this round
+
+1. **SAL macro parse path around `_When_`/annotation expansion** (e.g., `corecrt_wstring.h:144`).
+2. **UCRT formatted I/O wrapper call resolution** (e.g., `__stdio_common_vfwprintf` call shape in `corecrt_wstdio.h`).
+3. **MSVC STL front-end parse compatibility in `yvals.h` include path** (seen from `<algorithm>`).

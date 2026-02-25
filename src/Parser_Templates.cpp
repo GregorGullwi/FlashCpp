@@ -10239,22 +10239,42 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			} else {
 				// Regular parameter - substitute template parameters in the parameter type
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				auto [subst_type, subst_type_index] = substitute_template_parameter(
-					orig_param_type, template_params, template_args_as_type_args
-				);
+				ASTNode param_type;
+				if (orig_param_type.type() == Type::Auto && arg_type_index < arg_types.size()) {
+					// Abbreviated function template parameter (concept auto / auto):
+					// use the deduced argument type as the concrete instantiated parameter type.
+					const TypeSpecifierNode& deduced_arg_type = arg_types[arg_type_index];
+					CVQualifier cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(deduced_arg_type.cv_qualifier()) |
+						static_cast<uint8_t>(orig_param_type.cv_qualifier()));
+					param_type = emplace_node<TypeSpecifierNode>(
+						deduced_arg_type.type(),
+						TypeQualifier::None,
+						deduced_arg_type.size_in_bits(),
+						Token(),
+						cv
+					);
+					param_type.as<TypeSpecifierNode>().set_type_index(deduced_arg_type.type_index());
+					for (const auto& ptr_level : deduced_arg_type.pointer_levels()) {
+						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					}
+				} else {
+					auto [subst_type, subst_type_index] = substitute_template_parameter(
+						orig_param_type, template_params, template_args_as_type_args
+					);
+					param_type = emplace_node<TypeSpecifierNode>(
+						subst_type,
+						TypeQualifier::None,
+						get_type_size_bits(subst_type),
+						Token(),
+						orig_param_type.cv_qualifier()
+					);
+					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
 
-				ASTNode param_type = emplace_node<TypeSpecifierNode>(
-					subst_type,
-					TypeQualifier::None,
-					get_type_size_bits(subst_type),
-					Token(),
-					orig_param_type.cv_qualifier()
-				);
-				param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
-
-				// Preserve pointer levels from the original declaration
-				for (const auto& ptr_level : orig_param_type.pointer_levels()) {
-					param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					// Preserve pointer levels from the original declaration
+					for (const auto& ptr_level : orig_param_type.pointer_levels()) {
+						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					}
 				}
 
 				// Handle forwarding references using the deduced argument type (if available)
