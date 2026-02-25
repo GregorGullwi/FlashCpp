@@ -689,6 +689,32 @@ ParseResult Parser::parse_type_and_name() {
     // where const appears between the dependent type and the pointer.
     consume_pointer_ref_modifiers(type_spec);
 
+    // Function pointer check after reference declarators have been consumed.
+    // This handles patterns like: int& (*fp)(int) or ostream& (*__pf)(ostream&)
+    // After consuming '&', we now see '(' which starts a function pointer declarator.
+    if ((type_spec.is_reference() || type_spec.is_rvalue_reference()) && peek() == "("_tok) {
+        SaveHandle saved_pos = save_token_position();
+        advance(); // consume '('
+
+        parse_calling_convention();
+
+        if (peek() == "*"_tok) {
+            // Looks like a function pointer with reference return type: type& (*name)(params)
+            restore_token_position(saved_pos);
+            auto result = parse_declarator(type_spec, Linkage::None);
+            if (!result.is_error()) {
+                if (auto decl_node = result.node()) {
+                    if (decl_node->is<DeclarationNode>() && custom_alignment.has_value()) {
+                        decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+                    }
+                }
+                discard_saved_token(saved_pos);
+                return result;
+            }
+        }
+        restore_token_position(saved_pos);
+    }
+
     // Check for calling convention AFTER pointer/reference declarators
     // Example: void* __cdecl func(); or int& __stdcall func();
     // This handles the case where calling convention appears after * or &
@@ -1443,16 +1469,9 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
                 TypeSpecifierNode& param_type =
                     param_type_result.node()->as<TypeSpecifierNode>();
                 
-                // Parse pointer declarators: * [const] [volatile] *...
-                // Example: void* or const int* const*
-                while (peek() == "*"_tok) {
-                    advance(); // consume '*'
-                    
-                    // Check for CV-qualifiers after the *
-                    CVQualifier ptr_cv = parse_cv_qualifiers();
-                    
-                    param_type.add_pointer_level(ptr_cv);
-                }
+                // Parse pointer and reference declarators: * [const] [volatile] *... & &&
+                // Example: void* or const int* const* or int&
+                consume_pointer_ref_modifiers(param_type);
                 
                 param_types.push_back(param_type.type());
 

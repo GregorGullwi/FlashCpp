@@ -22,17 +22,17 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~1187ms parse; fold expression/pack expansion not expanded during template instantiation |
 | `<string>` | `test_std_string.cpp` | ❌ Codegen Crash | Parses successfully (2026-02-24: parent namespace lookup fix); crashes during codegen (PackExpansionExprNode) |
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | Aggregate brace initialization not supported for template types (`std::array<int,5> arr = {1,2,3,4,5}`) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Codegen Error | Parses OK; `__i` auto parameter not resolved in subrange constructor codegen |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Codegen Error | ~1307ms; fold expression/pack expansion not expanded; `__cats` variable undefined |
 | `<span>` | `test_std_span.cpp` | ❌ Codegen Error | ~926ms parse; fold expression/pack expansion not expanded during template instantiation |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | `__i` auto parameter not resolved in subrange constructor codegen |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | fold expression/pack expansion not expanded; `__cats` variable undefined |
 | `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | Parses now (2026-02-24: alias template fix); member `_M_start` not found in `_Vector_impl` during codegen |
-| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Fails on ADL-based `make_error_code` call in `<system_error>` |
+| `<memory>` | `test_std_memory.cpp` | ❌ Parse Error | Destructor `~sentry()` not recognized in nested class of template `basic_ostream` (ostream:516) |
 | `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Base class `__hash_code_base` not found in `<hashtable.h>` (dependent base class) |
 | `<map>` | `test_std_map.cpp` | ❌ Codegen Error | Parses OK; `_M_end` symbol not found during codegen |
-| `<set>` | `test_std_set.cpp` | ❌ Codegen Error | `__i` auto parameter not resolved in subrange codegen |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Fails on `make_error_code` in `<system_error>` |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Fails on `make_error_code` in `<system_error>` |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Parse Error | Fails on `make_error_code` in `<system_error>` |
+| `<set>` | `test_std_set.cpp` | ❌ Codegen Error | fold expression/pack expansion not expanded during codegen |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Destructor `~sentry()` in nested class of template `basic_ostream` |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Destructor `~sentry()` in nested class of template `basic_ostream` |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Parse Error | Destructor `~sentry()` in nested class of template `basic_ostream` |
 | `<atomic>` | N/A | ✅ Compiled | ~6105ms (2026-02-23: Fixed with enum enumerator scope resolution; some static_assert warnings remain) |
 | `<new>` | N/A | ✅ Compiled | ~44ms |
 | `<exception>` | N/A | ✅ Compiled | ~471ms |
@@ -88,19 +88,27 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
 
-1. **`<system_error>` ADL-based `make_error_code`**: The pattern `using __adl_only::make_error_code; *this = make_error_code(__e);` fails because FlashCpp doesn't support argument-dependent lookup (ADL) through using declarations. This blocks: `<memory>`, `<ranges>`, `<iostream>`, `<chrono>` and any header that includes `<system_error>`.
+1. **Nested class destructor parsing in template bodies**: Destructor `~sentry()` inside nested class `sentry` of template class `basic_ostream` fails with "Expected struct name after '~' in destructor". The parser loses track of the nested class struct name during template body parsing. This blocks: `<memory>`, `<ranges>`, `<iostream>`, `<chrono>` and any header that includes `<ostream>`.
 
-2. **Constrained auto parameters (`concept auto __i`) in codegen**: C++20 abbreviated function templates with constrained auto parameters (e.g., `subrange(convertible_to<_It> auto __i, _Sent __s)`) parse but the parameter `__i` is not registered in the symbol table during codegen. Affects: `<algorithm>`, `<tuple>`, `<set>` (via `subrange` in `<ranges_util.h>`).
+2. **Fold expression / pack expansion not expanded in codegen**: Some fold expressions and `PackExpansionExprNode`s survive template instantiation and reach codegen, which cannot handle them. Affects: `<string_view>`, `<span>`, `<string>`, `<cmath>`, `<algorithm>`, `<tuple>`, `<set>`.
 
-3. **Fold expression / pack expansion not expanded in codegen**: Some fold expressions and `PackExpansionExprNode`s survive template instantiation and reach codegen, which cannot handle them. Affects: `<string_view>`, `<span>`, `<string>`, `<cmath>`.
+3. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because FlashCpp treats `{}` as constructor lookup rather than aggregate initialization. Affects: `<array>`.
 
-4. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because FlashCpp treats `{}` as constructor lookup rather than aggregate initialization. Affects: `<array>`.
+4. **Dependent base class resolution**: Base classes that depend on template parameters (like `__hash_code_base` in `_Hashtable`) are not found during struct definition parsing. Affects: `<functional>` (via `<hashtable.h>`).
 
-5. **Dependent base class resolution**: Base classes that depend on template parameters (like `__hash_code_base` in `_Hashtable`) are not found during struct definition parsing. Affects: `<functional>` (via `<hashtable.h>`).
+5. **Variable template evaluation in constant expressions**: Variable templates like `__is_ratio_v<T>` cannot be evaluated in `static_assert` contexts. Affects: `<ratio>`, `<shared_mutex>`.
 
-6. **Variable template evaluation in constant expressions**: Variable templates like `__is_ratio_v<T>` cannot be evaluated in `static_assert` contexts. Affects: `<ratio>`, `<shared_mutex>`.
+6. **Non-type template parameter resolution in codegen**: Symbols like `_Size` or `_M_end` that come from non-type template parameters are not always resolved during code generation. Affects: `<latch>`, `<map>`, `<vector>`.
 
-7. **Non-type template parameter resolution in codegen**: Symbols like `_Size` or `_M_end` that come from non-type template parameters are not always resolved during code generation. Affects: `<latch>`, `<map>`, `<vector>`.
+### Recent Fixes (2026-02-25)
+
+1. **Extern template with namespace-qualified class names**: Fixed parsing of `extern template class ns::ClassName<T>;` — the parser now consumes `::` and subsequent identifiers to handle namespace-qualified names after `class`/`struct` in explicit template instantiation declarations. Previously only one token was consumed as the class name. Regression test: `tests/test_extern_template_ns_qualified_ret0.cpp`.
+
+2. **SEH keywords only active in MSVC mode**: `__except`, `__try`, `__finally`, and `__leave` are now only treated as keywords when in MSVC mode. In GCC/Clang mode on Linux, these are treated as regular identifiers, matching GCC/Clang behavior. This unblocked `<memory>` and `<ostream>` parsing past `__except` parameter names in libstdc++ headers (e.g., `basic_ios::exceptions(iostate __except)`).
+
+3. **Constrained auto parameter skip for FunctionDeclarationNode members**: Member functions stored as `FunctionDeclarationNode` (not just `ConstructorDeclarationNode` or `TemplateFunctionDeclarationNode`) are now checked for unresolved `Type::Auto` parameters and skipped during codegen. This prevents "Symbol not found" errors for abbreviated template members like `subrange` functions. Regression test coverage via `<algorithm>`, `<tuple>`, `<set>` tests.
+
+4. **Function pointer parameters with reference return types**: Fixed parsing of function pointer parameters where the return type is a reference, e.g., `ostream& (*__pf)(ostream&)`. Added function pointer detection after `consume_pointer_ref_modifiers()` handles `&`/`&&`, and added `&`/`&&` handling in `parse_postfix_declarator()` for function pointer parameter types. This unblocked `<ostream>` parsing past `operator<<` declarations. Regression test: `tests/test_fnptr_ref_return_ret0.cpp`.
 
 ### Recent Fixes (2026-02-24)
 

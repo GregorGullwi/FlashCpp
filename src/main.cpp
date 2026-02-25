@@ -422,6 +422,7 @@ int main_impl(int argc, char *argv[]) {
     {
         PhaseTimer timer("Lexer Setup", false, &lexer_setup_time);
         lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
+        lexer_ptr->setMsvcSehKeywords(context.isMsvcMode());
         // Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
         parser = std::make_unique<Parser>(*lexer_ptr, context);
     }

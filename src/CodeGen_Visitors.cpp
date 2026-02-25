@@ -3865,7 +3865,24 @@ private:
 					// Call the specific visitor directly instead of visit() to avoid clearing current_function_name_
 					const ASTNode& func_decl = member_func.function_declaration;
 					if (func_decl.is<FunctionDeclarationNode>()) {
-						visitFunctionDeclarationNode(func_decl.as<FunctionDeclarationNode>());
+						const auto& fn = func_decl.as<FunctionDeclarationNode>();
+						// Skip functions with unresolved auto parameters (abbreviated templates)
+						// These will be instantiated when called with concrete types
+						bool fn_has_auto = false;
+						for (const auto& p : fn.parameter_nodes()) {
+							if (p.is<DeclarationNode>()) {
+								const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								if (pt.type() == Type::Auto) {
+									fn_has_auto = true;
+									break;
+								}
+							}
+						}
+						if (!fn_has_auto) {
+							visitFunctionDeclarationNode(fn);
+						} else {
+							FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping member function with auto params (will be instantiated on call)");
+						}
 					} else if (func_decl.is<ConstructorDeclarationNode>()) {
 						const auto& ctor = func_decl.as<ConstructorDeclarationNode>();
 						// Skip constructors with unresolved auto parameters (member function templates)

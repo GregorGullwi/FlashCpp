@@ -36,6 +36,8 @@ public:
 		return file_paths_;
 	}
 	
+	void setMsvcSehKeywords(bool enable) { msvc_seh_keywords_ = enable; }
+	
 	// Get the text of a specific line from the preprocessed source
 	std::string get_line_text(size_t line_num) const {
 		if (line_num == 0) return "";
@@ -168,6 +170,7 @@ private:
 	size_t line_;
 	size_t column_;
 	size_t current_file_index_ = 0;
+	bool msvc_seh_keywords_ = true;
 	mutable std::vector<std::string> file_paths_;  // Mutable to allow adding "<unknown>" in constructor
 	std::vector<SourceLineMapping> line_map_;  // Changed from reference to value to avoid dangling reference
 	
@@ -564,11 +567,18 @@ private:
 			"__inline",     "__forceinline",
 			// Microsoft-specific attributes
 			"__declspec",
-			// Microsoft-specific SEH (Structured Exception Handling) keywords
+		};
+
+		// Microsoft-specific SEH keywords - only in MSVC mode
+		static const std::unordered_set<std::string_view> seh_keywords = {
 			"__try",        "__except",  "__finally",     "__leave"
 		};
 
-		return keywords.count(value) > 0;
+		if (keywords.count(value) > 0)
+			return true;
+		if (msvc_seh_keywords_ && seh_keywords.count(value) > 0)
+			return true;
+		return false;
 	}
 
 	// Map C++ alternative operator tokens to their standard operator spellings.
