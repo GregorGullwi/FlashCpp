@@ -1873,7 +1873,13 @@ ParseResult Parser::parse_template_declaration() {
 				if (found_constructor) continue;
 
 				// Check for destructor (~StructName followed by '(')
+				// Use save/restore so specifiers are not lost if this is NOT a destructor
+				{
+				SaveHandle dtor_saved_pos = save_token_position();
+				auto dtor_leading_specs = parse_member_leading_specifiers();
+				bool dtor_is_virtual = !!(dtor_leading_specs & FlashCpp::MLS_Virtual);
 				if (peek() == "~"_tok) {
+				discard_saved_token(dtor_saved_pos);
 					advance();  // consume '~'
 					
 					auto name_token_opt = advance();
@@ -1921,7 +1927,7 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_mangled_name(mangled);
 						dtor_ref.set_definition(block_node);
 						
-						struct_ref.add_destructor(dtor_node, current_access);
+						struct_ref.add_destructor(dtor_node, current_access, dtor_is_virtual);
 						continue;
 					}
 					
@@ -1956,9 +1962,13 @@ ParseResult Parser::parse_template_declaration() {
 						return ParseResult::error("Expected '{' or ';' after destructor declaration", peek_info());
 					}
 					
-					struct_ref.add_destructor(dtor_node, current_access);
+					struct_ref.add_destructor(dtor_node, current_access, dtor_is_virtual);
 					continue;
+				} else {
+					// Not a destructor - restore position so specifiers are not lost
+					restore_token_position(dtor_saved_pos);
 				}
+				} // end destructor check scope
 
 				// Special handling for conversion operators: operator type()
 				// Conversion operators don't have a return type, so we need to detect them early
@@ -2119,8 +2129,24 @@ ParseResult Parser::parse_template_declaration() {
 						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
 						func_specs.is_pure_virtual,
 						func_specs.is_override,
-						func_specs.is_final
+						func_specs.is_final,
+						member_quals.is_const,
+						member_quals.is_volatile
 					);
+					
+					// Also add to StructTypeInfo so out-of-line definitions can find the declaration
+					if (struct_info) {
+						StringHandle func_name_handle = decl_node.identifier_token().handle();
+						struct_info->addMemberFunction(func_name_handle, member_func_node,
+							current_access,
+							!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+							func_specs.is_pure_virtual, func_specs.is_override, func_specs.is_final);
+						// Set const/volatile on the last added member
+						if (!struct_info->member_functions.empty()) {
+							struct_info->member_functions.back().is_const = member_quals.is_const;
+							struct_info->member_functions.back().is_volatile = member_quals.is_volatile;
+						}
+					}
 					
 					// Add to AST for code generation
 					// Full specializations are not template patterns - they need their member functions emitted

@@ -1923,11 +1923,59 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	// Check for out-of-line member function definition: ClassName::functionName(...)
 	// Pattern: ReturnType ClassName::functionName(...) { ... }
+	// Also handles template specializations: ReturnType ClassName<Args>::functionName(...) { ... }
 	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: Got decl_node, identifier={}. About to check for '::', current_token={}, peek={}", 
 		std::string(decl_node.identifier_token().value()),
 		std::string(current_token_.value()),
 		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+
+	// Handle out-of-line member function for template specialization: ClassName<Args>::func(...)
+	// After parse_type_and_name parsed "bool ctype", next token is "<" for "ctype<char>::is(...)"
+	if (peek() == "<"_tok) {
+		std::string_view base_name = decl_node.identifier_token().value();
+		// Try to parse <Args>:: pattern for template specialization out-of-line definitions
+		// Save position and try: <Args>::func(...)
+		SaveHandle spec_pos = save_token_position();
+		auto template_args_opt = parse_explicit_template_arguments();
+		if (template_args_opt.has_value() && peek() == "::"_tok) {
+			// Build the instantiated class name: ClassName<Args> and verify it exists
+			auto inst_name_sv = get_instantiated_class_name(base_name, *template_args_opt);
+			auto inst_name = StringTable::getOrInternStringHandle(inst_name_sv);
+			FLASH_LOG(Parser, Debug, "Out-of-line template spec: base=", base_name, " instantiated=", inst_name_sv);
+			auto inst_type_it = gTypesByName.find(inst_name);
+			if (inst_type_it == gTypesByName.end()) {
+				// Try namespace-qualified instantiated name
+				NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
+				if (!current_namespace_handle.isGlobal()) {
+					auto qual_inst_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, inst_name);
+					FLASH_LOG(Parser, Debug, "Out-of-line template spec: trying qualified name=", qual_inst_name.view());
+					inst_type_it = gTypesByName.find(qual_inst_name);
+					if (inst_type_it != gTypesByName.end()) {
+						inst_name = qual_inst_name;
+					}
+				}
+			}
+			if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
+				FLASH_LOG(Parser, Debug, "Out-of-line template spec: found type for ", inst_name.view());
+				// Update decl_node's identifier to be the instantiated name
+				Token inst_token(Token::Type::Identifier, StringTable::getStringView(inst_name),
+					decl_node.identifier_token().line(), decl_node.identifier_token().column(),
+					decl_node.identifier_token().file_index());
+				decl_node.set_identifier_token(inst_token);
+				discard_saved_token(spec_pos);
+				// Fall through to the normal :: handling below
+			} else {
+				FLASH_LOG(Parser, Debug, "Out-of-line template spec: type NOT found for ", inst_name.view());
+				// Instantiated type not found, restore
+				restore_token_position(spec_pos);
+			}
+		} else {
+			// Not a template specialization followed by ::, restore
+			restore_token_position(spec_pos);
+		}
+	}
+
 	if (peek() == "::"_tok) {
 		// This is an out-of-line member function definition
 		advance();  // consume '::'
@@ -2163,21 +2211,146 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		func_ref.set_is_constinit(is_constinit);
 		func_ref.set_is_consteval(is_consteval);
 		
-		// Search for existing member function declaration with the same name and const qualification
+		// Search for existing member function declaration with the same name, const qualification, and matching signature
 		StructMemberFunction* existing_member = nullptr;
+		size_t def_param_count = func_ref.parameter_nodes().size();
 		for (auto& member : struct_info->member_functions) {
 			if (member.getName() == function_name_token.handle() &&
 				member.is_const == member_quals.is_const &&
 				member.is_volatile == member_quals.is_volatile) {
-				existing_member = &member;
-				break;
+				// Also check parameter count for overload resolution
+				if (member.function_decl.is<FunctionDeclarationNode>()) {
+					const auto& decl_func = member.function_decl.as<FunctionDeclarationNode>();
+					if (decl_func.parameter_nodes().size() == def_param_count) {
+						existing_member = &member;
+						break;
+					}
+				} else {
+					// If not a FunctionDeclarationNode, accept the first match
+					existing_member = &member;
+					break;
+				}
 			}
 		}
 		
 		if (!existing_member) {
-			FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(), 
-			          "' does not match any declaration in the class");
-			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			// Check if there's a declaration with the same name but different signature
+			// (e.g., const mismatch or parameter count mismatch for overloads)
+			bool has_name_match = false;
+			bool has_qualifier_match = false;
+			for (const auto& member : struct_info->member_functions) {
+				if (member.getName() == function_name_token.handle()) {
+					has_name_match = true;
+					if (member.is_const == member_quals.is_const &&
+						member.is_volatile == member_quals.is_volatile) {
+						has_qualifier_match = true;
+					}
+				}
+			}
+			if (has_name_match && !has_qualifier_match) {
+				// Name matches but const/volatile qualifiers don't match
+				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(), 
+				          "' does not match any declaration in the class (const/volatile qualifier mismatch)");
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+			if (has_name_match && has_qualifier_match) {
+				// Name and qualifiers match but parameter count differs (overload not found)
+				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(), 
+				          "' does not match any declaration in the class (parameter count mismatch)");
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+			
+			// No declaration at all for this name. This can happen for:
+			// 1. Template specializations where the body parser doesn't register in StructTypeInfo
+			// 2. Out-of-line definitions that serve as the first declaration
+			// Create the member function as a new entry (combined declaration+definition)
+			FLASH_LOG(Parser, Debug, "No matching in-class declaration for '", class_name.view(), "::", function_name_token.value(), 
+			          "' - creating new member function entry");
+			
+			// Note: const qualification is handled by the member function's StructMemberFunction entry
+			
+			struct_info->addMemberFunction(function_name_token.handle(), func_node,
+				AccessSpecifier::Public,
+				/*is_virtual=*/false,
+				/*is_pure_virtual=*/false,
+				/*is_override=*/false,
+				/*is_final_func=*/false);
+			// Propagate const/volatile qualifiers to the newly added member
+			if (!struct_info->member_functions.empty()) {
+				struct_info->member_functions.back().is_const = member_quals.is_const;
+				struct_info->member_functions.back().is_volatile = member_quals.is_volatile;
+			}
+
+			// Check for declaration only (;) or function definition ({)
+			if (consume(";"_tok)) {
+				ast_nodes_.push_back(func_node);
+				return saved_position.success(func_node);
+			}
+			
+			// Parse function body
+			if (peek() != "{"_tok) {
+				FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
+					(!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
+				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			}
+			
+			// Enter function scope with RAII guard (Phase 3)
+			FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
+			
+			// Push member function context
+			member_function_context_stack_.push_back({
+				class_name,
+				type_info->type_index_,
+				nullptr,
+				nullptr
+			});
+			
+			// Add 'this' pointer to symbol table
+			auto [this_type_node2, this_type_ref2] = emplace_node_ref<TypeSpecifierNode>(
+				Type::Struct, type_info->type_index_, 
+				static_cast<int>(struct_info->total_size * 8), Token()
+			);
+			this_type_ref2.add_pointer_level();
+			
+			Token this_token2(Token::Type::Keyword, "this"sv, 0, 0, 0);
+			auto [this_decl_node2, this_decl_ref2] = emplace_node_ref<DeclarationNode>(this_type_node2, this_token2);
+			gSymbolTable.insert("this"sv, this_decl_node2);
+			
+			// Add function parameters to symbol table
+			for (const ASTNode& param_node : func_ref.parameter_nodes()) {
+				if (param_node.is<VariableDeclarationNode>()) {
+					const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
+					const DeclarationNode& param_decl = var_decl.declaration();
+					gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+				} else if (param_node.is<DeclarationNode>()) {
+					const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+					gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+				}
+			}
+			
+			// Parse body using delayed parsing
+			SaveHandle body_start = save_token_position();
+			skip_balanced_braces();
+			
+			delayed_function_bodies_.push_back({
+				&func_ref,                  // func_node
+				body_start,                 // body_start
+				{},                         // initializer_list_start (not used)
+				class_name,                 // struct_name
+				type_info->type_index_,     // struct_type_index
+				nullptr,                    // struct_node (not available for out-of-line defs)
+				false,                      // has_initializer_list
+				false,                      // is_constructor
+				false,                      // is_destructor
+				nullptr,                    // ctor_node
+				nullptr,                    // dtor_node
+				{}                          // template_param_names (empty for non-template)
+			});
+			
+			member_function_context_stack_.pop_back();
+			
+			ast_nodes_.push_back(func_node);
+			return saved_position.success(func_node);
 		}
 		
 		// Validate that the existing declaration is a FunctionDeclarationNode

@@ -1625,6 +1625,7 @@ public:
 	ASTNode type_node() const { return type_node_; }
 	void set_type_node(const ASTNode& type_node) { type_node_ = type_node; }
 	const Token& identifier_token() const { return identifier_; }
+	void set_identifier_token(Token token) { identifier_ = std::move(token); }
 	uint32_t line_number() const { return identifier_.line(); }
 	bool is_array() const { return !array_dimensions_.empty() || is_unsized_array_; }
 	// Returns the first (outermost) dimension for backwards compatibility

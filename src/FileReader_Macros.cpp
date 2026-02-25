@@ -1067,23 +1067,28 @@
 			current_dir_str = std::filesystem::weakly_canonical(current_dir).string();
 		}
 
+		// Canonicalize the current file path so we can detect duplicate directory entries
+		std::string canonical_current_file;
+		if (!current_file.empty()) {
+			canonical_current_file = std::filesystem::weakly_canonical(std::filesystem::path(std::string(current_file))).string();
+		}
+
 		// Search include paths, skipping directories up to and including the one containing current_file
 		bool found_current_dir = false;
 		bool found = false;
 		for (const auto& include_dir : settings_.getIncludeDirs()) {
 			std::string canonical_include_dir = std::filesystem::weakly_canonical(std::filesystem::path(include_dir)).string();
 
-			// Check if the current file is in this include directory (or a subdirectory of it)
-			if (!found_current_dir && !current_dir_str.empty() &&
-			    current_dir_str.find(canonical_include_dir) == 0 &&
-			    (current_dir_str.size() == canonical_include_dir.size() ||
-			     current_dir_str[canonical_include_dir.size()] == '/' ||
-			     current_dir_str[canonical_include_dir.size()] == '\\')) {
+			// Check if the current file is DIRECTLY in this include directory
+			// (exact match only - not a parent directory, since #include_next
+			// should only skip the specific include dir used to find the file)
+			if (!current_dir_str.empty() &&
+			    current_dir_str == canonical_include_dir) {
 				found_current_dir = true;
 				if (settings_.isVerboseMode()) {
 					FLASH_LOG(Lexer, Trace, "  Skipping include dir (contains current file): ", include_dir);
 				}
-				continue;  // Skip this directory
+				continue;  // Skip this directory (and all duplicates of it)
 			}
 
 			if (!found_current_dir) {
@@ -1098,6 +1103,14 @@
 				FLASH_LOG(Lexer, Trace, "  include_next checking: ", include_file);
 			}
 			if (std::filesystem::exists(include_file)) {
+				// Ensure we don't find the same file we started from (prevents infinite recursion)
+				std::string canonical_found = std::filesystem::weakly_canonical(include_path).string();
+				if (canonical_found == canonical_current_file) {
+					if (settings_.isVerboseMode()) {
+						FLASH_LOG(Lexer, Trace, "  Skipping (same as current file): ", include_file);
+					}
+					continue;
+				}
 				if (settings_.isVerboseMode()) {
 					FLASH_LOG(Lexer, Trace, "Found include_next file: ", include_file);
 				}
