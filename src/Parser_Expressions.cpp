@@ -2975,10 +2975,20 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					ASTNode object = member_access.object();
 					bool is_arrow = member_access.is_arrow();
 					
+					// Save position so we can restore if next token isn't an identifier
+					// (e.g., obj.Base::~Base() or obj.Base::operator==())
+					auto saved_pos = save_token_position();
 					advance(); // consume '::'
 					
 					// Skip 'template' keyword if present (dependent context disambiguator)
 					if (peek() == "template"_tok) advance();
+					
+					// If next token isn't an identifier, restore and let the outer :: handler deal with it
+					if (!peek().is_identifier()) {
+						restore_token_position(saved_pos);
+						// Fall through to the normal :: handling below
+					} else {
+					discard_saved_token(saved_pos);
 					
 					// Consume all remaining qualified parts: Base::Inner::member
 					while (peek().is_identifier()) {
@@ -3020,6 +3030,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						break;
 					}
 					continue;
+					} // end else (identifier follows ::)
 				}
 			}
 
