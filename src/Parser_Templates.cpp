@@ -1873,6 +1873,13 @@ ParseResult Parser::parse_template_declaration() {
 				if (found_constructor) continue;
 
 				// Check for destructor (~StructName followed by '(')
+				// Consume leading specifiers like 'virtual', 'constexpr', 'inline' before '~'
+				bool dtor_is_virtual = false;
+				while (peek() == "virtual"_tok || peek() == "constexpr"_tok || peek() == "consteval"_tok || peek() == "inline"_tok) {
+					if (peek() == "virtual"_tok) dtor_is_virtual = true;
+					advance();
+				}
+				(void)dtor_is_virtual;  // TODO: use when virtual destructor tracking is needed
 				if (peek() == "~"_tok) {
 					advance();  // consume '~'
 					
@@ -2119,8 +2126,24 @@ ParseResult Parser::parse_template_declaration() {
 						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
 						func_specs.is_pure_virtual,
 						func_specs.is_override,
-						func_specs.is_final
+						func_specs.is_final,
+						member_quals.is_const,
+						member_quals.is_volatile
 					);
+					
+					// Also add to StructTypeInfo so out-of-line definitions can find the declaration
+					if (struct_info) {
+						StringHandle func_name_handle = decl_node.identifier_token().handle();
+						struct_info->addMemberFunction(func_name_handle, member_func_node,
+							current_access,
+							!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+							func_specs.is_pure_virtual, func_specs.is_override, func_specs.is_final);
+						// Set const/volatile on the last added member
+						if (!struct_info->member_functions.empty()) {
+							struct_info->member_functions.back().is_const = member_quals.is_const;
+							struct_info->member_functions.back().is_volatile = member_quals.is_volatile;
+						}
+					}
 					
 					// Add to AST for code generation
 					// Full specializations are not template patterns - they need their member functions emitted
