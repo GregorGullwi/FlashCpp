@@ -4807,16 +4807,18 @@ ParseResult Parser::parse_template_parameter() {
 		}
 		advance(); // consume 'class' or 'typename'
 
-		// Expect identifier (parameter name)
-		if (!peek().is_identifier()) {
-			FLASH_LOG(Parser, Error, "Expected identifier for template template parameter name, got: ",
-				(!peek().is_eof() ? std::string("'") + std::string(peek_info().value()) + "'" : "<EOF>"));
-			return ParseResult::error("Expected identifier for template template parameter name", current_token_);
+		// Parameter name is optional (unnamed template template parameters are valid C++)
+		// e.g., template <class, class, template <class> class, template <class> class>
+		std::string_view param_name;
+		Token param_name_token;
+		if (peek().is_identifier()) {
+			param_name_token = peek_info();
+			param_name = param_name_token.value();
+			advance(); // consume parameter name
+		} else {
+			// Generate a synthetic name for unnamed parameter
+			param_name = "";
 		}
-
-		Token param_name_token = peek_info();
-		std::string_view param_name = param_name_token.value();
-		advance(); // consume parameter name
 
 		// Create template template parameter node
 		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params), param_name_token);
