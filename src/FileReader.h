@@ -354,7 +354,6 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
 
     size_t arg_start = i;
     int paren_depth = 0;
-    int angle_depth = 0;  // Track template angle brackets
     bool in_string = false;
     bool in_char = false;
     char string_delimiter = '\0';
@@ -404,21 +403,11 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
                 paren_depth--;
                 continue;
             }
-            // Track template angle brackets for correct comma handling
-            // Note: angle_depth > 0 check prevents going negative for standalone > chars
-            // that aren't template closers (e.g., comparison operators)
-            if (c == '<') {
-                angle_depth++;
-                continue;
-            }
-            if (c == '>') {
-                if (angle_depth > 0) {
-                    angle_depth--;
-                }
-                continue;
-            }
-            if (c == ',' && paren_depth == 0 && angle_depth == 0) {
-                // Argument ended - only if not inside parens or angle brackets
+            // Per the C/C++ preprocessor standard, only parentheses are significant
+            // for macro argument splitting. Angle brackets are NOT tracked here because
+            // the preprocessor cannot distinguish template brackets from comparison operators
+            // (e.g., FOO(a < b, c) must split into two args: "a < b" and "c").
+            if (c == ',' && paren_depth == 0) {
                 size_t end = i;
 
                 // Trim trailing whitespace

@@ -11779,8 +11779,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 	else if (std::holds_alternative<StringLiteralNode>(expr)) {
 		// String literals have type "const char*" (pointer to const char)
-		TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8);
-		char_type.add_pointer_level(CVQualifier::Const);
+		TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
+		char_type.add_pointer_level();
 		return char_type;
 	}
 	else if (std::holds_alternative<IdentifierNode>(expr)) {

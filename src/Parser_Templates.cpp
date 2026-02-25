@@ -4807,16 +4807,23 @@ ParseResult Parser::parse_template_parameter() {
 		}
 		advance(); // consume 'class' or 'typename'
 
-		// Expect identifier (parameter name)
-		if (!peek().is_identifier()) {
-			FLASH_LOG(Parser, Error, "Expected identifier for template template parameter name, got: ",
-				(!peek().is_eof() ? std::string("'") + std::string(peek_info().value()) + "'" : "<EOF>"));
-			return ParseResult::error("Expected identifier for template template parameter name", current_token_);
+		// Parameter name is optional (unnamed template template parameters are valid C++)
+		// e.g., template <class, class, template <class> class, template <class> class>
+		std::string_view param_name;
+		Token param_name_token;
+		if (peek().is_identifier()) {
+			param_name_token = peek_info();
+			param_name = param_name_token.value();
+			advance(); // consume parameter name
+		} else {
+			// Generate a unique synthetic name for unnamed template template parameter.
+			// This avoids collisions when multiple unnamed template template parameters
+			// appear in the same declaration (e.g., template<template<class> class, template<class> class>).
+			// Without unique names, substitution maps would overwrite earlier bindings.
+			static int anonymous_template_template_counter = 0;
+			param_name = StringBuilder().append("__anon_ttp_"sv).append(static_cast<int64_t>(anonymous_template_template_counter++)).commit();
+			param_name_token = current_token_;
 		}
-
-		Token param_name_token = peek_info();
-		std::string_view param_name = param_name_token.value();
-		advance(); // consume parameter name
 
 		// Create template template parameter node
 		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params), param_name_token);
@@ -8214,13 +8221,18 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		if (peek() == "("_tok) {
 			SaveHandle paren_saved_pos = save_token_position();
 			advance(); // consume '('
-			
+
+			// Skip optional calling convention before ptr-operator, consistent with
+			// parse_declarator() and parse_type_and_name() which call parse_calling_convention()
+			// at the same position. Handles patterns like: _Ret (__cdecl _Arg0::*)(_Types...)
+			parse_calling_convention();
+
 			// Detect what's inside: *, &, &&, or _Class::* (member pointer)
 			bool is_ptr = false;
 			bool is_lvalue_ref = false;
 			bool is_rvalue_ref = false;
 			bool is_member_ptr = false;
-			
+
 			if (!peek().is_eof()) {
 				if (peek() == "*"_tok) {
 					is_ptr = true;
@@ -10239,22 +10251,60 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			} else {
 				// Regular parameter - substitute template parameters in the parameter type
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				auto [subst_type, subst_type_index] = substitute_template_parameter(
-					orig_param_type, template_params, template_args_as_type_args
-				);
+				ASTNode param_type;
+				if (orig_param_type.type() == Type::Auto && arg_type_index < arg_types.size()) {
+					// Abbreviated function template parameter (concept auto / auto):
+					// use the deduced argument type as the concrete instantiated parameter type.
+					//
+					// For plain `auto value` called with int: deduced type is int, no pointer levels.
+					// For `auto* p` called with int*: orig has 1 pointer level from the declaration,
+					// and deduced_arg_type has 1 pointer level from the argument. The deduced type
+					// already accounts for the full type (int*), so we use its pointer levels.
+					// However, if the original declaration adds EXTRA pointer levels beyond what
+					// deduction provides (e.g., `auto** pp` called with int*), we must preserve
+					// those additional levels from orig_param_type.
+					const TypeSpecifierNode& deduced_arg_type = arg_types[arg_type_index];
+					CVQualifier cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(deduced_arg_type.cv_qualifier()) |
+						static_cast<uint8_t>(orig_param_type.cv_qualifier()));
+					param_type = emplace_node<TypeSpecifierNode>(
+						deduced_arg_type.type(),
+						TypeQualifier::None,
+						deduced_arg_type.size_in_bits(),
+						Token(),
+						cv
+					);
+					param_type.as<TypeSpecifierNode>().set_type_index(deduced_arg_type.type_index());
+					// Copy pointer levels from the deduced argument type
+					for (const auto& ptr_level : deduced_arg_type.pointer_levels()) {
+						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					}
+					// If the original declaration has MORE pointer levels than the deduced type
+					// (e.g., `auto** pp` where deduced type is int*), append the extra levels.
+					// This handles patterns like `concept auto* p` or `auto** pp`.
+					if (orig_param_type.pointer_depth() > deduced_arg_type.pointer_depth()) {
+						const auto& orig_levels = orig_param_type.pointer_levels();
+						for (size_t pl = deduced_arg_type.pointer_depth(); pl < orig_param_type.pointer_depth(); ++pl) {
+							param_type.as<TypeSpecifierNode>().add_pointer_level(orig_levels[pl].cv_qualifier);
+						}
+					}
+				} else {
+					auto [subst_type, subst_type_index] = substitute_template_parameter(
+						orig_param_type, template_params, template_args_as_type_args
+					);
+					param_type = emplace_node<TypeSpecifierNode>(
+						subst_type,
+						TypeQualifier::None,
+						get_type_size_bits(subst_type),
+						Token(),
+						orig_param_type.cv_qualifier()
+					);
+					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
 
-				ASTNode param_type = emplace_node<TypeSpecifierNode>(
-					subst_type,
-					TypeQualifier::None,
-					get_type_size_bits(subst_type),
-					Token(),
-					orig_param_type.cv_qualifier()
-				);
-				param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
-
-				// Preserve pointer levels from the original declaration
-				for (const auto& ptr_level : orig_param_type.pointer_levels()) {
-					param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					// Preserve pointer levels from the original declaration
+					for (const auto& ptr_level : orig_param_type.pointer_levels()) {
+						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					}
 				}
 
 				// Handle forwarding references using the deduced argument type (if available)

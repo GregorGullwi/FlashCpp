@@ -399,11 +399,17 @@ private:
 
 		while (cursor_ < source_size_ && source_[cursor_] != '\"') {
 			if (source_[cursor_] == '\\') {
-				// Handle escape sequences if needed
-				// or should that be part of the preprocessor?
+				// Skip the backslash and the next character (escape sequence)
+				++cursor_;
+				++column_;
+				if (cursor_ < source_size_) {
+					++cursor_;
+					++column_;
+				}
+			} else {
+				++cursor_;
+				++column_;
 			}
-			++cursor_;
-			++column_;
 		}
 
 		if (cursor_ < source_size_ && source_[cursor_] == '\"') {

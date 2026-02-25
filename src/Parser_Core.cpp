@@ -995,8 +995,8 @@ void Parser::register_builtin_functions() {
 		
 		// Create parameter: const char* 
 		Token param_token = dummy_token;
-		auto param_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Char, TypeQualifier::None, 8, param_token);
-		param_type_node_ref.second.add_pointer_level(CVQualifier::Const);  // Make it const char*
+		auto param_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Char, TypeQualifier::None, 8, param_token, CVQualifier::Const);
+		param_type_node_ref.second.add_pointer_level();  // Make it const char*
 		auto param_decl = emplace_node<DeclarationNode>(param_type_node_ref.first, param_token);
 		func_decl_ref.add_parameter_node(param_decl);
 		
