@@ -1768,7 +1768,7 @@ struct RegisterAllocator
 	}
 
 	void release(X64Register reg) {
-		assert(reg != X64Register::Count);
+		if (reg == X64Register::Count) return; // No register to release
 		registers[static_cast<int>(reg)] = AllocatedRegister{ .reg = reg };
 	}
 

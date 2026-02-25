@@ -601,6 +601,22 @@ public:
 				// Look up the struct in gTypesByName
 				auto struct_type_it = gTypesByName.find(struct_handle);
 				
+				// If not found with the full qualified name (e.g., "std::is_integral$hash"),
+				// try without the namespace prefix (e.g., "is_integral$hash") since template
+				// instantiations are often registered with just the short name
+				if (struct_type_it == gTypesByName.end()) {
+					std::string_view full_name = StringTable::getStringView(struct_handle);
+					size_t last_colon = full_name.rfind("::");
+					if (last_colon != std::string_view::npos) {
+						std::string_view short_name = full_name.substr(last_colon + 2);
+						StringHandle short_handle = StringTable::getOrInternStringHandle(short_name);
+						struct_type_it = gTypesByName.find(short_handle);
+						if (struct_type_it != gTypesByName.end()) {
+							FLASH_LOG(ConstExpr, Debug, "Found type using short name '", short_name, "'");
+						}
+					}
+				}
+				
 				// If not found directly, this might be a type alias
 				// Type aliases are registered with their alias name pointing to the underlying type
 				const StructTypeInfo* struct_info = nullptr;

@@ -803,10 +803,25 @@ ParseResult Parser::parse_template_declaration() {
 				// Rewind and re-parse to extract template name and arguments as AST nodes
 				restore_token_position(target_type_start_pos);
 				
-				// Parse the template name
+				// Parse the template name (possibly namespace-qualified like ns1::vec)
 				if (peek().is_identifier()) {
-					target_template_name = peek_info().handle();
+					StringBuilder name_builder;
+					name_builder.append(peek_info().value());
 					advance();
+					
+					// Handle qualified names (e.g., ns1::vec, std::vector)
+					while (peek() == "::"_tok) {
+						advance();  // consume '::'
+						if (peek() == "template"_tok) {
+							advance();  // consume 'template' disambiguator
+						}
+						if (!peek().is_identifier()) break;
+						name_builder.append("::"sv).append(peek_info().value());
+						advance();
+					}
+					
+					std::string_view full_name = name_builder.commit();
+					target_template_name = StringTable::getOrInternStringHandle(full_name);
 					
 					// Parse template arguments as AST nodes (not evaluated)
 					if (peek() == "<"_tok) {
@@ -9299,21 +9314,23 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// When inside a namespace (e.g., std) and looking up "__detail::__or_fn",
 	// we need to also try "std::__detail::__or_fn" since templates are registered
 	// with their fully-qualified names.
+	// Walk up the namespace hierarchy: e.g., in std::__cxx11, try:
+	//   std::__cxx11::__detail::__or_fn, then std::__detail::__or_fn, then ::__detail::__or_fn
 	if (!all_templates || all_templates->empty()) {
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		if (!current_handle.isGlobal()) {
-			// Build the fully-qualified name by prepending the current namespace path
-			StringHandle template_handle = StringTable::getOrInternStringHandle(template_name);
+		StringHandle template_handle = StringTable::getOrInternStringHandle(template_name);
+		
+		while (!current_handle.isGlobal() && (!all_templates || all_templates->empty())) {
 			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, template_handle);
 			std::string_view qualified_name_view = StringTable::getStringView(qualified_handle);
-			// Note: qualified_name_view points to StringTable storage, which remains
-			// valid for the duration of this function. The lookup only needs the
-			// string_view temporarily, so no std::string allocation needed.
 			
 			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Template '{}' not found, trying qualified name '{}'",
 				recursion_depth, template_name, qualified_name_view);
 			
 			all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name_view);
+			
+			// Move to parent namespace for next iteration
+			current_handle = gNamespaceRegistry.getParent(current_handle);
 		}
 	}
 	
