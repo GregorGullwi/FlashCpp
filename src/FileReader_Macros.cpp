@@ -127,6 +127,52 @@
 					std::string_view ident(current.data() + ident_start, pos - ident_start);
 					std::string ident_str(ident);
 					
+					// Handle _Pragma() operator (C++20 §15.9 [cpp.pragma.op])
+					// _Pragma("string") is destringized and processed as #pragma string
+					if (ident == "_Pragma") {
+						// Skip whitespace before '('
+						size_t paren_pos = pos;
+						while (paren_pos < input_size && std::isspace(static_cast<unsigned char>(current[paren_pos]))) {
+							++paren_pos;
+						}
+						if (paren_pos < input_size && current[paren_pos] == '(') {
+							size_t close_paren = findMatchingClosingParen(current, paren_pos);
+							if (close_paren != std::string::npos) {
+								// Extract string literal content between parens
+								std::string_view inner(current.data() + paren_pos + 1, close_paren - paren_pos - 1);
+								// Trim whitespace
+								while (!inner.empty() && std::isspace(static_cast<unsigned char>(inner.front()))) inner.remove_prefix(1);
+								while (!inner.empty() && std::isspace(static_cast<unsigned char>(inner.back()))) inner.remove_suffix(1);
+								// Destringize: remove surrounding quotes, unescape backslash sequences
+								if (inner.size() >= 2 && inner.front() == '"' && inner.back() == '"') {
+									std::string pragma_content(inner.substr(1, inner.size() - 2));
+									// Destringize per standard: delete \ before " or \ characters
+									std::string destringized;
+									destringized.reserve(pragma_content.size());
+									for (size_t i = 0; i < pragma_content.size(); ++i) {
+										if (pragma_content[i] == '\\' && i + 1 < pragma_content.size() &&
+										    (pragma_content[i + 1] == '"' || pragma_content[i + 1] == '\\')) {
+											++i; // skip backslash, take next char
+										}
+										destringized += pragma_content[i];
+									}
+									// Process as #pragma: handle pack, skip others
+									if (destringized.find("pack") == 0) {
+										std::string pragma_line = "#pragma " + destringized;
+										processPragmaPack(pragma_line);
+									}
+									// else: skip (warning, GCC visibility, etc.)
+								}
+								pos = close_paren + 1;
+								needs_another_pass = true;
+								continue;
+							}
+						}
+						// Not a valid _Pragma invocation, emit as-is
+						output += ident;
+						continue;
+					}
+					
 					// Skip if this macro is being expanded (prevent recursion per C++ standard)
 					if (expanding_macros.count(ident_str) > 0) {
 						output += ident;
