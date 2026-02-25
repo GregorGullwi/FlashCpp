@@ -6375,10 +6375,16 @@ private:
 			}
 			
 			// Enhanced stack overflow logic: Track both int and float register usage independently
-			// to correctly identify which arguments overflow to stack
-			// For Windows variadic functions: ALL arguments must go on stack (in addition to registers)
-			bool variadic_needs_stack_args = call_op.is_variadic && is_coff_format;
-			
+			// to correctly identify which arguments overflow to stack.
+			// For variadic functions, register-passed args (first 4 on Windows, 6 on Linux) go in
+			// registers as normal. Only args beyond the register count go on the stack at RSP+32+
+			// (Windows) or RSP+0+ (Linux). The callee is responsible for homing its own register
+			// parameters to shadow space; the caller must not pre-populate shadow space since it
+			// overlaps with local variable storage in the caller's frame.
+			//
+			// Windows x64 ABI uses a UNIFIED position counter: position 0 is always RCX or XMM0,
+			// position 1 is always RDX or XMM1, etc. — float and int arguments share the same
+			// 4 register slots. Linux SysV AMD64 uses SEPARATE banks (6 int + 8 float).
 			size_t temp_int_idx = 0;
 			size_t temp_float_idx = 0;
 			size_t stack_arg_count = 0;
@@ -6390,9 +6396,18 @@ private:
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
 				bool is_two_reg_struct = isTwoRegisterStruct(arg);
 				
-				// Determine if this argument goes on stack
-				bool goes_on_stack = variadic_needs_stack_args; // For Windows variadic: ALL args go on stack
-				if (!goes_on_stack) {
+				// Determine if this argument goes on stack (overflows register file)
+				bool goes_on_stack = false;
+				if (is_coff_format && call_op.is_variadic) {
+					// Windows x64 VARIADIC: unified position counter — int and float share the same 4 slots.
+					// Position i uses RCX/XMM0 (i=0), RDX/XMM1 (i=1), R8/XMM2 (i=2), R9/XMM3 (i=3).
+					// Any arg at position i >= max_int_regs goes to the stack.
+					goes_on_stack = (i + param_shift >= max_int_regs);
+					if (is_float_arg) temp_float_idx++;
+					else temp_int_idx++;
+				} else {
+					// Linux SysV (all calls) and Windows non-variadic: separate register banks.
+					// Both caller and callee agree on this sequential convention, so it works.
 					if (is_float_arg) {
 						if (temp_float_idx >= max_float_regs) {
 							goes_on_stack = true;
@@ -6406,29 +6421,13 @@ private:
 						}
 						temp_int_idx += regs_needed;
 					}
-				} else {
-					// Still need to increment counters for variadic functions
-					if (is_float_arg) {
-						temp_float_idx++;
-					} else {
-						size_t regs_needed = is_two_reg_struct ? 2 : 1;
-						temp_int_idx += regs_needed;
-					}
 				}
 				
 				if (goes_on_stack) {
 					// Stack args placement:
-					// Windows variadic: RSP+0 + arg_index*8 (args start at RSP+0, no shadow space offset)
-					// Windows normal: RSP+32 (shadow space) + stack_arg_count*8
+					// Windows: RSP+32 (shadow space) + stack_arg_count*8
 					// Linux: RSP+0 (no shadow space) + stack_arg_count*8
-					int stack_offset;
-					if (variadic_needs_stack_args) {
-						// For variadic on Windows: args at RSP+0, RSP+8, RSP+16, ...
-						stack_offset = static_cast<int>(i * 8);
-					} else {
-						// For normal functions: skip shadow space first
-						stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
-					}
+					int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
 
 					// Determine if this stack argument needs to pass an address instead of its value
 					bool stack_pass_address = arg.is_reference() || shouldPassStructByAddress(arg);
@@ -6534,8 +6533,13 @@ private:
 				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg);
 				
 				// Check if this argument fits in a register (accounting for param_shift)
+				// Windows x64 variadic: unified position counter — int and float share the same 4 slots.
+				// Windows x64 non-variadic + Linux SysV: separate integer and float register banks.
 				bool use_register = false;
-				if (is_float_arg) {
+				if (is_coff_format && call_op.is_variadic) {
+					// Windows x64 VARIADIC: position (i + param_shift) determines register use
+					use_register = (i + param_shift < max_int_regs);
+				} else if (is_float_arg) {
 					if (float_reg_index < max_float_regs) {
 						use_register = true;
 					}
@@ -6549,14 +6553,29 @@ private:
 				
 				// Skip arguments that go on stack (already handled)
 				if (!use_register) {
+					if (is_float_arg) float_reg_index++;
+					else int_reg_index++;
 					continue;
 				}
 				
 				// Get the platform-specific calling convention register
-				// Use separate indices for int and float registers
-				X64Register target_reg = is_float_arg 
-					? getFloatParamReg<TWriterClass>(float_reg_index++)
-					: getIntParamReg<TWriterClass>(int_reg_index++);
+				// Windows x64 variadic: position-aligned registers (position = i + param_shift)
+				// Windows x64 non-variadic + Linux SysV: separate int and float indices
+				X64Register target_reg;
+				if (is_coff_format && call_op.is_variadic) {
+					// Windows x64 VARIADIC: both int and float use the same position counter.
+					// This ensures the shadow-space homing + va_arg walking lines up correctly.
+					size_t position = i + param_shift;
+					target_reg = is_float_arg
+						? getFloatParamReg<TWriterClass>(position)
+						: getIntParamReg<TWriterClass>(position);
+					if (is_float_arg) float_reg_index++;
+					else int_reg_index++;
+				} else {
+					target_reg = is_float_arg
+						? getFloatParamReg<TWriterClass>(float_reg_index++)
+						: getIntParamReg<TWriterClass>(int_reg_index++);
+				}
 
 				
 				// Special handling for passing addresses (this pointer or large struct references)
@@ -6704,11 +6723,12 @@ private:
 					uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
 					textSectionData.push_back(modrm_movq);
 					
-					// For varargs functions, System V AMD64 ABI requires copying XMM value to GPR
-					// System V AMD64 ABI does NOT require this - floats stay in XMM registers only
-					// Only copy if the corresponding integer register exists (i < max_int_regs)
-					if (call_op.is_variadic && i < max_int_regs && is_coff_format) {
-						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+					// For varargs functions, Windows x64 requires copying XMM value to the
+					// corresponding integer register at the same position (for shadow-space homing).
+					// System V AMD64 does NOT require this - floats stay in XMM registers only.
+					// Use position = i + param_shift for the correct integer register slot.
+					if (call_op.is_variadic && (i + param_shift) < max_int_regs && is_coff_format) {
+						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i + param_shift));
 					}
 					
 					// Release the temporary GPR
@@ -6743,10 +6763,10 @@ private:
 							emitCvtss2sd(target_reg, target_reg);
 						}
 						
-						// For varargs: also copy to corresponding INT register
+						// For varargs: also copy to corresponding INT register (Windows x64 only)
 						// System V AMD64 ABI does NOT require this
-						if (call_op.is_variadic && i < max_int_regs && is_coff_format) {
-							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+						if (call_op.is_variadic && (i + param_shift) < max_int_regs && is_coff_format) {
+							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i + param_shift));
 						}
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
@@ -6772,10 +6792,10 @@ private:
 							emitCvtss2sd(target_reg, target_reg);
 						}
 						
-						// For varargs: also copy to corresponding INT register
+						// For varargs: also copy to corresponding INT register (Windows x64 only)
 						// System V AMD64 ABI does NOT require this
-						if (call_op.is_variadic && i < max_int_regs && is_coff_format) {
-							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+						if (call_op.is_variadic && (i + param_shift) < max_int_regs && is_coff_format) {
+							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i + param_shift));
 						}
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
@@ -9741,14 +9761,20 @@ private:
 
 		// Second pass: generate parameter storage code in the correct order
 
-		// For Windows x64 variadic functions, parameters are already at positive offsets
-		// from RBP (caller's stack), so we DON'T spill them from registers
-		// For Linux (ELF), register save area is more complex - not handled here
-		constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
-		bool skip_param_spilling = is_variadic && is_coff_format;
-
-		// Standard order for other functions
-		if (!skip_param_spilling) {
+		// The callee is always responsible for homing its register parameters to the shadow space
+		// (Windows x64) or its local frame (Linux). This ensures va_list/va_arg can walk a
+		// contiguous memory region and that parameter values are accessible at their assigned offsets.
+		constexpr bool is_coff_format_spill = !std::is_same_v<TWriterClass, ElfFileWriter>;
+		if (is_variadic && is_coff_format_spill) {
+			// Windows x64 variadic: home ALL register arg slots (named + variadic) to shadow space.
+			// The caller must NOT pre-populate shadow space (doing so corrupts caller locals that
+			// share those addresses). The callee owns shadow space homing per the x64 ABI.
+			const size_t max_regs = getMaxIntParamRegs<TWriterClass>();
+			for (size_t i = 0; i < max_regs; ++i) {
+				int slot_offset = 16 + static_cast<int>(i) * 8;
+				emitMovToFrame(getIntParamReg<TWriterClass>(i), slot_offset, 64);
+			}
+		} else {
 			for (const auto& param : parameters) {
 				// MSVC-STYLE: Store parameters using RBP-relative addressing
 				bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && param.pointer_depth == 0;
