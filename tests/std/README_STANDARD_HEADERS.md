@@ -84,6 +84,39 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 > **Note:** Several headers that previously compiled now have codegen failures. This is because recent parser improvements allow them to parse more code, which then hits new codegen limitations (e.g., fold expressions, pack expansions, non-type template parameters). The headers `<string_view>` and `<span>` previously compiled because the codegen errors were masked; they still parse in similar times.
 
+### Expensive headers that currently compile
+
+Based on the timings above, the most expensive **successful** headers in this sweep are:
+
+| Header | Approx compile time | Why it is slow |
+|---|---:|---|
+| `<atomic>` | ~6105ms | Pulls in large libstdc++ machinery (`<bits/atomic_base.h>`, memory ordering, lock-free traits, compiler builtins). Heavy template and constexpr paths, many architecture/compiler feature branches, and lots of static assertions. |
+| `<optional>` | ~911ms | `optional` is template-heavy and depends on type-trait machinery and conditional special member generation paths. This creates many instantiations and constant-expression checks even for simple tests. |
+| `<numeric>` | ~884ms | Brings in algorithmic templates and iterator/type-trait constraints that instantiate deeply through helper traits and function templates. |
+| `<typeindex>` | ~766ms | Depends on RTTI/typeinfo layers and supporting utility/type-trait infrastructure; small surface API but expensive transitive includes. |
+| `<compare>` | ~655ms | Comparison category types and comparison customization points trigger concept/type-trait style checks and many small template instantiations. |
+
+#### Why these are slow in FlashCpp (not just in libstdc++)
+
+1. **High template instantiation volume** in modern STL headers creates large AST and symbol-table pressure.
+2. **Repeated constexpr/type-trait evaluation** across similar instantiations likely recomputes work.
+3. **Large transitive include graphs** amplify parser work even for tiny test files.
+4. **Codegen still runs for many instantiated entities** that are not needed by the final `main`, increasing end-to-end compile time.
+
+#### What we can do about it
+
+1. **Instantiation/constexpr memoization (highest impact):**
+	- Cache template substitution + constexpr evaluation results by normalized template argument key.
+	- Reuse previously materialized trait/value results (especially for `type_traits`-driven paths).
+2. **Early dead-instantiation/codegen pruning:**
+	- Avoid generating IR for inline/template entities that are never ODR-used by reachable code.
+	- Keep parsing/semantic checks, but defer or skip codegen for unused bodies.
+3. **Header-level front-end caching:**
+	- Cache tokenized/preprocessed include units (or add PCH support for std headers) so repeated tests do less repeated work.
+4. **Targeted profiling loop for std headers:**
+	- Add phase timing breakdown (parse, template instantiation, constexpr, codegen) per test to identify dominant cost center per header.
+	- Start with `<atomic>` and `<optional>` as canaries; optimize where measured time is highest.
+
 ### Known Blockers
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
