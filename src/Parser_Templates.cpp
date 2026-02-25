@@ -9105,6 +9105,22 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	}
 
 	// Handle the function body
+	// Helper: substitute template parameters in a function body node
+	auto substituteBodyWithArgs = [&](const ASTNode& body) -> ASTNode {
+		std::vector<TemplateArgument> converted_template_args;
+		converted_template_args.reserve(template_args.size());
+		for (const auto& arg : template_args) {
+			if (arg.kind == TemplateArgument::Kind::Type) {
+				converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
+			} else if (arg.kind == TemplateArgument::Kind::Value) {
+				converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
+			} else {
+				converted_template_args.push_back(arg);
+			}
+		}
+		return substituteTemplateParameters(body, template_params, converted_template_args);
+	};
+
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
 		// Re-parse the function body with template parameters substituted
@@ -9234,26 +9250,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
-			// After parsing, we need to substitute template parameters in the body
-			// This is essential for features like fold expressions that need AST transformation
-			// Convert template_args to TemplateArgument format for substitution
-			std::vector<TemplateArgument> converted_template_args;
-			converted_template_args.reserve(template_args.size());
-			for (const auto& arg : template_args) {
-				if (arg.kind == TemplateArgument::Kind::Type) {
-					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
-				} else if (arg.kind == TemplateArgument::Kind::Value) {
-					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
-				}
-			}
-		
-			ASTNode substituted_body = substituteTemplateParameters(
-				*block_result.node(),
-				template_params,
-				converted_template_args
-			);
-		
-			new_func_ref.set_definition(substituted_body);
+			new_func_ref.set_definition(substituteBodyWithArgs(*block_result.node()));
 		}
 		
 		// Clean up context
@@ -9272,7 +9269,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
-			new_func_ref.set_definition(orig_body.value());
+			new_func_ref.set_definition(substituteBodyWithArgs(*orig_body));
 		}
 	}
 
@@ -9283,6 +9280,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	new_func_ref.set_noexcept(func_decl.is_noexcept());
 	new_func_ref.set_is_variadic(func_decl.is_variadic());
 	new_func_ref.set_is_deleted(func_decl.is_deleted());
+	new_func_ref.set_is_static(func_decl.is_static());
 	new_func_ref.set_linkage(func_decl.linkage());
 	new_func_ref.set_calling_convention(func_decl.calling_convention());
 
@@ -15891,6 +15889,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_constinit(func_decl.is_constinit());
 				new_func_ref.set_noexcept(func_decl.is_noexcept());
 				new_func_ref.set_is_variadic(func_decl.is_variadic());
+				new_func_ref.set_is_static(func_decl.is_static());
 				new_func_ref.set_linkage(func_decl.linkage());
 				new_func_ref.set_calling_convention(func_decl.calling_convention());
 				new_func_ref.set_is_implicit(func_decl.is_implicit());
@@ -16139,6 +16138,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Debug, "Popped struct context");
 				}
 
+				// Copy function specifiers from original
+				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
+				new_func_ref.set_is_consteval(func_decl.is_consteval());
+				new_func_ref.set_is_constinit(func_decl.is_constinit());
+				new_func_ref.set_noexcept(func_decl.is_noexcept());
+				new_func_ref.set_is_variadic(func_decl.is_variadic());
+				new_func_ref.set_is_static(func_decl.is_static());
+				new_func_ref.set_linkage(func_decl.linkage());
+				new_func_ref.set_calling_convention(func_decl.calling_convention());
+				new_func_ref.set_is_implicit(func_decl.is_implicit());
+
 				// Add the substituted function to the instantiated struct
 				if (mem_func.is_operator_overload) {
 					instantiated_struct_ref.add_operator_overload(mem_func.operator_symbol, new_func_node, mem_func.access);
@@ -16286,6 +16296,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_constinit(func_decl.is_constinit());
 				new_func_ref.set_noexcept(func_decl.is_noexcept());
 				new_func_ref.set_is_variadic(func_decl.is_variadic());
+				new_func_ref.set_is_static(func_decl.is_static());
 				new_func_ref.set_linkage(func_decl.linkage());
 				new_func_ref.set_calling_convention(func_decl.calling_convention());
 				new_func_ref.set_is_implicit(func_decl.is_implicit());
@@ -16509,49 +16520,178 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				struct_info_ptr->addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
 			}
 		} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-			// Member template functions should be copied to the instantiated class as-is
-			// They are themselves templates and will be instantiated when called
+			// Member template functions need outer template parameters substituted
+			// while keeping inner template parameters (e.g., auto → _T0) unchanged.
+			// For example, in template<class _It, class _Sent> struct subrange:
+			//   subrange(convertible_to<_It> auto __i, _Sent __s)
+			// becomes a TemplateFunctionDeclarationNode with inner param _T0.
+			// When instantiating subrange<int*, sentinel>, we need to substitute
+			// _It→int* and _Sent→sentinel in the parameters, keeping _T0 as-is.
 			const TemplateFunctionDeclarationNode& template_func = 
 				mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
 			
-			FLASH_LOG(Templates, Debug, "Copying member template function to instantiated class");
+			FLASH_LOG(Templates, Debug, "Copying member template function to instantiated class with outer param substitution");
 			
-			// Add the member template function to the instantiated struct
-			instantiated_struct_ref.add_member_function(
-				mem_func.function_declaration,
-				mem_func.access
-			);
-			
-			// Also register the member template function in the global template registry
-			// with the instantiated class name
 			const FunctionDeclarationNode& func_decl = 
 				template_func.function_declaration().as<FunctionDeclarationNode>();
 			const DeclarationNode& decl_node = func_decl.decl_node();
 			
-			// Register with qualified name (InstantiatedClassName::functionName)
-			StringBuilder qualified_name_builder;
-			qualified_name_builder.append(StringTable::getStringView(instantiated_name))
-			                     .append("::")
-			                     .append(decl_node.identifier_token().value());
-			StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
-			
-			gTemplateRegistry.registerTemplate(qualified_name_handle, mem_func.function_declaration);
-			
-			// Also register with simple name for unqualified lookups
-			gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), mem_func.function_declaration);
-
-			// Register outer template parameter bindings so that when the inner template
-			// is instantiated, outer params (e.g., T→int) can be resolved in the body
+			// Substitute outer class template parameters in function parameter types
+			// so that e.g. _Sent becomes sentinel_t when the class is instantiated
+			bool needs_substitution = false;
+			// Check return type
 			{
-				OuterTemplateBinding outer_binding;
-				for (const auto& tp : template_params) {
-					if (tp.is<TemplateParameterNode>()) {
-						outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
+				const auto& rtype = decl_node.type_node().as<TypeSpecifierNode>();
+				if (rtype.type() == Type::UserDefined) {
+					needs_substitution = true;
+				}
+			}
+			// Check parameter types
+			if (!needs_substitution) {
+				for (const auto& param : func_decl.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& ptype = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						if (ptype.type() == Type::UserDefined) {
+							needs_substitution = true;
+							break;
+						}
 					}
 				}
-				outer_binding.param_args = template_args_to_use;
-				gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
-				FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
+			}
+			
+			if (needs_substitution) {
+				// Create a new inner function with substituted non-auto parameter types
+				const TypeSpecifierNode& return_type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+				auto [ret_type, ret_type_index] = substitute_template_parameter(
+					return_type_spec, template_params, template_args_to_use);
+				
+				ASTNode new_return_type = emplace_node<TypeSpecifierNode>(
+					ret_type, return_type_spec.qualifier(),
+					get_type_size_bits(ret_type), return_type_spec.token(), return_type_spec.cv_qualifier());
+				auto& new_return_spec = new_return_type.as<TypeSpecifierNode>();
+				new_return_spec.set_type_index(ret_type_index);
+				for (const auto& pl : return_type_spec.pointer_levels())
+					new_return_spec.add_pointer_level(pl.cv_qualifier);
+				if (return_type_spec.is_rvalue_reference()) new_return_spec.set_reference(true);
+				else if (return_type_spec.is_reference()) new_return_spec.set_reference(false);
+				
+				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
+					new_return_type, decl_node.identifier_token());
+				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+					new_decl_ref);
+				
+				// Copy parameter nodes with outer template parameter substitution
+				for (const auto& param : func_decl.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param.as<DeclarationNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+						
+						Type new_param_type = param_type_spec.type();
+						TypeIndex new_param_type_index = param_type_spec.type_index();
+						
+						// Only substitute UserDefined types (not Auto, which is inner template)
+						if (new_param_type == Type::UserDefined) {
+							auto [subst_type, subst_idx] = substitute_template_parameter(
+								param_type_spec, template_params, template_args_to_use);
+							new_param_type = subst_type;
+							new_param_type_index = subst_idx;
+						}
+						
+						ASTNode new_param_type_node = emplace_node<TypeSpecifierNode>(
+							new_param_type, param_type_spec.qualifier(),
+							get_type_size_bits(new_param_type), Token(), param_type_spec.cv_qualifier());
+						auto& new_param_spec = new_param_type_node.as<TypeSpecifierNode>();
+						new_param_spec.set_type_index(new_param_type_index);
+						for (const auto& pl : param_type_spec.pointer_levels())
+							new_param_spec.add_pointer_level(pl.cv_qualifier);
+						if (param_type_spec.is_rvalue_reference()) new_param_spec.set_reference(true);
+						else if (param_type_spec.is_reference()) new_param_spec.set_reference(false);
+						
+						auto new_param_decl = emplace_node<DeclarationNode>(
+							new_param_type_node, param_decl.identifier_token());
+						// Copy default value if present
+						if (param_decl.has_default_value()) {
+							new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+						}
+						new_func_ref.add_parameter_node(new_param_decl);
+					}
+				}
+				
+				// Copy function specifiers
+				new_func_ref.set_noexcept(func_decl.is_noexcept());
+				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
+				new_func_ref.set_is_consteval(func_decl.is_consteval());
+				new_func_ref.set_is_deleted(func_decl.is_deleted());
+				new_func_ref.set_is_variadic(func_decl.is_variadic());
+				new_func_ref.set_is_static(func_decl.is_static());
+				if (func_decl.get_definition().has_value())
+					new_func_ref.set_definition(*func_decl.get_definition());
+				if (func_decl.has_template_body_position())
+					new_func_ref.set_template_body_position(func_decl.template_body_position());
+				// Copy trailing return type position for SFINAE resolution
+				if (func_decl.has_trailing_return_type_position())
+					new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
+				
+				// Create new TemplateFunctionDeclarationNode with inner template params
+				auto new_template_func = emplace_node<TemplateFunctionDeclarationNode>(
+					template_func.template_parameters(),
+					new_func_node,
+					template_func.requires_clause()
+				);
+				
+				instantiated_struct_ref.add_member_function(new_template_func, mem_func.access);
+				
+				// Register with qualified name
+				StringBuilder qualified_name_builder;
+				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
+				                     .append("::")
+				                     .append(decl_node.identifier_token().value());
+				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+				
+				gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func);
+				gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), new_template_func);
+				
+				// Register outer template parameter bindings
+				{
+					OuterTemplateBinding outer_binding;
+					for (const auto& tp : template_params) {
+						if (tp.is<TemplateParameterNode>()) {
+							outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
+						}
+					}
+					outer_binding.param_args = template_args_to_use;
+					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
+				}
+			} else {
+				// No substitution needed - copy as-is
+				instantiated_struct_ref.add_member_function(
+					mem_func.function_declaration,
+					mem_func.access
+				);
+				
+				// Register with qualified name
+				StringBuilder qualified_name_builder;
+				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
+				                     .append("::")
+				                     .append(decl_node.identifier_token().value());
+				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+				
+				gTemplateRegistry.registerTemplate(qualified_name_handle, mem_func.function_declaration);
+				gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), mem_func.function_declaration);
+				
+				// Register outer template parameter bindings
+				{
+					OuterTemplateBinding outer_binding;
+					for (const auto& tp : template_params) {
+						if (tp.is<TemplateParameterNode>()) {
+							outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
+						}
+					}
+					outer_binding.param_args = template_args_to_use;
+					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
+				}
 			}
 		} else {
 			FLASH_LOG(Templates, Error, "Unknown member function type in template instantiation: ", 
@@ -17676,7 +17816,21 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 
 	// Helper lambda to resolve a UserDefined type against both inner and outer template params
+	// Also tracks which inner template parameter index corresponds to each auto parameter
+	// so that we know which template argument supplies the concrete type for each auto param.
+	size_t auto_param_index = 0;
 	auto resolve_template_type = [&](Type type, TypeIndex type_index) -> std::pair<Type, TypeIndex> {
+		if (type == Type::Auto) {
+			// Abbreviated function template parameter (concept auto / auto):
+			// Map this to the corresponding inner template parameter's argument type.
+			// Inner template params for auto are named _T0, _T1, etc.
+			if (auto_param_index < template_args.size()) {
+				const auto& arg = template_args[auto_param_index];
+				auto_param_index++;
+				return { arg.type_value, arg.type_index };
+			}
+			return { type, type_index };
+		}
 		if (type == Type::UserDefined && type_index < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[type_index];
 			std::string_view tn = StringTable::getStringView(ti.name());
@@ -17685,7 +17839,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			for (size_t i = 0; i < template_params.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == tn && i < template_args.size()) {
-					return { template_args[i].type_value, 0 };
+					return { template_args[i].type_value, template_args[i].type_index };
 				}
 			}
 			// Check outer template params (e.g., T→int from class template)
@@ -18026,6 +18180,7 @@ if (param_decl.has_default_value()) {
 		// Use the already-parsed definition
 		body_to_substitute = func_decl.get_definition();
 	} else if (func_decl.has_template_body_position()) {
+		FLASH_LOG(Templates, Debug, "Lazy member function body: re-parsing from saved position");
 		// Re-parse the function body from saved position
 		// This is needed for member struct templates where body parsing is deferred
 		
@@ -18056,6 +18211,12 @@ if (param_decl.has_default_value()) {
 		// Save current position and parsing context
 		SaveHandle current_pos = save_token_position();
 		const FunctionDeclarationNode* saved_current_function = current_function_;
+		
+		// When re-parsing a lazy member function body with concrete types,
+		// we're no longer in a dependent template context. Set parsing_template_body_
+		// to false so that constant expressions like sizeof(int) are evaluated.
+		bool saved_parsing_template_body = parsing_template_body_;
+		parsing_template_body_ = false;
 
 		// Restore to the function body start
 		restore_lexer_position_only(func_decl.template_body_position());
@@ -18080,6 +18241,7 @@ if (param_decl.has_default_value()) {
 		}
 		
 		// Clean up context
+		parsing_template_body_ = saved_parsing_template_body;
 		current_function_ = saved_current_function;
 		gSymbolTable.exit_scope();
 
@@ -18137,6 +18299,7 @@ if (param_decl.has_default_value()) {
 	new_func_ref.set_is_constinit(func_decl.is_constinit());
 	new_func_ref.set_noexcept(func_decl.is_noexcept());
 	new_func_ref.set_is_variadic(func_decl.is_variadic());
+	new_func_ref.set_is_static(func_decl.is_static());
 	new_func_ref.set_linkage(func_decl.linkage());
 	new_func_ref.set_calling_convention(func_decl.calling_convention());
 
@@ -19503,6 +19666,13 @@ ASTNode Parser::substituteTemplateParameters(
 				if (tparam.name() == param_name) {
 					const TemplateArgument& arg = template_args[i];
 
+					// When a non-type param (e.g., _Size) receives a Type argument due to
+					// dependent expressions like sizeof(_Tp), skip the substitution to avoid
+					// creating broken identifiers like "user_defined".
+					if (tparam.kind() == TemplateParameterKind::NonType && arg.kind != TemplateArgument::Kind::Value) {
+						break;  // Leave unsubstituted
+					}
+
 					if (arg.kind == TemplateArgument::Kind::Type) {
 						// Create an identifier node for the concrete type
 						Token type_token(Token::Type::Identifier, get_type_name(arg.type_value),
@@ -19538,6 +19708,11 @@ ASTNode Parser::substituteTemplateParameters(
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == id_name) {
 					const TemplateArgument& arg = template_args[i];
+					
+					// Skip substitution when non-type param gets a dependent Type argument
+					if (tparam.kind() == TemplateParameterKind::NonType && arg.kind != TemplateArgument::Kind::Value) {
+						break;  // Leave unsubstituted
+					}
 					
 					if (arg.kind == TemplateArgument::Kind::Type) {
 						// Create an identifier node for the concrete type

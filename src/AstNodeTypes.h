@@ -1980,6 +1980,10 @@ public:
 	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
 
+	// Static member function support
+	void set_is_static(bool is_static) { is_static_ = is_static; }
+	bool is_static() const { return is_static_; }
+
 	// Deleted function support (= delete)
 	void set_is_deleted(bool deleted) { is_deleted_ = deleted; }
 	bool is_deleted() const { return is_deleted_; }
@@ -2022,6 +2026,7 @@ private:
 	bool is_consteval_;
 	bool is_noexcept_ = false;  // True if function is declared noexcept
 	bool is_deleted_ = false;  // True if function is declared = delete
+	bool is_static_ = false;  // True if function is a static member function (no 'this' pointer)
 	bool inline_always_ = false;  // True if function should always be inlined (e.g., template pure expressions)
 	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)

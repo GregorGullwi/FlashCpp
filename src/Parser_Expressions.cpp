@@ -2088,6 +2088,9 @@ bool Parser::parse_static_member_function(
 	// Mark as constexpr
 	member_func_ref.set_is_constexpr(is_static_constexpr);
 
+	// Mark as static member function (no implicit 'this' parameter)
+	member_func_ref.set_is_static(true);
+
 	// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
 	FlashCpp::MemberQualifiers member_quals;
 	skip_function_trailing_specifiers(member_quals);
