@@ -503,6 +503,37 @@
 			if (scope_pos != std::string_view::npos) {
 				base_template_name = extractBaseTemplateName(func_name_view.substr(0, scope_pos));
 			}
+			// Direct lookup: if the struct qualifier is directly in gTypesByName (e.g., "Mid$hash::get"),
+			// find it immediately rather than only checking base classes.
+			if (scope_pos != std::string_view::npos && !matched_func_decl) {
+				std::string_view struct_part = func_name_view.substr(0, scope_pos);
+				std::string_view member_name_direct = func_name_view.substr(scope_pos + 2);
+				auto direct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_part));
+				if (direct_it != gTypesByName.end() && direct_it->second->isStruct()) {
+					const StructTypeInfo* si = direct_it->second->getStructInfo();
+					if (si) {
+						for (const auto& mf : si->member_functions) {
+							if (mf.function_decl.is<FunctionDeclarationNode>()) {
+								const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+								if (fd.decl_node().identifier_token().value() == member_name_direct) {
+									matched_func_decl = &fd;
+									resolveMangledName(matched_func_decl, struct_part);
+									// Queue all member functions of this struct for deferred generation
+									std::vector<std::string> ns_stack;
+									for (const auto& dmf : si->member_functions) {
+										DeferredMemberFunctionInfo deferred_info;
+										deferred_info.struct_name = direct_it->second->name();
+										deferred_info.function_node = dmf.function_decl;
+										deferred_info.namespace_stack = ns_stack;
+										deferred_member_functions_.push_back(std::move(deferred_info));
+									}
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
 			if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
 				std::string_view member_name = func_name_view.substr(scope_pos + 2);
 				

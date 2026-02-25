@@ -11710,6 +11710,50 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					}
 				}
 			}
+
+			// Handle dependent template-template parameter instantiation placeholders.
+			// When TT<int> or TTT<Inner> is used in a template body, a dependent placeholder
+			// with isTemplateInstantiation() is created (baseTemplateName()=TT, templateArgs()=[int]).
+			// Here we substitute: find a Template param whose name matches baseTemplateName(),
+			// then instantiate the corresponding concrete template with the preserved args.
+			if (!found_match && result_type_index < gTypeInfo.size() && result_type_index > 0) {
+				const TypeInfo& placeholder_info = gTypeInfo[result_type_index];
+				if (placeholder_info.isTemplateInstantiation()) {
+					std::string_view base_tpl_name = StringTable::getStringView(placeholder_info.baseTemplateName());
+					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+						if (!template_params[i].is<TemplateParameterNode>()) continue;
+						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+						if (tparam.kind() == TemplateParameterKind::Template && tparam.name() == base_tpl_name) {
+							const TemplateTypeArg& concrete_arg = template_args[i];
+							if (concrete_arg.type_index < gTypeInfo.size()) {
+								std::string_view concrete_tpl_name = StringTable::getStringView(gTypeInfo[concrete_arg.type_index].name());
+								// Convert the preserved args from the placeholder to TemplateTypeArg
+								std::vector<TemplateTypeArg> concrete_args;
+								for (const auto& arg_info : placeholder_info.templateArgs()) {
+									TemplateTypeArg ta;
+									ta.base_type = arg_info.base_type;
+									ta.type_index = arg_info.type_index;
+									ta.is_value = arg_info.is_value;
+									ta.value = arg_info.intValue();
+									concrete_args.push_back(ta);
+								}
+								// Instantiate the concrete template with the preserved args
+								try_instantiate_class_template(concrete_tpl_name, concrete_args);
+								std::string_view inst_name = get_instantiated_class_name(concrete_tpl_name, concrete_args);
+								auto inst_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+								if (inst_it != gTypesByName.end()) {
+									result_type = inst_it->second->type_;
+									result_type_index = inst_it->second->type_index_;
+									found_match = true;
+									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' → '{}' via concrete template '{}'",
+									                 base_tpl_name, inst_name, concrete_tpl_name);
+								}
+							}
+							break;
+						}
+					}
+				}
+			}
 		}
 	}
 

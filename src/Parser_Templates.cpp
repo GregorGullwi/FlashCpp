@@ -5145,8 +5145,14 @@ ParseResult Parser::parse_template_template_parameter_forms(std::vector<ASTNode>
 // Parse a single template template parameter form (just type specifier, no name)
 // For template<template<typename> class Container>, this parses "typename"
 // Also handles variadic packs: template<typename...> class Container
+// Also handles nested template template parameters: template<template<typename> class> class TTT
 ParseResult Parser::parse_template_template_parameter_form() {
 	ScopedTokenPosition saved_position(*this);
+
+	// Handle nested template template parameter: template<template<typename> class> class TTT
+	if (peek().is_keyword() && peek() == "template"_tok) {
+		return saved_position.propagate(parse_template_parameter());
+	}
 
 	// Only support typename and class for now (no non-type parameters in template template parameters)
 	if (peek().is_keyword()) {
@@ -16123,7 +16129,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (ttype_arg.is_value) {
 							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
 						} else {
-							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type, ttype_arg.type_index));
 						}
 					}
 
@@ -18284,7 +18290,7 @@ if (param_decl.has_default_value()) {
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
 			} else {
-				converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+				converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type, ttype_arg.type_index));
 			}
 		}
 
@@ -19792,7 +19798,7 @@ ASTNode Parser::substituteTemplateParameters(
 					if (arg.kind == TemplateArgument::Kind::Type) {
 						TemplateTypeArg type_arg;
 						type_arg.base_type = arg.type_value;
-						type_arg.type_index = 0;
+						type_arg.type_index = arg.type_index;
 						type_arg.is_value = false;
 						inst_args.push_back(type_arg);
 					} else if (arg.kind == TemplateArgument::Kind::Value) {

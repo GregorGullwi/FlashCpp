@@ -1320,6 +1320,39 @@ ParseResult Parser::parse_type_specifier()
 					
 					// No nested type access - create a dependent type reference
 					// This will be resolved during instantiation of the containing template
+					// When template args are present (e.g., TT<int> or TTT<Inner>), create a dependent
+					// placeholder that preserves the args so they can be instantiated during substitution.
+					if (!template_args->empty()) {
+						std::string_view instantiated_name = get_instantiated_class_name(type_name, *template_args);
+						auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
+
+						// Reuse existing placeholder if already created
+						auto existing = gTypesByName.find(type_handle);
+						if (existing != gTypesByName.end()) {
+							return ParseResult::success(emplace_node<TypeSpecifierNode>(
+								Type::UserDefined, existing->second->type_index_, 0, type_name_token, CVQualifier::None));
+						}
+
+						// Create a new dependent placeholder with template instantiation metadata
+						auto& type_info = gTypeInfo.emplace_back();
+						type_info.type_ = Type::UserDefined;
+						type_info.type_index_ = gTypeInfo.size() - 1;
+						type_info.type_size_ = 0;
+						type_info.name_ = type_handle;
+						gTypesByName[type_handle] = &type_info;
+
+						auto template_args_info = convertToTemplateArgInfo(*template_args);
+						type_info.setTemplateInstantiationInfo(
+							QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()),
+							template_args_info);
+						FLASH_LOG_FORMAT(Templates, Debug, "Created dependent template-template placeholder '{}' with {} args",
+						                 instantiated_name, template_args_info.size());
+
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::UserDefined, type_info.type_index_, 0, type_name_token, CVQualifier::None));
+					}
+
+					// Fallback: no template args - just reference the template parameter type
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 					if (type_it != gTypesByName.end()) {
 						TypeIndex type_idx = type_it->second - &gTypeInfo[0];
