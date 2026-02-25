@@ -614,10 +614,8 @@ if ($expectedFailuresWithoutFail.Count -gt 0) {
 	Write-Host ""
 }
 
-# Exit with error if any compilation or linking failed, or if any _fail test unexpectedly passed
-# NOTE: Runtime crashes and return mismatches are currently disabled from failing the build
-# since test files are now named with expected return values, which exposes FlashCpp bugs.
-# To re-enable these checks, add: -or $runtimeCrashes.Count -gt 0 -or $returnMismatches.Count -gt 0
+# Exit with error if any compilation or linking failed, if any _fail test unexpectedly passed,
+# or if any test crashed at runtime.
 $exitCode = 0
 $failureReasons = @()
 
@@ -629,6 +627,9 @@ if ($compileFailed.Count -gt 0) {
 }
 if ($linkFailed.Count -gt 0) {
 	$failureReasons += "Some files did not link successfully"
+}
+if ($runtimeCrashes.Count -gt 0) {
+	$failureReasons += "Some tests crashed at runtime"
 }
 
 if ($failureReasons.Count -gt 0) {
