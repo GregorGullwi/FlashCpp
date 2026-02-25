@@ -1927,7 +1927,7 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_mangled_name(mangled);
 						dtor_ref.set_definition(block_node);
 						
-						struct_ref.add_destructor(dtor_node, current_access);
+						struct_ref.add_destructor(dtor_node, current_access, dtor_is_virtual);
 						continue;
 					}
 					

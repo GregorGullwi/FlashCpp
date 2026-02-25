@@ -2234,18 +2234,29 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 		
 		if (!existing_member) {
-			// Check if there's a declaration with the same name but different qualifiers (e.g., const mismatch)
+			// Check if there's a declaration with the same name but different signature
+			// (e.g., const mismatch or parameter count mismatch for overloads)
 			bool has_name_match = false;
+			bool has_qualifier_match = false;
 			for (const auto& member : struct_info->member_functions) {
 				if (member.getName() == function_name_token.handle()) {
 					has_name_match = true;
-					break;
+					if (member.is_const == member_quals.is_const &&
+						member.is_volatile == member_quals.is_volatile) {
+						has_qualifier_match = true;
+					}
 				}
 			}
-			if (has_name_match) {
-				// There IS a declaration with this name but qualifiers don't match - genuine error
+			if (has_name_match && !has_qualifier_match) {
+				// Name matches but const/volatile qualifiers don't match
 				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(), 
 				          "' does not match any declaration in the class (const/volatile qualifier mismatch)");
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+			if (has_name_match && has_qualifier_match) {
+				// Name and qualifiers match but parameter count differs (overload not found)
+				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(), 
+				          "' does not match any declaration in the class (parameter count mismatch)");
 				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 			}
 			
