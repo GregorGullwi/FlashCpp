@@ -131,6 +131,9 @@
       <AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <Link>
+      <StackReserveSize>8388608</StackReserveSize>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -140,6 +143,9 @@
       <AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <Link>
+      <StackReserveSize>8388608</StackReserveSize>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Benchmark|x64'">
     <ClCompile>
