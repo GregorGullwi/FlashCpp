@@ -15824,20 +15824,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& ool_nested : ool_nested_classes) {
 		// Full specializations (template<>) store concrete args — skip if they don't match
 		// this instantiation's arguments (e.g., Wrapper<int>::Nested shouldn't apply to Wrapper<float>).
-		if (!ool_nested.specialization_args.empty()) {
-			if (ool_nested.specialization_args.size() != template_args_to_use.size()) {
-				continue;
-			}
-			bool args_match = true;
-			for (size_t i = 0; i < ool_nested.specialization_args.size(); ++i) {
-				if (!(ool_nested.specialization_args[i] == template_args_to_use[i])) {
-					args_match = false;
-					break;
-				}
-			}
-			if (!args_match) {
-				continue;
-			}
+		if (!ool_nested.specialization_args.empty() &&
+		    (ool_nested.specialization_args.size() != template_args_to_use.size() ||
+		     !std::equal(ool_nested.specialization_args.begin(), ool_nested.specialization_args.end(),
+		                 template_args_to_use.begin()))) {
+			continue;
 		}
 
 		std::string_view nested_name = StringTable::getStringView(ool_nested.nested_class_name);
