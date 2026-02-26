@@ -20124,66 +20124,8 @@ ASTNode Parser::substituteTemplateParameters(
 				if (arg.is<ExpressionNode>()) {
 					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
 					if (std::holds_alternative<PackExpansionExprNode>(arg_expr)) {
-						const PackExpansionExprNode& pack_expansion = std::get<PackExpansionExprNode>(arg_expr);
-						const ASTNode& pattern = pack_expansion.pattern();
-						
-						// Find the variadic template parameter and pack size
-						size_t variadic_param_idx = SIZE_MAX;
-						size_t non_variadic_count = 0;
-						for (size_t p = 0; p < template_params.size(); ++p) {
-							if (template_params[p].is<TemplateParameterNode>()) {
-								const auto& tparam = template_params[p].as<TemplateParameterNode>();
-								if (tparam.is_variadic()) {
-									variadic_param_idx = p;
-								} else {
-									non_variadic_count++;
-								}
-							}
-						}
-						
-						size_t num_pack_elements = 0;
-						if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
-							num_pack_elements = template_args.size() - non_variadic_count;
-						}
-						
-						// Also check pack_param_info_ for function parameter packs
-						std::string_view func_pack_name;
-						for (const auto& pack_info : pack_param_info_) {
-							if (pack_info.pack_size > 0) {
-								func_pack_name = pack_info.original_name;
-								if (num_pack_elements == 0) num_pack_elements = pack_info.pack_size;
-								break;
-							}
-						}
-						
-						if (num_pack_elements > 0) {
-							FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: ", num_pack_elements, " elements");
-							for (size_t pi = 0; pi < num_pack_elements; ++pi) {
-								// Build substitution params for this single pack element
-								std::vector<ASTNode> subst_params;
-								std::vector<TemplateArgument> subst_args;
-								for (size_t p = 0; p < template_params.size(); ++p) {
-									if (!template_params[p].is<TemplateParameterNode>()) continue;
-									const auto& tparam = template_params[p].as<TemplateParameterNode>();
-									if (tparam.is_variadic()) {
-										TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
-										subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
-										subst_args.push_back(template_args[non_variadic_count + pi]);
-									} else if (p < template_args.size()) {
-										subst_params.push_back(template_params[p]);
-										subst_args.push_back(template_args[p]);
-									}
-								}
-								
-								// Replace the function parameter pack identifier (e.g., "args") with
-								// the expanded element name (e.g., "args_0") in the pattern before substitution
-								ASTNode expanded_pattern = replacePackIdentifierInExpr(pattern, func_pack_name, pi);
-								
-								ASTNode substituted = substituteTemplateParameters(expanded_pattern, subst_params, subst_args);
-								substituted_args.push_back(substituted);
-							}
-							expanded = true;
-						}
+						expanded = expandPackExpansionArgs(
+							std::get<PackExpansionExprNode>(arg_expr), template_params, template_args, substituted_args);
 					}
 				}
 				if (!expanded) {
@@ -20797,57 +20739,8 @@ ASTNode Parser::substituteTemplateParameters(
 			if (arg.is<ExpressionNode>()) {
 				const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
 				if (std::holds_alternative<PackExpansionExprNode>(arg_expr)) {
-					const PackExpansionExprNode& pack_expansion = std::get<PackExpansionExprNode>(arg_expr);
-					const ASTNode& pattern = pack_expansion.pattern();
-					
-					size_t variadic_param_idx = SIZE_MAX;
-					size_t non_variadic_count = 0;
-					for (size_t p = 0; p < template_params.size(); ++p) {
-						if (template_params[p].is<TemplateParameterNode>()) {
-							const auto& tparam = template_params[p].as<TemplateParameterNode>();
-							if (tparam.is_variadic()) variadic_param_idx = p;
-							else non_variadic_count++;
-						}
-					}
-					
-					size_t num_pack_elements = 0;
-					if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
-						num_pack_elements = template_args.size() - non_variadic_count;
-					}
-					
-					std::string_view func_pack_name;
-					for (const auto& pack_info : pack_param_info_) {
-						if (pack_info.pack_size > 0) {
-							func_pack_name = pack_info.original_name;
-							if (num_pack_elements == 0) num_pack_elements = pack_info.pack_size;
-							break;
-						}
-					}
-					
-					if (num_pack_elements > 0) {
-						FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in direct function call args: ", num_pack_elements, " elements");
-						for (size_t pi = 0; pi < num_pack_elements; ++pi) {
-							std::vector<ASTNode> subst_params;
-							std::vector<TemplateArgument> subst_args;
-							for (size_t p = 0; p < template_params.size(); ++p) {
-								if (!template_params[p].is<TemplateParameterNode>()) continue;
-								const auto& tparam = template_params[p].as<TemplateParameterNode>();
-								if (tparam.is_variadic()) {
-									TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
-									subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
-									subst_args.push_back(template_args[non_variadic_count + pi]);
-								} else if (p < template_args.size()) {
-									subst_params.push_back(template_params[p]);
-									subst_args.push_back(template_args[p]);
-								}
-							}
-							
-							ASTNode expanded_pattern = replacePackIdentifierInExpr(pattern, func_pack_name, pi);
-							ASTNode substituted = substituteTemplateParameters(expanded_pattern, subst_params, subst_args);
-							substituted_args.push_back(substituted);
-						}
-						expanded = true;
-					}
+					expanded = expandPackExpansionArgs(
+						std::get<PackExpansionExprNode>(arg_expr), template_params, template_args, substituted_args);
 				}
 			}
 			if (!expanded) {
@@ -21155,6 +21048,72 @@ static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	}
 
 	return nullptr;
+}
+
+// Expand a PackExpansionExprNode into multiple substituted arguments for function calls.
+// For each pack element, the pattern expression is cloned with the pack identifier replaced,
+// then template parameters are substituted.
+bool Parser::expandPackExpansionArgs(
+	const PackExpansionExprNode& pack_expansion,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateArgument>& template_args,
+	ChunkedVector<ASTNode>& out_args) {
+
+	const ASTNode& pattern = pack_expansion.pattern();
+
+	// Find the variadic template parameter and count non-variadic params
+	size_t variadic_param_idx = SIZE_MAX;
+	size_t non_variadic_count = 0;
+	for (size_t p = 0; p < template_params.size(); ++p) {
+		if (template_params[p].is<TemplateParameterNode>()) {
+			const auto& tparam = template_params[p].as<TemplateParameterNode>();
+			if (tparam.is_variadic()) variadic_param_idx = p;
+			else non_variadic_count++;
+		}
+	}
+
+	size_t num_pack_elements = 0;
+	if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
+		num_pack_elements = template_args.size() - non_variadic_count;
+	}
+
+	// Also check pack_param_info_ for function parameter packs
+	std::string_view func_pack_name;
+	for (const auto& pack_info : pack_param_info_) {
+		if (pack_info.pack_size > 0) {
+			func_pack_name = pack_info.original_name;
+			if (num_pack_elements == 0) num_pack_elements = pack_info.pack_size;
+			break;
+		}
+	}
+
+	if (num_pack_elements == 0) return false;
+
+	FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: ", num_pack_elements, " elements");
+	for (size_t pi = 0; pi < num_pack_elements; ++pi) {
+		// Build substitution params for this single pack element
+		std::vector<ASTNode> subst_params;
+		std::vector<TemplateArgument> subst_args;
+		for (size_t p = 0; p < template_params.size(); ++p) {
+			if (!template_params[p].is<TemplateParameterNode>()) continue;
+			const auto& tparam = template_params[p].as<TemplateParameterNode>();
+			if (tparam.is_variadic()) {
+				TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
+				subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
+				subst_args.push_back(template_args[non_variadic_count + pi]);
+			} else if (p < template_args.size()) {
+				subst_params.push_back(template_params[p]);
+				subst_args.push_back(template_args[p]);
+			}
+		}
+
+		// Replace the function parameter pack identifier (e.g., "args") with
+		// the expanded element name (e.g., "args_0") in the pattern before substitution
+		ASTNode expanded_pattern = replacePackIdentifierInExpr(pattern, func_pack_name, pi);
+		ASTNode substituted = substituteTemplateParameters(expanded_pattern, subst_params, subst_args);
+		out_args.push_back(substituted);
+	}
+	return true;
 }
 
 // Replace a pack parameter identifier in an expression pattern with its expanded element name.
