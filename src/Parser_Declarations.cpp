@@ -4290,9 +4290,8 @@ ParseResult Parser::parse_struct_declaration()
 	for (;;) {
 		if (peek() == "<"_tok) {
 			// Skip template specialization arguments: <T>, <int, float>, etc.
-			int angle_bracket_depth = 0;
 			advance(); // consume '<'
-			angle_bracket_depth = 1;
+			int angle_bracket_depth = 1;
 			while (!peek().is_eof() && angle_bracket_depth > 0) {
 				if (peek() == "<"_tok) {
 					angle_bracket_depth++;
