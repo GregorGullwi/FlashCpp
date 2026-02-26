@@ -15852,7 +15852,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 		
-		// Parse body members
+		// Phase 1: Parse body for data members, collect deferred function positions
+		struct DeferredNestedFunc {
+			SaveHandle func_start;       // Position at start of function (before return type or class name)
+			AccessSpecifier access;
+			bool is_constructor = false;
+			bool is_destructor = false;
+		};
+		std::vector<DeferredNestedFunc> deferred_functions;
+		
 		AccessSpecifier current_access = default_access;
 		if (peek() == "{"_tok) {
 			advance(); // consume '{'
@@ -15930,7 +15938,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (peek().is_identifier() && peek_info().value() == nested_name) {
 						advance(); // consume class name
 						if (peek() == "("_tok) {
-							// This is a constructor - skip it
+							// This is a constructor - save position for Phase 2
+							deferred_functions.push_back({ctor_check, current_access, true, false});
 							discard_saved_token(ctor_check);
 							skip_balanced_parens();
 							FlashCpp::MemberQualifiers ctor_quals;
@@ -15997,7 +16006,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					advance(); // consume member name
 					
 					if (peek() == "("_tok) {
-						// This is a member function - skip it
+						// This is a member function - save position for Phase 2
+						deferred_functions.push_back({type_check, current_access, false, false});
 						discard_saved_token(type_check);
 						skip_balanced_parens();
 						FlashCpp::MemberQualifiers func_quals;
@@ -16099,7 +16109,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Don't consume '}' - just note we're done
 		}
 		
-		// Restore parser state
+		// Restore parser state (after Phase 1)
 		current_template_param_names_ = saved_param_names;
 		parsing_template_body_ = saved_template_body;
 		parsing_template_class_ = saved_template_class;
@@ -16129,6 +16139,200 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 			FLASH_LOG(Templates, Debug, "Registered out-of-line nested class: ", StringTable::getStringView(qualified_name),
 			          " (size=", nested_type_info.type_size_, ")");
+		}
+		
+		// Phase 2: Process deferred member functions now that the nested type is registered
+		TypeInfo* nested_type_ptr = nullptr;
+		{
+			auto nit = gTypesByName.find(qualified_name);
+			if (nit != gTypesByName.end()) nested_type_ptr = nit->second;
+		}
+		
+		if (nested_type_ptr && nested_type_ptr->getStructInfo() && !deferred_functions.empty()) {
+			FLASH_LOG(Templates, Debug, "Processing ", deferred_functions.size(), 
+			          " deferred member functions for nested class ", StringTable::getStringView(qualified_name));
+			
+			for (const auto& deferred : deferred_functions) {
+				// Save position and set up template context for re-parsing
+				SaveHandle func_saved_pos = save_token_position();
+				auto func_saved_template_body = parsing_template_body_;
+				auto func_saved_template_class = parsing_template_class_;
+				auto func_saved_param_names = current_template_param_names_;
+				parsing_template_body_ = true;
+				parsing_template_class_ = true;
+				current_template_param_names_ = ool_nested.template_param_names;
+				
+				// Restore lexer to the saved function position
+				restore_lexer_position_only(deferred.func_start);
+				
+				// Build template argument conversion for substitution
+				std::vector<TemplateArgument> converted_args;
+				converted_args.reserve(template_args_to_use.size());
+				for (const auto& arg : template_args_to_use) {
+					if (arg.is_value) converted_args.push_back(TemplateArgument::makeValue(arg.value, arg.base_type));
+					else converted_args.push_back(TemplateArgument::makeType(arg.base_type));
+				}
+				
+				bool func_parsed = false;
+				
+				if (deferred.is_constructor) {
+					// Constructor: [explicit] ClassName(params) [: init_list] { body }
+					if (peek() == "explicit"_tok) advance();
+					if (peek().is_identifier()) {
+						advance(); // consume class name
+						if (peek() == "("_tok) {
+							FlashCpp::ParsedParameterList ctor_params;
+							auto param_result = parse_parameter_list(ctor_params);
+							if (!param_result.is_error()) {
+								FlashCpp::MemberQualifiers ctor_quals;
+								skip_function_trailing_specifiers(ctor_quals);
+								
+								// Skip member initializer list to find body
+								if (peek() == ":"_tok) {
+									advance();
+									while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+										if (peek() == "("_tok) skip_balanced_parens();
+										else if (peek() == "{"_tok) {
+											skip_balanced_braces();
+											if (peek() != ","_tok) break;
+										}
+										else advance();
+									}
+								}
+								
+								if (peek() == "{"_tok) {
+									member_function_context_stack_.push_back({
+										qualified_name, nested_type_ptr->type_index_, nullptr, nullptr
+									});
+									gSymbolTable.enter_scope(ScopeType::Block);
+									for (auto& param : ctor_params.parameters) {
+										if (param.is<DeclarationNode>()) {
+											gSymbolTable.insert(param.as<DeclarationNode>().identifier_token().value(), param);
+										}
+									}
+									
+									auto body_result = parse_block();
+									
+									member_function_context_stack_.pop_back();
+									gSymbolTable.exit_scope();
+									
+									if (!body_result.is_error() && body_result.node().has_value()) {
+										try {
+											ASTNode subst_body = substituteTemplateParameters(
+												*body_result.node(), ool_nested.template_params, converted_args);
+											
+											auto ctor_node = emplace_node<ConstructorDeclarationNode>(
+												qualified_name, ool_nested.nested_class_name);
+											auto& ctor_ref = ctor_node.as<ConstructorDeclarationNode>();
+											for (const auto& param : ctor_params.parameters) {
+												ASTNode subst_param = substituteTemplateParameters(
+													param, ool_nested.template_params, converted_args);
+												ctor_ref.add_parameter_node(subst_param);
+											}
+											ctor_ref.set_definition(subst_body);
+											
+											nested_type_ptr->getStructInfo()->member_functions.push_back(
+												StructMemberFunction(ool_nested.nested_class_name, ctor_node, deferred.access, true, false));
+											func_parsed = true;
+											FLASH_LOG(Templates, Debug, "Added constructor to nested class: ",
+											          StringTable::getStringView(qualified_name));
+										} catch (...) {
+											FLASH_LOG(Templates, Warning, "Failed to substitute template params in nested constructor");
+										}
+									}
+								}
+							}
+						}
+					}
+				} else {
+					// Regular member function: RetType name(params) [const] { body }
+					auto ret_result = parse_type_specifier();
+					if (!ret_result.is_error() && ret_result.node().has_value()) {
+						if (ret_result.node()->is<TypeSpecifierNode>()) {
+							consume_pointer_ref_modifiers(ret_result.node()->as<TypeSpecifierNode>());
+						}
+						
+						if (peek().is_identifier()) {
+							Token func_name_token = peek_info();
+							advance();
+							if (peek() == "("_tok) {
+								FlashCpp::ParsedParameterList func_params;
+								auto param_result = parse_parameter_list(func_params);
+								if (!param_result.is_error()) {
+									FlashCpp::MemberQualifiers func_quals;
+									skip_function_trailing_specifiers(func_quals);
+									
+									if (peek() == "->"_tok) {
+										advance();
+										ret_result = parse_type_specifier();
+									}
+									
+									if (peek() == "{"_tok) {
+										member_function_context_stack_.push_back({
+											qualified_name, nested_type_ptr->type_index_, nullptr, nullptr
+										});
+										gSymbolTable.enter_scope(ScopeType::Block);
+										for (auto& param : func_params.parameters) {
+											if (param.is<DeclarationNode>()) {
+												gSymbolTable.insert(param.as<DeclarationNode>().identifier_token().value(), param);
+											}
+										}
+										
+										auto body_result = parse_block();
+										
+										member_function_context_stack_.pop_back();
+										gSymbolTable.exit_scope();
+										
+										if (!body_result.is_error() && body_result.node().has_value()) {
+											try {
+												ASTNode subst_body = substituteTemplateParameters(
+													*body_result.node(), ool_nested.template_params, converted_args);
+												
+												const TypeSpecifierNode& ret_spec = ret_result.node()->as<TypeSpecifierNode>();
+												auto [subst_ret, subst_ret_idx] = substitute_template_parameter(
+													ret_spec, ool_nested.template_params, template_args_to_use);
+												
+												auto subst_ret_node = emplace_node<TypeSpecifierNode>(
+													subst_ret, ret_spec.qualifier(),
+													get_type_size_bits(subst_ret), func_name_token);
+												subst_ret_node.as<TypeSpecifierNode>().set_type_index(subst_ret_idx);
+												
+												auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(
+													subst_ret_node, func_name_token);
+												auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+													func_decl_ref, func_name_token.value());
+												
+												for (const auto& param : func_params.parameters) {
+													ASTNode subst_param = substituteTemplateParameters(
+														param, ool_nested.template_params, converted_args);
+													func_ref.add_parameter_node(subst_param);
+												}
+												func_ref.set_definition(subst_body);
+												
+												StringHandle func_name_handle = func_name_token.handle();
+												nested_type_ptr->getStructInfo()->member_functions.push_back(
+													StructMemberFunction(func_name_handle, func_node, deferred.access));
+												func_parsed = true;
+												FLASH_LOG(Templates, Debug, "Added member function to nested class: ",
+												          StringTable::getStringView(qualified_name), "::", func_name_token.value());
+											} catch (...) {
+												FLASH_LOG(Templates, Warning, "Failed to substitute template params in nested member function");
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				
+				(void)func_parsed;
+				// Restore parser state
+				current_template_param_names_ = func_saved_param_names;
+				parsing_template_body_ = func_saved_template_body;
+				parsing_template_class_ = func_saved_template_class;
+				restore_lexer_position_only(func_saved_pos);
+			}
 		}
 	}
 
