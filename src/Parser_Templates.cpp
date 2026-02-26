@@ -1298,14 +1298,11 @@ ParseResult Parser::parse_template_declaration() {
 					consume(";"_tok);
 					
 					// Register the out-of-line nested class definition
-					OutOfLineNestedClass ool_nested;
-					ool_nested.template_params = template_params;
-					ool_nested.nested_class_name = StringTable::getOrInternStringHandle(member_class_name);
-					ool_nested.body_start = body_start;
-					ool_nested.template_param_names = template_param_names;
-					ool_nested.is_class = is_class;
-					gTemplateRegistry.registerOutOfLineNestedClass(template_name, std::move(ool_nested));
-					
+					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
+						template_params,
+						StringTable::getOrInternStringHandle(member_class_name),
+						body_start, template_param_names, is_class
+					});
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class (full spec): {}::{}",
 					                 template_name, member_class_name);
 					
@@ -2638,14 +2635,11 @@ ParseResult Parser::parse_template_declaration() {
 					consume(";"_tok);
 					
 					// Register the out-of-line nested class definition
-					OutOfLineNestedClass ool_nested;
-					ool_nested.template_params = template_params;
-					ool_nested.nested_class_name = StringTable::getOrInternStringHandle(member_class_name);
-					ool_nested.body_start = body_start;
-					ool_nested.template_param_names = template_param_names;
-					ool_nested.is_class = is_class;
-					gTemplateRegistry.registerOutOfLineNestedClass(template_name, std::move(ool_nested));
-					
+					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
+						template_params,
+						StringTable::getOrInternStringHandle(member_class_name),
+						body_start, template_param_names, is_class
+					});
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class: {}::{}",
 					                 template_name, member_class_name);
 					
@@ -15854,10 +15848,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Phase 1: Parse body for data members, collect deferred function positions
 		struct DeferredNestedFunc {
-			SaveHandle func_start;       // Position at start of function (before return type or class name)
-			AccessSpecifier access;
-			bool is_constructor = false;
-			bool is_destructor = false;
+			SaveHandle func_start;       // Lexer position at start of function (before return type or class name)
+			AccessSpecifier access;      // Access level when this function was encountered
+			bool is_constructor = false; // true if this is a constructor definition
+			bool is_destructor = false;  // true if this is a destructor definition
+			bool is_explicit = false;    // true if constructor was declared 'explicit'
 		};
 		std::vector<DeferredNestedFunc> deferred_functions;
 		
@@ -15866,24 +15861,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			advance(); // consume '{'
 			
 			while (!peek().is_eof() && peek() != "}"_tok) {
+				// Skip empty declarations (bare ';' tokens)
+				if (peek() == ";"_tok) {
+					advance();
+					continue;
+				}
+				
 				// Handle access specifiers: public:, private:, protected:
-				if (peek() == "public"_tok) {
-					current_access = AccessSpecifier::Public;
-					advance();
-					if (peek() == ":"_tok) advance();
-					continue;
-				}
-				if (peek() == "private"_tok) {
-					current_access = AccessSpecifier::Private;
-					advance();
-					if (peek() == ":"_tok) advance();
-					continue;
-				}
-				if (peek() == "protected"_tok) {
-					current_access = AccessSpecifier::Protected;
-					advance();
-					if (peek() == ":"_tok) advance();
-					continue;
+				if (peek().is_keyword()) {
+					std::string_view keyword = peek_info().value();
+					if (keyword == "public" || keyword == "private" || keyword == "protected") {
+						advance(); // consume access specifier
+						if (peek() == ":"_tok) advance(); // consume ':'
+						if (keyword == "public") current_access = AccessSpecifier::Public;
+						else if (keyword == "private") current_access = AccessSpecifier::Private;
+						else if (keyword == "protected") current_access = AccessSpecifier::Protected;
+						continue;
+					}
 				}
 				
 				// Skip friend declarations
@@ -15896,18 +15890,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 				
-				// Skip static_assert
+				// Evaluate static_assert using the existing parser
 				if (peek() == "static_assert"_tok) {
-					while (!peek().is_eof() && peek() != ";"_tok) {
-						if (peek() == "("_tok) skip_balanced_parens();
-						else advance();
+					auto static_assert_result = parse_static_assert();
+					if (static_assert_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "static_assert failed in out-of-line nested class: ",
+						          StringTable::getStringView(qualified_name));
 					}
-					if (peek() == ";"_tok) advance();
 					continue;
 				}
 				
-				// Skip using declarations/aliases
+				// Parse using declarations/aliases via existing parser
 				if (peek() == "using"_tok) {
+					// We don't have a StructDeclarationNode for the nested class yet,
+					// so skip for now — type aliases will be inherited from the template body
 					while (!peek().is_eof() && peek() != ";"_tok) {
 						advance();
 					}
@@ -15915,32 +15911,46 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 				
-				// Skip destructor definitions: ~ClassName() { ... }
+				// Defer destructor definitions to Phase 2: ~ClassName() { ... }
 				if (peek_info().value() == "~") {
-					while (!peek().is_eof() && peek() != ";"_tok) {
-						if (peek() == "{"_tok) skip_balanced_braces();
-						else if (peek() == "("_tok) skip_balanced_parens();
-						else advance();
+					auto dtor_check = save_token_position();
+					advance(); // consume '~'
+					if (peek().is_identifier()) {
+						advance(); // consume class name
+						if (peek() == "("_tok) {
+							// Destructor — save position for Phase 2
+							deferred_functions.push_back({dtor_check, current_access, false, true, false});
+							skip_balanced_parens();
+							FlashCpp::MemberQualifiers dtor_quals;
+							skip_function_trailing_specifiers(dtor_quals);
+							if (peek() == "{"_tok) skip_balanced_braces();
+							else if (peek() == "="_tok) {
+								advance();
+								if (peek() == "default"_tok || peek() == "delete"_tok) advance();
+								if (peek() == ";"_tok) advance();
+							}
+							else if (peek() == ";"_tok) advance();
+							continue;
+						}
 					}
-					if (peek() == ";"_tok) advance();
-					continue;
+					// Not a destructor pattern — restore and fall through
+					restore_token_position(dtor_check);
 				}
 				
 				// Try to detect constructors: ClassName(params) or explicit ClassName(params)
 				{
-					bool is_explicit = false;
+					bool is_explicit_ctor = false;
 					auto ctor_check = save_token_position();
 					if (peek() == "explicit"_tok) {
 						advance();
-						is_explicit = true;
+						is_explicit_ctor = true;
 					}
-					(void)is_explicit;
 					if (peek().is_identifier() && peek_info().value() == nested_name) {
 						advance(); // consume class name
 						if (peek() == "("_tok) {
-							// This is a constructor - save position for Phase 2
-							deferred_functions.push_back({ctor_check, current_access, true, false});
-							discard_saved_token(ctor_check);
+							// Constructor — save position for Phase 2
+							// Note: ctor_check is NOT discarded — Phase 2 needs it to restore lexer position
+							deferred_functions.push_back({ctor_check, current_access, true, false, is_explicit_ctor});
 							skip_balanced_parens();
 							FlashCpp::MemberQualifiers ctor_quals;
 							skip_function_trailing_specifiers(ctor_quals);
@@ -16006,9 +16016,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					advance(); // consume member name
 					
 					if (peek() == "("_tok) {
-						// This is a member function - save position for Phase 2
-						deferred_functions.push_back({type_check, current_access, false, false});
-						discard_saved_token(type_check);
+						// Member function — save position for Phase 2
+						// Note: type_check is NOT discarded — Phase 2 needs it to restore lexer position
+						deferred_functions.push_back({type_check, current_access, false, false, false});
 						skip_balanced_parens();
 						FlashCpp::MemberQualifiers func_quals;
 						skip_function_trailing_specifiers(func_quals);
@@ -16075,20 +16085,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						bool is_rvalue_ref_member = substituted_type_spec.is_rvalue_reference();
 						
 						nested_struct_info->addMember(
-							member_name_token.handle(),
-							substituted_type_spec.type(),
-							substituted_type_spec.type_index(),
-							member_size,
-							member_alignment,
-							current_access,
-							std::nullopt,
-							is_ref_member,
-							is_rvalue_ref_member,
-							(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0,
-							false,
-							{},
-							static_cast<int>(substituted_type_spec.pointer_depth()),
-							std::nullopt
+							member_name_token.handle(),        // name
+							substituted_type_spec.type(),       // type
+							substituted_type_spec.type_index(), // type_index
+							member_size,                        // size
+							member_alignment,                   // alignment
+							current_access,                     // access
+							std::nullopt,                       // default_value (none for OOL nested)
+							is_ref_member,                      // is_reference
+							is_rvalue_ref_member,               // is_rvalue_reference
+							(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0, // referenced_type_size_bits
+							false,                              // is_bitfield
+							{},                                 // bitfield_width
+							static_cast<int>(substituted_type_spec.pointer_depth()), // pointer_depth
+							std::nullopt                        // custom_alignment
 						);
 						
 						FLASH_LOG(Templates, Debug, "Added member to out-of-line nested class: ",
@@ -16224,6 +16234,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											auto ctor_node = emplace_node<ConstructorDeclarationNode>(
 												qualified_name, ool_nested.nested_class_name);
 											auto& ctor_ref = ctor_node.as<ConstructorDeclarationNode>();
+											ctor_ref.set_explicit(deferred.is_explicit);
 											for (const auto& param : ctor_params.parameters) {
 												ASTNode subst_param = substituteTemplateParameters(
 													param, ool_nested.template_params, converted_args);
@@ -16239,6 +16250,49 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										} catch (...) {
 											FLASH_LOG(Templates, Warning, "Failed to substitute template params in nested constructor");
 										}
+									}
+								}
+							}
+						}
+					}
+				} else if (deferred.is_destructor) {
+					// Destructor: ~ClassName() { body }
+					advance(); // consume '~'
+					if (peek().is_identifier()) {
+						advance(); // consume class name
+						if (peek() == "("_tok) {
+							skip_balanced_parens();
+							FlashCpp::MemberQualifiers dtor_quals;
+							skip_function_trailing_specifiers(dtor_quals);
+							
+							if (peek() == "{"_tok) {
+								member_function_context_stack_.push_back({
+									qualified_name, nested_type_ptr->type_index_, nullptr, nullptr
+								});
+								gSymbolTable.enter_scope(ScopeType::Block);
+								
+								auto body_result = parse_block();
+								
+								member_function_context_stack_.pop_back();
+								gSymbolTable.exit_scope();
+								
+								if (!body_result.is_error() && body_result.node().has_value()) {
+									try {
+										ASTNode subst_body = substituteTemplateParameters(
+											*body_result.node(), ool_nested.template_params, converted_args);
+										
+										StringHandle dtor_name = StringTable::getOrInternStringHandle(
+											StringBuilder().append("~"sv).append(nested_name).commit());
+										auto dtor_node = emplace_node<DestructorDeclarationNode>(qualified_name, dtor_name);
+										dtor_node.as<DestructorDeclarationNode>().set_definition(subst_body);
+										
+										nested_type_ptr->getStructInfo()->member_functions.push_back(
+											StructMemberFunction(dtor_name, dtor_node, deferred.access, false, true));
+										func_parsed = true;
+										FLASH_LOG(Templates, Debug, "Added destructor to nested class: ",
+										          StringTable::getStringView(qualified_name));
+									} catch (...) {
+										FLASH_LOG(Templates, Warning, "Failed to substitute template params in nested destructor");
 									}
 								}
 							}
