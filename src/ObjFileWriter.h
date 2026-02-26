@@ -1200,7 +1200,7 @@ public:
 	                                  std::string_view mangled_name,
 	                                  const std::vector<TryBlockInfo>& try_blocks,
 	                                  const std::vector<UnwindMapEntryInfo>& unwind_map,
-	                                  uint32_t effective_frame_size, uint32_t stack_frame_size,
+	                                  uint32_t effective_frame_size, [[maybe_unused]] uint32_t stack_frame_size,
 	                                  uint32_t cpp_funcinfo_rva_field_offset,
 	                                  bool has_cpp_funcinfo_rva_field,
 	                                  uint32_t& cpp_funcinfo_local_offset_out,
@@ -1243,22 +1243,12 @@ public:
 
 		// Sort try blocks innermost-first (smaller range first) — MSVC convention.
 		// This must happen BEFORE state assignment so states follow nesting order.
-		std::vector<TryBlockInfo> sorted_try_blocks(try_blocks.begin(), try_blocks.end());
-		{
-			std::vector<size_t> perm(sorted_try_blocks.size());
-			std::iota(perm.begin(), perm.end(), 0);
-			std::sort(perm.begin(), perm.end(), [&try_blocks](size_t a, size_t b) {
-				uint32_t range_a = try_blocks[a].try_end_offset - try_blocks[a].try_start_offset;
-				uint32_t range_b = try_blocks[b].try_end_offset - try_blocks[b].try_start_offset;
-				return range_a < range_b;
-			});
-			std::vector<TryBlockInfo> new_blocks;
-			new_blocks.reserve(sorted_try_blocks.size());
-			for (size_t idx : perm) {
-				new_blocks.push_back(sorted_try_blocks[idx]);
-			}
-			sorted_try_blocks = std::move(new_blocks);
-		}
+        std::vector<TryBlockInfo> sorted_try_blocks(try_blocks.begin(), try_blocks.end());
+        std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(), [](const auto& a, const auto& b) {
+            uint32_t range_a = a.try_end_offset - a.try_start_offset;
+            uint32_t range_b = b.try_end_offset - b.try_start_offset;
+            return range_a < range_b;
+        });
 
 		// Determine nesting relationships: block j contains block i if
 		// j.start <= i.start && i.end <= j.end (sorted innermost-first, so j > i means j is outer).
@@ -1317,12 +1307,15 @@ public:
 			}
 		}
 
-		// Debug: log state layout for each try block
-		for (size_t i = 0; i < try_state_layout.size(); i++) {
-			FLASH_LOG_FORMAT(Codegen, Debug, "  TryBlock[{}]: tryLow={}, tryHigh={}, catchHigh={}, offsets=[{},{}], catches={}",
-				i, try_state_layout[i].try_low, try_state_layout[i].try_high, try_state_layout[i].catch_high,
-				sorted_try_blocks[i].try_start_offset, sorted_try_blocks[i].try_end_offset,
-				try_state_layout[i].catches.size());
+		if (IS_FLASH_LOG_ENABLED(Codegen, Debug))
+		{
+			// Debug: log state layout for each try block
+			for (size_t i = 0; i < try_state_layout.size(); i++) {
+				FLASH_LOG_FORMAT(Codegen, Debug, "  TryBlock[{}]: tryLow={}, tryHigh={}, catchHigh={}, offsets=[{},{}], catches={}",
+					i, try_state_layout[i].try_low, try_state_layout[i].try_high, try_state_layout[i].catch_high,
+					sorted_try_blocks[i].try_start_offset, sorted_try_blocks[i].try_end_offset,
+					try_state_layout[i].catches.size());
+			}
 		}
 
 		// Magic number for x64 FH3 FuncInfo layout.
