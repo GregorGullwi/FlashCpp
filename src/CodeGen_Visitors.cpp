@@ -241,6 +241,7 @@ public:
 			current_function_name_ = StringHandle();
 			current_namespace_stack_ = info.namespace_stack;
 			
+			
 			if (info.function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
 				// If the function has no body, it may be a lazily-registered template member.

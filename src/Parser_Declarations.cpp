@@ -4459,6 +4459,13 @@ ParseResult Parser::parse_struct_declaration()
 		struct_info->set_pack_alignment(pack_alignment);
 	}
 
+	// Check for 'final' keyword before base class list (C++ standard: class-key identifier final(opt) base-clause(opt))
+	if (peek() == "final"_tok) {
+		advance();  // consume 'final'
+		struct_ref.set_is_final(true);
+		struct_info->is_final = true;
+	}
+
 	// Parse base class list (if present): : public Base1, private Base2
 	if (peek() == ":"_tok) {
 		advance();  // consume ':'

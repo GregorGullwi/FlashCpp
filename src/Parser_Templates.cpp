@@ -1018,9 +1018,9 @@ ParseResult Parser::parse_template_declaration() {
 					arg.is_reference = type_spec.is_lvalue_reference();
 					arg.is_rvalue_reference = type_spec.is_rvalue_reference();
 					arg.is_array = is_array;
-					// Mark as dependent - this is a partial specialization pattern,
-					// so all types are template parameters (dependent types)
-					arg.is_dependent = true;
+					// Mark as dependent only for partial specializations
+					// For full specializations (template<>), the types are concrete, not dependent
+					arg.is_dependent = !template_params.empty();
 					
 					// Store the type name for pattern matching
 					// For template instantiations like ratio<_Num, _Den>, this will be "ratio"
@@ -1112,6 +1112,18 @@ ParseResult Parser::parse_template_declaration() {
 				// e.g., is_reference_v<T&> should get pattern "is_reference_v_R", not "is_reference_v_TR"
 				// BUT for dependent TEMPLATE INSTANTIATIONS (like ratio<_Num, _Den>), DO include the base template name
 				bool included_type_name = false;
+				
+				// For non-dependent fundamental types (int, float, bool, etc.), include the type name
+				// This is needed for explicit full specializations like:
+				//   template<> inline constexpr unsigned __cmp_cat_id<int> = 2;
+				//   template<> inline constexpr unsigned __cmp_cat_id<float> = 4;
+				if (!arg.is_dependent && !arg.is_value) {
+					std::string_view fundamental_name = getTypeName(arg.base_type);
+					if (!fundamental_name.empty()) {
+						pattern_name.append(fundamental_name);
+						included_type_name = true;
+					}
+				}
 				
 				// First, check if we have a valid type_index pointing to a named type
 				if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum)) {
@@ -1252,6 +1264,44 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
+
+			// Check for out-of-line member class definition: template<> class Foo<Args>::Bar { ... }
+			// E.g., template<> class basic_ostream<char, char_traits<char>>::sentry { ... };
+			if (peek() == "::"_tok) {
+				auto scope_check = save_token_position();
+				advance(); // consume '::'
+				if (peek().is_identifier()) {
+					discard_saved_token(scope_check);
+					std::string_view member_class_name = peek_info().value();
+					advance(); // consume member class name
+					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition (full spec): {}::{}",
+					                 template_name, member_class_name);
+					
+					// Skip base class list if present
+					if (peek() == ":"_tok) {
+						advance();
+						while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+							advance();
+						}
+					}
+					
+					// Skip body if present
+					if (peek() == "{"_tok) {
+						skip_balanced_braces();
+					}
+					
+					// Consume trailing semicolon
+					consume(";"_tok);
+					
+					// Reset parsing context flags
+					parsing_template_class_ = false;
+					parsing_template_body_ = false;
+					
+					return saved_position.success();
+				}
+				// Not an identifier after '::' - restore parser position
+				restore_token_position(scope_check);
+			}
 
 			// Check for forward declaration: template<> struct ClassName<Args>;
 			if (peek() == ";"_tok) {
@@ -1589,6 +1639,9 @@ ParseResult Parser::parse_template_declaration() {
 						// Handle nested struct/class declarations inside full specialization body
 						advance(); // consume 'struct' or 'class'
 						
+						// Skip C++11 attributes
+						skip_cpp_attributes();
+						
 						// Skip struct name if present
 						if (peek().is_identifier()) {
 							advance(); // consume struct name
@@ -1597,6 +1650,11 @@ ParseResult Parser::parse_template_declaration() {
 						// Skip template arguments if present (e.g., struct Wrapper<int>)
 						if (peek() == "<"_tok) {
 							parse_explicit_template_arguments();
+						}
+						
+						// Skip 'final' specifier if present
+						if (peek() == "final"_tok) {
+							advance();
 						}
 						
 						// Skip base class list if present (e.g., struct Frame : public Base)
@@ -2529,6 +2587,47 @@ ParseResult Parser::parse_template_declaration() {
 			
 			std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
 			
+			// Check for out-of-line member class definition: template<...> class Foo<...>::Bar { ... }
+			// E.g., template<typename _CharT, typename _Traits>
+			//        class basic_ostream<_CharT, _Traits>::sentry { ... };
+			// This defines a nested class member of a class template outside the class body.
+			// We skip the body here since instantiation uses the nested class from the primary template.
+			if (peek() == "::"_tok) {
+				auto scope_check = save_token_position();
+				advance(); // consume '::'
+				if (peek().is_identifier()) {
+					discard_saved_token(scope_check);
+					std::string_view member_class_name = peek_info().value();
+					advance(); // consume member class name
+					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition: {}::{}",
+					                 template_name, member_class_name);
+					
+					// Skip base class list if present
+					if (peek() == ":"_tok) {
+						advance();
+						while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+							advance();
+						}
+					}
+					
+					// Skip body if present
+					if (peek() == "{"_tok) {
+						skip_balanced_braces();
+					}
+					
+					// Consume trailing semicolon
+					consume(";"_tok);
+					
+					// Clean up template parameter context
+					current_template_param_names_.clear();
+					parsing_template_body_ = false;
+					
+					return saved_position.success();
+				}
+				// Not an identifier after '::' - restore parser position
+				restore_token_position(scope_check);
+			}
+			
 			// Generate a unique name for the pattern template
 			// We use the template parameter names + modifiers to create unique pattern names
 			// E.g., Container<T*> -> Container_pattern_TP
@@ -2873,11 +2972,33 @@ ParseResult Parser::parse_template_declaration() {
 					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
 						// Handle nested struct/class declarations inside partial specialization body
 						// e.g., struct __type { ... };
+						// e.g., class _Sp_counted_ptr final : public _Sp_counted_base<_Lp> { ... };
 						advance(); // consume 'struct' or 'class'
+						
+						// Skip C++11 attributes
+						skip_cpp_attributes();
 						
 						// Skip struct name if present
 						if (peek().is_identifier()) {
 							advance(); // consume struct name
+						}
+						
+						// Skip template arguments if present (e.g., struct Wrapper<int>)
+						if (peek() == "<"_tok) {
+							skip_template_arguments();
+						}
+						
+						// Skip 'final' specifier if present
+						if (peek() == "final"_tok) {
+							advance();
+						}
+						
+						// Skip base class list if present (e.g., : public Base<T>)
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+								advance();
+							}
 						}
 						
 						// Skip to body or semicolon
@@ -11093,6 +11214,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		
 		// Include base type name for user-defined types to match partial specs
 		// e.g., for __is_ratio_v<ratio<1,2>>, look for pattern "__is_ratio_v_ratio"
+		// For fundamental types (int, float, bool, etc.), include the type name
+		// e.g., for __cmp_cat_id<int>, look for pattern "__cmp_cat_id_int"
+		{
+			std::string_view fundamental_name = getTypeName(arg.base_type);
+			if (!fundamental_name.empty()) {
+				pattern_builder.append(fundamental_name);
+			}
+		}
 		if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
 			if (arg.type_index < gTypeInfo.size()) {
 				const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
@@ -11124,15 +11253,60 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			pattern_builder.append("P");  // pointer
 		}
 		
-		// Always try to look up partial specialization
+		// Try to look up full specialization first (pattern includes type name)
 		std::string_view pattern_key = pattern_builder.commit();
 		auto spec_opt = gTemplateRegistry.lookupVariableTemplate(pattern_key);
+		
+		// If full specialization not found, try partial specialization pattern
+		// (without fundamental type name, just qualifiers like R, RR, P)
+		if (!spec_opt.has_value()) {
+			StringBuilder partial_pattern_builder;
+			partial_pattern_builder.append(simple_template_name);
+			partial_pattern_builder.append("_");
+			// Only include user-defined type names for partial specs
+			if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
+				if (arg.type_index < gTypeInfo.size()) {
+					const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
+					std::string_view type_name = StringTable::getStringView(arg_type_info.name());
+					size_t last_colon = type_name.rfind("::");
+					if (last_colon != std::string_view::npos) {
+						type_name = type_name.substr(last_colon + 2);
+					}
+					if (arg_type_info.isTemplateInstantiation()) {
+						type_name = StringTable::getStringView(arg_type_info.baseTemplateName());
+					}
+					partial_pattern_builder.append(type_name);
+				}
+			}
+			if (arg.is_reference) {
+				partial_pattern_builder.append("R");
+			} else if (arg.is_rvalue_reference) {
+				partial_pattern_builder.append("RR");
+			}
+			for (size_t i = 0; i < arg.pointer_depth; ++i) {
+				partial_pattern_builder.append("P");
+			}
+			std::string_view partial_key = partial_pattern_builder.commit();
+			if (partial_key != pattern_key) {
+				spec_opt = gTemplateRegistry.lookupVariableTemplate(partial_key);
+				if (spec_opt.has_value()) {
+					pattern_key = partial_key;
+				}
+			}
+		}
 		
 		// Also try with qualified name if simple name lookup failed
 		StringBuilder qualified_pattern_builder;
 		if (!spec_opt.has_value() && template_name != simple_template_name) {
 			qualified_pattern_builder.append(template_name);
 			qualified_pattern_builder.append("_");
+			// Include fundamental type name for qualified lookup too
+			{
+				std::string_view fundamental_name = getTypeName(arg.base_type);
+				if (!fundamental_name.empty()) {
+					qualified_pattern_builder.append(fundamental_name);
+				}
+			}
 			if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
 				if (arg.type_index < gTypeInfo.size()) {
 					const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
@@ -11182,22 +11356,33 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					return gSymbolTable.lookup(persistent_name);
 				}
 				
-				// Create instantiated variable using the specialization's initializer
+				// Create instantiated variable using the specialization's type and initializer
 				// Use original token's line/column/file info for better diagnostics
 				Token inst_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
-				TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, orig_token);  // 8 bits = 1 byte
+				
+				// Use the specialization's actual type and initializer instead of always bool/true
+				const DeclarationNode& spec_decl = spec_var_decl.declaration();
+				ASTNode spec_type = spec_decl.type_node();
+				
 				auto decl_node = emplace_node<DeclarationNode>(
-					emplace_node<TypeSpecifierNode>(bool_type),
+					spec_type,
 					inst_token
 				);
 				
-				// Create the initializer expression - use 'true' for specializations that match reference types
-				Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
-				auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
+				// Use the specialization's actual initializer if present
+				std::optional<ASTNode> init_expr;
+				if (spec_var_decl.initializer().has_value()) {
+					init_expr = *spec_var_decl.initializer();
+				} else if (spec_decl.type_node().is<TypeSpecifierNode>() &&
+				           spec_decl.type_node().as<TypeSpecifierNode>().type() == Type::Bool) {
+					// Default to 'true' only for bool-typed specializations (e.g., is_reference_v<T&>)
+					Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
+					init_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
+				}
 				
 				auto var_decl_node = emplace_node<VariableDeclarationNode>(
 					decl_node,
-					true_expr,  // Use 'true' as the initializer for reference specializations
+					init_expr,
 					StorageClass::None
 				);
 				var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
@@ -18916,6 +19101,60 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 				advance(); // consume '~'
 				is_dtor = true;
 			}
+			// Handle nested class member function: ClassName<Args>::NestedClass::ctor/dtor/func(...)
+			// E.g., basic_ostream<_CharT, _Traits>::sentry::sentry(...)
+			//        basic_ostream<_CharT, _Traits>::sentry::~sentry()
+			if (!is_dtor && peek().is_identifier() && peek_info().value() != potential_class.value()) {
+				SaveHandle nested_check = save_token_position();
+				Token nested_class_token = peek_info();
+				advance(); // consume nested class name
+				if (peek() == "::"_tok) {
+					advance(); // consume '::'
+					bool is_nested_dtor = false;
+					if (peek_info().value() == "~") {
+						advance(); // consume '~'
+						is_nested_dtor = true;
+					}
+					if (peek().is_identifier()) {
+						advance(); // consume function name
+						if (peek() == "("_tok) {
+							// Out-of-line nested class member function definition
+							// Skip the entire definition (params, body, etc.)
+							discard_saved_token(nested_check);
+							discard_saved_token(ctor_check);
+							FLASH_LOG_FORMAT(Templates, Debug,
+								"Skipping out-of-line nested class member function: {}::{}::{}",
+								potential_class.value(), nested_class_token.value(),
+								(is_nested_dtor ? "~dtor" : "ctor/func"));
+							skip_balanced_parens();
+							FlashCpp::MemberQualifiers nested_quals;
+							skip_function_trailing_specifiers(nested_quals);
+							// Skip member initializer list
+							if (peek() == ":"_tok) {
+								advance();
+								while (!peek().is_eof() && peek() != ";"_tok) {
+									if (peek() == "("_tok) skip_balanced_parens();
+									else if (peek() == "{"_tok) {
+										skip_balanced_braces();
+										if (peek() != ","_tok) break;
+									} else advance();
+								}
+							}
+							if (peek() == "{"_tok) skip_balanced_braces();
+							else if (peek() == "="_tok) {
+								advance(); // consume '='
+								if (peek() == "default"_tok || peek() == "delete"_tok) advance();
+								if (peek() == ";"_tok) advance();
+							}
+							else if (peek() == ";"_tok) advance();
+							discard_saved_token(saved_pos);
+							return true;
+						}
+					}
+				}
+				// Not a nested class member - restore to after the first '::' 
+				restore_token_position(nested_check);
+			}
 			if (peek().is_identifier() && peek_info().value() == potential_class.value()) {
 					Token ctor_name_token = peek_info();
 					advance(); // consume constructor/destructor name
@@ -19771,8 +20010,79 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 		}
-
-		// For other expression types, recursively substitute in subexpressions
+		
+		// Check if this IdentifierNode is a dependent template placeholder (e.g., __cmp_cat_id$hash)
+		// These are created during template body parsing for variable template references like __cmp_cat_id<_Ts>
+		// We need to re-instantiate the variable template with the substituted type args
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+			std::string_view id_name = id_node.name();
+			
+			// Only check for dependent placeholders if the name contains '$' (the hash separator)
+			if (id_name.find('$') != std::string_view::npos) {
+			// Look up the type info for this identifier
+			StringHandle id_handle = StringTable::getOrInternStringHandle(id_name);
+			auto type_it = gTypesByName.find(id_handle);
+			if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
+				const TypeInfo* placeholder_type = type_it->second;
+				std::string_view base_template = StringTable::getStringView(placeholder_type->baseTemplateName());
+				
+				// Check if this is a variable template
+				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(base_template);
+				if (var_template_opt.has_value()) {
+					// Get the template args from the placeholder and substitute them
+					const auto& placeholder_args = placeholder_type->templateArgs();
+					std::vector<TemplateTypeArg> new_args;
+					bool any_substituted = false;
+					
+					for (const auto& parg : placeholder_args) {
+						TemplateTypeArg arg;
+						arg.base_type = parg.base_type;
+						arg.type_index = parg.type_index;
+						arg.is_reference = (parg.ref_qualifier == ReferenceQualifier::LValueReference);
+						arg.is_rvalue_reference = (parg.ref_qualifier == ReferenceQualifier::RValueReference);
+						arg.pointer_depth = parg.pointer_depth;
+						arg.cv_qualifier = parg.cv_qualifier;
+						
+						// Check if this arg is a template parameter that should be substituted
+						if (parg.type_index < gTypeInfo.size()) {
+							std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[parg.type_index].name());
+							for (size_t p = 0; p < template_params.size() && p < template_args.size(); ++p) {
+								if (!template_params[p].is<TemplateParameterNode>()) continue;
+								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+								if (tparam.name() == arg_type_name) {
+									// Substitute with the concrete type
+									const TemplateArgument& concrete_arg = template_args[p];
+									if (concrete_arg.kind == TemplateArgument::Kind::Type) {
+										arg.base_type = concrete_arg.type_value;
+										arg.type_index = concrete_arg.type_index;
+										arg.is_dependent = false;
+										any_substituted = true;
+									}
+									break;
+								}
+							}
+						}
+						new_args.push_back(arg);
+					}
+					
+					if (any_substituted) {
+						auto result = try_instantiate_variable_template(base_template, new_args);
+						if (result.has_value()) {
+							// The variable template was instantiated. Return an IdentifierNode
+							// that references the instantiated variable (not the VariableDeclarationNode itself)
+							if (result->is<VariableDeclarationNode>()) {
+								const auto& var_decl = result->as<VariableDeclarationNode>();
+								Token ref_token = var_decl.declaration().identifier_token();
+								return emplace_node<ExpressionNode>(IdentifierNode(ref_token));
+							}
+							return *result;
+						}
+					}
+				}
+			}
+			} // end of '$' check
+		}
 		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 			const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr);
 			ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
@@ -19885,36 +20195,188 @@ ASTNode Parser::substituteTemplateParameters(
 			// C++17 Fold expressions - expand into nested binary operations
 			const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
 		
-			// The fold pack_name refers to a function parameter pack (like "args")
-			// We need to expand it into individual parameter references (like "args_0", "args_1", "args_2")
 			std::vector<ASTNode> pack_values;
 		
-			// Count pack elements using the helper function
-			size_t num_pack_elements = count_pack_elements(fold.pack_name());
+			// Handle complex pack expressions like (__cmp_cat_id<_Ts> | ...)
+			// where the pack is inside a variable template invocation, not a simple identifier
+			if (fold.has_complex_pack_expr()) {
+				// Find the variadic template parameter
+				size_t variadic_param_idx = SIZE_MAX;
+				size_t non_variadic_count = 0;
+				for (size_t p = 0; p < template_params.size(); ++p) {
+					if (template_params[p].is<TemplateParameterNode>()) {
+						const auto& tparam = template_params[p].as<TemplateParameterNode>();
+						if (tparam.is_variadic()) {
+							variadic_param_idx = p;
+						} else {
+							non_variadic_count++;
+						}
+					}
+				}
+				
+				size_t num_pack_elements = 0;
+				if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
+					num_pack_elements = template_args.size() - non_variadic_count;
+				}
+				
+				FLASH_LOG(Templates, Debug, "Complex fold expansion: num_pack_elements=", num_pack_elements);
+				
+				if (num_pack_elements == 0) {
+					// C++17: empty unary fold is allowed only for &&, || and comma
+					// For other operators, return identity values
+					std::string_view op = fold.op();
+					if (op == "&&") {
+						Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+						return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, true));
+					} else if (op == "||") {
+						Token bool_token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+						return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, false));
+					} else if (op == ",") {
+						Token void_token(Token::Type::Literal, "0"sv, 0, 0, 0);
+						return emplace_node<ExpressionNode>(NumericLiteralNode(
+							void_token, 0ULL, Type::Void, TypeQualifier::None, 0));
+					}
+					FLASH_LOG(Templates, Warning, "Complex fold expression with empty pack and operator '", op, "'");
+					return node;
+				}
+				
+				// For each pack element, substitute the variadic parameter in the complex expression
+				for (size_t i = 0; i < num_pack_elements; ++i) {
+					// Create a single-element template params/args pair for the variadic parameter
+					std::vector<ASTNode> single_param = { template_params[variadic_param_idx] };
+					std::vector<TemplateArgument> single_arg = { template_args[non_variadic_count + i] };
+					
+					// Also include the non-variadic parameters so they get substituted too
+					std::vector<ASTNode> subst_params;
+					std::vector<TemplateArgument> subst_args;
+					for (size_t p = 0; p < template_params.size(); ++p) {
+						if (template_params[p].is<TemplateParameterNode>()) {
+							const auto& tparam = template_params[p].as<TemplateParameterNode>();
+							if (tparam.is_variadic()) {
+								// Create a non-variadic version of this parameter for single substitution
+								TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
+								// Don't set variadic - we're substituting one element at a time
+								subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
+								subst_args.push_back(template_args[non_variadic_count + i]);
+							} else if (p < template_args.size()) {
+								subst_params.push_back(template_params[p]);
+								subst_args.push_back(template_args[p]);
+							}
+						}
+					}
+					
+					ASTNode substituted = substituteTemplateParameters(*fold.pack_expr(), subst_params, subst_args);
+					pack_values.push_back(substituted);
+				}
+			} else {
+				// Simple pack name case: pack_name refers to a function parameter pack (like "args")
+				// or a non-type template parameter pack (like "Bs" in (Bs && ...))
+				size_t num_pack_elements = count_pack_elements(fold.pack_name());
+				
+				FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
 			
-			FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
-		
-			if (num_pack_elements == 0) {
-				FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
-				return node;
-			}
-		
-			// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
-			for (size_t i = 0; i < num_pack_elements; ++i) {
-				StringBuilder param_name_builder;
-				param_name_builder.append(fold.pack_name());
-				param_name_builder.append('_');
-				param_name_builder.append(i);
-				std::string_view param_name = param_name_builder.commit();
-		
-				Token param_token(Token::Type::Identifier, param_name,
-								 fold.get_token().line(), fold.get_token().column(),
-								 fold.get_token().file_index());
-				pack_values.push_back(emplace_node<ExpressionNode>(IdentifierNode(param_token)));
+				if (num_pack_elements == 0) {
+					// Fallback: check template_params/template_args for non-type parameter packs
+					// This handles patterns like template<unsigned... args> constexpr unsigned f() { return (args | ...); }
+					std::optional<size_t> pack_param_idx;
+					size_t non_variadic_count = 0;
+					for (size_t p = 0; p < template_params.size(); ++p) {
+						if (template_params[p].is<TemplateParameterNode>()) {
+							const auto& tparam = template_params[p].as<TemplateParameterNode>();
+							if (tparam.is_variadic() && tparam.name() == fold.pack_name()) {
+								pack_param_idx = p;
+							} else if (!tparam.is_variadic()) {
+								non_variadic_count++;
+							}
+						}
+					}
+					
+					if (pack_param_idx.has_value() && template_args.size() >= non_variadic_count) {
+						size_t pack_size = template_args.size() - non_variadic_count;
+						
+						// Check if all pack elements are values (non-type parameters)
+						bool all_values = true;
+						std::vector<int64_t> pack_int_values;
+						for (size_t i = non_variadic_count; i < template_args.size(); ++i) {
+							if (template_args[i].kind == TemplateArgument::Kind::Value) {
+								pack_int_values.push_back(template_args[i].int_value);
+							} else {
+								all_values = false;
+								break;
+							}
+						}
+						
+						if (all_values && !pack_int_values.empty()) {
+							// Direct evaluation for non-type parameter pack folds
+							auto fold_result = ConstExpr::evaluate_fold_expression(fold.op(), pack_int_values);
+							if (fold_result.has_value()) {
+								std::string_view op = fold.op();
+								if (op == "&&" || op == "||") {
+									Token bool_token(Token::Type::Keyword, *fold_result ? "true"sv : "false"sv, 0, 0, 0);
+									return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
+								} else {
+									// Determine the result type from the variadic parameter's declared type
+									// e.g., template<unsigned... args> -> Type::UnsignedInt, 32 bits
+									Type result_type = Type::Int;
+									int result_size_bits = 32;
+									if (pack_param_idx.has_value()) {
+										const auto& tparam = template_params[*pack_param_idx].as<TemplateParameterNode>();
+										if (tparam.has_type() && tparam.type_node().is<TypeSpecifierNode>()) {
+											const TypeSpecifierNode& param_type_spec = tparam.type_node().as<TypeSpecifierNode>();
+											result_type = param_type_spec.type();
+											result_size_bits = get_type_size_bits(result_type);
+										}
+									}
+									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*fold_result)).commit();
+									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+									return emplace_node<ExpressionNode>(NumericLiteralNode(
+										num_token, static_cast<unsigned long long>(*fold_result), result_type, TypeQualifier::None, result_size_bits));
+								}
+							}
+						} else if (pack_size == 0) {
+							// Empty pack - return identity value per C++17
+							std::string_view op = fold.op();
+							if (op == "&&") {
+								Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+								return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, true));
+							} else if (op == "||") {
+								Token bool_token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+								return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, false));
+							}
+						}
+					}
+					
+					// Also check pack_param_info_ as another fallback
+					if (num_pack_elements == 0) {
+						auto pack_size = get_pack_size(fold.pack_name());
+						if (pack_size.has_value()) {
+							num_pack_elements = *pack_size;
+						}
+					}
+					
+					if (num_pack_elements == 0) {
+						FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
+						return node;
+					}
+				}
+			
+				// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
+				for (size_t i = 0; i < num_pack_elements; ++i) {
+					StringBuilder param_name_builder;
+					param_name_builder.append(fold.pack_name());
+					param_name_builder.append('_');
+					param_name_builder.append(i);
+					std::string_view param_name = param_name_builder.commit();
+			
+					Token param_token(Token::Type::Identifier, param_name,
+									 fold.get_token().line(), fold.get_token().column(),
+									 fold.get_token().file_index());
+					pack_values.push_back(emplace_node<ExpressionNode>(IdentifierNode(param_token)));
+				}
 			}
 		
 			if (pack_values.empty()) {
-				FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' is empty");
+				FLASH_LOG(Templates, Warning, "Fold expression pack is empty");
 				return node;
 			}
 		

@@ -63,14 +63,14 @@
 				return generateTemplateParameterReferenceIr(expr);
 			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
-				return {};
+				throw std::runtime_error("Unexpanded fold expression reached codegen - complex pack pattern not yet supported");
 			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				return generatePseudoDestructorCallIr(expr);
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				return generatePointerToMemberAccessIr(expr);
 			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
-				return {};
+				throw std::runtime_error("Unexpanded pack expansion reached codegen - pack expansion in function call contexts not yet implemented");
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				return generateInitializerListConstructionIr(expr);
 			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {

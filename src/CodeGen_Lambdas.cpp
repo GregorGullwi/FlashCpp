@@ -75,7 +75,7 @@
 				// Store the variable declaration for later use
 				info.captured_var_decls.push_back(*var_symbol);
 			} else {
-				std::cerr << "Warning: Captured variable '" << var_name << "' not found in scope during lambda generation\n";
+				FLASH_LOG(Codegen, Warning, "Lambda capture: variable '", var_name, "' not found in scope during lambda collection");
 			}
 		}
 
