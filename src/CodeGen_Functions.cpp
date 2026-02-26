@@ -5789,7 +5789,7 @@
 						dtor_op.object = std::get<StringHandle>(ptr_value);
 					} else {
 						// ptr_value is a literal (unsigned long long or double) - skip destructor call
-						break;
+						// ptr_value is a literal (unsigned long long or double) - skip destructor call
 					}
 					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 				}
