@@ -75,12 +75,6 @@ public:
 	};
 	
 	// Generate LSDA binary data for a function
-	//
-	// KNOWN LIMITATION: Currently only generates call site entries for try blocks.
-	// The Itanium C++ ABI requires call site entries for ALL code regions in the function,
-	// including code before/after try blocks. This causes the personality routine to fail
-	// when searching for handlers. To fix this, we need to track all code regions and
-	// generate call site entries that cover the entire function from start to finish.
 	LSDAGenerationResult generate(const FunctionLSDAInfo& info) {
 		LSDAGenerationResult result;
 		std::vector<uint8_t>& lsda_data = result.data;
@@ -106,13 +100,14 @@ public:
 		std::vector<std::pair<uint32_t, std::string>> type_table_relocs;
 		encode_type_table(type_table_data, effective_info, type_table_relocs);
 		
-		// Build action table
+		// Build action table with per-region action offsets
 		std::vector<uint8_t> action_table_data;
-		encode_action_table(action_table_data, effective_info);
+		std::vector<uint32_t> region_action_offsets;
+		encode_action_table(action_table_data, effective_info, region_action_offsets);
 		
-		// Build call site table
+		// Build call site table using per-region action offsets
 		std::vector<uint8_t> call_site_table_data;
-		encode_call_site_table(call_site_table_data, effective_info);
+		encode_call_site_table(call_site_table_data, effective_info, region_action_offsets);
 		
 		// Now assemble the LSDA header with actual sizes
 		encode_header(lsda_data, type_table_data.size(), call_site_table_data.size(), action_table_data.size());
@@ -179,34 +174,41 @@ private:
 		DwarfCFI::appendULEB128(data, call_site_table_size);
 	}
 	
-	// Encode call site table
-	void encode_call_site_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info) {
+	// Encode call site table with per-region action offsets
+	void encode_call_site_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info,
+	                           const std::vector<uint32_t>& region_action_offsets) {
+		size_t handler_region_idx = 0;
 		for (const auto& try_region : info.try_regions) {
 			// Call site entry:
 			// - Start offset (ULEB128)
 			// - Length (ULEB128)
 			// - Landing pad offset (ULEB128) - 0 if no handler
-			// - Action offset (ULEB128) - 1-based index into action table, 0 for no action
+			// - Action offset (ULEB128) - 1-based byte offset into action table, 0 for no action
+
+			uint32_t action = 0;
+			if (!try_region.catch_handlers.empty()) {
+				assert(handler_region_idx < region_action_offsets.size() && "action offset mismatch");
+				action = region_action_offsets[handler_region_idx] + 1;  // 1-based
+				handler_region_idx++;
+			}
 
 			if (g_enable_debug_output) {
 				std::cerr << "[LSDA] Call site: start=" << try_region.try_start_offset
 				         << " len=" << try_region.try_length
 				         << " lpad=" << try_region.landing_pad_offset
-				         << " action=" << (try_region.catch_handlers.empty() ? 0 : 1) << std::endl;
+				         << " action=" << action << std::endl;
 			}
 
 			DwarfCFI::appendULEB128(data, try_region.try_start_offset);
 			DwarfCFI::appendULEB128(data, try_region.try_length);
 			DwarfCFI::appendULEB128(data, try_region.landing_pad_offset);
-
-			// Action index: 1-based index into action table
-			// For now, use 1 for first try block (will be refined)
-			DwarfCFI::appendULEB128(data, try_region.catch_handlers.empty() ? 0 : 1);
+			DwarfCFI::appendULEB128(data, action);
 		}
 	}
 	
-	// Encode action table
-	void encode_action_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info) {
+	// Encode action table with per-region action offset tracking
+	void encode_action_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info,
+	                        std::vector<uint32_t>& region_action_offsets) {
 		// Action table entries describe what to do when exception is caught
 		// Each entry has:
 		// - Type filter (SLEB128) - positive for catch clause, 0 for cleanup, negative for exception spec
@@ -228,6 +230,9 @@ private:
 			if (try_region.catch_handlers.empty()) {
 				continue;  // No handlers, no action entry needed
 			}
+
+			// Record the byte offset where this region's first action entry starts
+			region_action_offsets.push_back(static_cast<uint32_t>(data.size()));
 
 			// Generate action entries for all catch handlers in this try region
 			// We need to encode them and track positions to calculate offsets

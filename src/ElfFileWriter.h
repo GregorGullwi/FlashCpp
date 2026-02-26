@@ -797,64 +797,107 @@ public:
 				}
 			}
 
-			uint32_t current_offset = 0;  // Start of function
-			uint32_t function_end_offset = min_landing_pad_offset;  // End at first landing pad, not end of function
-
+			// Determine function_end_offset for call site coverage.
+			// For simple (non-nested) try blocks, stop at the first landing pad.
+			// For nested try blocks, the outer try may extend past landing pads
+			// (covering the inner catch handler code), so use the max try end offset.
+			uint32_t max_try_end_offset = 0;
 			for (const auto& try_block : sorted_try_blocks) {
-				// Add call site entry for code BEFORE this try block (if any)
-				if (current_offset < try_block.try_start_offset) {
-					LSDAGenerator::TryRegionInfo no_handler_region;
-					no_handler_region.try_start_offset = current_offset;
-					no_handler_region.try_length = try_block.try_start_offset - current_offset;
-					no_handler_region.landing_pad_offset = 0;  // No handler
-					// no_handler_region.catch_handlers is empty, so action=0
-					lsda_info.try_regions.push_back(no_handler_region);
-				}
+				max_try_end_offset = std::max(max_try_end_offset, try_block.try_end_offset);
+			}
+			uint32_t function_end_offset = std::max(min_landing_pad_offset, max_try_end_offset);
 
-				// Add call site entry for the try block itself
-				LSDAGenerator::TryRegionInfo try_region;
-				try_region.try_start_offset = try_block.try_start_offset;
-				try_region.try_length = try_block.try_end_offset - try_block.try_start_offset;
-
-				// Use first handler's offset as landing pad (they're all at the same location)
-				if (!try_block.catch_handlers.empty()) {
-					try_region.landing_pad_offset = try_block.catch_handlers[0].handler_offset;
-				}
-
-				// Convert catch handlers
+			// Helper lambda to convert catch handlers for a try block into LSDA format
+			auto convert_catch_handlers = [&](const ObjectFileWriter::TryBlockInfo& try_block) {
+				std::vector<LSDAGenerator::CatchHandlerInfo> handlers;
 				for (const auto& handler : try_block.catch_handlers) {
 					LSDAGenerator::CatchHandlerInfo catch_info;
 					catch_info.type_index = handler.type_index;
 					catch_info.is_catch_all = handler.is_catch_all;
-
-					// Generate typeinfo symbol name from type name
-					// For now, use a simple mapping for built-in types
 					if (!handler.is_catch_all && !handler.type_name.empty()) {
 						catch_info.typeinfo_symbol = get_typeinfo_symbol(handler.type_name);
-
-						// Add to type table if not already present
 						if (std::find(lsda_info.type_table.begin(), lsda_info.type_table.end(),
 						             catch_info.typeinfo_symbol) == lsda_info.type_table.end()) {
 							lsda_info.type_table.push_back(catch_info.typeinfo_symbol);
 						}
 					}
-
-					try_region.catch_handlers.push_back(catch_info);
+					handlers.push_back(catch_info);
 				}
+				return handlers;
+			};
 
-				lsda_info.try_regions.push_back(try_region);
+			// Build non-overlapping call site regions using event-based sweep.
+			// For nested try blocks, the innermost block takes priority.
+			struct TryEvent {
+				uint32_t offset;
+				bool is_start;       // true = start of try block, false = end
+				size_t block_index;
+				uint32_t end_offset; // end offset of the try block (for sorting)
+			};
 
-				// Update current_offset to the end of this try block
-				current_offset = try_block.try_end_offset;
+			std::vector<TryEvent> events;
+			for (size_t i = 0; i < sorted_try_blocks.size(); i++) {
+				events.push_back({sorted_try_blocks[i].try_start_offset, true, i, sorted_try_blocks[i].try_end_offset});
+				events.push_back({sorted_try_blocks[i].try_end_offset, false, i, sorted_try_blocks[i].try_end_offset});
 			}
 
-			// Add call site entry for code AFTER the last try block (if any)
-			if (current_offset < function_end_offset) {
+			// Sort: by offset, then END events before START events at same offset,
+			// then for START events at same offset: larger range (outer) before smaller (inner)
+			std::sort(events.begin(), events.end(), [](const TryEvent& a, const TryEvent& b) {
+				if (a.offset != b.offset) return a.offset < b.offset;
+				if (a.is_start != b.is_start) return !a.is_start;  // END before START
+				if (a.is_start) return a.end_offset > b.end_offset;  // Larger range first for START
+				return a.end_offset < b.end_offset;  // Smaller range first for END
+			});
+
+			// Process events to build non-overlapping regions
+			std::vector<size_t> active_stack;  // Stack of active try block indices (innermost on top)
+			uint32_t region_start = 0;
+
+			for (const auto& event : events) {
+				uint32_t event_offset = std::min(event.offset, function_end_offset);
+				if (event_offset > region_start) {
+					// Create region [region_start, event_offset)
+					LSDAGenerator::TryRegionInfo region;
+					region.try_start_offset = region_start;
+					region.try_length = event_offset - region_start;
+
+					if (active_stack.empty()) {
+						region.landing_pad_offset = 0;  // No handler
+					} else {
+						// Use innermost (top of stack) try block's handler
+						const auto& block = sorted_try_blocks[active_stack.back()];
+						if (!block.catch_handlers.empty()) {
+							region.landing_pad_offset = block.catch_handlers[0].handler_offset;
+						} else {
+							region.landing_pad_offset = 0;
+						}
+						region.catch_handlers = convert_catch_handlers(block);
+					}
+
+					lsda_info.try_regions.push_back(region);
+					region_start = event_offset;
+				}
+
+				if (event.is_start) {
+					active_stack.push_back(event.block_index);
+				} else {
+					// Remove this block from the active stack
+					for (auto it = active_stack.begin(); it != active_stack.end(); ++it) {
+						if (*it == event.block_index) {
+							active_stack.erase(it);
+							break;
+						}
+					}
+				}
+			}
+
+			// Final region after all events
+			if (region_start < function_end_offset) {
 				LSDAGenerator::TryRegionInfo no_handler_region;
-				no_handler_region.try_start_offset = current_offset;
-				no_handler_region.try_length = function_end_offset - current_offset;
+				no_handler_region.try_start_offset = region_start;
+				no_handler_region.try_length = function_end_offset - region_start;
 				no_handler_region.landing_pad_offset = 0;  // No handler
-				// no_handler_region.catch_handlers is empty, so action=0
 				lsda_info.try_regions.push_back(no_handler_region);
 			}
 

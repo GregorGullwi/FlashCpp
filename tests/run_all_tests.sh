@@ -39,7 +39,6 @@ EXPECTED_LINK_FAIL=(
 
 # Expected runtime crashes - files that compile and link but crash at runtime
 EXPECTED_RUNTIME_CRASH=(
-    "test_exceptions_nested_ret0.cpp"          # Known crash with nested exception handling (signal 6 - SIGABRT)
 )
 
 # Results
