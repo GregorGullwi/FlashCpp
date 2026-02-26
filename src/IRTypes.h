@@ -1179,6 +1179,7 @@ struct ConstructorCallOp {
 struct DestructorCallOp {
 	StringHandle struct_name;                         // Pure StringHandle
 	std::variant<StringHandle, TempVar> object;       // Object instance ('this' or temp)
+	bool object_is_pointer = false;                   // True if object holds a pointer (heap-allocated)
 };
 
 // Virtual function call through vtable

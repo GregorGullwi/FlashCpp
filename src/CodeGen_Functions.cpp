@@ -5757,18 +5757,6 @@
 		// Get the pointer type
 		Type ptr_type = std::get<Type>(ptr_operands[0]);
 
-		// Check if we need to call destructor (for struct types)
-		if (ptr_type == Type::Struct && !deleteExpr.is_array()) {
-			// For single object deletion, call destructor before freeing
-			// Note: For array deletion, we'd need to track the array size and call destructors for each element
-			// This is a simplified implementation
-
-			// We need the type index to get struct info
-			// For now, we'll skip destructor calls for delete (can be enhanced later)
-			// TODO: Track type information through pointer types to enable destructor calls
-		}
-
-		// Generate the appropriate free instruction
 		// Convert IrOperand to IrValue
 		IrValue ptr_value;
 		if (std::holds_alternative<unsigned long long>(ptr_operands[2])) {
@@ -5779,6 +5767,30 @@
 			ptr_value = std::get<StringHandle>(ptr_operands[2]);
 		} else if (std::holds_alternative<double>(ptr_operands[2])) {
 			ptr_value = std::get<double>(ptr_operands[2]);
+		}
+
+		// Check if we need to call destructor (for struct types with a user-defined destructor).
+		// ptr_operands[3] is the type_index when the expression type is Type::Struct (index 0 is invalid).
+		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
+		if (ptr_type == Type::Struct && !deleteExpr.is_array() &&
+		    ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
+			unsigned long long type_idx_val = std::get<unsigned long long>(ptr_operands[3]);
+			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
+			if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_idx_val];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info && struct_info->hasDestructor()) {
+					DestructorCallOp dtor_op;
+					dtor_op.struct_name = type_info.name();
+					dtor_op.object_is_pointer = true;
+					if (std::holds_alternative<TempVar>(ptr_value)) {
+						dtor_op.object = std::get<TempVar>(ptr_value);
+					} else if (std::holds_alternative<StringHandle>(ptr_value)) {
+						dtor_op.object = std::get<StringHandle>(ptr_value);
+					}
+					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+				}
+			}
 		}
 
 		if (deleteExpr.is_array()) {
