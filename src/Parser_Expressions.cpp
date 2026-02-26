@@ -2060,7 +2060,7 @@ bool Parser::parse_static_member_function(
 		return true;  // We handled it (even though it's an error)
 	}
 
-	DeclarationNode& decl_node = const_cast<DeclarationNode&>(type_and_name_result.node()->as<DeclarationNode>());
+	DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
 
 	// Parse function declaration with parameters
 	auto func_result = parse_function_declaration(decl_node);
@@ -2325,7 +2325,7 @@ ParseResult Parser::parse_static_member_block(
 		// We need to get it from the global map
 		auto type_it = gTypesByName.find(struct_name_handle);
 		if (type_it != gTypesByName.end() && type_it->second->getStructInfo()) {
-			const_cast<StructTypeInfo*>(type_it->second->getStructInfo())->addStaticMember(
+			type_it->second->getStructInfo()->addStaticMember(
 				static_member_name_handle,
 				type_spec.type(),
 				type_spec.type_index(),
@@ -4056,14 +4056,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Look up the operator function in the current struct type
 			const auto& member_ctx = member_function_context_stack_.back();
 			if (member_ctx.struct_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index];
+				TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index];
 				if (type_info.struct_info_) {
 					// Search for the operator member function
-					for (const auto& member_func : type_info.struct_info_->member_functions) {
+					for (auto& member_func : type_info.struct_info_->member_functions) {
 						if (StringTable::getStringView(member_func.name) == operator_name) {
 							// Found the operator function - check if it's a FunctionDeclarationNode
 							if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-								auto& func_decl = const_cast<FunctionDeclarationNode&>(member_func.function_decl.as<FunctionDeclarationNode>());
+								FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 								result = emplace_node<ExpressionNode>(
 									MemberFunctionCallNode(this_node, func_decl, std::move(args), operator_name_token));
 								return ParseResult::success(*result);
@@ -5499,7 +5499,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 
 			// Get the FunctionDeclarationNode
-			FunctionDeclarationNode& func_decl = const_cast<FunctionDeclarationNode&>(identifierType->as<FunctionDeclarationNode>());
+			FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 
 			// Create MemberFunctionCallNode with implicit 'this'
 			result = emplace_node<ExpressionNode>(
@@ -6897,7 +6897,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 					
 					// Get the FunctionDeclarationNode
-					FunctionDeclarationNode& func_decl = const_cast<FunctionDeclarationNode&>(identifierType->as<FunctionDeclarationNode>());
+					FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					
 					// Create MemberFunctionCallNode with implicit 'this'
 					result = emplace_node<ExpressionNode>(
@@ -8221,10 +8221,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					const TypeInfo& type_info = gTypeInfo[type_index];
 
 					// Find operator() in member functions
-					FunctionDeclarationNode* operator_call_func = nullptr;
+					const FunctionDeclarationNode* operator_call_func = nullptr;
 					for (const auto& member_func : type_info.struct_info_->member_functions) {
 						if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
-							operator_call_func = &const_cast<FunctionDeclarationNode&>(member_func.function_decl.as<FunctionDeclarationNode>());
+							operator_call_func = &member_func.function_decl.as<FunctionDeclarationNode>();
 							break;
 						}
 					}
@@ -8606,8 +8606,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Look up the UDL operator in the symbol table
 				auto udl_lookup = gSymbolTable.lookup(operator_name);
 				if (udl_lookup.has_value() && udl_lookup->is<FunctionDeclarationNode>()) {
-					const FunctionDeclarationNode& func_decl = udl_lookup->as<FunctionDeclarationNode>();
-					DeclarationNode& decl = const_cast<DeclarationNode&>(func_decl.decl_node());
+					FunctionDeclarationNode& func_decl = udl_lookup->as<FunctionDeclarationNode>();
+					const DeclarationNode& decl = func_decl.decl_node();
 					
 					// Build arguments: the string literal and its length
 					ChunkedVector<ASTNode> args;

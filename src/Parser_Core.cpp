@@ -225,27 +225,27 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
 				identifiers.insert(inner_node.nameHandle());
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-				findReferencedIdentifiers(ASTNode(const_cast<BinaryOperatorNode*>(&inner_node)), identifiers);
+				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-				findReferencedIdentifiers(ASTNode(const_cast<UnaryOperatorNode*>(&inner_node)), identifiers);
+				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
 			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				findReferencedIdentifiers(inner_node.condition(), identifiers);
 				findReferencedIdentifiers(inner_node.true_expr(), identifiers);
 				findReferencedIdentifiers(inner_node.false_expr(), identifiers);
 			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				findReferencedIdentifiers(ASTNode(const_cast<FunctionCallNode*>(&inner_node)), identifiers);
+				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				for (const auto& argument : inner_node.arguments()) {
 					findReferencedIdentifiers(argument, identifiers);
 				}
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-				findReferencedIdentifiers(ASTNode(const_cast<MemberAccessNode*>(&inner_node)), identifiers);
+				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
-				findReferencedIdentifiers(ASTNode(const_cast<PointerToMemberAccessNode*>(&inner_node)), identifiers);
+				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
 			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-				findReferencedIdentifiers(ASTNode(const_cast<MemberFunctionCallNode*>(&inner_node)), identifiers);
+				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-				findReferencedIdentifiers(ASTNode(const_cast<ArraySubscriptNode*>(&inner_node)), identifiers);
+				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
 			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
 								 std::is_same_v<T, ConstCastNode> ||
 								 std::is_same_v<T, ReinterpretCastNode> ||

@@ -1491,7 +1491,7 @@ private:
 	// Used when a member function call syntax is used but the object is not a struct
 	std::vector<IrOperand> convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
 		const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
-		DeclarationNode& decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
+		const DeclarationNode& decl_node = func_decl.decl_node();
 		
 		// Copy the arguments using the visit method
 		ChunkedVector<ASTNode> args_copy;

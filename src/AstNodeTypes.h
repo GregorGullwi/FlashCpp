@@ -47,6 +47,7 @@ public:
 	ASTNode() = default;
 
 	template <typename T> ASTNode(T* node) : node_(node) {}
+	template <typename T> ASTNode(const T* node) : node_(const_cast<T*>(node)) {}
 
 	template <typename T, typename... Args>
 	static ASTNode emplace_node(Args&&... args) {
@@ -849,6 +850,14 @@ struct StructTypeInfo {
 		}
 		return nullptr;
 	}
+	StructStaticMember* findStaticMember(StringHandle member_name) {
+		for (auto& static_member : static_members) {
+			if (static_member.getName() == member_name) {
+				return &static_member;
+			}
+		}
+		return nullptr;
+	}
 
 	// Add static member
 	void addStaticMember(StringHandle member_name, Type type, TypeIndex type_index, size_t size, size_t member_alignment,
@@ -1322,7 +1331,7 @@ struct StringEqual {
 	}
 };
 
-extern std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
+extern std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 

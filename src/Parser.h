@@ -758,7 +758,7 @@ private:
         std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);  // Helper: Try to instantiate a specific template node (for SFINAE)
         std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count = SIZE_MAX);  // NEW: Instantiate with explicit args
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
-        std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, const ASTNode& spec_node);  // Instantiate full specialization
+        std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
         std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template
         ASTNode substitute_template_params_in_expression(
             const ASTNode& expr, 
@@ -1108,7 +1108,7 @@ public:  // Public methods for template instantiation
         // Finalize an out-of-line static member variable definition.
         // Sets the initializer on the member and returns a VariableDeclarationNode.
         // When init_expr is std::nullopt, creates a zero literal from the member's type (empty brace init).
-        ParseResult finalize_static_member_init(const StructStaticMember* static_member,
+        ParseResult finalize_static_member_init(StructStaticMember* static_member,
                                                 std::optional<ASTNode> init_expr,
                                                 DeclarationNode& decl_node,
                                                 const Token& name_token,

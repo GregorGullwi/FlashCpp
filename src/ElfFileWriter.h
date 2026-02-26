@@ -1811,7 +1811,8 @@ private:
 				if (symtab_sec) {
 					size_t entry_size = symtab_sec->get_entry_size();
 					size_t offset = i * entry_size;
-					char* data = const_cast<char*>(symtab_sec->get_data());
+					// ELFIO's get_data() is const-only; cast is safe as we own the mutable section data
+				char* data = const_cast<char*>(symtab_sec->get_data());
 					// Symbol table entry layout (64-bit):
 					// 0:4=st_name, 4:1=st_info, 5:1=st_other, 6:2=st_shndx, 8:8=st_value, 16:8=st_size
 					data[offset + 4] = (bind << 4) | (type & 0x0F);
@@ -1975,6 +1976,7 @@ private:
 		accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
 		if (sym_type != ELFIO::STT_FUNC) return;
 		size_t entry_size = symtab_sec->get_entry_size();
+		// ELFIO's get_data() is const-only; cast is safe as we own the mutable section data
 		char* data = const_cast<char*>(symtab_sec->get_data());
 		// st_size is at offset 16 in a 64-bit ELF symbol entry
 		*reinterpret_cast<ELFIO::Elf_Xword*>(&data[i * entry_size + 16]) = size;

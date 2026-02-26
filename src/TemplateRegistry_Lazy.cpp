@@ -869,8 +869,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 	if (expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
 		return std::visit([&](const auto& inner) -> std::optional<long long> {
-			using T = std::decay_t<decltype(inner)>;
-			ASTNode inner_ast_node(const_cast<T*>(&inner));
+			ASTNode inner_ast_node(&inner);
 			return evaluateConstraintExpression(inner_ast_node, template_args, template_param_names);
 		}, expr_variant);
 	}
@@ -1071,9 +1070,8 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		const ExpressionNode& expr_variant = constraint_expr.as<ExpressionNode>();
 		// ExpressionNode is a variant, visit it to get the actual inner node
 		return std::visit([&](const auto& inner) -> ConstraintEvaluationResult {
-			using T = std::decay_t<decltype(inner)>;
 			// Create an ASTNode wrapper around the inner node
-			ASTNode inner_ast_node(const_cast<T*>(&inner));
+			ASTNode inner_ast_node(&inner);
 			return evaluateConstraint(inner_ast_node, template_args, template_param_names);
 		}, expr_variant);
 	}
