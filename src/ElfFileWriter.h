@@ -1402,10 +1402,12 @@ public:
 		auto* accessor = getSymbolAccessor();
 		if (accessor && string_accessor_) {
 			// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
-			accessor->add_symbol(*string_accessor_, ".gcc_except_table",
+			ELFIO::Elf_Word gcc_etc_sym_idx = accessor->add_symbol(*string_accessor_, ".gcc_except_table",
 			                    0, gcc_except_table_data.size(), 
 			                    ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
 			                    ELFIO::STV_HIDDEN, except_section->get_index());
+			// Keep cache in sync so generate_eh_frame() can find this symbol without a full rebuild
+			symbol_index_cache_[".gcc_except_table"] = gcc_etc_sym_idx;
 		}
 		
 		// For indirect encoding (0x9b), we need to:
@@ -1436,6 +1438,8 @@ public:
 				                        0, 0, ELFIO::STB_WEAK, ELFIO::STT_SECTION,
 				                        ELFIO::STV_HIDDEN, typeinfo_data_section->get_index());
 				data_section_sym_index = sym_accessor->get_symbols_num() - 1;
+				// Keep cache in sync
+				symbol_index_cache_[".data"] = static_cast<ELFIO::Elf_Word>(data_section_sym_index);
 			}
 
 			// Create .rela.data for typeinfo R_X86_64_64 relocations
