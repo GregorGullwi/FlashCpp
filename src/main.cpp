@@ -513,16 +513,32 @@ int main_impl(int argc, char *argv[]) {
     }
 
     // Deferred generation (lambdas and local struct member functions)
+    bool deferred_gen_had_errors = false;
     {
         PhaseTimer deferred_timer("Deferred Gen", false, &deferred_gen_time);
-        // Generate all collected lambdas after visiting all nodes
-        converter.generateCollectedLambdas();
+        try {
+            // Generate all collected lambdas after visiting all nodes
+            converter.generateCollectedLambdas();
+        } catch (const std::exception& e) {
+            FLASH_LOG(General, Error, "Deferred lambda generation failed: ", e.what());
+            deferred_gen_had_errors = true;
+        }
 
-        // Generate all collected local struct member functions after visiting all nodes
-        converter.generateCollectedLocalStructMembers();
+        try {
+            // Generate all collected local struct member functions after visiting all nodes
+            converter.generateCollectedLocalStructMembers();
+        } catch (const std::exception& e) {
+            FLASH_LOG(General, Error, "Local struct member generation failed: ", e.what());
+            deferred_gen_had_errors = true;
+        }
 
-        // Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
-        converter.generateDeferredMemberFunctions();
+        try {
+            // Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
+            converter.generateDeferredMemberFunctions();
+        } catch (const std::exception& e) {
+            FLASH_LOG(General, Error, "Deferred member function generation failed: ", e.what());
+            deferred_gen_had_errors = true;
+        }
 
         // Note: Template instantiations happen during parsing, not here
     }
@@ -537,7 +553,7 @@ int main_impl(int argc, char *argv[]) {
         FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
     }
 
-    if (ir_conversion_had_errors) {
+    if (ir_conversion_had_errors || deferred_gen_had_errors) {
         FLASH_LOG(General, Error, "Compilation failed due to IR conversion errors");
         printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
         return 1;
