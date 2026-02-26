@@ -16178,12 +16178,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				restore_lexer_position_only(deferred.func_start);
 				
 				// Build template argument conversion for substitution
-				std::vector<TemplateArgument> converted_args;
-				converted_args.reserve(template_args_to_use.size());
-				for (const auto& arg : template_args_to_use) {
-					if (arg.is_value) converted_args.push_back(TemplateArgument::makeValue(arg.value, arg.base_type));
-					else converted_args.push_back(TemplateArgument::makeType(arg.base_type));
-				}
+                std::vector<TemplateArgument> converted_args;
+                converted_args.reserve(template_args_to_use.size());
+                for (const auto& arg : template_args_to_use) {
+                    converted_args.push_back(toTemplateArgument(arg));
+                }
 				
 				bool func_parsed = false;
 				
