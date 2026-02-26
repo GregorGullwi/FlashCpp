@@ -8894,7 +8894,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											FoldExpressionNode(second_id, fold_op,
 												FoldExpressionNode::Direction::Left, init_expr, op_token));
 										is_fold = true;
-									} else {
+									} else if (first_is_pack && !second_is_pack) {
 										// Binary right fold: (pack op ... op init)
 										Token init_token(Token::Type::Identifier, second_id, 0, 0, 0);
 										ASTNode init_expr = emplace_node<ExpressionNode>(IdentifierNode(init_token));
@@ -8905,6 +8905,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											FoldExpressionNode(first_id, fold_op,
 												FoldExpressionNode::Direction::Right, init_expr, op_token));
 										is_fold = true;
+									} else {
+										// Neither or both identifiers recognized as packs in pack_param_info_.
+										// This can happen for template parameter packs (e.g., Ns...) which are
+										// tracked differently. Don't guess direction here — restore position and
+										// let Pattern 3 (complex-expression binary left fold) or the complex-
+										// expression fallback below handle it correctly.
+										restore_token_position(after_second);
 									}
 								} else {
 									restore_token_position(after_second);
