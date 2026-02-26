@@ -6310,6 +6310,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 							}
 						}
+					} else {
+						// Complex pack expansion: the argument is a complex expression
+						// containing a pack parameter (e.g., identity(args)..., static_cast<Args>(args)...)
+						// Wrap the expression in a PackExpansionExprNode for expansion during template substitution
+						advance(); // consume '...'
+						Token ellipsis_token(Token::Type::Punctuator, "..."sv, 0, 0, 0);
+						ASTNode& last_arg_ref = args[args.size() - 1];
+						auto pack_expansion = emplace_node<ExpressionNode>(
+							PackExpansionExprNode(last_arg_ref, ellipsis_token));
+						last_arg_ref = pack_expansion;
 					}
 				}
 				
@@ -7774,7 +7784,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				} else if (!identifierType && !found_as_type_alias) {
 					// Not a function call, template member access, template parameter reference, pack expansion, or alias template
 					// In template context, treat unknown identifiers as potentially member references that will resolve at instantiation time
-					if (parsing_template_body_ || !current_template_param_names_.empty() || !struct_parsing_context_stack_.empty()) {
+					// Also check if the identifier is a pack parameter name - during template body re-parsing,
+					// pack parameters (e.g., "args") are expanded to args_0, args_1, etc. but the original
+					// name must still be accepted when used in pack expansion patterns like func(transform(args)...)
+					bool is_pack_param = false;
+					for (const auto& pack_info : pack_param_info_) {
+						if (idenfifier_token.value() == pack_info.original_name) {
+							is_pack_param = true;
+							break;
+						}
+					}
+					if (parsing_template_body_ || !current_template_param_names_.empty() || !struct_parsing_context_stack_.empty() || is_pack_param) {
 						FLASH_LOG(Parser, Debug, "Treating unknown identifier '", idenfifier_token.value(), "' as dependent in template context");
 						result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 						// Don't return error - let it continue as a dependent expression
