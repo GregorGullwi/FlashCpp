@@ -501,7 +501,7 @@ int main_impl(int argc, char *argv[]) {
                 ir_conversion_had_errors = true;
             } catch (const std::runtime_error& e) {
                 // Log and skip nodes that cause runtime errors during IR conversion
-                // This handles codegen errors that were previously assert(false)
+                // This handles deliberate compilation errors (deleted constructors, explicit violations, etc.)
                 std::string node_desc = node_handle.type_name();
                 if (node_handle.is<FunctionDeclarationNode>()) {
                     node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
