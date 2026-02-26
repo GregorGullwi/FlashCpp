@@ -11369,11 +11369,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					inst_token
 				);
 				
-				// Use the specialization's actual initializer if present, otherwise 'true' for bool
+				// Use the specialization's actual initializer if present
 				std::optional<ASTNode> init_expr;
 				if (spec_var_decl.initializer().has_value()) {
 					init_expr = *spec_var_decl.initializer();
-				} else {
+				} else if (spec_decl.type_node().is<TypeSpecifierNode>() &&
+				           spec_decl.type_node().as<TypeSpecifierNode>().type() == Type::Bool) {
+					// Default to 'true' only for bool-typed specializations (e.g., is_reference_v<T&>)
 					Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
 					init_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
 				}
@@ -20016,6 +20018,8 @@ ASTNode Parser::substituteTemplateParameters(
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 			std::string_view id_name = id_node.name();
 			
+			// Only check for dependent placeholders if the name contains '$' (the hash separator)
+			if (id_name.find('$') != std::string_view::npos) {
 			// Look up the type info for this identifier
 			StringHandle id_handle = StringTable::getOrInternStringHandle(id_name);
 			auto type_it = gTypesByName.find(id_handle);
@@ -20077,6 +20081,7 @@ ASTNode Parser::substituteTemplateParameters(
 					}
 				}
 			}
+			} // end of '$' check
 		}
 		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 			const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr);
