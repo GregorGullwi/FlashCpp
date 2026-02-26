@@ -11850,7 +11850,7 @@ std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle id
 }
 
 // Helper to extract type from an expression for overload resolution
-std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) const {
+std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) {
 	// Guard against infinite recursion by tracking the call stack
 	// Use the address of the expr_node as a unique identifier
 	const void* expr_ptr = &expr_node;
@@ -12255,7 +12255,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (struct_info) {
 					// Trigger lazy static member instantiation if needed
 					StringHandle member_name_handle = StringTable::getOrInternStringHandle(std::string(member_name));
-					const_cast<Parser*>(this)->instantiateLazyStaticMember(struct_info->name, member_name_handle);
+					instantiateLazyStaticMember(struct_info->name, member_name_handle);
 					
 					// Look for static member
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
@@ -12278,7 +12278,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 }
 
 // Helper function to deduce the type of an expression for auto type deduction
-Type Parser::deduce_type_from_expression(const ASTNode& expr) const {
+Type Parser::deduce_type_from_expression(const ASTNode& expr) {
 	// For now, use a simple approach: use the existing get_expression_type function
 	// which returns TypeSpecifierNode, and extract the type from it
 	auto type_spec_opt = get_expression_type(expr);

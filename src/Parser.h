@@ -857,7 +857,7 @@ public:  // Public methods for template instantiation
         ParseResult parse_seh_leave_statement();  // Parse __leave statement
 
         // Helper functions for auto type deduction
-        Type deduce_type_from_expression(const ASTNode& expr) const;
+        Type deduce_type_from_expression(const ASTNode& expr);
         void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
         void process_deferred_lambda_deductions();  // Process deferred lambda return type deductions
         bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;  // Check if two types are compatible
@@ -1002,7 +1002,7 @@ public:  // Public methods for template instantiation
         std::optional<size_t> parse_alignas_specifier();  // Parse alignas(n) and return alignment value
 
         // Helper to extract type from an expression for overload resolution
-        std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node) const;
+        std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
 
         // Check if an identifier name is a template parameter in current scope
         bool is_template_parameter(std::string_view name) const;
