@@ -1594,16 +1594,20 @@ public:
 				appendLE_xdata(xdata, uint32_t(0));
 				add_xdata_relocation(xdata_offset + address_of_handler_field_offset, catch_symbol_name);
 
-				// dispFrame - displacement from establisher frame to the catch funclet's
-				// frame pointer. On x64 FH3 (magic >= 0x19930522), HandlerType has 5 fields
-				// (20 bytes). The CRT computes frame_ptr = EstablisherFrame + dispFrame and
-				// passes it as RDX to the catch funclet.
-				// EstablisherFrame = RBP - effective_frame_size.
-				// The funclet does: lea rbp, [rdx + stack_frame_size].
-				// rbp = (RBP - effective_frame_size) + dispFrame + stack_frame_size.
-				// For rbp to equal parent's RBP: dispFrame = effective_frame_size - stack_frame_size.
-				// When not capped this is 0; when capped it's negative.
-				int32_t disp_frame = static_cast<int32_t>(effective_frame_size) - static_cast<int32_t>(stack_frame_size);
+				// dispFrame: offset from catch funclet's EstablisherFrame to where the
+				// funclet saved the parent's establisher frame (RDX arg).
+				// __CxxFrameHandler3 uses: parent_estab = *(funclet_estab + dispFrame)
+				// to find the parent's frame when dispatching nested exceptions.
+				//
+				// Funclet prologue on x64:
+				//   movq %rdx, 0x10(%rsp)  ; save parent estab at [entry_RSP + 0x10]
+				//   pushq %rbp             ; RSP -= 8
+				//   subq , %rsp       ; RSP -= 0x20  (total prolog delta = 0x28)
+				// RtlVirtualUnwind returns funclet_estab = entry_RSP (unwinds 0x28).
+				// funclet_estab + dispFrame = entry_RSP + 0x10 => dispFrame = 0x28 + 0x10 = 0x38.
+				// This is a CONSTANT 0x38, regardless of parent function's frame size.
+				// (Verified empirically: clang-cl emits 0x38 for all frame sizes.)
+				int32_t disp_frame = 0x38;
 				appendLE_xdata(xdata, static_cast<uint32_t>(disp_frame));
 				
 				handler_index++;
