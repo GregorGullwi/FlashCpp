@@ -8607,7 +8607,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				auto udl_lookup = gSymbolTable.lookup(operator_name);
 				if (udl_lookup.has_value() && udl_lookup->is<FunctionDeclarationNode>()) {
 					FunctionDeclarationNode& func_decl = udl_lookup->as<FunctionDeclarationNode>();
-					const DeclarationNode& decl = func_decl.decl_node();
 					
 					// Build arguments: the string literal and its length
 					ChunkedVector<ASTNode> args;
@@ -8628,7 +8627,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					args.push_back(len_node);
 					
 					result = emplace_node<ExpressionNode>(
-						FunctionCallNode(decl, std::move(args), suffix_token));
+						FunctionCallNode(func_decl.decl_node(), std::move(args), suffix_token));
 					
 					// Set mangled name if available
 					if (func_decl.has_mangled_name()) {
