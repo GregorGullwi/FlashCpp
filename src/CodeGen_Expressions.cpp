@@ -65,7 +65,7 @@
 				FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
 				// Return a safe dummy value (0) to avoid downstream crashes
 				// Root cause: fold expression parser doesn't handle all complex pack patterns yet
-				return { Type::Int, 32, 0ULL, 0 };
+				return { Type::Int, 32, 0ULL, 0ULL };
 			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				return generatePseudoDestructorCallIr(expr);
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
