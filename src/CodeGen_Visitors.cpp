@@ -229,10 +229,19 @@ public:
 	
 	// Generate deferred member functions discovered during function call resolution.
 	// Uses a worklist approach since generated functions may call other ungenerated functions.
+	// Deduplicates by struct_name to avoid visiting the same struct's members multiple times
+	// (both the direct lookup and fallback paths queue ALL members of a matched struct).
 	void generateDeferredMemberFunctions() {
+		std::unordered_set<uint32_t> seen_structs;
 		size_t processed = 0;
 		while (processed < deferred_member_functions_.size()) {
 		DeferredMemberFunctionInfo info = deferred_member_functions_[processed++];
+			// Skip if we've already processed all members of this struct.
+			// Note: visitFunctionDeclarationNode also deduplicates via generated_function_names_,
+			// but skipping early avoids unnecessary work (scope setup, lazy instantiation checks, etc.).
+			if (!seen_structs.insert(info.struct_name.index).second) {
+				continue;
+			}
 			StringHandle saved_function = current_function_name_;
 			auto saved_namespace = current_namespace_stack_;
 			current_struct_name_ = info.struct_name;
