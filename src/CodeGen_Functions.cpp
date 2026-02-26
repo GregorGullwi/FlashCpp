@@ -3559,7 +3559,7 @@
 				}
 				if (base_type != Type::Struct) {
 					FLASH_LOG(Codegen, Error, "nested member access on non-struct type");
-					return {};
+					throw std::runtime_error("nested member access on non-struct type");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
