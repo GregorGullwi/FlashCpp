@@ -1542,8 +1542,9 @@ private:
 	// Track functions that already have exception info to avoid duplicates (O(1) lookup)
 	std::unordered_set<std::string> added_exception_functions_;
 
-	// Cache for symbol name → symbol index lookups (avoids O(n) iteration per lookup)
-	std::unordered_map<std::string, ELFIO::Elf_Word> symbol_index_cache_;
+	// Cache for symbol name → symbol index lookups (avoids O(n) iteration per lookup).
+	// Uses transparent hashing so std::string_view lookups avoid temporary std::string allocation.
+	std::unordered_map<std::string, ELFIO::Elf_Word, ObjectFileCommon::StringViewHash, std::equal_to<>> symbol_index_cache_;
 	bool symbol_index_cache_dirty_ = true;  // invalidated whenever symbols are added
 
 	// ===== DWARF4 debug info data =====
@@ -1747,7 +1748,7 @@ private:
 		// Check cache first (O(1)).
 		// Invariant: every symbol added to ELFIO is also added to symbol_index_cache_,
 		// so a cache miss means the symbol truly does not yet exist.
-		auto cache_it = symbol_index_cache_.find(std::string(name));
+		auto cache_it = symbol_index_cache_.find(name);  // transparent: no temporary std::string
 		if (cache_it != symbol_index_cache_.end()) {
 			ELFIO::Elf_Word i = cache_it->second;
 			// If existing symbol is undefined and we're providing a definition, update it
@@ -1778,7 +1779,7 @@ private:
 		// Cache miss → symbol doesn't exist; create it and add to cache
 		auto* accessor = getSymbolAccessor();
 		ELFIO::Elf_Word new_idx = accessor->add_symbol(*string_accessor_, name.data(), value, size, bind, type, ELFIO::STV_DEFAULT, section_index);
-		symbol_index_cache_[std::string(name)] = new_idx;
+		symbol_index_cache_.emplace(name, new_idx);  // name is std::string_view, emplace constructs std::string key
 		return new_idx;
 	}
 
