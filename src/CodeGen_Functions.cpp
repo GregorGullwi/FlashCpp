@@ -5787,6 +5787,9 @@
 						dtor_op.object = std::get<TempVar>(ptr_value);
 					} else if (std::holds_alternative<StringHandle>(ptr_value)) {
 						dtor_op.object = std::get<StringHandle>(ptr_value);
+					} else {
+						// ptr_value is a literal (unsigned long long or double) - skip destructor call
+						break;
 					}
 					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 				}
