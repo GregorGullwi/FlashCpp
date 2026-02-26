@@ -21190,6 +21190,24 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			return emplace_node<ExpressionNode>(StaticCastNode(cast.target_type(), new_expr, cast.cast_token()));
 		}
 
+		if (std::holds_alternative<DynamicCastNode>(expr_variant)) {
+			const DynamicCastNode& cast = std::get<DynamicCastNode>(expr_variant);
+			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(DynamicCastNode(cast.target_type(), new_expr, cast.cast_token()));
+		}
+
+		if (std::holds_alternative<ConstCastNode>(expr_variant)) {
+			const ConstCastNode& cast = std::get<ConstCastNode>(expr_variant);
+			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(ConstCastNode(cast.target_type(), new_expr, cast.cast_token()));
+		}
+
+		if (std::holds_alternative<ReinterpretCastNode>(expr_variant)) {
+			const ReinterpretCastNode& cast = std::get<ReinterpretCastNode>(expr_variant);
+			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(ReinterpretCastNode(cast.target_type(), new_expr, cast.cast_token()));
+		}
+
 		// For other variant types, return as-is
 		return expr;
 	}

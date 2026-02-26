@@ -8863,17 +8863,69 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Check if binary fold or unary right fold
 						if (peek().is_operator() &&
 							peek_info().value() == fold_op) {
-							// Binary right fold: (pack op ... op init)
+							// Binary fold: (X op ... op Y)
+							// Need to determine direction: if first_id is a pack parameter, it's
+							// a binary right fold (pack op ... op init). If first_id is NOT a pack
+							// but Y is, it's a binary left fold (init op ... op pack).
+							SaveHandle binary_pos = save_token_position();
 							advance(); // consume second operator
 							
-							ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (!init_result.is_error() && init_result.node().has_value() &&
-								consume(")"_tok)) {
-								discard_saved_token(fold_check_pos);
-								result = emplace_node<ExpressionNode>(
-									FoldExpressionNode(first_id, fold_op,
-										FoldExpressionNode::Direction::Right, *init_result.node(), op_token));
-								is_fold = true;
+							// Check if second operand is a simple identifier (potential pack name)
+							if (peek().is_identifier()) {
+								std::string_view second_id = peek_info().value();
+								SaveHandle after_second = save_token_position();
+								advance(); // consume second identifier
+								
+								if (peek() == ")"_tok) {
+									advance(); // consume )
+									
+									// Determine direction by checking which identifier is a pack
+									bool first_is_pack = get_pack_size(first_id).has_value();
+									bool second_is_pack = get_pack_size(second_id).has_value();
+									
+									if (second_is_pack && !first_is_pack) {
+										// Binary left fold: (init op ... op pack)
+										Token init_token(Token::Type::Identifier, first_id, 0, 0, 0);
+										ASTNode init_expr = emplace_node<ExpressionNode>(IdentifierNode(init_token));
+										discard_saved_token(fold_check_pos);
+										discard_saved_token(binary_pos);
+										discard_saved_token(after_second);
+										result = emplace_node<ExpressionNode>(
+											FoldExpressionNode(second_id, fold_op,
+												FoldExpressionNode::Direction::Left, init_expr, op_token));
+										is_fold = true;
+									} else {
+										// Binary right fold: (pack op ... op init)
+										Token init_token(Token::Type::Identifier, second_id, 0, 0, 0);
+										ASTNode init_expr = emplace_node<ExpressionNode>(IdentifierNode(init_token));
+										discard_saved_token(fold_check_pos);
+										discard_saved_token(binary_pos);
+										discard_saved_token(after_second);
+										result = emplace_node<ExpressionNode>(
+											FoldExpressionNode(first_id, fold_op,
+												FoldExpressionNode::Direction::Right, init_expr, op_token));
+										is_fold = true;
+									}
+								} else {
+									restore_token_position(after_second);
+								}
+							}
+							
+							if (!is_fold) {
+								// Second operand is a complex expression - parse it
+								restore_token_position(binary_pos);
+								advance(); // consume second operator again
+								
+								ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (!init_result.is_error() && init_result.node().has_value() &&
+									consume(")"_tok)) {
+									discard_saved_token(fold_check_pos);
+									discard_saved_token(binary_pos);
+									result = emplace_node<ExpressionNode>(
+										FoldExpressionNode(first_id, fold_op,
+											FoldExpressionNode::Direction::Right, *init_result.node(), op_token));
+									is_fold = true;
+								}
 							}
 						} else if (consume(")"_tok)) {
 							// Unary right fold: (pack op ...)
