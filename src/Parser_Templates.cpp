@@ -1267,6 +1267,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Check for out-of-line member class definition: template<> class Foo<Args>::Bar { ... }
 			// E.g., template<> class basic_ostream<char, char_traits<char>>::sentry { ... };
+			// Register it so the body is re-parsed during template instantiation.
 			if (peek() == "::"_tok) {
 				auto scope_check = save_token_position();
 				advance(); // consume '::'
@@ -1276,6 +1277,9 @@ ParseResult Parser::parse_template_declaration() {
 					advance(); // consume member class name
 					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition (full spec): {}::{}",
 					                 template_name, member_class_name);
+					
+					// Save position before base class list / body for re-parsing during instantiation
+					SaveHandle body_start = save_token_position();
 					
 					// Skip base class list if present
 					if (peek() == ":"_tok) {
@@ -1292,6 +1296,18 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Consume trailing semicolon
 					consume(";"_tok);
+					
+					// Register the out-of-line nested class definition
+					OutOfLineNestedClass ool_nested;
+					ool_nested.template_params = template_params;
+					ool_nested.nested_class_name = StringTable::getOrInternStringHandle(member_class_name);
+					ool_nested.body_start = body_start;
+					ool_nested.template_param_names = template_param_names;
+					ool_nested.is_class = is_class;
+					gTemplateRegistry.registerOutOfLineNestedClass(template_name, std::move(ool_nested));
+					
+					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class (full spec): {}::{}",
+					                 template_name, member_class_name);
 					
 					// Reset parsing context flags
 					parsing_template_class_ = false;
@@ -2591,7 +2607,7 @@ ParseResult Parser::parse_template_declaration() {
 			// E.g., template<typename _CharT, typename _Traits>
 			//        class basic_ostream<_CharT, _Traits>::sentry { ... };
 			// This defines a nested class member of a class template outside the class body.
-			// We skip the body here since instantiation uses the nested class from the primary template.
+			// Register it so the body is re-parsed during template instantiation.
 			if (peek() == "::"_tok) {
 				auto scope_check = save_token_position();
 				advance(); // consume '::'
@@ -2601,6 +2617,9 @@ ParseResult Parser::parse_template_declaration() {
 					advance(); // consume member class name
 					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition: {}::{}",
 					                 template_name, member_class_name);
+					
+					// Save position before base class list / body for re-parsing during instantiation
+					SaveHandle body_start = save_token_position();
 					
 					// Skip base class list if present
 					if (peek() == ":"_tok) {
@@ -2617,6 +2636,18 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Consume trailing semicolon
 					consume(";"_tok);
+					
+					// Register the out-of-line nested class definition
+					OutOfLineNestedClass ool_nested;
+					ool_nested.template_params = template_params;
+					ool_nested.nested_class_name = StringTable::getOrInternStringHandle(member_class_name);
+					ool_nested.body_start = body_start;
+					ool_nested.template_param_names = template_param_names;
+					ool_nested.is_class = is_class;
+					gTemplateRegistry.registerOutOfLineNestedClass(template_name, std::move(ool_nested));
+					
+					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class: {}::{}",
+					                 template_name, member_class_name);
 					
 					// Clean up template parameter context
 					current_template_param_names_.clear();
@@ -15769,6 +15800,335 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
+		}
+	}
+
+	// Process out-of-line nested class definitions
+	// These are patterns like: template<typename T> struct Outer<T>::Inner { T data; };
+	// The definition was saved during parsing and is now re-parsed with template parameter substitution.
+	auto ool_nested_classes = gTemplateRegistry.getOutOfLineNestedClasses(template_name);
+	FLASH_LOG(Templates, Debug, "Processing ", ool_nested_classes.size(), " out-of-line nested class definitions for ", template_name);
+	for (const auto& ool_nested : ool_nested_classes) {
+		std::string_view nested_name = StringTable::getStringView(ool_nested.nested_class_name);
+		auto qualified_name = StringTable::getOrInternStringHandle(
+			StringBuilder().append(instantiated_name).append("::"sv).append(nested_name));
+		
+		// Check if already registered - skip only if it has actual members (from inline definition)
+		// Forward-declared nested classes are registered with no members; those need to be replaced.
+		TypeInfo* existing_nested_type = nullptr;
+		auto existing_it = gTypesByName.find(qualified_name);
+		if (existing_it != gTypesByName.end()) {
+			existing_nested_type = existing_it->second;
+			if (existing_nested_type->getStructInfo() && !existing_nested_type->getStructInfo()->members.empty()) {
+				FLASH_LOG(Templates, Debug, "Out-of-line nested class already has members: ", StringTable::getStringView(qualified_name));
+				continue;
+			}
+			FLASH_LOG(Templates, Debug, "Replacing forward-declared nested class: ", StringTable::getStringView(qualified_name));
+		}
+		
+		// Determine default access specifier
+		AccessSpecifier default_access = ool_nested.is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+		auto nested_struct_info = std::make_unique<StructTypeInfo>(qualified_name, default_access);
+		
+		// Save current lexer position and parser state
+		SaveHandle saved_pos = save_token_position();
+		auto saved_template_body = parsing_template_body_;
+		auto saved_template_class = parsing_template_class_;
+		auto saved_param_names = current_template_param_names_;
+		
+		// Set up template parsing context so template parameter types resolve correctly
+		parsing_template_body_ = true;
+		parsing_template_class_ = true;
+		current_template_param_names_ = ool_nested.template_param_names;
+		
+		// Restore lexer to the saved body position (before base class list or '{')
+		restore_lexer_position_only(ool_nested.body_start);
+		
+		// Skip base class list if present
+		if (peek() == ":"_tok) {
+			advance();
+			while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+				advance();
+			}
+		}
+		
+		// Parse body members
+		AccessSpecifier current_access = default_access;
+		if (peek() == "{"_tok) {
+			advance(); // consume '{'
+			
+			while (!peek().is_eof() && peek() != "}"_tok) {
+				// Handle access specifiers: public:, private:, protected:
+				if (peek() == "public"_tok) {
+					current_access = AccessSpecifier::Public;
+					advance();
+					if (peek() == ":"_tok) advance();
+					continue;
+				}
+				if (peek() == "private"_tok) {
+					current_access = AccessSpecifier::Private;
+					advance();
+					if (peek() == ":"_tok) advance();
+					continue;
+				}
+				if (peek() == "protected"_tok) {
+					current_access = AccessSpecifier::Protected;
+					advance();
+					if (peek() == ":"_tok) advance();
+					continue;
+				}
+				
+				// Skip friend declarations
+				if (peek() == "friend"_tok) {
+					while (!peek().is_eof() && peek() != ";"_tok) {
+						if (peek() == "{"_tok) skip_balanced_braces();
+						else advance();
+					}
+					if (peek() == ";"_tok) advance();
+					continue;
+				}
+				
+				// Skip static_assert
+				if (peek() == "static_assert"_tok) {
+					while (!peek().is_eof() && peek() != ";"_tok) {
+						if (peek() == "("_tok) skip_balanced_parens();
+						else advance();
+					}
+					if (peek() == ";"_tok) advance();
+					continue;
+				}
+				
+				// Skip using declarations/aliases
+				if (peek() == "using"_tok) {
+					while (!peek().is_eof() && peek() != ";"_tok) {
+						advance();
+					}
+					if (peek() == ";"_tok) advance();
+					continue;
+				}
+				
+				// Skip destructor definitions: ~ClassName() { ... }
+				if (peek_info().value() == "~") {
+					while (!peek().is_eof() && peek() != ";"_tok) {
+						if (peek() == "{"_tok) skip_balanced_braces();
+						else if (peek() == "("_tok) skip_balanced_parens();
+						else advance();
+					}
+					if (peek() == ";"_tok) advance();
+					continue;
+				}
+				
+				// Try to detect constructors: ClassName(params) or explicit ClassName(params)
+				{
+					bool is_explicit = false;
+					auto ctor_check = save_token_position();
+					if (peek() == "explicit"_tok) {
+						advance();
+						is_explicit = true;
+					}
+					(void)is_explicit;
+					if (peek().is_identifier() && peek_info().value() == nested_name) {
+						advance(); // consume class name
+						if (peek() == "("_tok) {
+							// This is a constructor - skip it
+							discard_saved_token(ctor_check);
+							skip_balanced_parens();
+							FlashCpp::MemberQualifiers ctor_quals;
+							skip_function_trailing_specifiers(ctor_quals);
+							// Skip member initializer list
+							if (peek() == ":"_tok) {
+								advance();
+								while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+									if (peek() == "("_tok) skip_balanced_parens();
+									else if (peek() == "{"_tok) {
+										skip_balanced_braces();
+										if (peek() != ","_tok) break;
+									}
+									else advance();
+								}
+							}
+							if (peek() == "{"_tok) skip_balanced_braces();
+							else if (peek() == "="_tok) {
+								advance();
+								if (peek() == "default"_tok || peek() == "delete"_tok) advance();
+								if (peek() == ";"_tok) advance();
+							}
+							else if (peek() == ";"_tok) advance();
+							continue;
+						}
+					}
+					restore_token_position(ctor_check);
+				}
+				
+				// Parse potential data member: [const/static/...] type name [= init] ;
+				// Skip leading qualifiers
+				bool is_static_member = false;
+				if (peek() == "static"_tok) {
+					is_static_member = true;
+					advance();
+				}
+				// Skip additional qualifiers
+				while (peek() == "const"_tok || peek() == "constexpr"_tok || peek() == "inline"_tok || peek() == "volatile"_tok || peek() == "mutable"_tok) {
+					advance();
+				}
+				
+				// Try to parse a type specifier
+				auto type_check = save_token_position();
+				auto type_result = parse_type_specifier();
+				if (type_result.is_error() || !type_result.node().has_value()) {
+					restore_token_position(type_check);
+					// Unknown token - skip to next semicolon or closing brace
+					while (!peek().is_eof() && peek() != ";"_tok && peek() != "}"_tok) {
+						if (peek() == "{"_tok) skip_balanced_braces();
+						else if (peek() == "("_tok) skip_balanced_parens();
+						else advance();
+					}
+					if (peek() == ";"_tok) advance();
+					continue;
+				}
+				
+				// Consume pointer/reference modifiers after the type
+				if (type_result.node()->is<TypeSpecifierNode>()) {
+					consume_pointer_ref_modifiers(type_result.node()->as<TypeSpecifierNode>());
+				}
+				
+				if (peek().is_identifier()) {
+					Token member_name_token = peek_info();
+					advance(); // consume member name
+					
+					if (peek() == "("_tok) {
+						// This is a member function - skip it
+						discard_saved_token(type_check);
+						skip_balanced_parens();
+						FlashCpp::MemberQualifiers func_quals;
+						skip_function_trailing_specifiers(func_quals);
+						// Handle trailing return type
+						if (peek() == "->"_tok) {
+							advance();
+							parse_type_specifier();
+						}
+						if (peek() == "{"_tok) skip_balanced_braces();
+						else if (peek() == "="_tok) {
+							advance();
+							if (peek() == "default"_tok || peek() == "delete"_tok) advance();
+							if (peek() == ";"_tok) advance();
+						}
+						else if (peek() == ";"_tok) advance();
+						continue;
+					}
+					
+					if (peek() == ";"_tok || peek() == "="_tok || peek() == "{"_tok) {
+						// This is a data member declaration
+						discard_saved_token(type_check);
+						
+						// Skip initializer if present
+						if (peek() == "="_tok) {
+							advance();
+							while (!peek().is_eof() && peek() != ";"_tok && peek() != "}"_tok) {
+								if (peek() == "("_tok) skip_balanced_parens();
+								else if (peek() == "{"_tok) skip_balanced_braces();
+								else advance();
+							}
+						} else if (peek() == "{"_tok) {
+							skip_balanced_braces();
+						}
+						if (peek() == ";"_tok) advance();
+						
+						if (is_static_member) continue; // Skip static members for layout purposes
+						
+						// Substitute template parameters in the type
+						const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+						auto [subst_type, subst_type_index] = substitute_template_parameter(
+							type_spec, ool_nested.template_params, template_args_to_use);
+						
+						TypeSpecifierNode substituted_type_spec(
+							subst_type,
+							type_spec.qualifier(),
+							get_type_size_bits(subst_type),
+							Token()
+						);
+						substituted_type_spec.set_type_index(subst_type_index);
+						
+						for (const auto& ptr_level : type_spec.pointer_levels()) {
+							substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+						}
+						
+						size_t member_size;
+						if (substituted_type_spec.is_pointer()) {
+							member_size = 8;
+						} else {
+							member_size = substituted_type_spec.size_in_bits() / 8;
+						}
+						size_t member_alignment = get_type_alignment(substituted_type_spec.type(), member_size);
+						
+						bool is_ref_member = substituted_type_spec.is_reference();
+						bool is_rvalue_ref_member = substituted_type_spec.is_rvalue_reference();
+						
+						nested_struct_info->addMember(
+							member_name_token.handle(),
+							substituted_type_spec.type(),
+							substituted_type_spec.type_index(),
+							member_size,
+							member_alignment,
+							current_access,
+							std::nullopt,
+							is_ref_member,
+							is_rvalue_ref_member,
+							(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0,
+							false,
+							{},
+							static_cast<int>(substituted_type_spec.pointer_depth()),
+							std::nullopt
+						);
+						
+						FLASH_LOG(Templates, Debug, "Added member to out-of-line nested class: ",
+						          member_name_token.value(), " of type ", (int)subst_type);
+						continue;
+					}
+				}
+				
+				// Fallback: couldn't parse this declaration, skip to next semicolon
+				restore_token_position(type_check);
+				while (!peek().is_eof() && peek() != ";"_tok && peek() != "}"_tok) {
+					if (peek() == "{"_tok) skip_balanced_braces();
+					else if (peek() == "("_tok) skip_balanced_parens();
+					else advance();
+				}
+				if (peek() == ";"_tok) advance();
+			}
+			// Don't consume '}' - just note we're done
+		}
+		
+		// Restore parser state
+		current_template_param_names_ = saved_param_names;
+		parsing_template_body_ = saved_template_body;
+		parsing_template_class_ = saved_template_class;
+		restore_lexer_position_only(saved_pos);
+		
+		// Finalize the nested struct layout
+		if (!nested_struct_info->finalize()) {
+			FLASH_LOG(Parser, Error, nested_struct_info->getFinalizationError());
+			continue;
+		}
+		
+		// Register the nested class in the type system
+		if (existing_nested_type) {
+			// Update existing forward-declared type in-place
+			existing_nested_type->setStructInfo(std::move(nested_struct_info));
+			if (existing_nested_type->getStructInfo()) {
+				existing_nested_type->type_size_ = existing_nested_type->getStructInfo()->total_size;
+			}
+			FLASH_LOG(Templates, Debug, "Updated out-of-line nested class: ", StringTable::getStringView(qualified_name),
+			          " (size=", existing_nested_type->type_size_, ")");
+		} else {
+			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size(), 0);
+			nested_type_info.setStructInfo(std::move(nested_struct_info));
+			if (nested_type_info.getStructInfo()) {
+				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
+			}
+			gTypesByName.emplace(qualified_name, &nested_type_info);
+			FLASH_LOG(Templates, Debug, "Registered out-of-line nested class: ", StringTable::getStringView(qualified_name),
+			          " (size=", nested_type_info.type_size_, ")");
 		}
 	}
 

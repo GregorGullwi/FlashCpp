@@ -786,6 +786,17 @@ struct OutOfLineMemberVariable {
 	std::vector<StringHandle> template_param_names;  // Names of template parameters
 };
 
+// Out-of-line template nested class definition
+// Stores information about patterns like:
+//   template<typename T> struct Outer<T>::Inner { ... };
+struct OutOfLineNestedClass {
+	std::vector<ASTNode> template_params;           // Outer template parameters (e.g., <typename T>)
+	StringHandle nested_class_name;                 // Name of the nested class (e.g., "Inner")
+	SaveHandle body_start;                          // Saved position of the body (including base class list) for re-parsing
+	std::vector<StringHandle> template_param_names; // Names of template parameters
+	bool is_class = false;                          // true if 'class', false if 'struct'
+};
+
 // SFINAE condition for void_t patterns
 // Stores information about dependent member type checks like "typename T::type"
 struct SfinaeCondition {
@@ -1522,6 +1533,35 @@ public:
 		return {};
 	}
 
+	// Register an out-of-line template nested class definition (StringHandle overload)
+	void registerOutOfLineNestedClass(StringHandle class_name, OutOfLineNestedClass nested_class) {
+		out_of_line_nested_classes_[class_name].push_back(std::move(nested_class));
+	}
+
+	// Register an out-of-line template nested class definition (string_view overload)
+	void registerOutOfLineNestedClass(std::string_view class_name, OutOfLineNestedClass nested_class) {
+		StringHandle key = StringTable::getOrInternStringHandle(class_name);
+		registerOutOfLineNestedClass(key, std::move(nested_class));
+	}
+
+	// Get out-of-line nested classes for a class (StringHandle overload)
+	std::vector<OutOfLineNestedClass> getOutOfLineNestedClasses(StringHandle class_name) const {
+		auto it = out_of_line_nested_classes_.find(class_name);
+		if (it != out_of_line_nested_classes_.end()) {
+			return it->second;
+		}
+		return {};
+	}
+
+	// Get out-of-line nested classes for a class (string_view overload)
+	std::vector<OutOfLineNestedClass> getOutOfLineNestedClasses(std::string_view class_name) const {
+		auto it = out_of_line_nested_classes_.find(class_name);
+		if (it != out_of_line_nested_classes_.end()) {
+			return it->second;
+		}
+		return {};
+	}
+
 	// Register outer template parameter bindings for a member function template
 	// of an instantiated class template (e.g., Container<int>::convert has T→int)
 	void registerOuterTemplateBinding(std::string_view qualified_name, OuterTemplateBinding binding) {
@@ -1812,6 +1852,7 @@ public:
 		instantiations_.clear();
 		out_of_line_variables_.clear();
 		out_of_line_members_.clear();
+		out_of_line_nested_classes_.clear();
 		specializations_.clear();
 		specialization_patterns_.clear();
 		alias_templates_.clear();
@@ -1895,6 +1936,9 @@ private:
 
 	// Map from class name to out-of-line static member variable definitions (StringHandle key for efficient lookup)
 	std::unordered_map<StringHandle, std::vector<OutOfLineMemberVariable>, TransparentStringHash, TransparentStringEqual> out_of_line_variables_;
+
+	// Map from class name to out-of-line nested class definitions (StringHandle key for efficient lookup)
+	std::unordered_map<StringHandle, std::vector<OutOfLineNestedClass>, TransparentStringHash, TransparentStringEqual> out_of_line_nested_classes_;
 
 	// Map from qualified member function template name (e.g., "Container$hash::convert") to
 	// outer template parameter bindings (e.g., T→int). Used during nested template instantiation.
