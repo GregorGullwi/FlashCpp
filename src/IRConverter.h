@@ -7525,22 +7525,22 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(dtor_op.object);
-			auto it = variable_scopes.back().variables.find(var_name_handle);
-			if (it == variable_scopes.back().variables.end()) {
+			const VariableInfo* var_info = findVariableInfo(var_name_handle);
+			if (!var_info) {
 				throw std::runtime_error("Destructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
 			}
-			object_offset = it->second.offset;
+			object_offset = var_info->offset;
 		}
 
 		// Check if the object is a pointer (needs to be loaded, not addressed)
-		// This includes 'this' pointer and TempVars from heap_alloc
+		// This includes 'this' pointer, TempVars from heap_alloc, and pointer variables from delete
 		bool object_is_pointer = false;
 		if (std::holds_alternative<TempVar>(dtor_op.object)) {
 			// TempVars are always pointers in destructor calls (from heap_free)
 			object_is_pointer = true;
 		} else if (std::holds_alternative<StringHandle>(dtor_op.object)) {
 			StringHandle obj_handle = std::get<StringHandle>(dtor_op.object);
-			object_is_pointer = (StringTable::getStringView(obj_handle) == "this");
+			object_is_pointer = dtor_op.object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
