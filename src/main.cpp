@@ -516,13 +516,28 @@ int main_impl(int argc, char *argv[]) {
     {
         PhaseTimer deferred_timer("Deferred Gen", false, &deferred_gen_time);
         // Generate all collected lambdas after visiting all nodes
-        converter.generateCollectedLambdas();
+        try {
+            converter.generateCollectedLambdas();
+        } catch (const std::exception& e) {
+            FLASH_LOG(General, Error, "Deferred lambda generation failed: ", e.what());
+            ir_conversion_had_errors = true;
+        }
 
         // Generate all collected local struct member functions after visiting all nodes
-        converter.generateCollectedLocalStructMembers();
+        try {
+            converter.generateCollectedLocalStructMembers();
+        } catch (const std::exception& e) {
+            FLASH_LOG(General, Error, "Deferred local struct member generation failed: ", e.what());
+            ir_conversion_had_errors = true;
+        }
 
         // Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
-        converter.generateDeferredMemberFunctions();
+        try {
+            converter.generateDeferredMemberFunctions();
+        } catch (const std::exception& e) {
+            FLASH_LOG(General, Error, "Deferred member function generation failed: ", e.what());
+            ir_conversion_had_errors = true;
+        }
 
         // Note: Template instantiations happen during parsing, not here
     }

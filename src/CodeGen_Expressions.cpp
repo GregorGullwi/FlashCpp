@@ -63,19 +63,19 @@
 				return generateTemplateParameterReferenceIr(expr);
 			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
-				return {};
+				return { Type::Int, 32, 0ULL, 0ULL };
 			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				return generatePseudoDestructorCallIr(expr);
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				return generatePointerToMemberAccessIr(expr);
 			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
-				return {};
+				return { Type::Int, 32, 0ULL, 0ULL };
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				return generateInitializerListConstructionIr(expr);
 			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
-				return {};
+				return { Type::Void, 0, 0ULL, 0ULL };
 			} else {
 				static_assert(!std::is_same_v<T, T>, "Unhandled ExpressionNode variant");
 			}
