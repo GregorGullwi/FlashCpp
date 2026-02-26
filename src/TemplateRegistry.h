@@ -792,7 +792,7 @@ struct OutOfLineMemberVariable {
 struct OutOfLineNestedClass {
 	std::vector<ASTNode> template_params;           // Outer template parameters (e.g., <typename T>)
 	StringHandle nested_class_name;                 // Name of the nested class (e.g., "Inner")
-	SaveHandle body_start;                          // Saved position of the body (including base class list) for re-parsing
+	SaveHandle body_start;                          // Saved position at the struct/class keyword for re-parsing via parse_struct_declaration()
 	std::vector<StringHandle> template_param_names; // Names of template parameters
 	bool is_class = false;                          // true if 'class', false if 'struct'
 };
