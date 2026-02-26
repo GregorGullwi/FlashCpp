@@ -788,13 +788,15 @@ struct OutOfLineMemberVariable {
 
 // Out-of-line template nested class definition
 // Stores information about patterns like:
-//   template<typename T> struct Outer<T>::Inner { ... };
+//   template<typename T> struct Outer<T>::Inner { ... };     (partial — applies to all instantiations)
+//   template<> struct Wrapper<int>::Nested { int x; };       (full — applies only when args match)
 struct OutOfLineNestedClass {
 	std::vector<ASTNode> template_params;           // Outer template parameters (e.g., <typename T>)
 	StringHandle nested_class_name;                 // Name of the nested class (e.g., "Inner")
 	SaveHandle body_start;                          // Saved position at the struct/class keyword for re-parsing via parse_struct_declaration()
 	std::vector<StringHandle> template_param_names; // Names of template parameters
 	bool is_class = false;                          // true if 'class', false if 'struct'
+	std::vector<TemplateTypeArg> specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
 };
 
 // SFINAE condition for void_t patterns

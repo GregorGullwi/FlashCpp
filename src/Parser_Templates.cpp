@@ -1300,11 +1300,14 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Register the out-of-line nested class definition
 					// struct_keyword_pos points at the struct/class keyword so parse_struct_declaration()
-					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation
+					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation.
+					// For full specializations (template<>), store the concrete template_args so the
+					// nested class is only applied when instantiation arguments match.
 					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
 						template_params,
 						StringTable::getOrInternStringHandle(member_class_name),
-						struct_keyword_pos, template_param_names, is_class
+						struct_keyword_pos, template_param_names, is_class,
+						template_args  // concrete specialization args (e.g., <int>)
 					});
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class (full spec): {}::{}",
 					                 template_name, member_class_name);
@@ -2644,11 +2647,13 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Register the out-of-line nested class definition
 					// struct_keyword_pos points at the struct/class keyword so parse_struct_declaration()
-					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation
+					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation.
+					// Partial specializations leave specialization_args empty — applies to all instantiations.
 					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
 						template_params,
 						StringTable::getOrInternStringHandle(member_class_name),
-						struct_keyword_pos, template_param_names, is_class
+						struct_keyword_pos, template_param_names, is_class,
+						{}  // no specialization args — applies to all instantiations
 					});
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class: {}::{}",
 					                 template_name, member_class_name);
@@ -15817,6 +15822,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto ool_nested_classes = gTemplateRegistry.getOutOfLineNestedClasses(template_name);
 	FLASH_LOG(Templates, Debug, "Processing ", ool_nested_classes.size(), " out-of-line nested class definitions for ", template_name);
 	for (const auto& ool_nested : ool_nested_classes) {
+		// Full specializations (template<>) store concrete args — skip if they don't match
+		// this instantiation's arguments (e.g., Wrapper<int>::Nested shouldn't apply to Wrapper<float>).
+		if (!ool_nested.specialization_args.empty()) {
+			if (ool_nested.specialization_args.size() != template_args_to_use.size()) {
+				continue;
+			}
+			bool args_match = true;
+			for (size_t i = 0; i < ool_nested.specialization_args.size(); ++i) {
+				if (!(ool_nested.specialization_args[i] == template_args_to_use[i])) {
+					args_match = false;
+					break;
+				}
+			}
+			if (!args_match) {
+				continue;
+			}
+		}
+
 		std::string_view nested_name = StringTable::getStringView(ool_nested.nested_class_name);
 		auto qualified_name = StringTable::getOrInternStringHandle(
 			StringBuilder().append(instantiated_name).append("::"sv).append(nested_name));
