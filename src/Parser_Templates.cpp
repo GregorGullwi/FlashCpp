@@ -14280,6 +14280,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			
 			if (!found) {
+				// Check if this is a variadic pack parameter (e.g., struct Combined : Bases...)
+				// Pack params are in pack_substitution_map, not name_substitution_map
+				ensure_substitution_maps();
+				StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_class_name);
+				auto pack_it = pack_substitution_map.find(base_name_handle);
+				if (pack_it != pack_substitution_map.end()) {
+					for (const TemplateTypeArg& pack_arg : pack_it->second) {
+						if (pack_arg.type_index < gTypeInfo.size()) {
+							const TypeInfo& concrete_type = gTypeInfo[pack_arg.type_index];
+							if (concrete_type.type_ == Type::Struct &&
+							    !(concrete_type.struct_info_ && concrete_type.struct_info_->is_final)) {
+								struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), pack_arg.type_index, base.access, base.is_virtual);
+								FLASH_LOG(Templates, Debug, "Expanded pack base '", base_class_name, "' -> '", StringTable::getStringView(concrete_type.name_), "'");
+								found = true;
+							}
+						}
+					}
+				}
+			}
+			if (!found) {
 				FLASH_LOG(Templates, Warning, "Could not resolve template parameter base class: ", base_class_name);
 			}
 		} else {

@@ -7525,22 +7525,22 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(dtor_op.object);
-			auto it = variable_scopes.back().variables.find(var_name_handle);
-			if (it == variable_scopes.back().variables.end()) {
+			const VariableInfo* var_info = findVariableInfo(var_name_handle);
+			if (!var_info) {
 				throw std::runtime_error("Destructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
 			}
-			object_offset = it->second.offset;
+			object_offset = var_info->offset;
 		}
 
 		// Check if the object is a pointer (needs to be loaded, not addressed)
-		// This includes 'this' pointer and TempVars from heap_alloc
+		// This includes 'this' pointer, TempVars from heap_alloc, and pointer variables from delete
 		bool object_is_pointer = false;
 		if (std::holds_alternative<TempVar>(dtor_op.object)) {
 			// TempVars are always pointers in destructor calls (from heap_free)
 			object_is_pointer = true;
 		} else if (std::holds_alternative<StringHandle>(dtor_op.object)) {
 			StringHandle obj_handle = std::get<StringHandle>(dtor_op.object);
-			object_is_pointer = (StringTable::getStringView(obj_handle) == "this");
+			object_is_pointer = dtor_op.object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
@@ -7869,10 +7869,23 @@ private:
 			textSectionData.push_back(static_cast<uint8_t>((op.size_in_bytes >> (i * 8)) & 0xFF));
 		}
 
+		if (op.needs_cookie) {
+			// Add 8 bytes for the array count cookie: ADD RAX, 8
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x83); // ADD r/m64, imm8
+			textSectionData.push_back(0xC0); // ModR/M: RAX
+			textSectionData.push_back(0x08); // imm8 = 8
+		}
+
 		// Move result to first parameter register for malloc
 		// Use platform-correct register (RDI on Linux, RCX on Windows)
 		constexpr X64Register alloc_param_reg = getIntParamReg<TWriterClass>(0);
 		emitMovRegReg(alloc_param_reg, X64Register::RAX);
+
+		// Save count in RCX/RSI before clobbering it with the malloc call
+		// We'll need it to store in the cookie after malloc returns.
+		// Save count operand to a second parameter register (not clobbered by malloc result).
+		// We reload the count after malloc since RAX is the only volatile we care about here.
 
 		// Call malloc
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
@@ -7882,7 +7895,34 @@ private:
 		// Invalidate caller-saved registers (function calls clobber them)
 		regAlloc.invalidateCallerSavedRegisters();
 
-		// Result is in RAX, store it to the result variable (pointer is always 64-bit)
+		if (op.needs_cookie) {
+			// Store the element count at [RAX]: MOV [RAX], count
+			// Re-load the count into RCX (2nd param reg) or another temp register
+			X64Register count_reg = getIntParamReg<TWriterClass>(1);  // RDX on Linux, RDX on Windows
+			// Load count value into count_reg
+			if (std::holds_alternative<TempVar>(op.count)) {
+				TempVar count_var = std::get<TempVar>(op.count);
+				int count_offset = getStackOffsetFromTempVar(count_var);
+				emitMovFromFrameSized(SizedRegister{count_reg, 64, false}, SizedStackSlot{count_offset, 64, false});
+			} else if (std::holds_alternative<StringHandle>(op.count)) {
+				StringHandle count_name_handle = std::get<StringHandle>(op.count);
+				auto it = variable_scopes.back().variables.find(count_name_handle);
+				if (it != variable_scopes.back().variables.end()) {
+					emitMovFromFrameSized(SizedRegister{count_reg, 64, false}, SizedStackSlot{it->second.offset, 64, false});
+				}
+			} else if (std::holds_alternative<unsigned long long>(op.count)) {
+				emitMovImm64(count_reg, std::get<unsigned long long>(op.count));
+			}
+			// MOV QWORD PTR [RAX], count_reg
+			emitStoreToMemory(textSectionData, count_reg, X64Register::RAX, 0, 8);
+			// Advance RAX past the cookie: ADD RAX, 8
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x83); // ADD r/m64, imm8
+			textSectionData.push_back(0xC0); // ModR/M: RAX
+			textSectionData.push_back(0x08); // imm8 = 8
+		}
+
+		// Result is in RAX (user pointer, past cookie if applicable)
 		int result_offset = getStackOffsetFromTempVar(op.result);
 
 		emitMovToFrameSized(
@@ -7934,10 +7974,6 @@ private:
 	}
 
 	void handleHeapFreeArray(const IrInstruction& instruction) {
-		// HeapFreeArray format: same as HeapFree (just has a pointer)
-		// For C++, delete[] is the same as delete for POD types (just calls free)
-		// For types with destructors, we'd need to call destructors for each element first
-		// This is a simplified implementation
 		const HeapFreeArrayOp& op = instruction.getTypedPayload<HeapFreeArrayOp>();
 
 		flushAllDirtyRegisters();
@@ -7965,6 +8001,17 @@ private:
 		// Use platform-correct register (RDI on Linux, RCX on Windows)
 		constexpr X64Register free_param_reg = getIntParamReg<TWriterClass>(0);
 		emitMovFromFrame(free_param_reg, ptr_offset);
+
+		if (op.has_cookie) {
+			// Adjust pointer back past the cookie: SUB free_param_reg, 8
+			uint8_t rex = 0x48;
+			uint8_t rm = static_cast<uint8_t>(free_param_reg);
+			if (rm >= 8) { rex |= 0x01; rm &= 0x07; }
+			textSectionData.push_back(rex);
+			textSectionData.push_back(0x83);           // SUB r/m64, imm8
+			textSectionData.push_back(0xE8 | rm);      // ModR/M: mod=11 /5 rm=reg
+			textSectionData.push_back(0x08);            // imm8 = 8
+		}
 
 		// Call free
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };

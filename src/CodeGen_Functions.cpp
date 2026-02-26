@@ -5540,14 +5540,32 @@
 					FLASH_LOG(Codegen, Error, "Array size operands insufficient (expected 3, got ", size_operands.size(), ")");
 					return {};
 				}
+				IrValue count_value;
 				if (std::holds_alternative<unsigned long long>(size_operands[2])) {
-					op.count = std::get<unsigned long long>(size_operands[2]);
+					count_value = op.count = std::get<unsigned long long>(size_operands[2]);
 				} else if (std::holds_alternative<TempVar>(size_operands[2])) {
-					op.count = std::get<TempVar>(size_operands[2]);
+					count_value = op.count = std::get<TempVar>(size_operands[2]);
 				} else if (std::holds_alternative<StringHandle>(size_operands[2])) {
-					op.count = std::get<StringHandle>(size_operands[2]);
+					count_value = op.count = std::get<StringHandle>(size_operands[2]);
 				} else if (std::holds_alternative<double>(size_operands[2])) {
-					op.count = std::get<double>(size_operands[2]);
+					count_value = op.count = std::get<double>(size_operands[2]);
+				}
+
+				// Check if struct type needs a cookie (has destructor)
+				bool needs_ctor_loop = false;
+				const StructTypeInfo* array_struct_info = nullptr;
+				StringHandle array_struct_name_handle{};
+				if (type == Type::Struct) {
+					TypeIndex type_index = type_spec.type_index();
+					if (type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
+							array_struct_info = type_info.struct_info_.get();
+							array_struct_name_handle = type_info.name();
+							needs_ctor_loop = true;
+							op.needs_cookie = type_info.struct_info_->hasDestructor();
+						}
+					}
 				}
 
 				ir_.addInstruction(IrInstruction(IrOpcode::HeapAllocArray, std::move(op), Token()));
@@ -5629,6 +5647,76 @@
 							}
 						}
 					}
+				} else if (needs_ctor_loop && array_struct_info) {
+					// No explicit initializers: emit a loop calling the default constructor for each element
+					static size_t new_array_counter = 0;
+					size_t loop_id = new_array_counter++;
+					size_t elem_sz = array_struct_info->total_size;
+
+					auto loop_start = StringTable::createStringHandle(StringBuilder().append("new_arr_start_").append(loop_id));
+					auto loop_end   = StringTable::createStringHandle(StringBuilder().append("new_arr_end_").append(loop_id));
+
+					// i_var = 0
+					TempVar i_var = var_counter.next();
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
+						.result = i_var,
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 0ULL},
+					}, Token()));
+
+					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
+
+					// cmp = (i_var < count)
+					TempVar cmp_var = var_counter.next();
+					ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, BinaryOp{
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = count_value},
+						.result = cmp_var,
+					}, Token()));
+
+					CondBranchOp cond;
+					cond.label_true = loop_start;  // placeholder - will immediately follow with body inline
+					cond.label_false = loop_end;
+					cond.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_var};
+					// We use a body label right after the branch
+					auto loop_body = StringTable::createStringHandle(StringBuilder().append("new_arr_body_").append(loop_id));
+					cond.label_true = loop_body;
+					ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond), Token()));
+
+					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body}, Token()));
+
+					// offset_var = i_var * elem_sz
+					TempVar offset_var = var_counter.next();
+					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(elem_sz)},
+						.result = offset_var,
+					}, Token()));
+
+					// elem_ptr = result_var + offset_var
+					TempVar elem_ptr = var_counter.next();
+					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = offset_var},
+						.result = elem_ptr,
+					}, Token()));
+
+					// Call default constructor
+					ConstructorCallOp ctor_op;
+					ctor_op.struct_name = array_struct_name_handle;
+					ctor_op.object = elem_ptr;
+					ctor_op.is_heap_allocated = true;
+					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+
+					// i_var = i_var + 1  (write back to same TempVar slot)
+					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 1ULL},
+						.result = i_var,
+					}, Token()));
+
+					ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start}, Token()));
+					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end}, Token()));
 				}
 			}
 		} else if (newExpr.placement_address().has_value()) {
@@ -5757,18 +5845,6 @@
 		// Get the pointer type
 		Type ptr_type = std::get<Type>(ptr_operands[0]);
 
-		// Check if we need to call destructor (for struct types)
-		if (ptr_type == Type::Struct && !deleteExpr.is_array()) {
-			// For single object deletion, call destructor before freeing
-			// Note: For array deletion, we'd need to track the array size and call destructors for each element
-			// This is a simplified implementation
-
-			// We need the type index to get struct info
-			// For now, we'll skip destructor calls for delete (can be enhanced later)
-			// TODO: Track type information through pointer types to enable destructor calls
-		}
-
-		// Generate the appropriate free instruction
 		// Convert IrOperand to IrValue
 		IrValue ptr_value;
 		if (std::holds_alternative<unsigned long long>(ptr_operands[2])) {
@@ -5781,10 +5857,137 @@
 			ptr_value = std::get<double>(ptr_operands[2]);
 		}
 
+		// Check if we need to call destructor (for struct types with a user-defined destructor).
+		// ptr_operands[3] is the type_index when the expression type is Type::Struct (index 0 is invalid).
+		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
+		if (ptr_type == Type::Struct && !deleteExpr.is_array() &&
+		    ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
+			unsigned long long type_idx_val = std::get<unsigned long long>(ptr_operands[3]);
+			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
+			if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_idx_val];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info && struct_info->hasDestructor()) {
+					DestructorCallOp dtor_op;
+					dtor_op.struct_name = type_info.name();
+					dtor_op.object_is_pointer = true;
+					if (std::holds_alternative<TempVar>(ptr_value)) {
+						dtor_op.object = std::get<TempVar>(ptr_value);
+					} else if (std::holds_alternative<StringHandle>(ptr_value)) {
+						dtor_op.object = std::get<StringHandle>(ptr_value);
+					} else {
+						// ptr_value is a literal (unsigned long long or double) - skip destructor call
+						// ptr_value is a literal (unsigned long long or double) - skip destructor call
+					}
+					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+				}
+			}
+		}
+
 		if (deleteExpr.is_array()) {
-			HeapFreeArrayOp op;
-			op.pointer = ptr_value;
-			ir_.addInstruction(IrInstruction(IrOpcode::HeapFreeArray, std::move(op), Token()));
+			// Array delete: call destructor for each element if the type has one, using cookie
+			bool has_dtor_loop = false;
+			if (ptr_type == Type::Struct &&
+			    ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
+				unsigned long long type_idx_val = std::get<unsigned long long>(ptr_operands[3]);
+				if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_idx_val];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && struct_info->hasDestructor()) {
+						has_dtor_loop = true;
+						size_t elem_sz = struct_info->total_size;
+
+						// Read count from cookie: raw_ptr = ptr - 8
+						TempVar raw_ptr = var_counter.next();
+						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = ptr_value},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 8ULL},
+							.result = raw_ptr,
+						}, Token()));
+
+						// count_var = *raw_ptr  (load 64-bit cookie)
+						TempVar count_var = var_counter.next();
+						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
+							.result = count_var,
+							.pointer = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = raw_ptr, .pointer_depth = 1},
+						}, Token()));
+
+						// Emit reverse-order destructor loop: i = count-1 down to 0
+						static size_t del_array_counter = 0;
+						size_t loop_id = del_array_counter++;
+
+						auto loop_start = StringTable::createStringHandle(StringBuilder().append("del_arr_start_").append(loop_id));
+						auto loop_body  = StringTable::createStringHandle(StringBuilder().append("del_arr_body_").append(loop_id));
+						auto loop_end   = StringTable::createStringHandle(StringBuilder().append("del_arr_end_").append(loop_id));
+
+						// i_var = count_var  (will decrement before use, so start at count)
+						TempVar i_var = var_counter.next();
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
+							.result = i_var,
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = count_var},
+						}, Token()));
+
+						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
+
+						// if i_var == 0 goto loop_end
+						TempVar cmp_var = var_counter.next();
+						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, BinaryOp{
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 0ULL},
+							.result = cmp_var,
+						}, Token()));
+						CondBranchOp cond;
+						cond.label_true  = loop_body;
+						cond.label_false = loop_end;
+						cond.condition   = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_var};
+						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond), Token()));
+
+						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body}, Token()));
+
+						// i_var = i_var - 1  (decrement first, so index runs count-1..0)
+						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 1ULL},
+							.result = i_var,
+						}, Token()));
+
+						// elem_ptr = ptr + i_var * elem_sz
+						TempVar offset_var = var_counter.next();
+						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(elem_sz)},
+							.result = offset_var,
+						}, Token()));
+						TempVar elem_ptr = var_counter.next();
+						ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = ptr_value},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = offset_var},
+							.result = elem_ptr,
+						}, Token()));
+
+						DestructorCallOp dtor_op;
+						dtor_op.struct_name      = type_info.name();
+						dtor_op.object           = elem_ptr;
+						dtor_op.object_is_pointer = true;
+						ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+
+						ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start}, Token()));
+						ir_.addInstruction(IrInstruction(IrOpcode::Label,  LabelOp{.label_name = loop_end},      Token()));
+
+						// Free using the raw (cookie) pointer — raw_ptr already points to start of allocation
+						HeapFreeArrayOp free_op;
+						free_op.pointer    = raw_ptr;
+						free_op.has_cookie = false;
+						ir_.addInstruction(IrInstruction(IrOpcode::HeapFreeArray, std::move(free_op), Token()));
+					}
+				}
+			}
+			if (!has_dtor_loop) {
+				HeapFreeArrayOp op;
+				op.pointer = ptr_value;
+				ir_.addInstruction(IrInstruction(IrOpcode::HeapFreeArray, std::move(op), Token()));
+			}
 		} else {
 			HeapFreeOp op;
 			op.pointer = ptr_value;

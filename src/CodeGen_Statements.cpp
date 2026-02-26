@@ -92,7 +92,20 @@
 		}
 
 		// Evaluate condition
-		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+		// The condition may be a declaration: if (Type var = expr) — C++98/11/14/17/20
+		std::vector<IrOperand> condition_operands;
+		auto cond_node = node.get_condition();
+		if (cond_node.is<VariableDeclarationNode>()) {
+			// Declaration-as-condition: visit the declaration to generate alloc + init IR,
+			// then use the variable's value as the boolean condition.
+			// ExpressionNode is a std::variant, so IdentifierNode implicitly converts to it.
+			const VariableDeclarationNode& var_decl = cond_node.as<VariableDeclarationNode>();
+			visitVariableDeclarationNode(cond_node);
+			ExpressionNode ident_expr = IdentifierNode(var_decl.declaration().identifier_token());
+			condition_operands = visitExpressionNode(ident_expr);
+		} else {
+			condition_operands = visitExpressionNode(cond_node.as<ExpressionNode>());
+		}
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;

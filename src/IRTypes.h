@@ -1179,6 +1179,7 @@ struct ConstructorCallOp {
 struct DestructorCallOp {
 	StringHandle struct_name;                         // Pure StringHandle
 	std::variant<StringHandle, TempVar> object;       // Object instance ('this' or temp)
+	bool object_is_pointer = false;                   // True if object holds a pointer (heap-allocated)
 };
 
 // Virtual function call through vtable
@@ -1396,6 +1397,7 @@ struct HeapAllocArrayOp {
 	int size_in_bytes = 0;
 	int pointer_depth = 0;
 	IrValue count;               // Array element count (TempVar or constant)
+	bool needs_cookie = false;   // If true, prepend 8-byte count cookie; result points past cookie
 };
 
 // Heap free (delete operator)
@@ -1406,6 +1408,7 @@ struct HeapFreeOp {
 // Heap array free (delete[] operator)
 struct HeapFreeArrayOp {
 	IrValue pointer;             // Pointer to free (TempVar or string_view)
+	bool has_cookie = false;     // If true, pointer is past a cookie; free pointer-8
 };
 
 // Placement new operator

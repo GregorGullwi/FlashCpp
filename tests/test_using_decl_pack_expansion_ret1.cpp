@@ -1,6 +1,5 @@
 // Test: using-declaration with pack expansion (C++17)
 // Pattern: using Base<Args>::member...;
-// Expected to fail: variadic base classes (Bases...) not yet supported
 
 template<int I>
 struct Fun {
@@ -13,6 +12,6 @@ struct Combined : Bases... {
 };
 
 int main() {
-    Combined<Fun<0>> c;
-    return c.call(); // 0
+    Combined<Fun<1>> c;
+    return c.call(); // 1
 }
