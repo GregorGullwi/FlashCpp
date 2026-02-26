@@ -20315,10 +20315,22 @@ ASTNode Parser::substituteTemplateParameters(
 									Token bool_token(Token::Type::Keyword, *fold_result ? "true"sv : "false"sv, 0, 0, 0);
 									return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
 								} else {
+									// Determine the result type from the variadic parameter's declared type
+									// e.g., template<unsigned... args> -> Type::UnsignedInt, 32 bits
+									Type result_type = Type::Int;
+									int result_size_bits = 32;
+									if (pack_param_idx.has_value()) {
+										const auto& tparam = template_params[*pack_param_idx].as<TemplateParameterNode>();
+										if (tparam.has_type() && tparam.type_node().is<TypeSpecifierNode>()) {
+											const TypeSpecifierNode& param_type_spec = tparam.type_node().as<TypeSpecifierNode>();
+											result_type = param_type_spec.type();
+											result_size_bits = get_type_size_bits(result_type);
+										}
+									}
 									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*fold_result)).commit();
 									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 									return emplace_node<ExpressionNode>(NumericLiteralNode(
-										num_token, static_cast<unsigned long long>(*fold_result), Type::Int, TypeQualifier::None, 64));
+										num_token, static_cast<unsigned long long>(*fold_result), result_type, TypeQualifier::None, result_size_bits));
 								}
 							}
 						} else if (pack_size == 0) {
