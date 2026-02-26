@@ -116,7 +116,6 @@ $linuxOnlyTests = @(
 
 # Expected runtime crashes - files that compile and link but crash at runtime
 $expectedRuntimeCrashes = @(
-	"test_exceptions_nested_ret0.cpp"	# Known crash with nested exception handling
 )
 
 # Filter to only files that have a main function and separate _fail files

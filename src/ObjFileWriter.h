@@ -20,6 +20,8 @@
 #include <iomanip>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
+#include <numeric>
 #include "coffi/coffi.hpp"
 
 extern bool g_enable_debug_output;
@@ -1198,7 +1200,7 @@ public:
 	                                  std::string_view mangled_name,
 	                                  const std::vector<TryBlockInfo>& try_blocks,
 	                                  const std::vector<UnwindMapEntryInfo>& unwind_map,
-	                                  uint32_t effective_frame_size, uint32_t stack_frame_size,
+	                                  uint32_t effective_frame_size, [[maybe_unused]] uint32_t stack_frame_size,
 	                                  uint32_t cpp_funcinfo_rva_field_offset,
 	                                  bool has_cpp_funcinfo_rva_field,
 	                                  uint32_t& cpp_funcinfo_local_offset_out,
@@ -1239,15 +1241,52 @@ public:
 		std::vector<TryStateLayout> try_state_layout;
 		try_state_layout.reserve(try_blocks.size());
 
-		int32_t next_state = 0;
-		for (const auto& try_block : try_blocks) {
-			TryStateLayout layout;
-			layout.try_low = next_state++;
-			layout.try_high = layout.try_low;
-			layout.catch_high = layout.try_high;
-			layout.catches.reserve(try_block.catch_handlers.size());
+		// Sort try blocks innermost-first (smaller range first) — MSVC convention.
+		// This must happen BEFORE state assignment so states follow nesting order.
+        std::vector<TryBlockInfo> sorted_try_blocks(try_blocks.begin(), try_blocks.end());
+        std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(), [](const auto& a, const auto& b) {
+            uint32_t range_a = a.try_end_offset - a.try_start_offset;
+            uint32_t range_b = b.try_end_offset - b.try_start_offset;
+            return range_a < range_b;
+        });
 
-			for (const auto& handler : try_block.catch_handlers) {
+		// Determine nesting relationships: block j contains block i if
+		// j.start <= i.start && i.end <= j.end (sorted innermost-first, so j > i means j is outer).
+		// parent_index[i] = index of the immediately enclosing try block, or -1 if top-level.
+		std::vector<int> parent_index(sorted_try_blocks.size(), -1);
+		for (size_t i = 0; i < sorted_try_blocks.size(); i++) {
+			for (size_t j = i + 1; j < sorted_try_blocks.size(); j++) {
+				if (sorted_try_blocks[j].try_start_offset <= sorted_try_blocks[i].try_start_offset &&
+					sorted_try_blocks[i].try_end_offset <= sorted_try_blocks[j].try_end_offset) {
+					parent_index[i] = static_cast<int>(j);
+					break;  // First match is the immediate parent (next-smallest enclosing)
+				}
+			}
+		}
+
+		// Assign states following MSVC/clang convention:
+		// - Each try block gets its own try_low state (even if nested)
+		// - Outer try blocks get lower state numbers (assigned first)
+		// - Inner try blocks get higher state numbers
+		// - Catch handlers get states after their owning try
+		// Process outermost-first for state assignment, then keep innermost-first order for output.
+
+		// First pass: assign try_low states outermost-first (reverse of sorted order)
+		std::vector<int32_t> assigned_try_low(sorted_try_blocks.size(), -1);
+		int32_t next_state = 0;
+		for (int i = static_cast<int>(sorted_try_blocks.size()) - 1; i >= 0; i--) {
+			assigned_try_low[i] = next_state++;
+		}
+
+		// Second pass: assign catch states and build layouts innermost-first
+		for (size_t i = 0; i < sorted_try_blocks.size(); i++) {
+			TryStateLayout layout;
+			layout.try_low = assigned_try_low[i];
+			layout.try_high = layout.try_low;  // Initially just covers own state
+			layout.catch_high = layout.try_high;
+			layout.catches.reserve(sorted_try_blocks[i].catch_handlers.size());
+
+			for (const auto& handler : sorted_try_blocks[i].catch_handlers) {
 				int32_t catch_state = next_state++;
 				layout.catches.push_back(CatchStateBinding{&handler, catch_state});
 				layout.catch_high = catch_state;
@@ -1255,7 +1294,30 @@ public:
 
 			try_state_layout.push_back(std::move(layout));
 		}
-		
+
+		// Third pass: adjust outer try's tryHigh to encompass nested states
+		for (size_t i = 0; i < try_state_layout.size(); i++) {
+			for (size_t j = i + 1; j < try_state_layout.size(); j++) {
+				if (sorted_try_blocks[j].try_start_offset <= sorted_try_blocks[i].try_start_offset &&
+					sorted_try_blocks[i].try_end_offset <= sorted_try_blocks[j].try_end_offset) {
+					if (try_state_layout[i].catch_high > try_state_layout[j].try_high) {
+						try_state_layout[j].try_high = try_state_layout[i].catch_high;
+					}
+				}
+			}
+		}
+
+		if (IS_FLASH_LOG_ENABLED(Codegen, Debug))
+		{
+			// Debug: log state layout for each try block
+			for (size_t i = 0; i < try_state_layout.size(); i++) {
+				FLASH_LOG_FORMAT(Codegen, Debug, "  TryBlock[{}]: tryLow={}, tryHigh={}, catchHigh={}, offsets=[{},{}], catches={}",
+					i, try_state_layout[i].try_low, try_state_layout[i].try_high, try_state_layout[i].catch_high,
+					sorted_try_blocks[i].try_start_offset, sorted_try_blocks[i].try_end_offset,
+					try_state_layout[i].catches.size());
+			}
+		}
+
 		// Magic number for x64 FH3 FuncInfo layout.
 		// 0x19930522 = FuncInfo with 10 fields (40 bytes) including dispUnwindHelp,
 		// pESTypeList, and EHFlags. Requires a stack-based state variable at
@@ -1331,25 +1393,52 @@ public:
 			cpp_xdata_rva_field_offsets.push_back(p_unwind_map_field_offset);
 		}
 		
-		// Now add UnwindMap entries (if present)
+		// Build proper unwind map with state chaining for nested try/catch.
+		// For each state, determine toState: the state to unwind to (parent state).
+		// - try_low state → parent try's try_low, or -1 if top-level
+		// - catch states → the try_low of their owning try block
+		std::vector<int32_t> computed_to_state(max_state, -1);
+		for (size_t i = 0; i < try_state_layout.size(); i++) {
+			const auto& layout = try_state_layout[i];
+			// Determine the parent's try_low for this block (or -1 if no parent)
+			int32_t parent_try_low = -1;
+			if (parent_index[i] >= 0) {
+				parent_try_low = try_state_layout[parent_index[i]].try_low;
+			}
+			// The try_low state unwinds to its parent
+			if (layout.try_low >= 0 && layout.try_low < static_cast<int32_t>(max_state)) {
+				computed_to_state[layout.try_low] = parent_try_low;
+			}
+			// Each catch state unwinds to this try block's parent (same as try_low's toState)
+			for (const auto& cb : layout.catches) {
+				if (cb.catch_state >= 0 && cb.catch_state < static_cast<int32_t>(max_state)) {
+					computed_to_state[cb.catch_state] = parent_try_low;
+				}
+			}
+		}
+
+		// Now add UnwindMap entries
 		// Each UnwindMapEntry:
 		//   int toState (state to transition to, -1 = end of unwind chain)
 		//   DWORD action (RVA to cleanup/destructor function, or 0 for no action)
 		if (unwind_entry_count > 0) {
 			for (uint32_t i = 0; i < unwind_entry_count; ++i) {
 				const bool has_ir_entry = i < unwind_map.size();
-				// toState
-				int32_t to_state = has_ir_entry ? unwind_map[i].to_state : -1;
+				// Use IR entry if available, otherwise use computed chain
+				int32_t to_state;
+				if (has_ir_entry) {
+					to_state = unwind_map[i].to_state;
+				} else if (i < computed_to_state.size()) {
+					to_state = computed_to_state[i];
+				} else {
+					to_state = -1;
+				}
 				appendLE_xdata(xdata, static_cast<uint32_t>(to_state));
-				
+
 				// action - RVA to destructor/cleanup function
-				// For now, we'll use 0 (no action) since we don't have destructor function addresses yet
-				// TODO: Add relocation for destructor function when we have the mangled name
 				uint32_t action_rva = 0;
 				if (has_ir_entry && !unwind_map[i].action.empty()) {
-					// We would need to add a relocation here for the destructor function
-					// For now, just set to 0 and add TODO comment
-					// action_rva will be patched via relocation
+					// action_rva will be patched via relocation when destructor support is added
 				}
 				appendLE_xdata(xdata, action_rva);
 			}
@@ -1369,8 +1458,8 @@ public:
 		
 		uint32_t handler_array_base = tryblock_map_offset + (num_try_blocks * 20); // 20 bytes per TryBlockMapEntry
 		
-		for (size_t i = 0; i < try_blocks.size(); ++i) {
-			const auto& try_block = try_blocks[i];
+		for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
+			const auto& try_block = sorted_try_blocks[i];
 			const auto& state_layout = try_state_layout[i];
 			
 			// tryLow (state when entering try block)
@@ -1408,7 +1497,7 @@ public:
 		// First, generate type descriptors for all unique exception types
 		// Use class member to track across multiple function calls
 		
-		for (const auto& try_block : try_blocks) {
+		for (const auto& try_block : sorted_try_blocks) {
 			for (const auto& handler : try_block.catch_handlers) {
 				if (!handler.is_catch_all && !handler.type_name.empty()) {
 					ensure_type_descriptor(handler.type_name);
@@ -1438,7 +1527,7 @@ public:
 		};
 
 		size_t handler_index = 0;
-		for (size_t try_index = 0; try_index < try_blocks.size(); ++try_index) {
+		for (size_t try_index = 0; try_index < sorted_try_blocks.size(); ++try_index) {
 			const auto& state_layout = try_state_layout[try_index];
 			for (const auto& catch_binding : state_layout.catches) {
 				const auto& handler = *catch_binding.handler;
@@ -1498,16 +1587,20 @@ public:
 				appendLE_xdata(xdata, uint32_t(0));
 				add_xdata_relocation(xdata_offset + address_of_handler_field_offset, catch_symbol_name);
 
-				// dispFrame - displacement from establisher frame to the catch funclet's
-				// frame pointer. On x64 FH3 (magic >= 0x19930522), HandlerType has 5 fields
-				// (20 bytes). The CRT computes frame_ptr = EstablisherFrame + dispFrame and
-				// passes it as RDX to the catch funclet.
-				// EstablisherFrame = RBP - effective_frame_size.
-				// The funclet does: lea rbp, [rdx + stack_frame_size].
-				// rbp = (RBP - effective_frame_size) + dispFrame + stack_frame_size.
-				// For rbp to equal parent's RBP: dispFrame = effective_frame_size - stack_frame_size.
-				// When not capped this is 0; when capped it's negative.
-				int32_t disp_frame = static_cast<int32_t>(effective_frame_size) - static_cast<int32_t>(stack_frame_size);
+				// dispFrame: offset from catch funclet's EstablisherFrame to where the
+				// funclet saved the parent's establisher frame (RDX arg).
+				// __CxxFrameHandler3 uses: parent_estab = *(funclet_estab + dispFrame)
+				// to find the parent's frame when dispatching nested exceptions.
+				//
+				// Funclet prologue on x64:
+				//   movq %rdx, 0x10(%rsp)  ; save parent estab at [entry_RSP + 0x10]
+				//   pushq %rbp             ; RSP -= 8
+				//   subq , %rsp       ; RSP -= 0x20  (total prolog delta = 0x28)
+				// RtlVirtualUnwind returns funclet_estab = entry_RSP (unwinds 0x28).
+				// funclet_estab + dispFrame = entry_RSP + 0x10 => dispFrame = 0x28 + 0x10 = 0x38.
+				// This is a CONSTANT 0x38, regardless of parent function's frame size.
+				// (Verified empirically: clang-cl emits 0x38 for all frame sizes.)
+				int32_t disp_frame = 0x38;
 				appendLE_xdata(xdata, static_cast<uint32_t>(disp_frame));
 				
 				handler_index++;
@@ -1522,18 +1615,24 @@ public:
 		};
 
 		std::vector<IpStateEntry> ip_to_state_entries;
-		ip_to_state_entries.reserve(try_blocks.size() * 2 + 2);
+		ip_to_state_entries.reserve(sorted_try_blocks.size() * 2 + 2);
 		ip_to_state_entries.push_back({function_start, -1});
 
-		for (size_t i = 0; i < try_blocks.size(); ++i) {
-			const auto& tb = try_blocks[i];
+		for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
+			const auto& tb = sorted_try_blocks[i];
 			const auto& layout = try_state_layout[i];
 			ip_to_state_entries.push_back({function_start + tb.try_start_offset, layout.try_low});
 			uint32_t try_end_ip = tb.try_end_offset;
 			if (try_end_ip < function_size) {
 				try_end_ip += 1;
 			}
-			ip_to_state_entries.push_back({function_start + try_end_ip, -1});
+			// After this try ends, determine if we're still inside a parent try block.
+			// If so, transition to the parent's try_low state; otherwise transition to -1.
+			int32_t post_try_state = -1;
+			if (parent_index[i] >= 0) {
+				post_try_state = try_state_layout[parent_index[i]].try_low;
+			}
+			ip_to_state_entries.push_back({function_start + try_end_ip, post_try_state});
 			
 			// Add catch funclet state ranges
 			for (const auto& catch_binding : layout.catches) {
@@ -1575,6 +1674,7 @@ public:
 		cpp_xdata_rva_field_offsets.push_back(p_ip_to_state_map_field_offset);
 
 		for (const auto& entry : compact_entries) {
+			FLASH_LOG_FORMAT(Codegen, Debug, "  IP-to-state: ip_rva=0x{:X} (func+{}), state={}", entry.ip_rva, entry.ip_rva - function_start, entry.state);
 			uint32_t ip_field_offset = static_cast<uint32_t>(xdata.size());
 			appendLE_xdata(xdata, entry.ip_rva);
 			cpp_text_rva_field_offsets.push_back(ip_field_offset);

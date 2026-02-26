@@ -9147,6 +9147,8 @@ private:
 			next_temp_var_offset_ = 8;  // Reset TempVar allocation offset
 			current_function_try_blocks_.clear();  // Clear exception tracking for next function
 			current_try_block_ = nullptr;
+			try_block_nesting_stack_.clear();
+			pending_catch_try_index_ = SIZE_MAX;
 			current_catch_handler_ = nullptr;
 			current_function_local_objects_.clear();  // Clear local object tracking
 			current_function_unwind_map_.clear();  // Clear unwind map
@@ -15506,8 +15508,10 @@ private:
 		try_block.try_end_offset = 0;  // Will be set in handleTryEnd
 		
 		current_function_try_blocks_.push_back(try_block);
-		current_try_block_ = &current_function_try_blocks_.back();
-		
+		size_t new_index = current_function_try_blocks_.size() - 1;
+		try_block_nesting_stack_.push_back(new_index);
+		current_try_block_ = &current_function_try_blocks_[new_index];
+
 		// Note: The instruction has a BranchOp typed payload with the handler label,
 		// but we don't need it for code generation - we track offsets directly.
 	}
@@ -15521,9 +15525,18 @@ private:
 		// TryEnd marks the end of a try block
 		// Record the current code offset as the end of the try block
 		
-		if (current_try_block_) {
-			current_try_block_->try_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-			current_try_block_ = nullptr;
+		if (!try_block_nesting_stack_.empty()) {
+			size_t try_index = try_block_nesting_stack_.back();
+			try_block_nesting_stack_.pop_back();
+			current_function_try_blocks_[try_index].try_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			pending_catch_try_index_ = try_index;
+
+			// Restore current_try_block_ to outer try block (if any)
+			if (!try_block_nesting_stack_.empty()) {
+				current_try_block_ = &current_function_try_blocks_[try_block_nesting_stack_.back()];
+			} else {
+				current_try_block_ = nullptr;
+			}
 		}
 	}
 
@@ -15536,9 +15549,9 @@ private:
 		// CatchBegin marks the start of a catch handler
 		// Record this catch handler in the most recent try block
 		
-		if (!current_function_try_blocks_.empty()) {
-			// Get the last try block (the one we just finished with TryEnd)
-			TryBlock& try_block = current_function_try_blocks_.back();
+		if (pending_catch_try_index_ != SIZE_MAX && pending_catch_try_index_ < current_function_try_blocks_.size()) {
+			// Get the try block that just ended (tracked by pending_catch_try_index_)
+			TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
 			
 			CatchHandler handler;
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
@@ -15588,8 +15601,8 @@ private:
 			// Determine handler index within this try block
 			size_t handler_index = 0;
 			bool is_multi_handler = false;
-			if (!current_function_try_blocks_.empty()) {
-				const TryBlock& try_block = current_function_try_blocks_.back();
+			if (pending_catch_try_index_ != SIZE_MAX && pending_catch_try_index_ < current_function_try_blocks_.size()) {
+				const TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
 				handler_index = try_block.catch_handlers.size() - 1;  // Just added
 				// We don't know total count yet, but if handler_index > 0, we're multi
 				is_multi_handler = (handler_index > 0);
@@ -15618,7 +15631,7 @@ private:
 				emitCmpFrameImm32(elf_selector_offset_, 0);  // placeholder 0
 				// Record patch position: the IMM32 is at the last 4 bytes we just wrote
 				uint32_t filter_patch_pos = static_cast<uint32_t>(textSectionData.size()) - 4;
-				elf_catch_filter_patches_.push_back({filter_patch_pos, current_function_try_blocks_.size() - 1, handler_index});
+				elf_catch_filter_patches_.push_back({filter_patch_pos, pending_catch_try_index_, handler_index});
 				
 				// JNE catch_end_label (skip this handler if selector doesn't match)
 				StringHandle catch_end_handle = StringTable::getOrInternStringHandle(catch_op.catch_end_label);
@@ -17216,6 +17229,8 @@ private:
 
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
+	std::vector<size_t> try_block_nesting_stack_;  // Stack of try block indices for nested try tracking
+	size_t pending_catch_try_index_ = SIZE_MAX;  // Try block index awaiting catch handlers
 	CatchHandler* current_catch_handler_ = nullptr;  // Currently active catch handler being processed
 	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF).
 	bool in_catch_funclet_ = false;  // Tracks whether codegen is currently inside a Windows catch funclet.

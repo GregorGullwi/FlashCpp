@@ -26,11 +26,6 @@ EXPECTED_FAIL=(
     # Standard header tests have been moved to tests/std/
     # They are no longer run by this script to avoid timeouts and failures
     # See tests/std/STANDARD_HEADERS_MISSING_FEATURES.md for detailed analysis
-    
-    # Tests restored from workarounds - expose known FlashCpp limitations
-    # Note: test_member_var_template_ret42.cpp now compiles successfully (member variable template support added)
-    # Note: test_placement_new_parsing_ret42.cpp now parses and compiles successfully (placement new with multiple args and alignas(type-id) added)
-    "test_out_of_line_template_member_multiline_ret42.cpp"  # Valid C++ multiline out-of-line member; parser doesn't handle yet
 )
 
 # Expected link failures - files that compile but require external C helper files
@@ -44,7 +39,6 @@ EXPECTED_LINK_FAIL=(
 
 # Expected runtime crashes - files that compile and link but crash at runtime
 EXPECTED_RUNTIME_CRASH=(
-    "test_exceptions_nested_ret0.cpp"          # Known crash with nested exception handling (signal 6 - SIGABRT)
 )
 
 # Results
