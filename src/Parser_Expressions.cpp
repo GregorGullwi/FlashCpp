@@ -8919,8 +8919,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 								if (!init_result.is_error() && init_result.node().has_value() &&
 									consume(")"_tok)) {
-									discard_saved_token(fold_check_pos);
-									discard_saved_token(binary_pos);
+								discard_saved_token(fold_check_pos);
 									result = emplace_node<ExpressionNode>(
 										FoldExpressionNode(first_id, fold_op,
 											FoldExpressionNode::Direction::Right, *init_result.node(), op_token));
