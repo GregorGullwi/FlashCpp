@@ -187,9 +187,8 @@ private:
 
 			uint32_t action = 0;
 			if (!try_region.catch_handlers.empty()) {
-				if (handler_region_idx < region_action_offsets.size()) {
-					action = region_action_offsets[handler_region_idx] + 1;  // 1-based
-				}
+				assert(handler_region_idx < region_action_offsets.size() && "action offset mismatch");
+				action = region_action_offsets[handler_region_idx] + 1;  // 1-based
 				handler_region_idx++;
 			}
 
