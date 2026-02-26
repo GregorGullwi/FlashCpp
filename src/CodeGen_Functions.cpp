@@ -534,7 +534,7 @@
 					}
 				}
 			}
-			if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
+			if (!matched_func_decl && !base_template_name.empty() && scope_pos != std::string_view::npos) {
 				std::string_view member_name = func_name_view.substr(scope_pos + 2);
 				
 				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving dependent qualified call: base_template='{}', member='{}'", base_template_name, member_name);
