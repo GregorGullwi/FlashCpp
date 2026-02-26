@@ -15822,13 +15822,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Determine default access specifier
 		AccessSpecifier default_access = ool_nested.is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
-		auto nested_struct_info = std::make_unique<StructTypeInfo>(qualified_name, default_access);
 		
 		// Save current lexer position and parser state
 		SaveHandle saved_pos = save_token_position();
 		auto saved_template_body = parsing_template_body_;
 		auto saved_template_class = parsing_template_class_;
 		auto saved_param_names = current_template_param_names_;
+		auto saved_delayed_bodies = std::move(delayed_function_bodies_);
+		delayed_function_bodies_.clear();
 		
 		// Set up template parsing context so template parameter types resolve correctly
 		parsing_template_body_ = true;
@@ -15838,6 +15839,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Restore lexer to the saved body position (before base class list or '{')
 		restore_lexer_position_only(ool_nested.body_start);
 		
+		// Create a StructDeclarationNode for the nested class — this enables the same
+		// parsing loop used by full specializations (constructors, destructors, using
+		// declarations, member functions, data members, etc.)
+		auto [nested_struct_node, nested_struct_ref] = emplace_node_ref<StructDeclarationNode>(
+			qualified_name, ool_nested.is_class, false /*is_union*/);
+		
+		// Register the type early so types resolve during body parsing
+		TypeInfo* nested_type_ptr = nullptr;
+		if (existing_nested_type) {
+			nested_type_ptr = existing_nested_type;
+		} else {
+			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size(), 0);
+			gTypesByName.emplace(qualified_name, &nested_type_info);
+			nested_type_ptr = &nested_type_info;
+		}
+		
+		auto nested_struct_info = std::make_unique<StructTypeInfo>(qualified_name, default_access);
+		
 		// Skip base class list if present
 		if (peek() == ":"_tok) {
 			advance();
@@ -15846,285 +15865,623 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 		
-		// Phase 1: Parse body for data members, collect deferred function positions
-		struct DeferredNestedFunc {
-			SaveHandle func_start;       // Lexer position at start of function (before return type or class name)
-			AccessSpecifier access;      // Access level when this function was encountered
-			bool is_constructor = false; // true if this is a constructor definition
-			bool is_destructor = false;  // true if this is a destructor definition
-			bool is_explicit = false;    // true if constructor was declared 'explicit'
-		};
-		std::vector<DeferredNestedFunc> deferred_functions;
+		// Expect opening brace
+		if (!consume("{"_tok)) {
+			// Restore parser state and continue
+			current_template_param_names_ = saved_param_names;
+			parsing_template_body_ = saved_template_body;
+			parsing_template_class_ = saved_template_class;
+			delayed_function_bodies_ = std::move(saved_delayed_bodies);
+			restore_lexer_position_only(saved_pos);
+			continue;
+		}
 		
+		// Parse class body using the same pattern as full specializations (lines ~1560-2314).
+		// This reuses existing parsing helpers: parse_static_assert(), parse_member_type_alias(),
+		// parse_enum_declaration(), parse_friend_declaration(), parse_declaration_specifiers(),
+		// parse_parameter_list(), parse_function_declaration(), parse_type_and_name(),
+		// parse_bitfield_width(), parse_expression(), parse_function_trailing_specifiers(), etc.
 		AccessSpecifier current_access = default_access;
-		if (peek() == "{"_tok) {
-			advance(); // consume '{'
+		
+		member_function_context_stack_.push_back({
+			qualified_name,
+			nested_type_ptr->type_index_,
+			&nested_struct_ref,
+			nullptr
+		});
+		
+		while (!peek().is_eof() && peek() != "}"_tok) {
+			// Skip empty declarations (bare ';' tokens)
+			if (peek() == ";"_tok) {
+				advance();
+				continue;
+			}
 			
-			while (!peek().is_eof() && peek() != "}"_tok) {
-				// Skip empty declarations (bare ';' tokens)
-				if (peek() == ";"_tok) {
+			// Keyword-dispatched handling (same as full specialization body parsing)
+			if (peek().is_keyword()) {
+				if (peek() == "public"_tok) {
 					advance();
-					continue;
-				}
-				
-				// Handle access specifiers: public:, private:, protected:
-				if (peek().is_keyword()) {
-					std::string_view keyword = peek_info().value();
-					if (keyword == "public" || keyword == "private" || keyword == "protected") {
-						advance(); // consume access specifier
-						if (peek() == ":"_tok) advance(); // consume ':'
-						if (keyword == "public") current_access = AccessSpecifier::Public;
-						else if (keyword == "private") current_access = AccessSpecifier::Private;
-						else if (keyword == "protected") current_access = AccessSpecifier::Protected;
-						continue;
+					if (!consume(":"_tok)) {
+						FLASH_LOG(Parser, Warning, "Expected ':' after 'public'");
 					}
-				}
-				
-				// Skip friend declarations
-				if (peek() == "friend"_tok) {
-					while (!peek().is_eof() && peek() != ";"_tok) {
-						if (peek() == "{"_tok) skip_balanced_braces();
-						else advance();
-					}
-					if (peek() == ";"_tok) advance();
+					current_access = AccessSpecifier::Public;
 					continue;
-				}
-				
-				// Evaluate static_assert using the existing parser
-				if (peek() == "static_assert"_tok) {
-					auto static_assert_result = parse_static_assert();
-					if (static_assert_result.is_error()) {
-						FLASH_LOG(Templates, Warning, "static_assert failed in out-of-line nested class: ",
+				} else if (peek() == "private"_tok) {
+					advance();
+					if (!consume(":"_tok)) {
+						FLASH_LOG(Parser, Warning, "Expected ':' after 'private'");
+					}
+					current_access = AccessSpecifier::Private;
+					continue;
+				} else if (peek() == "protected"_tok) {
+					advance();
+					if (!consume(":"_tok)) {
+						FLASH_LOG(Parser, Warning, "Expected ':' after 'protected'");
+					}
+					current_access = AccessSpecifier::Protected;
+					continue;
+				} else if (peek() == "static_assert"_tok) {
+					auto sa_result = parse_static_assert();
+					if (sa_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "static_assert in out-of-line nested class: ",
 						          StringTable::getStringView(qualified_name));
 					}
 					continue;
-				}
-				
-				// Skip using declarations/aliases — parse_member_type_alias requires a
-				// StructDeclarationNode which doesn't exist during Phase 1. Type aliases
-				// (e.g., "using value_type = T;") from the nested class body are not needed
-				// for struct layout computation. They would need full Phase 2 handling to be
-				// properly registered, which is left as future work.
-				if (peek() == "using"_tok) {
-					while (!peek().is_eof() && peek() != ";"_tok) {
-						advance();
+				} else if (peek() == "enum"_tok) {
+					auto enum_result = parse_enum_declaration();
+					if (enum_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "enum parse error in out-of-line nested class");
 					}
-					if (peek() == ";"_tok) advance();
 					continue;
-				}
-				
-				// Defer destructor definitions to Phase 2: ~ClassName() { ... }
-				if (peek_info().value() == "~") {
-					auto dtor_check = save_token_position();
-					advance(); // consume '~'
-					if (peek().is_identifier()) {
-						advance(); // consume class name
-						if (peek() == "("_tok) {
-							// Destructor — save position for Phase 2
-							deferred_functions.push_back({dtor_check, current_access, false, true, false});
-							skip_balanced_parens();
-							FlashCpp::MemberQualifiers dtor_quals;
-							skip_function_trailing_specifiers(dtor_quals);
-							if (peek() == "{"_tok) skip_balanced_braces();
-							else if (peek() == "="_tok) {
-								advance();
-								if (peek() == "default"_tok || peek() == "delete"_tok) advance();
-								if (peek() == ";"_tok) advance();
-							}
-							else if (peek() == ";"_tok) advance();
-							continue;
-						}
+				} else if (peek() == "using"_tok) {
+					auto alias_result = parse_member_type_alias("using", &nested_struct_ref, current_access);
+					if (alias_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "using parse error in out-of-line nested class");
 					}
-					// Not a destructor — restore position and continue to next parser rules
-					restore_token_position(dtor_check);
-				}
-				
-				// Try to detect constructors: ClassName(params) or explicit ClassName(params)
-				{
-					bool is_explicit_ctor = false;
-					auto ctor_check = save_token_position();
-					if (peek() == "explicit"_tok) {
-						advance();
-						is_explicit_ctor = true;
-					}
-					if (peek().is_identifier() && peek_info().value() == nested_name) {
-						advance(); // consume class name
-						if (peek() == "("_tok) {
-							// Constructor — save position for Phase 2
-							// Note: ctor_check is NOT discarded — Phase 2 needs it to restore lexer position
-							deferred_functions.push_back({ctor_check, current_access, true, false, is_explicit_ctor});
-							skip_balanced_parens();
-							FlashCpp::MemberQualifiers ctor_quals;
-							skip_function_trailing_specifiers(ctor_quals);
-							// Skip member initializer list
-							if (peek() == ":"_tok) {
-								advance();
-								while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
-									if (peek() == "("_tok) skip_balanced_parens();
-									else if (peek() == "{"_tok) {
-										skip_balanced_braces();
-										if (peek() != ","_tok) break;
-									}
-									else advance();
-								}
-							}
-							if (peek() == "{"_tok) skip_balanced_braces();
-							else if (peek() == "="_tok) {
-								advance();
-								if (peek() == "default"_tok || peek() == "delete"_tok) advance();
-								if (peek() == ";"_tok) advance();
-							}
-							else if (peek() == ";"_tok) advance();
-							continue;
-						}
-					}
-					restore_token_position(ctor_check);
-				}
-				
-				// Parse potential data member: [const/static/...] type name [= init] ;
-				// Skip leading qualifiers
-				bool is_static_member = false;
-				if (peek() == "static"_tok) {
-					is_static_member = true;
-					advance();
-				}
-				// Skip additional qualifiers
-				while (peek() == "const"_tok || peek() == "constexpr"_tok || peek() == "inline"_tok || peek() == "volatile"_tok || peek() == "mutable"_tok) {
-					advance();
-				}
-				
-				// Try to parse a type specifier
-				auto type_check = save_token_position();
-				auto type_result = parse_type_specifier();
-				if (type_result.is_error() || !type_result.node().has_value()) {
-					restore_token_position(type_check);
-					// Unknown token - skip to next semicolon or closing brace
-					while (!peek().is_eof() && peek() != ";"_tok && peek() != "}"_tok) {
-						if (peek() == "{"_tok) skip_balanced_braces();
-						else if (peek() == "("_tok) skip_balanced_parens();
-						else advance();
-					}
-					if (peek() == ";"_tok) advance();
 					continue;
-				}
-				
-				// Consume pointer/reference modifiers after the type
-				if (type_result.node()->is<TypeSpecifierNode>()) {
-					consume_pointer_ref_modifiers(type_result.node()->as<TypeSpecifierNode>());
-				}
-				
-				if (peek().is_identifier()) {
-					Token member_name_token = peek_info();
-					advance(); // consume member name
-					
-					if (peek() == "("_tok) {
-						// Member function — save position for Phase 2
-						// Note: type_check is NOT discarded — Phase 2 needs it to restore lexer position
-						deferred_functions.push_back({type_check, current_access, false, false, false});
-						skip_balanced_parens();
-						FlashCpp::MemberQualifiers func_quals;
-						skip_function_trailing_specifiers(func_quals);
-						// Handle trailing return type
-						if (peek() == "->"_tok) {
-							advance();
-							parse_type_specifier();
-						}
-						if (peek() == "{"_tok) skip_balanced_braces();
-						else if (peek() == "="_tok) {
-							advance();
-							if (peek() == "default"_tok || peek() == "delete"_tok) advance();
-							if (peek() == ";"_tok) advance();
-						}
-						else if (peek() == ";"_tok) advance();
-						continue;
+				} else if (peek() == "typedef"_tok) {
+					auto alias_result = parse_member_type_alias("typedef", &nested_struct_ref, current_access);
+					if (alias_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "typedef parse error in out-of-line nested class");
 					}
-					
-					if (peek() == ";"_tok || peek() == "="_tok || peek() == "{"_tok) {
-						// This is a data member declaration
-						discard_saved_token(type_check);
-						
-						// Skip initializer if present
-						if (peek() == "="_tok) {
-							advance();
-							while (!peek().is_eof() && peek() != ";"_tok && peek() != "}"_tok) {
-								if (peek() == "("_tok) skip_balanced_parens();
-								else if (peek() == "{"_tok) skip_balanced_braces();
-								else advance();
-							}
-						} else if (peek() == "{"_tok) {
-							skip_balanced_braces();
-						}
-						if (peek() == ";"_tok) advance();
-						
-						if (is_static_member) continue; // Skip static members for layout purposes
-						
-						// Substitute template parameters in the type
-						const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-						auto [subst_type, subst_type_index] = substitute_template_parameter(
-							type_spec, ool_nested.template_params, template_args_to_use);
-						
-						TypeSpecifierNode substituted_type_spec(
-							subst_type,
-							type_spec.qualifier(),
-							get_type_size_bits(subst_type),
-							Token()
-						);
-						substituted_type_spec.set_type_index(subst_type_index);
-						
-						for (const auto& ptr_level : type_spec.pointer_levels()) {
-							substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-						}
-						
-						size_t member_size;
-						if (substituted_type_spec.is_pointer()) {
-							member_size = 8;
-						} else {
-							member_size = substituted_type_spec.size_in_bits() / 8;
-						}
-						size_t member_alignment = get_type_alignment(substituted_type_spec.type(), member_size);
-						
-						bool is_ref_member = substituted_type_spec.is_reference();
-						bool is_rvalue_ref_member = substituted_type_spec.is_rvalue_reference();
-						
-						nested_struct_info->addMember(
-							member_name_token.handle(),        // name
-							substituted_type_spec.type(),       // type
-							substituted_type_spec.type_index(), // type_index
-							member_size,                        // size
-							member_alignment,                   // alignment
-							current_access,                     // access
-							std::nullopt,                       // default_value (none for OOL nested)
-							is_ref_member,                      // is_reference
-							is_rvalue_ref_member,               // is_rvalue_reference
-							(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0, // referenced_type_size_bits
-							false,                              // is_bitfield
-							{},                                 // bitfield_width
-							static_cast<int>(substituted_type_spec.pointer_depth()), // pointer_depth
-							std::nullopt                        // custom_alignment
-						);
-						
-						FLASH_LOG(Templates, Debug, "Added member to out-of-line nested class: ",
-						          member_name_token.value(), " of type ", (int)subst_type);
-						continue;
+					continue;
+				} else if (peek() == "template"_tok) {
+					auto template_result = parse_member_template_or_function(nested_struct_ref, current_access);
+					if (template_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "template member parse error in out-of-line nested class");
 					}
-				}
-				
-				// Fallback: couldn't parse this declaration, skip to next semicolon
-				restore_token_position(type_check);
-				while (!peek().is_eof() && peek() != ";"_tok && peek() != "}"_tok) {
+					continue;
+				} else if (peek() == "static"_tok) {
+					advance(); // consume "static"
+					auto static_result = parse_static_member_block(
+						qualified_name, nested_struct_ref,
+						nested_struct_info.get(), current_access,
+						current_template_param_names_, /*use_struct_type_info=*/false);
+					if (static_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "static member parse error in out-of-line nested class");
+					}
+					continue;
+				} else if (peek() == "struct"_tok || peek() == "class"_tok) {
+					// Skip nested struct/class declarations
+					advance();
+					skip_cpp_attributes();
+					if (peek().is_identifier()) advance();
+					if (peek() == "<"_tok) parse_explicit_template_arguments();
+					if (peek() == "final"_tok) advance();
+					if (peek() == ":"_tok) {
+						advance();
+						while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) advance();
+					}
 					if (peek() == "{"_tok) skip_balanced_braces();
-					else if (peek() == "("_tok) skip_balanced_parens();
-					else advance();
+					if (peek() == ";"_tok) advance();
+					continue;
+				} else if (peek() == "friend"_tok) {
+					auto friend_result = parse_friend_declaration();
+					if (friend_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "friend parse error in out-of-line nested class");
+					}
+					continue;
 				}
-				if (peek() == ";"_tok) advance();
 			}
-			// Don't consume '}' - just note we're done
+			
+			// Check for constructor: identifier matching nested class name followed by '('
+			// Same logic as full specialization constructor detection (lines ~1700-1944)
+			SaveHandle ctor_saved_pos = save_token_position();
+			bool found_constructor = false;
+			bool ctor_is_constexpr = false;
+			bool ctor_is_explicit = false;
+			{
+				auto specs = parse_declaration_specifiers();
+				ctor_is_constexpr = specs.is_constexpr;
+				while (peek() == "explicit"_tok) {
+					ctor_is_explicit = true;
+					advance();
+					if (peek() == "("_tok) skip_balanced_parens(); // explicit(condition)
+				}
+			}
+			if (!peek().is_eof() && peek().is_identifier() &&
+			    peek_info().value() == nested_name) {
+				advance(); // consume class name
+				
+				if (peek() == "("_tok) {
+					discard_saved_token(ctor_saved_pos);
+					found_constructor = true;
+					
+					auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+						qualified_name, ool_nested.nested_class_name);
+					ctor_ref.set_constexpr(ctor_is_constexpr);
+					ctor_ref.set_explicit(ctor_is_explicit);
+					
+					FlashCpp::ParsedParameterList params;
+					auto param_result = parse_parameter_list(params);
+					if (param_result.is_error()) {
+						FLASH_LOG(Templates, Warning, "Constructor param parse error in nested class");
+						break;
+					}
+					for (const auto& param : params.parameters) {
+						ctor_ref.add_parameter_node(param);
+					}
+					
+					gSymbolTable.enter_scope(ScopeType::Function);
+					register_parameters_in_scope(ctor_ref.parameter_nodes());
+					
+					if (parse_constructor_exception_specifier()) {
+						ctor_ref.set_noexcept(true);
+					}
+					if (auto req = parse_trailing_requires_clause()) {
+						ctor_ref.set_requires_clause(*req);
+					}
+					skip_gcc_attributes();
+					
+					// Parse member initializer list if present (same as full spec lines ~1768-1834)
+					if (peek() == ":"_tok) {
+						advance();
+						while (peek() != "{"_tok && peek() != ";"_tok) {
+							auto init_name_token = advance();
+							if (init_name_token.type() != Token::Type::Identifier) break;
+							
+							if (peek() == "<"_tok) {
+								parse_explicit_template_arguments();
+							}
+							
+							bool is_paren = peek() == "("_tok;
+							bool is_brace = peek() == "{"_tok;
+							if (!is_paren && !is_brace) break;
+							
+							advance();
+							TokenKind close_kind = is_paren ? ")"_tok : "}"_tok;
+							
+							std::vector<ASTNode> init_args;
+							if (peek() != close_kind) {
+								do {
+									auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+									if (arg_result.is_error()) break;
+									if (auto arg_node = arg_result.node()) {
+										if (peek() == "..."_tok) advance();
+										init_args.push_back(*arg_node);
+									}
+								} while (consume(","_tok));
+							}
+							
+							consume(close_kind);
+							
+							if (!init_args.empty()) {
+								ctor_ref.add_member_initializer(init_name_token.value(), init_args[0]);
+							}
+							
+							if (!consume(","_tok)) break;
+						}
+					}
+					
+					// Handle = default / = delete (same as full spec lines ~1837-1915)
+					bool ctor_is_defaulted = false;
+					bool ctor_is_deleted = false;
+					if (peek() == "="_tok) {
+						advance();
+						if (peek() == "default"_tok) {
+							advance();
+							ctor_is_defaulted = true;
+							consume(";"_tok);
+							ctor_ref.set_is_implicit(true);
+							auto [block_node, block_ref] = create_node_ref(BlockNode());
+							ctor_ref.set_definition(block_node);
+							gSymbolTable.exit_scope();
+						} else if (peek() == "delete"_tok) {
+							advance();
+							ctor_is_deleted = true;
+							consume(";"_tok);
+							gSymbolTable.exit_scope();
+							nested_struct_ref.add_constructor(ctor_node, current_access);
+							continue;
+						}
+					}
+					
+					// Parse constructor body if present (same as full spec lines ~1918-1936)
+					if (!ctor_is_defaulted && !ctor_is_deleted && peek() == "{"_tok) {
+						auto block_result = parse_block();
+						gSymbolTable.exit_scope();
+						if (!block_result.is_error() && block_result.node().has_value()) {
+							ctor_ref.set_definition(*block_result.node());
+						}
+					} else if (!ctor_is_defaulted && !ctor_is_deleted) {
+						consume(";"_tok);
+						gSymbolTable.exit_scope();
+					}
+					
+					nested_struct_ref.add_constructor(ctor_node, current_access);
+					ast_nodes_.push_back(ctor_node);
+					continue;
+				} else {
+					restore_token_position(ctor_saved_pos);
+				}
+			} else {
+				restore_token_position(ctor_saved_pos);
+			}
+			if (found_constructor) continue;
+			
+			// Check for destructor: ~ClassName()
+			// Same logic as full specialization destructor detection (lines ~1956-2052)
+			{
+				SaveHandle dtor_saved_pos = save_token_position();
+				auto dtor_leading_specs = parse_member_leading_specifiers();
+				bool dtor_is_virtual = !!(dtor_leading_specs & FlashCpp::MLS_Virtual);
+				if (peek() == "~"_tok) {
+					discard_saved_token(dtor_saved_pos);
+					advance(); // consume '~'
+					
+					auto name_token_opt = advance();
+					if (name_token_opt.type() == Token::Type::Identifier &&
+					    name_token_opt.value() == nested_name) {
+						
+						consume("("_tok);
+						consume(")"_tok);
+						
+						auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
+							qualified_name, StringTable::getOrInternStringHandle(
+								StringBuilder().append("~"sv).append(nested_name).commit()));
+						
+						// Parse trailing specifiers (noexcept, override, final, = default, = delete)
+						FlashCpp::MemberQualifiers dtor_member_quals;
+						FlashCpp::FunctionSpecifiers dtor_func_specs;
+						parse_function_trailing_specifiers(dtor_member_quals, dtor_func_specs);
+						
+						if (dtor_func_specs.is_noexcept) dtor_ref.set_noexcept(true);
+						
+						if (dtor_func_specs.is_defaulted) {
+							consume(";"_tok);
+							auto [block_node, block_ref] = create_node_ref(BlockNode());
+							NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
+							dtor_ref.set_mangled_name(mangled);
+							dtor_ref.set_definition(block_node);
+							nested_struct_ref.add_destructor(dtor_node, current_access, dtor_is_virtual);
+							continue;
+						}
+						
+						if (dtor_func_specs.is_deleted) {
+							consume(";"_tok);
+							continue;
+						}
+						
+						// Parse destructor body via delayed parsing (same as full spec lines ~2024-2041)
+						if (peek() == "{"_tok) {
+							SaveHandle body_start = save_token_position();
+							skip_balanced_braces();
+							delayed_function_bodies_.push_back({
+								nullptr, body_start, {}, qualified_name,
+								nested_type_ptr->type_index_, &nested_struct_ref,
+								false, false, true, nullptr, &dtor_ref, {}
+							});
+						} else {
+							consume(";"_tok);
+						}
+						
+						nested_struct_ref.add_destructor(dtor_node, current_access, dtor_is_virtual);
+						continue;
+					} else {
+						FLASH_LOG(Parser, Warning, "Unexpected destructor name in out-of-line nested class");
+						skip_member_declaration_to_semicolon();
+						continue;
+					}
+				} else {
+					restore_token_position(dtor_saved_pos);
+				}
+			}
+			
+			// Parse member declaration using existing parse_type_and_name() + parse_function_declaration()
+			// Same pattern as full specialization body parsing (lines ~2054-2310)
+			ParseResult member_result;
+			FlashCpp::MemberLeadingSpecifiers conv_specs;
+			{
+				SaveHandle conv_saved = save_token_position();
+				bool found_conversion_op = false;
+				conv_specs = parse_member_leading_specifiers();
+				if (peek() == "operator"_tok) {
+					SaveHandle op_saved = save_token_position();
+					Token operator_keyword_token = peek_info();
+					advance();
+					
+					bool is_conversion = false;
+					if (peek() != "("_tok && peek() != "+"_tok && peek() != "-"_tok &&
+					    peek() != "*"_tok && peek() != "/"_tok && peek() != "%"_tok &&
+					    peek() != "<"_tok && peek() != ">"_tok && peek() != "="_tok &&
+					    peek() != "!"_tok && peek() != "&"_tok && peek() != "|"_tok &&
+					    peek() != "^"_tok && peek() != "~"_tok && peek() != "["_tok &&
+					    peek() != ","_tok && peek() != "->"_tok) {
+						is_conversion = true;
+						auto conv_type_result = parse_type_specifier();
+						if (!conv_type_result.is_error() && conv_type_result.node().has_value()) {
+							if (peek() == "("_tok) {
+								auto decl_node = emplace_node<DeclarationNode>(
+									*conv_type_result.node(), operator_keyword_token);
+								discard_saved_token(op_saved);
+								discard_saved_token(conv_saved);
+								member_result = ParseResult::success(decl_node);
+								found_conversion_op = true;
+							}
+						}
+					}
+					if (!is_conversion) {
+						restore_token_position(op_saved);
+					}
+				}
+				if (!found_conversion_op) {
+					restore_token_position(conv_saved);
+					member_result = parse_type_and_name();
+				}
+			}
+			if (member_result.is_error() || !member_result.node().has_value()) {
+				FLASH_LOG(Parser, Error, "Failed to parse member in out-of-line nested class: ",
+				          StringTable::getStringView(qualified_name));
+				skip_member_declaration_to_semicolon();
+				continue;
+			}
+			
+			// Check if this is a member function (has '(') or data member
+			if (peek() == "("_tok) {
+				// Member function — use parse_function_declaration for full handling
+				// (trailing return types, const/volatile/noexcept, etc. handled automatically)
+				if (!member_result.node()->is<DeclarationNode>()) {
+					skip_member_declaration_to_semicolon();
+					continue;
+				}
+				
+				DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+				auto func_result = parse_function_declaration(decl_node);
+				if (func_result.is_error() || !func_result.node().has_value()) {
+					skip_member_declaration_to_semicolon();
+					continue;
+				}
+				
+				FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+				DeclarationNode& func_decl_node = func_decl.decl_node();
+				
+				auto [member_func_node, member_func_ref] =
+					emplace_node_ref<FunctionDeclarationNode>(func_decl_node, StringTable::getStringView(qualified_name));
+				
+				for (const auto& param : func_decl.parameter_nodes()) {
+					member_func_ref.add_parameter_node(param);
+				}
+				
+				auto definition_opt = func_decl.get_definition();
+				if (definition_opt.has_value()) {
+					member_func_ref.set_definition(definition_opt.value());
+				}
+				
+				member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
+				member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
+				member_func_ref.set_inline_always(conv_specs & FlashCpp::MLS_Inline);
+				
+				// Parse trailing specifiers (const, volatile, noexcept, override, final)
+				FlashCpp::MemberQualifiers member_quals;
+				FlashCpp::FunctionSpecifiers func_specs;
+				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+				if (specs_result.is_error()) {
+					skip_member_declaration_to_semicolon();
+					continue;
+				}
+				
+				// Parse function body via delayed parsing (same as full spec lines ~2176-2204)
+				if (peek() == "{"_tok) {
+					SaveHandle body_start = save_token_position();
+					skip_balanced_braces();
+					delayed_function_bodies_.push_back({
+						&member_func_ref, body_start, {}, qualified_name,
+						nested_type_ptr->type_index_, &nested_struct_ref,
+						false, false, false, nullptr, nullptr, {}
+					});
+				} else {
+					consume(";"_tok);
+				}
+				
+				nested_struct_ref.add_member_function(
+					member_func_node, current_access,
+					!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+					func_specs.is_pure_virtual, func_specs.is_override, func_specs.is_final,
+					member_quals.is_const, member_quals.is_volatile);
+				
+				if (nested_struct_info) {
+					StringHandle func_name_handle = decl_node.identifier_token().handle();
+					nested_struct_info->addMemberFunction(func_name_handle, member_func_node,
+						current_access,
+						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+						func_specs.is_pure_virtual, func_specs.is_override, func_specs.is_final);
+					if (!nested_struct_info->member_functions.empty()) {
+						nested_struct_info->member_functions.back().is_const = member_quals.is_const;
+						nested_struct_info->member_functions.back().is_volatile = member_quals.is_volatile;
+					}
+				}
+				
+				ast_nodes_.push_back(member_func_node);
+			} else {
+				// Data member — use parse_bitfield_width() and parse_expression() for proper handling
+				if (!member_result.node()->is<DeclarationNode>()) {
+					skip_member_declaration_to_semicolon();
+					continue;
+				}
+				
+				std::optional<ASTNode> default_initializer;
+				const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+				std::optional<size_t> bitfield_width;
+				std::optional<ASTNode> bitfield_width_expr;
+				
+				if (auto width_result = parse_bitfield_width(bitfield_width, &bitfield_width_expr); width_result.is_error()) {
+					skip_member_declaration_to_semicolon();
+					continue;
+				}
+				
+				// Parse member initialization with '=' (same as full spec lines ~2253-2264)
+				if (peek() == "="_tok) {
+					advance();
+					auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (!init_result.is_error() && init_result.node().has_value()) {
+						default_initializer = *init_result.node();
+					}
+				}
+				
+				nested_struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr);
+				
+				// Handle comma-separated declarations (e.g., int x, y, z;)
+				while (peek() == ","_tok) {
+					advance();
+					auto next_member_name = advance();
+					if (next_member_name.type() != Token::Type::Identifier) break;
+					
+					std::optional<size_t> additional_bitfield_width;
+					std::optional<ASTNode> additional_bitfield_width_expr;
+					if (auto width_result = parse_bitfield_width(additional_bitfield_width, &additional_bitfield_width_expr); width_result.is_error()) {
+						break;
+					}
+					
+					std::optional<ASTNode> additional_init;
+					if (peek() == "="_tok) {
+						advance();
+						auto init_result = parse_expression(2, ExpressionContext::Normal);
+						if (!init_result.is_error() && init_result.node().has_value()) {
+							additional_init = *init_result.node();
+						}
+					}
+					
+					const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+					ASTNode next_member_decl = emplace_node<DeclarationNode>(
+						emplace_node<TypeSpecifierNode>(type_spec), next_member_name);
+					nested_struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
+				}
+				
+				consume(";"_tok);
+			}
 		}
 		
-		// Restore parser state (after Phase 1)
+		// Consume closing brace
+		consume("}"_tok);
+		
+		// Pop member function context
+		member_function_context_stack_.pop_back();
+		
+		// Parse delayed function bodies (destructors, member functions with bodies)
+		// Same approach as full specialization delayed body parsing (lines ~2458-2510)
+		SaveHandle position_after_nested = save_token_position();
+		for (auto& delayed : delayed_function_bodies_) {
+			restore_token_position(delayed.body_start);
+			
+			gSymbolTable.enter_scope(ScopeType::Function);
+			member_function_context_stack_.push_back({
+				delayed.struct_name, delayed.struct_type_index,
+				delayed.struct_node, nullptr
+			});
+			
+			if (delayed.is_constructor && delayed.ctor_node) {
+				for (const auto& param : delayed.ctor_node->parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						gSymbolTable.insert(param.as<DeclarationNode>().identifier_token().value(), param);
+					}
+				}
+			} else if (!delayed.is_destructor && delayed.func_node) {
+				for (const auto& param : delayed.func_node->parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						gSymbolTable.insert(param.as<DeclarationNode>().identifier_token().value(), param);
+					}
+				}
+			}
+			
+			auto block_result = parse_block();
+			member_function_context_stack_.pop_back();
+			gSymbolTable.exit_scope();
+			
+			if (!block_result.is_error() && block_result.node().has_value()) {
+				if (delayed.is_destructor && delayed.dtor_node) {
+					delayed.dtor_node->set_definition(*block_result.node());
+				} else if (delayed.func_node) {
+					delayed.func_node->set_definition(*block_result.node());
+				}
+			}
+		}
+		restore_token_position(position_after_nested);
+		delayed_function_bodies_.clear();
+		
+		// Build StructTypeInfo from the parsed StructDeclarationNode members
+		// Same approach as full specialization (lines ~2354-2450)
+		for (const auto& member_decl : nested_struct_ref.members()) {
+			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+			
+			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+			size_t referenced_size_bits = type_spec.size_in_bits();
+			
+			if (type_spec.type() == Type::Struct) {
+				const TypeInfo* member_type_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == type_spec.type_index()) {
+						member_type_info = &ti;
+						break;
+					}
+				}
+				if (member_type_info && member_type_info->getStructInfo()) {
+					member_size = member_type_info->getStructInfo()->total_size;
+					referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+					member_alignment = member_type_info->getStructInfo()->alignment;
+				}
+			}
+			
+			bool is_ref_member = type_spec.is_reference();
+			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+			if (is_ref_member) {
+				referenced_size_bits = referenced_size_bits ? referenced_size_bits : type_spec.size_in_bits();
+			}
+			
+			nested_struct_info->addMember(
+				decl.identifier_token().handle(),
+				type_spec.type(),
+				type_spec.type_index(),
+				member_size,
+				member_alignment,
+				member_decl.access,
+				member_decl.default_initializer,
+				is_ref_member,
+				is_rvalue_ref_member,
+				referenced_size_bits,
+				false, {},
+				static_cast<int>(type_spec.pointer_depth()),
+				member_decl.bitfield_width
+			);
+		}
+		
+		// Add member functions to struct info (same as full spec lines ~2404-2438)
+		bool has_constructor = false;
+		for (const auto& mf : nested_struct_ref.member_functions()) {
+			if (mf.is_constructor) {
+				has_constructor = true;
+				nested_struct_info->addConstructor(mf.function_declaration, mf.access);
+			} else if (mf.is_destructor) {
+				nested_struct_info->addDestructor(mf.function_declaration, mf.access, mf.is_virtual);
+			}
+		}
+		nested_struct_info->needs_default_constructor = !has_constructor;
+		
+		// Restore parser state
 		current_template_param_names_ = saved_param_names;
 		parsing_template_body_ = saved_template_body;
 		parsing_template_class_ = saved_template_class;
+		delayed_function_bodies_ = std::move(saved_delayed_bodies);
 		restore_lexer_position_only(saved_pos);
 		
 		// Finalize the nested struct layout
@@ -16134,261 +16491,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Register the nested class in the type system
-		if (existing_nested_type) {
-			// Update existing forward-declared type in-place
-			existing_nested_type->setStructInfo(std::move(nested_struct_info));
-			if (existing_nested_type->getStructInfo()) {
-				existing_nested_type->type_size_ = existing_nested_type->getStructInfo()->total_size;
-			}
-			FLASH_LOG(Templates, Debug, "Updated out-of-line nested class: ", StringTable::getStringView(qualified_name),
-			          " (size=", existing_nested_type->type_size_, ")");
-		} else {
-			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size(), 0);
-			nested_type_info.setStructInfo(std::move(nested_struct_info));
-			if (nested_type_info.getStructInfo()) {
-				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
-			}
-			gTypesByName.emplace(qualified_name, &nested_type_info);
-			FLASH_LOG(Templates, Debug, "Registered out-of-line nested class: ", StringTable::getStringView(qualified_name),
-			          " (size=", nested_type_info.type_size_, ")");
+		nested_type_ptr->setStructInfo(std::move(nested_struct_info));
+		if (nested_type_ptr->getStructInfo()) {
+			nested_type_ptr->type_size_ = nested_type_ptr->getStructInfo()->total_size;
 		}
-		
-		// Phase 2: Process deferred member functions now that the nested type is registered
-		TypeInfo* nested_type_ptr = nullptr;
-		{
-			auto nit = gTypesByName.find(qualified_name);
-			if (nit != gTypesByName.end()) nested_type_ptr = nit->second;
-		}
-		
-		if (nested_type_ptr && nested_type_ptr->getStructInfo() && !deferred_functions.empty()) {
-			FLASH_LOG(Templates, Debug, "Processing ", deferred_functions.size(), 
-			          " deferred member functions for nested class ", StringTable::getStringView(qualified_name));
-			
-			for (const auto& deferred : deferred_functions) {
-				// Save position and set up template context for re-parsing
-				SaveHandle func_saved_pos = save_token_position();
-				auto func_saved_template_body = parsing_template_body_;
-				auto func_saved_template_class = parsing_template_class_;
-				auto func_saved_param_names = current_template_param_names_;
-				parsing_template_body_ = true;
-				parsing_template_class_ = true;
-				current_template_param_names_ = ool_nested.template_param_names;
-				
-				// Restore lexer to the saved function position
-				restore_lexer_position_only(deferred.func_start);
-				
-				// Build template argument conversion for substitution
-                std::vector<TemplateArgument> converted_args;
-                converted_args.reserve(template_args_to_use.size());
-                for (const auto& arg : template_args_to_use) {
-                    converted_args.push_back(toTemplateArgument(arg));
-                }
-				
-				bool func_parsed = false;
-				
-				if (deferred.is_constructor) {
-					// Constructor: [explicit] ClassName(params) [: init_list] { body }
-					if (peek() == "explicit"_tok) advance();
-					if (peek().is_identifier()) {
-						advance(); // consume class name
-						if (peek() == "("_tok) {
-							FlashCpp::ParsedParameterList ctor_params;
-							auto param_result = parse_parameter_list(ctor_params);
-							if (!param_result.is_error()) {
-								FlashCpp::MemberQualifiers ctor_quals;
-								skip_function_trailing_specifiers(ctor_quals);
-								
-								// Skip member initializer list to find body
-								if (peek() == ":"_tok) {
-									advance();
-									while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
-										if (peek() == "("_tok) skip_balanced_parens();
-										else if (peek() == "{"_tok) {
-											skip_balanced_braces();
-											if (peek() != ","_tok) break;
-										}
-										else advance();
-									}
-								}
-								
-								if (peek() == "{"_tok) {
-									member_function_context_stack_.push_back({
-										qualified_name, nested_type_ptr->type_index_, nullptr, nullptr
-									});
-									gSymbolTable.enter_scope(ScopeType::Block);
-									for (auto& param : ctor_params.parameters) {
-										if (param.is<DeclarationNode>()) {
-											gSymbolTable.insert(param.as<DeclarationNode>().identifier_token().value(), param);
-										}
-									}
-									
-									auto body_result = parse_block();
-									
-									member_function_context_stack_.pop_back();
-									gSymbolTable.exit_scope();
-									
-									if (!body_result.is_error() && body_result.node().has_value()) {
-										try {
-											ASTNode subst_body = substituteTemplateParameters(
-												*body_result.node(), ool_nested.template_params, converted_args);
-											
-											auto ctor_node = emplace_node<ConstructorDeclarationNode>(
-												qualified_name, ool_nested.nested_class_name);
-											auto& ctor_ref = ctor_node.as<ConstructorDeclarationNode>();
-											ctor_ref.set_explicit(deferred.is_explicit);
-											for (const auto& param : ctor_params.parameters) {
-												ASTNode subst_param = substituteTemplateParameters(
-													param, ool_nested.template_params, converted_args);
-												ctor_ref.add_parameter_node(subst_param);
-											}
-											ctor_ref.set_definition(subst_body);
-											
-											nested_type_ptr->getStructInfo()->member_functions.push_back(
-												StructMemberFunction(ool_nested.nested_class_name, ctor_node, deferred.access, true, false));
-											func_parsed = true;
-											FLASH_LOG(Templates, Debug, "Added constructor to nested class: ",
-											          StringTable::getStringView(qualified_name));
-										} catch (...) {
-											FLASH_LOG(Templates, Warning, "Failed to substitute template params in nested constructor");
-										}
-									}
-								}
-							}
-						}
-					}
-				} else if (deferred.is_destructor) {
-					// Destructor: ~ClassName() { body }
-					advance(); // consume '~'
-					if (peek().is_identifier()) {
-						advance(); // consume class name
-						if (peek() == "("_tok) {
-							skip_balanced_parens();
-							FlashCpp::MemberQualifiers dtor_quals;
-							skip_function_trailing_specifiers(dtor_quals);
-							
-							if (peek() == "{"_tok) {
-								member_function_context_stack_.push_back({
-									qualified_name, nested_type_ptr->type_index_, nullptr, nullptr
-								});
-								gSymbolTable.enter_scope(ScopeType::Block);
-								
-								auto body_result = parse_block();
-								
-								member_function_context_stack_.pop_back();
-								gSymbolTable.exit_scope();
-								
-								if (!body_result.is_error() && body_result.node().has_value()) {
-									try {
-										ASTNode subst_body = substituteTemplateParameters(
-											*body_result.node(), ool_nested.template_params, converted_args);
-										
-										StringHandle dtor_name = StringTable::getOrInternStringHandle(
-											StringBuilder().append("~"sv).append(nested_name).commit());
-										auto dtor_node = emplace_node<DestructorDeclarationNode>(qualified_name, dtor_name);
-										dtor_node.as<DestructorDeclarationNode>().set_definition(subst_body);
-										
-										nested_type_ptr->getStructInfo()->member_functions.push_back(
-											StructMemberFunction(dtor_name, dtor_node, deferred.access, false, true));
-										func_parsed = true;
-										FLASH_LOG(Templates, Debug, "Added destructor to nested class: ",
-										          StringTable::getStringView(qualified_name));
-									} catch (...) {
-										FLASH_LOG(Templates, Warning, "Failed to substitute template params in nested destructor");
-									}
-								}
-							}
-						}
-					}
-				} else {
-					// Regular member function: RetType name(params) [const] { body }
-					auto ret_result = parse_type_specifier();
-					if (!ret_result.is_error() && ret_result.node().has_value()) {
-						if (ret_result.node()->is<TypeSpecifierNode>()) {
-							consume_pointer_ref_modifiers(ret_result.node()->as<TypeSpecifierNode>());
-						}
-						
-						if (peek().is_identifier()) {
-							Token func_name_token = peek_info();
-							advance();
-							if (peek() == "("_tok) {
-								FlashCpp::ParsedParameterList func_params;
-								auto param_result = parse_parameter_list(func_params);
-								if (!param_result.is_error()) {
-									FlashCpp::MemberQualifiers func_quals;
-									skip_function_trailing_specifiers(func_quals);
-									
-									if (peek() == "->"_tok) {
-										advance();
-										ret_result = parse_type_specifier();
-									}
-									
-									if (peek() == "{"_tok) {
-										member_function_context_stack_.push_back({
-											qualified_name, nested_type_ptr->type_index_, nullptr, nullptr
-										});
-										gSymbolTable.enter_scope(ScopeType::Block);
-										for (auto& param : func_params.parameters) {
-											if (param.is<DeclarationNode>()) {
-												gSymbolTable.insert(param.as<DeclarationNode>().identifier_token().value(), param);
-											}
-										}
-										
-										auto body_result = parse_block();
-										
-										member_function_context_stack_.pop_back();
-										gSymbolTable.exit_scope();
-										
-										if (!body_result.is_error() && body_result.node().has_value()) {
-											try {
-												ASTNode subst_body = substituteTemplateParameters(
-													*body_result.node(), ool_nested.template_params, converted_args);
-												
-												const TypeSpecifierNode& ret_spec = ret_result.node()->as<TypeSpecifierNode>();
-												auto [subst_ret, subst_ret_idx] = substitute_template_parameter(
-													ret_spec, ool_nested.template_params, template_args_to_use);
-												
-												auto subst_ret_node = emplace_node<TypeSpecifierNode>(
-													subst_ret, ret_spec.qualifier(),
-													get_type_size_bits(subst_ret), func_name_token);
-												subst_ret_node.as<TypeSpecifierNode>().set_type_index(subst_ret_idx);
-												
-												auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(
-													subst_ret_node, func_name_token);
-												auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-													func_decl_ref, func_name_token.value());
-												
-												for (const auto& param : func_params.parameters) {
-													ASTNode subst_param = substituteTemplateParameters(
-														param, ool_nested.template_params, converted_args);
-													func_ref.add_parameter_node(subst_param);
-												}
-												func_ref.set_definition(subst_body);
-												
-												StringHandle func_name_handle = func_name_token.handle();
-												nested_type_ptr->getStructInfo()->member_functions.push_back(
-													StructMemberFunction(func_name_handle, func_node, deferred.access));
-												func_parsed = true;
-												FLASH_LOG(Templates, Debug, "Added member function to nested class: ",
-												          StringTable::getStringView(qualified_name), "::", func_name_token.value());
-											} catch (...) {
-												FLASH_LOG(Templates, Warning, "Failed to substitute template params in nested member function");
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-				
-				(void)func_parsed;
-				// Restore parser state
-				current_template_param_names_ = func_saved_param_names;
-				parsing_template_body_ = func_saved_template_body;
-				parsing_template_class_ = func_saved_template_class;
-				restore_lexer_position_only(func_saved_pos);
-			}
-		}
+		FLASH_LOG(Templates, Debug, "Registered out-of-line nested class: ", StringTable::getStringView(qualified_name),
+		          " (size=", nested_type_ptr->type_size_, ")");
 	}
 
 	// Fix up struct members whose types were unresolved nested classes.
