@@ -1253,6 +1253,40 @@ ParseResult Parser::parse_template_declaration() {
 
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
 
+			// Check for out-of-line member class definition: template<> class Foo<Args>::Bar { ... }
+			// E.g., template<> class basic_ostream<char, char_traits<char>>::sentry { ... };
+			if (peek() == "::"_tok) {
+				advance(); // consume '::'
+				if (peek().is_identifier()) {
+					std::string_view member_class_name = peek_info().value();
+					advance(); // consume member class name
+					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition (full spec): {}::{}",
+					                 template_name, member_class_name);
+					
+					// Skip base class list if present
+					if (peek() == ":"_tok) {
+						advance();
+						while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+							advance();
+						}
+					}
+					
+					// Skip body if present
+					if (peek() == "{"_tok) {
+						skip_balanced_braces();
+					}
+					
+					// Consume trailing semicolon
+					consume(";"_tok);
+					
+					// Reset parsing context flags
+					parsing_template_class_ = false;
+					parsing_template_body_ = false;
+					
+					return saved_position.success();
+				}
+			}
+
 			// Check for forward declaration: template<> struct ClassName<Args>;
 			if (peek() == ";"_tok) {
 				advance(); // consume ';'
@@ -1589,6 +1623,9 @@ ParseResult Parser::parse_template_declaration() {
 						// Handle nested struct/class declarations inside full specialization body
 						advance(); // consume 'struct' or 'class'
 						
+						// Skip C++11 attributes
+						skip_cpp_attributes();
+						
 						// Skip struct name if present
 						if (peek().is_identifier()) {
 							advance(); // consume struct name
@@ -1597,6 +1634,11 @@ ParseResult Parser::parse_template_declaration() {
 						// Skip template arguments if present (e.g., struct Wrapper<int>)
 						if (peek() == "<"_tok) {
 							parse_explicit_template_arguments();
+						}
+						
+						// Skip 'final' specifier if present
+						if (peek() == "final"_tok || (peek().is_identifier() && peek_info().value() == "final")) {
+							advance();
 						}
 						
 						// Skip base class list if present (e.g., struct Frame : public Base)
@@ -2529,6 +2571,43 @@ ParseResult Parser::parse_template_declaration() {
 			
 			std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
 			
+			// Check for out-of-line member class definition: template<...> class Foo<...>::Bar { ... }
+			// E.g., template<typename _CharT, typename _Traits>
+			//        class basic_ostream<_CharT, _Traits>::sentry { ... };
+			// This defines a nested class member of a class template outside the class body.
+			// We skip the body here since instantiation uses the nested class from the primary template.
+			if (peek() == "::"_tok) {
+				advance(); // consume '::'
+				if (peek().is_identifier()) {
+					std::string_view member_class_name = peek_info().value();
+					advance(); // consume member class name
+					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition: {}::{}",
+					                 template_name, member_class_name);
+					
+					// Skip base class list if present
+					if (peek() == ":"_tok) {
+						advance();
+						while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+							advance();
+						}
+					}
+					
+					// Skip body if present
+					if (peek() == "{"_tok) {
+						skip_balanced_braces();
+					}
+					
+					// Consume trailing semicolon
+					consume(";"_tok);
+					
+					// Clean up template parameter context
+					current_template_param_names_.clear();
+					parsing_template_body_ = false;
+					
+					return saved_position.success();
+				}
+			}
+			
 			// Generate a unique name for the pattern template
 			// We use the template parameter names + modifiers to create unique pattern names
 			// E.g., Container<T*> -> Container_pattern_TP
@@ -2873,11 +2952,33 @@ ParseResult Parser::parse_template_declaration() {
 					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
 						// Handle nested struct/class declarations inside partial specialization body
 						// e.g., struct __type { ... };
+						// e.g., class _Sp_counted_ptr final : public _Sp_counted_base<_Lp> { ... };
 						advance(); // consume 'struct' or 'class'
+						
+						// Skip C++11 attributes
+						skip_cpp_attributes();
 						
 						// Skip struct name if present
 						if (peek().is_identifier()) {
 							advance(); // consume struct name
+						}
+						
+						// Skip template arguments if present (e.g., struct Wrapper<int>)
+						if (peek() == "<"_tok) {
+							skip_template_arguments();
+						}
+						
+						// Skip 'final' specifier if present
+						if (peek() == "final"_tok || (peek().is_identifier() && peek_info().value() == "final")) {
+							advance();
+						}
+						
+						// Skip base class list if present (e.g., : public Base<T>)
+						if (peek() == ":"_tok) {
+							advance(); // consume ':'
+							while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
+								advance();
+							}
 						}
 						
 						// Skip to body or semicolon
@@ -18915,6 +19016,55 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			if (peek_info().value() == "~") {
 				advance(); // consume '~'
 				is_dtor = true;
+			}
+			// Handle nested class member function: ClassName<Args>::NestedClass::ctor/dtor/func(...)
+			// E.g., basic_ostream<_CharT, _Traits>::sentry::sentry(...)
+			//        basic_ostream<_CharT, _Traits>::sentry::~sentry()
+			if (!is_dtor && peek().is_identifier() && peek_info().value() != potential_class.value()) {
+				SaveHandle nested_check = save_token_position();
+				Token nested_class_token = peek_info();
+				advance(); // consume nested class name
+				if (peek() == "::"_tok) {
+					advance(); // consume '::'
+					bool is_nested_dtor = false;
+					if (peek_info().value() == "~") {
+						advance(); // consume '~'
+						is_nested_dtor = true;
+					}
+					if (peek().is_identifier()) {
+						advance(); // consume function name
+						if (peek() == "("_tok) {
+							// Out-of-line nested class member function definition
+							// Skip the entire definition (params, body, etc.)
+							discard_saved_token(nested_check);
+							discard_saved_token(ctor_check);
+							FLASH_LOG_FORMAT(Templates, Debug,
+								"Skipping out-of-line nested class member function: {}::{}::{}",
+								potential_class.value(), nested_class_token.value(),
+								(is_nested_dtor ? "~dtor" : "ctor/func"));
+							skip_balanced_parens();
+							FlashCpp::MemberQualifiers nested_quals;
+							skip_function_trailing_specifiers(nested_quals);
+							// Skip member initializer list
+							if (peek() == ":"_tok) {
+								advance();
+								while (!peek().is_eof() && peek() != ";"_tok) {
+									if (peek() == "("_tok) skip_balanced_parens();
+									else if (peek() == "{"_tok) {
+										skip_balanced_braces();
+										if (peek() != ","_tok) break;
+									} else advance();
+								}
+							}
+							if (peek() == "{"_tok) skip_balanced_braces();
+							else if (peek() == ";"_tok) advance();
+							discard_saved_token(saved_pos);
+							return true;
+						}
+					}
+				}
+				// Not a nested class member - restore to after the first '::' 
+				restore_token_position(nested_check);
 			}
 			if (peek().is_identifier() && peek_info().value() == potential_class.value()) {
 					Token ctor_name_token = peek_info();
