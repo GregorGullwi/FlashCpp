@@ -512,10 +512,14 @@
 				if (direct_it != gTypesByName.end() && direct_it->second->isStruct()) {
 					const StructTypeInfo* si = direct_it->second->getStructInfo();
 					if (si) {
+						// Count expected parameters for overload disambiguation
+						size_t direct_expected_param_count = 0;
+						functionCallNode.arguments().visit([&](ASTNode) { ++direct_expected_param_count; });
 						for (const auto& mf : si->member_functions) {
 							if (mf.function_decl.is<FunctionDeclarationNode>()) {
 								const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
-								if (fd.decl_node().identifier_token().value() == member_name_direct) {
+								if (fd.decl_node().identifier_token().value() == member_name_direct
+								    && fd.parameter_nodes().size() == direct_expected_param_count) {
 									matched_func_decl = &fd;
 									resolveMangledName(matched_func_decl, struct_part);
 									// Queue all member functions of this struct for deferred generation
