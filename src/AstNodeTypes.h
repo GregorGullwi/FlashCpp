@@ -47,6 +47,8 @@ public:
 	ASTNode() = default;
 
 	template <typename T> ASTNode(T* node) : node_(node) {}
+	// Accepts const T* by stripping const; safe because ASTNode stores pointers into globally-owned
+	// non-const storage (gChunkedAnyStorage / gTypeInfo). Used when visiting const variant alternatives.
 	template <typename T> ASTNode(const T* node) : node_(const_cast<T*>(node)) {}
 
 	template <typename T, typename... Args>
