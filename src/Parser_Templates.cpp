@@ -19063,8 +19063,13 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 										if (peek() != ","_tok) break;
 									} else advance();
 								}
-							}
 							if (peek() == "{"_tok) skip_balanced_braces();
+							else if (peek() == "="_tok) {
+								advance(); // consume '='
+								if (peek() == "default"_tok || peek() == "delete"_tok) advance();
+								if (peek() == ";"_tok) advance();
+							}
+							else if (peek() == ";"_tok) advance();
 							else if (peek() == ";"_tok) advance();
 							discard_saved_token(saved_pos);
 							return true;
