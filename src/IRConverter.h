@@ -15584,7 +15584,7 @@ private:
 				emitCmpFrameImm32(elf_selector_offset_, 0);  // placeholder 0
 				// Record patch position: the IMM32 is at the last 4 bytes we just wrote
 				uint32_t filter_patch_pos = static_cast<uint32_t>(textSectionData.size()) - 4;
-				elf_catch_filter_patches_.push_back({filter_patch_pos, current_function_try_blocks_.size() - 1, handler_index});
+				elf_catch_filter_patches_.push_back({filter_patch_pos, pending_catch_try_index_, handler_index});
 				
 				// JNE catch_end_label (skip this handler if selector doesn't match)
 				StringHandle catch_end_handle = StringTable::getOrInternStringHandle(catch_op.catch_end_label);
