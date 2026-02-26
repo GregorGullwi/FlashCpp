@@ -520,6 +520,25 @@
 									resolveMangledName(matched_func_decl, struct_part);
 									// Queue all member functions of this struct for deferred generation
 									std::vector<std::string> ns_stack;
+									auto parse_ns = [&](std::string_view qualified_name) {
+										size_t ns_end = qualified_name.rfind("::");
+										if (ns_end == std::string_view::npos) return;
+										std::string_view ns_part = qualified_name.substr(0, ns_end);
+										size_t start = 0;
+										while (start < ns_part.size()) {
+											size_t pos = ns_part.find("::", start);
+											if (pos == std::string_view::npos) {
+												ns_stack.emplace_back(ns_part.substr(start));
+												break;
+											}
+											ns_stack.emplace_back(ns_part.substr(start, pos - start));
+											start = pos + 2;
+										}
+									};
+									parse_ns(struct_part);
+									if (ns_stack.empty()) {
+										parse_ns(StringTable::getStringView(direct_it->second->name()));
+									}
 									for (const auto& dmf : si->member_functions) {
 										DeferredMemberFunctionInfo deferred_info;
 										deferred_info.struct_name = direct_it->second->name();
