@@ -1018,9 +1018,9 @@ ParseResult Parser::parse_template_declaration() {
 					arg.is_reference = type_spec.is_lvalue_reference();
 					arg.is_rvalue_reference = type_spec.is_rvalue_reference();
 					arg.is_array = is_array;
-					// Mark as dependent - this is a partial specialization pattern,
-					// so all types are template parameters (dependent types)
-					arg.is_dependent = true;
+					// Mark as dependent only for partial specializations
+					// For full specializations (template<>), the types are concrete, not dependent
+					arg.is_dependent = !template_params.empty();
 					
 					// Store the type name for pattern matching
 					// For template instantiations like ratio<_Num, _Den>, this will be "ratio"
@@ -1112,6 +1112,18 @@ ParseResult Parser::parse_template_declaration() {
 				// e.g., is_reference_v<T&> should get pattern "is_reference_v_R", not "is_reference_v_TR"
 				// BUT for dependent TEMPLATE INSTANTIATIONS (like ratio<_Num, _Den>), DO include the base template name
 				bool included_type_name = false;
+				
+				// For non-dependent fundamental types (int, float, bool, etc.), include the type name
+				// This is needed for explicit full specializations like:
+				//   template<> inline constexpr unsigned __cmp_cat_id<int> = 2;
+				//   template<> inline constexpr unsigned __cmp_cat_id<float> = 4;
+				if (!arg.is_dependent && !arg.is_value) {
+					std::string_view fundamental_name = getTypeName(arg.base_type);
+					if (!fundamental_name.empty()) {
+						pattern_name.append(fundamental_name);
+						included_type_name = true;
+					}
+				}
 				
 				// First, check if we have a valid type_index pointing to a named type
 				if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum)) {
@@ -11202,6 +11214,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		
 		// Include base type name for user-defined types to match partial specs
 		// e.g., for __is_ratio_v<ratio<1,2>>, look for pattern "__is_ratio_v_ratio"
+		// For fundamental types (int, float, bool, etc.), include the type name
+		// e.g., for __cmp_cat_id<int>, look for pattern "__cmp_cat_id_int"
+		{
+			std::string_view fundamental_name = getTypeName(arg.base_type);
+			if (!fundamental_name.empty()) {
+				pattern_builder.append(fundamental_name);
+			}
+		}
 		if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
 			if (arg.type_index < gTypeInfo.size()) {
 				const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
@@ -11233,15 +11253,60 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			pattern_builder.append("P");  // pointer
 		}
 		
-		// Always try to look up partial specialization
+		// Try to look up full specialization first (pattern includes type name)
 		std::string_view pattern_key = pattern_builder.commit();
 		auto spec_opt = gTemplateRegistry.lookupVariableTemplate(pattern_key);
+		
+		// If full specialization not found, try partial specialization pattern
+		// (without fundamental type name, just qualifiers like R, RR, P)
+		if (!spec_opt.has_value()) {
+			StringBuilder partial_pattern_builder;
+			partial_pattern_builder.append(simple_template_name);
+			partial_pattern_builder.append("_");
+			// Only include user-defined type names for partial specs
+			if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
+				if (arg.type_index < gTypeInfo.size()) {
+					const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
+					std::string_view type_name = StringTable::getStringView(arg_type_info.name());
+					size_t last_colon = type_name.rfind("::");
+					if (last_colon != std::string_view::npos) {
+						type_name = type_name.substr(last_colon + 2);
+					}
+					if (arg_type_info.isTemplateInstantiation()) {
+						type_name = StringTable::getStringView(arg_type_info.baseTemplateName());
+					}
+					partial_pattern_builder.append(type_name);
+				}
+			}
+			if (arg.is_reference) {
+				partial_pattern_builder.append("R");
+			} else if (arg.is_rvalue_reference) {
+				partial_pattern_builder.append("RR");
+			}
+			for (size_t i = 0; i < arg.pointer_depth; ++i) {
+				partial_pattern_builder.append("P");
+			}
+			std::string_view partial_key = partial_pattern_builder.commit();
+			if (partial_key != pattern_key) {
+				spec_opt = gTemplateRegistry.lookupVariableTemplate(partial_key);
+				if (spec_opt.has_value()) {
+					pattern_key = partial_key;
+				}
+			}
+		}
 		
 		// Also try with qualified name if simple name lookup failed
 		StringBuilder qualified_pattern_builder;
 		if (!spec_opt.has_value() && template_name != simple_template_name) {
 			qualified_pattern_builder.append(template_name);
 			qualified_pattern_builder.append("_");
+			// Include fundamental type name for qualified lookup too
+			{
+				std::string_view fundamental_name = getTypeName(arg.base_type);
+				if (!fundamental_name.empty()) {
+					qualified_pattern_builder.append(fundamental_name);
+				}
+			}
 			if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
 				if (arg.type_index < gTypeInfo.size()) {
 					const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
@@ -11291,22 +11356,31 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					return gSymbolTable.lookup(persistent_name);
 				}
 				
-				// Create instantiated variable using the specialization's initializer
+				// Create instantiated variable using the specialization's type and initializer
 				// Use original token's line/column/file info for better diagnostics
 				Token inst_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
-				TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, orig_token);  // 8 bits = 1 byte
+				
+				// Use the specialization's actual type and initializer instead of always bool/true
+				const DeclarationNode& spec_decl = spec_var_decl.declaration();
+				ASTNode spec_type = spec_decl.type_node();
+				
 				auto decl_node = emplace_node<DeclarationNode>(
-					emplace_node<TypeSpecifierNode>(bool_type),
+					spec_type,
 					inst_token
 				);
 				
-				// Create the initializer expression - use 'true' for specializations that match reference types
-				Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
-				auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
+				// Use the specialization's actual initializer if present, otherwise 'true' for bool
+				std::optional<ASTNode> init_expr;
+				if (spec_var_decl.initializer().has_value()) {
+					init_expr = *spec_var_decl.initializer();
+				} else {
+					Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
+					init_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
+				}
 				
 				auto var_decl_node = emplace_node<VariableDeclarationNode>(
 					decl_node,
-					true_expr,  // Use 'true' as the initializer for reference specializations
+					init_expr,
 					StorageClass::None
 				);
 				var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
@@ -19934,8 +20008,76 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 		}
-
-		// For other expression types, recursively substitute in subexpressions
+		
+		// Check if this IdentifierNode is a dependent template placeholder (e.g., __cmp_cat_id$hash)
+		// These are created during template body parsing for variable template references like __cmp_cat_id<_Ts>
+		// We need to re-instantiate the variable template with the substituted type args
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+			std::string_view id_name = id_node.name();
+			
+			// Look up the type info for this identifier
+			StringHandle id_handle = StringTable::getOrInternStringHandle(id_name);
+			auto type_it = gTypesByName.find(id_handle);
+			if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
+				const TypeInfo* placeholder_type = type_it->second;
+				std::string_view base_template = StringTable::getStringView(placeholder_type->baseTemplateName());
+				
+				// Check if this is a variable template
+				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(base_template);
+				if (var_template_opt.has_value()) {
+					// Get the template args from the placeholder and substitute them
+					const auto& placeholder_args = placeholder_type->templateArgs();
+					std::vector<TemplateTypeArg> new_args;
+					bool any_substituted = false;
+					
+					for (const auto& parg : placeholder_args) {
+						TemplateTypeArg arg;
+						arg.base_type = parg.base_type;
+						arg.type_index = parg.type_index;
+						arg.is_reference = (parg.ref_qualifier == ReferenceQualifier::LValueReference);
+						arg.is_rvalue_reference = (parg.ref_qualifier == ReferenceQualifier::RValueReference);
+						arg.pointer_depth = parg.pointer_depth;
+						arg.cv_qualifier = parg.cv_qualifier;
+						
+						// Check if this arg is a template parameter that should be substituted
+						if (parg.type_index < gTypeInfo.size()) {
+							std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[parg.type_index].name());
+							for (size_t p = 0; p < template_params.size() && p < template_args.size(); ++p) {
+								if (!template_params[p].is<TemplateParameterNode>()) continue;
+								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+								if (tparam.name() == arg_type_name) {
+									// Substitute with the concrete type
+									const TemplateArgument& concrete_arg = template_args[p];
+									if (concrete_arg.kind == TemplateArgument::Kind::Type) {
+										arg.base_type = concrete_arg.type_value;
+										arg.type_index = concrete_arg.type_index;
+										arg.is_dependent = false;
+										any_substituted = true;
+									}
+									break;
+								}
+							}
+						}
+						new_args.push_back(arg);
+					}
+					
+					if (any_substituted) {
+						auto result = try_instantiate_variable_template(base_template, new_args);
+						if (result.has_value()) {
+							// The variable template was instantiated. Return an IdentifierNode
+							// that references the instantiated variable (not the VariableDeclarationNode itself)
+							if (result->is<VariableDeclarationNode>()) {
+								const auto& var_decl = result->as<VariableDeclarationNode>();
+								Token ref_token = var_decl.declaration().identifier_token();
+								return emplace_node<ExpressionNode>(IdentifierNode(ref_token));
+							}
+							return *result;
+						}
+					}
+				}
+			}
+		}
 		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 			const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr);
 			ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
