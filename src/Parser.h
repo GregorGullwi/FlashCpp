@@ -885,6 +885,18 @@ public:  // Public methods for template instantiation
             return std::nullopt;
         }
 
+        // Replace a pack parameter identifier in an expression pattern with its expanded name
+        // e.g., replace "args" with "args_0" in a pattern like identity(args)
+        ASTNode replacePackIdentifierInExpr(const ASTNode& expr, std::string_view pack_name, size_t element_index);
+
+        // Expand a PackExpansionExprNode into multiple substituted arguments
+        // Returns true if expansion was performed, false otherwise
+        bool expandPackExpansionArgs(
+            const PackExpansionExprNode& pack_expansion,
+            const std::vector<ASTNode>& template_params,
+            const std::vector<TemplateArgument>& template_args,
+            ChunkedVector<ASTNode>& out_args);
+
         // Phase 3: Expression context tracking for template disambiguation
         enum class ExpressionContext {
             Normal,              // Regular expression context
