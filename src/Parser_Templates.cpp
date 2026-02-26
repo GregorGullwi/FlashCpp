@@ -20048,36 +20048,176 @@ ASTNode Parser::substituteTemplateParameters(
 			// C++17 Fold expressions - expand into nested binary operations
 			const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
 		
-			// The fold pack_name refers to a function parameter pack (like "args")
-			// We need to expand it into individual parameter references (like "args_0", "args_1", "args_2")
 			std::vector<ASTNode> pack_values;
 		
-			// Count pack elements using the helper function
-			size_t num_pack_elements = count_pack_elements(fold.pack_name());
+			// Handle complex pack expressions like (__cmp_cat_id<_Ts> | ...)
+			// where the pack is inside a variable template invocation, not a simple identifier
+			if (fold.has_complex_pack_expr()) {
+				// Find the variadic template parameter
+				size_t variadic_param_idx = SIZE_MAX;
+				size_t non_variadic_count = 0;
+				for (size_t p = 0; p < template_params.size(); ++p) {
+					if (template_params[p].is<TemplateParameterNode>()) {
+						const auto& tparam = template_params[p].as<TemplateParameterNode>();
+						if (tparam.is_variadic()) {
+							variadic_param_idx = p;
+						} else {
+							non_variadic_count++;
+						}
+					}
+				}
+				
+				size_t num_pack_elements = 0;
+				if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
+					num_pack_elements = template_args.size() - non_variadic_count;
+				}
+				
+				FLASH_LOG(Templates, Debug, "Complex fold expansion: num_pack_elements=", num_pack_elements);
+				
+				if (num_pack_elements == 0) {
+					// C++17: empty unary fold is allowed only for &&, || and comma
+					// For other operators, return identity values
+					std::string_view op = fold.op();
+					if (op == "&&") {
+						Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+						return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, true));
+					} else if (op == "||") {
+						Token bool_token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+						return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, false));
+					} else if (op == ",") {
+						Token void_token(Token::Type::Literal, "0"sv, 0, 0, 0);
+						return emplace_node<ExpressionNode>(NumericLiteralNode(
+							void_token, 0ULL, Type::Void, TypeQualifier::None, 0));
+					}
+					FLASH_LOG(Templates, Warning, "Complex fold expression with empty pack and operator '", op, "'");
+					return node;
+				}
+				
+				// For each pack element, substitute the variadic parameter in the complex expression
+				for (size_t i = 0; i < num_pack_elements; ++i) {
+					// Create a single-element template params/args pair for the variadic parameter
+					std::vector<ASTNode> single_param = { template_params[variadic_param_idx] };
+					std::vector<TemplateArgument> single_arg = { template_args[non_variadic_count + i] };
+					
+					// Also include the non-variadic parameters so they get substituted too
+					std::vector<ASTNode> subst_params;
+					std::vector<TemplateArgument> subst_args;
+					for (size_t p = 0; p < template_params.size(); ++p) {
+						if (template_params[p].is<TemplateParameterNode>()) {
+							const auto& tparam = template_params[p].as<TemplateParameterNode>();
+							if (tparam.is_variadic()) {
+								// Create a non-variadic version of this parameter for single substitution
+								TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
+								// Don't set variadic - we're substituting one element at a time
+								subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
+								subst_args.push_back(template_args[non_variadic_count + i]);
+							} else if (p < template_args.size()) {
+								subst_params.push_back(template_params[p]);
+								subst_args.push_back(template_args[p]);
+							}
+						}
+					}
+					
+					ASTNode substituted = substituteTemplateParameters(*fold.pack_expr(), subst_params, subst_args);
+					pack_values.push_back(substituted);
+				}
+			} else {
+				// Simple pack name case: pack_name refers to a function parameter pack (like "args")
+				// or a non-type template parameter pack (like "Bs" in (Bs && ...))
+				size_t num_pack_elements = count_pack_elements(fold.pack_name());
+				
+				FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
 			
-			FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
-		
-			if (num_pack_elements == 0) {
-				FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
-				return node;
-			}
-		
-			// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
-			for (size_t i = 0; i < num_pack_elements; ++i) {
-				StringBuilder param_name_builder;
-				param_name_builder.append(fold.pack_name());
-				param_name_builder.append('_');
-				param_name_builder.append(i);
-				std::string_view param_name = param_name_builder.commit();
-		
-				Token param_token(Token::Type::Identifier, param_name,
-								 fold.get_token().line(), fold.get_token().column(),
-								 fold.get_token().file_index());
-				pack_values.push_back(emplace_node<ExpressionNode>(IdentifierNode(param_token)));
+				if (num_pack_elements == 0) {
+					// Fallback: check template_params/template_args for non-type parameter packs
+					// This handles patterns like template<unsigned... args> constexpr unsigned f() { return (args | ...); }
+					std::optional<size_t> pack_param_idx;
+					size_t non_variadic_count = 0;
+					for (size_t p = 0; p < template_params.size(); ++p) {
+						if (template_params[p].is<TemplateParameterNode>()) {
+							const auto& tparam = template_params[p].as<TemplateParameterNode>();
+							if (tparam.is_variadic() && tparam.name() == fold.pack_name()) {
+								pack_param_idx = p;
+							} else if (!tparam.is_variadic()) {
+								non_variadic_count++;
+							}
+						}
+					}
+					
+					if (pack_param_idx.has_value() && template_args.size() >= non_variadic_count) {
+						size_t pack_size = template_args.size() - non_variadic_count;
+						
+						// Check if all pack elements are values (non-type parameters)
+						bool all_values = true;
+						std::vector<int64_t> pack_int_values;
+						for (size_t i = non_variadic_count; i < template_args.size(); ++i) {
+							if (template_args[i].kind == TemplateArgument::Kind::Value) {
+								pack_int_values.push_back(template_args[i].int_value);
+							} else {
+								all_values = false;
+								break;
+							}
+						}
+						
+						if (all_values && !pack_int_values.empty()) {
+							// Direct evaluation for non-type parameter pack folds
+							auto fold_result = ConstExpr::evaluate_fold_expression(fold.op(), pack_int_values);
+							if (fold_result.has_value()) {
+								std::string_view op = fold.op();
+								if (op == "&&" || op == "||") {
+									Token bool_token(Token::Type::Keyword, *fold_result ? "true"sv : "false"sv, 0, 0, 0);
+									return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
+								} else {
+									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*fold_result)).commit();
+									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+									return emplace_node<ExpressionNode>(NumericLiteralNode(
+										num_token, static_cast<unsigned long long>(*fold_result), Type::Int, TypeQualifier::None, 64));
+								}
+							}
+						} else if (pack_size == 0) {
+							// Empty pack - return identity value per C++17
+							std::string_view op = fold.op();
+							if (op == "&&") {
+								Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+								return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, true));
+							} else if (op == "||") {
+								Token bool_token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+								return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, false));
+							}
+						}
+					}
+					
+					// Also check pack_param_info_ as another fallback
+					if (num_pack_elements == 0) {
+						auto pack_size = get_pack_size(fold.pack_name());
+						if (pack_size.has_value()) {
+							num_pack_elements = *pack_size;
+						}
+					}
+					
+					if (num_pack_elements == 0) {
+						FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
+						return node;
+					}
+				}
+			
+				// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
+				for (size_t i = 0; i < num_pack_elements; ++i) {
+					StringBuilder param_name_builder;
+					param_name_builder.append(fold.pack_name());
+					param_name_builder.append('_');
+					param_name_builder.append(i);
+					std::string_view param_name = param_name_builder.commit();
+			
+					Token param_token(Token::Type::Identifier, param_name,
+									 fold.get_token().line(), fold.get_token().column(),
+									 fold.get_token().file_index());
+					pack_values.push_back(emplace_node<ExpressionNode>(IdentifierNode(param_token)));
+				}
 			}
 		
 			if (pack_values.empty()) {
-				FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' is empty");
+				FLASH_LOG(Templates, Warning, "Fold expression pack is empty");
 				return node;
 			}
 		

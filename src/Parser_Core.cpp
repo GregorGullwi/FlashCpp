@@ -228,8 +228,16 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 				findReferencedIdentifiers(ASTNode(const_cast<BinaryOperatorNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<UnaryOperatorNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				findReferencedIdentifiers(inner_node.condition(), identifiers);
+				findReferencedIdentifiers(inner_node.true_expr(), identifiers);
+				findReferencedIdentifiers(inner_node.false_expr(), identifiers);
 			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<FunctionCallNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+				for (size_t i = 0; i < inner_node.arguments().size(); ++i) {
+					findReferencedIdentifiers(inner_node.arguments()[i], identifiers);
+				}
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<MemberAccessNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
@@ -238,6 +246,14 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 				findReferencedIdentifiers(ASTNode(const_cast<MemberFunctionCallNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<ArraySubscriptNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, StaticCastNode>) {
+				findReferencedIdentifiers(inner_node.expr(), identifiers);
+			} else if constexpr (std::is_same_v<T, ConstCastNode>) {
+				findReferencedIdentifiers(inner_node.expr(), identifiers);
+			} else if constexpr (std::is_same_v<T, ReinterpretCastNode>) {
+				findReferencedIdentifiers(inner_node.expr(), identifiers);
+			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
+				findReferencedIdentifiers(inner_node.expr(), identifiers);
 			}
 			// Add more types as needed
 		}, expr);
