@@ -3902,6 +3902,19 @@ private:
 						}
 						if (!fn_has_auto) {
 							visitFunctionDeclarationNode(fn);
+							// If the function was skipped (lazy stub - no body yet), queue it for
+							// deferred lazy instantiation so the body gets generated.
+							if (!fn.get_definition().has_value() && !fn.is_implicit() && parser_) {
+								StringHandle member_handle = fn.decl_node().identifier_token().handle();
+								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle)) {
+									DeferredMemberFunctionInfo deferred_info;
+									deferred_info.struct_name = current_struct_name_;
+									deferred_info.function_node = func_decl;
+									deferred_member_functions_.push_back(std::move(deferred_info));
+									FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - queued lazy member function '",
+									          fn.decl_node().identifier_token().value(), "' for deferred instantiation");
+								}
+							}
 						} else {
 							FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping member function with auto params (will be instantiated on call)");
 						}

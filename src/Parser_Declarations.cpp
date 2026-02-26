@@ -4902,6 +4902,11 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
+		// Handle pack expansion '...' for variadic template parameters (e.g., struct C : Bases...)
+		if (peek() == "..."_tok) {
+			advance(); // consume '...'
+		}
+
 		// Validate and add the base class
 		ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, base_name_token);
 		if (result.is_error()) {
