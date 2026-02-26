@@ -15900,10 +15900,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 				
-				// Parse using declarations/aliases via existing parser
+				// Skip using declarations/aliases — parse_member_type_alias requires a
+				// StructDeclarationNode which doesn't exist during Phase 1. Type aliases
+				// (e.g., "using value_type = T;") from the nested class body are not needed
+				// for struct layout computation. They would need full Phase 2 handling to be
+				// properly registered, which is left as future work.
 				if (peek() == "using"_tok) {
-					// We don't have a StructDeclarationNode for the nested class yet,
-					// so skip for now — type aliases will be inherited from the template body
 					while (!peek().is_eof() && peek() != ";"_tok) {
 						advance();
 					}
@@ -15933,7 +15935,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							continue;
 						}
 					}
-					// Not a destructor pattern — restore and fall through
+					// Not a destructor — restore position and continue to next parser rules
 					restore_token_position(dtor_check);
 				}
 				
