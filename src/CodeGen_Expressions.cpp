@@ -74,7 +74,7 @@
 				FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
 				// Return a safe dummy value (0) to avoid downstream crashes
 				// Root cause: pack expansion in function call contexts (e.g., std::forward<Args>(args)...) not yet implemented
-				return { Type::Int, 32, 0ULL, 0 };
+				return { Type::Int, 32, 0ULL, 0ULL };
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				return generateInitializerListConstructionIr(expr);
 			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
