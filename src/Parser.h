@@ -775,8 +775,8 @@ private:
             const ASTNode& template_node,
             const std::vector<TemplateArgument>& template_args,
             const FlashCpp::TemplateInstantiationKey& key);
-        std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
     public:
+        std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
         bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
     private:
         bool instantiateLazyClassToPhase(StringHandle instantiated_name, ClassInstantiationPhase target_phase);  // Phase 2: Instantiate lazy class to specified phase

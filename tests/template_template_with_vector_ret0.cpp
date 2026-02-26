@@ -10,5 +10,7 @@ public:
 };
 
 int main() {
+    Vector<int> v;
+    v.data = 42;
     return 0;
 }

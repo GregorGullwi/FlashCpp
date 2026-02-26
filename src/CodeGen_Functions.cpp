@@ -503,7 +503,61 @@
 			if (scope_pos != std::string_view::npos) {
 				base_template_name = extractBaseTemplateName(func_name_view.substr(0, scope_pos));
 			}
-			if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
+			// Direct lookup: if the struct qualifier is directly in gTypesByName (e.g., "Mid$hash::get"),
+			// find it immediately rather than only checking base classes.
+			if (scope_pos != std::string_view::npos && !matched_func_decl) {
+				std::string_view struct_part = func_name_view.substr(0, scope_pos);
+				std::string_view member_name_direct = func_name_view.substr(scope_pos + 2);
+				auto direct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_part));
+				if (direct_it != gTypesByName.end() && direct_it->second->isStruct()) {
+					const StructTypeInfo* si = direct_it->second->getStructInfo();
+					if (si) {
+						// Count expected parameters for overload disambiguation
+						size_t direct_expected_param_count = 0;
+						functionCallNode.arguments().visit([&](ASTNode) { ++direct_expected_param_count; });
+						for (const auto& mf : si->member_functions) {
+							if (mf.function_decl.is<FunctionDeclarationNode>()) {
+								const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+								if (fd.decl_node().identifier_token().value() == member_name_direct
+								    && fd.parameter_nodes().size() == direct_expected_param_count) {
+									matched_func_decl = &fd;
+									resolveMangledName(matched_func_decl, struct_part);
+									// Queue all member functions of this struct for deferred generation
+									std::vector<std::string> ns_stack;
+									auto parse_ns = [&](std::string_view qualified_name) {
+										size_t ns_end = qualified_name.rfind("::");
+										if (ns_end == std::string_view::npos) return;
+										std::string_view ns_part = qualified_name.substr(0, ns_end);
+										size_t start = 0;
+										while (start < ns_part.size()) {
+											size_t pos = ns_part.find("::", start);
+											if (pos == std::string_view::npos) {
+												ns_stack.emplace_back(ns_part.substr(start));
+												break;
+											}
+											ns_stack.emplace_back(ns_part.substr(start, pos - start));
+											start = pos + 2;
+										}
+									};
+									parse_ns(struct_part);
+									if (ns_stack.empty()) {
+										parse_ns(StringTable::getStringView(direct_it->second->name()));
+									}
+									for (const auto& dmf : si->member_functions) {
+										DeferredMemberFunctionInfo deferred_info;
+										deferred_info.struct_name = direct_it->second->name();
+										deferred_info.function_node = dmf.function_decl;
+										deferred_info.namespace_stack = ns_stack;
+										deferred_member_functions_.push_back(std::move(deferred_info));
+									}
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+			if (!matched_func_decl && !base_template_name.empty() && scope_pos != std::string_view::npos) {
 				std::string_view member_name = func_name_view.substr(scope_pos + 2);
 				
 				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving dependent qualified call: base_template='{}', member='{}'", base_template_name, member_name);

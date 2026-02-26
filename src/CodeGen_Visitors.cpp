@@ -229,6 +229,8 @@ public:
 	
 	// Generate deferred member functions discovered during function call resolution.
 	// Uses a worklist approach since generated functions may call other ungenerated functions.
+	// Deduplication is handled by visitFunctionDeclarationNode via generated_function_names_,
+	// which skips any function whose mangled name has already been emitted.
 	void generateDeferredMemberFunctions() {
 		size_t processed = 0;
 		while (processed < deferred_member_functions_.size()) {
@@ -240,7 +242,26 @@ public:
 			current_namespace_stack_ = info.namespace_stack;
 			
 			if (info.function_node.is<FunctionDeclarationNode>()) {
-				visitFunctionDeclarationNode(info.function_node.as<FunctionDeclarationNode>());
+				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
+				// If the function has no body, it may be a lazily-registered template member.
+				// Trigger lazy instantiation via the parser so the body becomes available.
+				if (!func.get_definition().has_value() && !func.is_implicit() && parser_) {
+					StringHandle member_handle = func.decl_node().identifier_token().handle();
+					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(info.struct_name, member_handle)) {
+						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle);
+						if (lazy_info_opt.has_value()) {
+							auto new_func_node = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+							if (new_func_node.has_value() && new_func_node->is<FunctionDeclarationNode>()) {
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle);
+								visitFunctionDeclarationNode(new_func_node->as<FunctionDeclarationNode>());
+								current_function_name_ = saved_function;
+								current_namespace_stack_ = saved_namespace;
+								continue;
+							}
+						}
+					}
+				}
+				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
 			} else if (info.function_node.is<DestructorDeclarationNode>()) {
