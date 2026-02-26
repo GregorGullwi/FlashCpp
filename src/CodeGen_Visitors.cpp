@@ -258,8 +258,8 @@ public:
 						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle);
 						if (lazy_info_opt.has_value()) {
 							auto new_func_node = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-							LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle);
 							if (new_func_node.has_value() && new_func_node->is<FunctionDeclarationNode>()) {
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle);
 								visitFunctionDeclarationNode(new_func_node->as<FunctionDeclarationNode>());
 								current_function_name_ = saved_function;
 								current_namespace_stack_ = saved_namespace;
