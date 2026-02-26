@@ -2130,7 +2130,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 
 					FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
-					DeclarationNode& func_decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
+					DeclarationNode& func_decl_node = func_decl.decl_node();
 
 					// Create a new FunctionDeclarationNode with member function info
 					auto [member_func_node, member_func_ref] =
@@ -3500,7 +3500,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 					
 					FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
-					DeclarationNode& func_decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
+					DeclarationNode& func_decl_node = func_decl.decl_node();
 					
 					// Create a new FunctionDeclarationNode with member function info
 					auto [member_func_node, member_func_ref] =
@@ -7491,7 +7491,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// Trigger lazy static member instantiation if needed
 		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-		const_cast<Parser*>(this)->instantiateLazyStaticMember(type_name_handle, member_name_handle);
+		instantiateLazyStaticMember(type_name_handle, member_name_handle);
 		
 		// Look for the static member with the given name (may have just been lazily instantiated)
 		// Use findStaticMemberRecursive to also search base classes
@@ -7505,7 +7505,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		if (owner_struct != struct_info) {
 			FLASH_LOG(Templates, Debug, "Static member '", member_name, "' found in base class '", 
 			          StringTable::getStringView(owner_struct->name), "', triggering lazy instantiation");
-			const_cast<Parser*>(this)->instantiateLazyStaticMember(owner_struct->name, member_name_handle);
+			instantiateLazyStaticMember(owner_struct->name, member_name_handle);
 			// Re-fetch the static member after lazy instantiation
 			auto [updated_static_member, updated_owner] = owner_struct->findStaticMemberRecursive(member_name_handle);
 			static_member = updated_static_member;
@@ -7574,7 +7574,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// Trigger lazy static member instantiation if needed
 		StringHandle type_name_handle2 = StringTable::getOrInternStringHandle(type_name);
 		StringHandle member_name_handle2 = StringTable::getOrInternStringHandle(member_name);
-		const_cast<Parser*>(this)->instantiateLazyStaticMember(type_name_handle2, member_name_handle2);
+		instantiateLazyStaticMember(type_name_handle2, member_name_handle2);
 		
 		// Look for the static member with the given name (may have just been lazily instantiated)
 		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle2);
@@ -11660,7 +11660,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 std::optional<ASTNode> Parser::instantiate_full_specialization(
 	std::string_view template_name,
 	const std::vector<TemplateTypeArg>& template_args,
-	const ASTNode& spec_node
+	ASTNode& spec_node
 ) {
 	// Generate the instantiated class name
 	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
@@ -11671,7 +11671,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		return std::nullopt;
 	}
 	
-	const StructDeclarationNode& spec_struct = spec_node.as<StructDeclarationNode>();
+	StructDeclarationNode& spec_struct = spec_node.as<StructDeclarationNode>();
 	
 	// Helper lambda to register type aliases with qualified names
 	auto register_type_aliases = [&]() {
@@ -11789,7 +11789,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	
 	// Check if there's an explicit constructor - if not, we need to generate a default one
 	bool has_constructor = false;
-	for (const auto& mem_func : spec_struct.member_functions()) {
+	for (auto& mem_func : spec_struct.member_functions()) {
 		if (mem_func.is_constructor) {
 			has_constructor = true;
 			
@@ -11839,11 +11839,11 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			struct_info->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
 			ast_nodes_.push_back(new_dtor_node);
 		} else {
-			const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 			
 			// Create a NEW FunctionDeclarationNode with the instantiated struct name
 			auto new_func_node = emplace_node<FunctionDeclarationNode>(
-				const_cast<DeclarationNode&>(orig_func.decl_node()),
+				orig_func.decl_node(),
 				instantiated_name
 			);
 			
@@ -12483,11 +12483,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (pattern_match_opt.has_value()) {
 			FLASH_LOG(Templates, Debug, "Found pattern match!");
 			// Found a matching pattern - we need to instantiate it with concrete types
-			const ASTNode& pattern_node = *pattern_match_opt;
+			ASTNode& pattern_node = *pattern_match_opt;
 		
 		// Handle both StructDeclarationNode (top-level partial specialization) and
 		// TemplateClassDeclarationNode (member template partial specialization)
-		const StructDeclarationNode* pattern_struct_ptr = nullptr;
+		StructDeclarationNode* pattern_struct_ptr = nullptr;
 		if (pattern_node.is<StructDeclarationNode>()) {
 			pattern_struct_ptr = &pattern_node.as<StructDeclarationNode>();
 		} else if (pattern_node.is<TemplateClassDeclarationNode>()) {
@@ -12498,7 +12498,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt;
 		}
 		
-		const StructDeclarationNode& pattern_struct = *pattern_struct_ptr;
+		StructDeclarationNode& pattern_struct = *pattern_struct_ptr;
 		FLASH_LOG(Templates, Debug, "Pattern struct name: ", pattern_struct.name());
 		
 		// Register the mapping from instantiated name to pattern name
@@ -12821,7 +12821,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Copy member functions from pattern
-		for (const StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
+		for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
 			if (mem_func.is_constructor) {
 				// Handle constructor - it's a ConstructorDeclarationNode, not FunctionDeclarationNode
 				struct_info->addConstructor(
@@ -12851,8 +12851,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					mem_func.is_final
 				);
 			} else {
-				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-				DeclarationNode& orig_decl = const_cast<DeclarationNode&>(orig_func.decl_node());
+				FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+				DeclarationNode& orig_decl = orig_func.decl_node();
 				
 				// Substitute return type if it uses a template parameter
 				// For partial specializations like Container<T*>, the return type T* needs substitution
@@ -13510,7 +13510,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Copy member functions to AST node WITH CORRECT PARENT STRUCT NAME
 		// This is critical - we need to create new FunctionDeclarationNodes with instantiated_name as parent
-		for (const StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
+		for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
 			if (mem_func.is_constructor) {
 				// Handle constructor - it's a ConstructorDeclarationNode
 				const ConstructorDeclarationNode& orig_ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
@@ -13548,9 +13548,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					mem_func.access
 				);
 			} else {
-				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+				FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 				auto new_func_node = emplace_node<FunctionDeclarationNode>(
-					const_cast<DeclarationNode&>(orig_func.decl_node()),  // Reuse declaration
+					orig_func.decl_node(),  // Reuse declaration
 					instantiated_name  // Set correct parent struct name
 				);
 				
@@ -17850,9 +17850,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	if (specialization_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "Found explicit specialization for ", qualified_name.view());
 		// We have an explicit specialization - parse its body if needed
-		const ASTNode& spec_node = *specialization_opt;
+		ASTNode& spec_node = *specialization_opt;
 		if (spec_node.is<FunctionDeclarationNode>()) {
-			FunctionDeclarationNode& spec_func = const_cast<FunctionDeclarationNode&>(spec_node.as<FunctionDeclarationNode>());
+			FunctionDeclarationNode& spec_func = spec_node.as<FunctionDeclarationNode>();
 			
 			// If the specialization has a body position and no definition yet, parse it now
 			if (spec_func.has_template_body_position() && !spec_func.get_definition().has_value()) {
@@ -17868,7 +17868,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					// Try to find the struct node in the symbol table
 					auto struct_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(struct_name));
 					if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
-						struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
+						struct_node_ptr = &struct_symbol_opt->as<StructDeclarationNode>();
 					}
 				}
 				
@@ -18564,8 +18564,8 @@ if (param_decl.has_default_value()) {
 	// Find the struct in gTypesByName
 	auto struct_it = gTypesByName.find(lazy_info.instantiated_class_name);
 	if (struct_it != gTypesByName.end()) {
-		const TypeInfo* struct_type_info = struct_it->second;
-		StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(struct_type_info->getStructInfo());
+		TypeInfo* struct_type_info = struct_it->second;
+		StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 		if (struct_info) {
 			// Find and update the member function
 			for (auto& member_func : struct_info->member_functions) {
@@ -18615,8 +18615,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		return false;
 	}
 	
-	// Need const_cast because gTypesByName stores const TypeInfo*, but we need to modify StructTypeInfo
-	StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_it->second->getStructInfo());
+	StructTypeInfo* struct_info = type_it->second->getStructInfo();
 	if (!struct_info) {
 		FLASH_LOG(Templates, Error, "Type is not a struct: ", instantiated_class_name);
 		return false;
@@ -19881,7 +19880,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			auto struct_symbol_opt = lookup_symbol(struct_name);
 			StructDeclarationNode* struct_node_ptr = nullptr;
 			if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
-				struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
+				struct_node_ptr = &struct_symbol_opt->as<StructDeclarationNode>();
 			}
 			
 			MemberFunctionContext ctx;
@@ -20202,7 +20201,7 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 			
-			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
+			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(func_call.function_declaration(), std::move(substituted_args), func_call.called_from()));
 			// Copy mangled name if present (important for template instantiation)
 			if (func_call.has_mangled_name()) {
 				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_mangled_name(func_call.mangled_name());
@@ -20750,7 +20749,7 @@ ASTNode Parser::substituteTemplateParameters(
 
 		// For now, don't substitute the function declaration itself
 		// Create new function call with substituted arguments
-		ASTNode new_func_call = emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from());
+		ASTNode new_func_call = emplace_node<FunctionCallNode>(func_call.function_declaration(), std::move(substituted_args), func_call.called_from());
 		// Copy mangled name if present (important for template instantiation)
 		if (func_call.has_mangled_name()) {
 			new_func_call.as<FunctionCallNode>().set_mangled_name(func_call.mangled_name());
@@ -21148,7 +21147,7 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 				new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
 			}
 			ASTNode new_call = emplace_node<ExpressionNode>(
-				FunctionCallNode(const_cast<DeclarationNode&>(call.function_declaration()), std::move(new_args), call.called_from()));
+				FunctionCallNode(call.function_declaration(), std::move(new_args), call.called_from()));
 			if (call.has_template_arguments()) {
 				std::vector<ASTNode> new_template_args;
 				for (const auto& ta : call.template_arguments()) {
@@ -21219,7 +21218,7 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 		for (size_t i = 0; i < call.arguments().size(); ++i) {
 			new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
 		}
-		return emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(call.function_declaration()), std::move(new_args), call.called_from());
+		return emplace_node<FunctionCallNode>(call.function_declaration(), std::move(new_args), call.called_from());
 	}
 
 	return expr;

@@ -821,7 +821,7 @@
 		ChunkedVector<ASTNode> empty_args;
 		auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
 			MemberFunctionCallNode(range_expr_for_begin, 
-			                       const_cast<FunctionDeclarationNode&>(begin_func_decl),
+			                       begin_func_decl,
 			                       std::move(empty_args), Token())
 		);
 		
@@ -837,7 +837,7 @@
 		ChunkedVector<ASTNode> empty_args2;
 		auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
 			MemberFunctionCallNode(range_expr_for_end,
-			                       const_cast<FunctionDeclarationNode&>(end_func_decl),
+			                       end_func_decl,
 			                       std::move(empty_args2), Token())
 		);
 		

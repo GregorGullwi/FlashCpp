@@ -421,8 +421,7 @@ ParseResult Parser::parse_type_and_name() {
                         decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
                     } else if (decl_node->is<FunctionDeclarationNode>() && custom_alignment.has_value()) {
                         // For function declarations, alignment applies to the underlying declaration node
-                        DeclarationNode& inner_decl = const_cast<DeclarationNode&>(
-                            decl_node->as<FunctionDeclarationNode>().decl_node());
+                        DeclarationNode& inner_decl = decl_node->as<FunctionDeclarationNode>().decl_node();
                         inner_decl.set_custom_alignment(custom_alignment.value());
                     }
                 }
@@ -2069,14 +2068,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
 		
-		const TypeInfo* type_info = struct_iter->second;
-		StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_info->getStructInfo());
+		TypeInfo* type_info = struct_iter->second;
+		StructTypeInfo* struct_info = type_info->getStructInfo();
 		if (!struct_info) {
 			// Type alias resolution: follow type_index_ to find the actual struct type
 			// e.g., using Alias = SomeStruct; then Alias::member() needs to resolve to SomeStruct
 			if (type_info->type_index_ < gTypeInfo.size() && &gTypeInfo[type_info->type_index_] != type_info) {
-				const TypeInfo& resolved_type = gTypeInfo[type_info->type_index_];
-				struct_info = const_cast<StructTypeInfo*>(resolved_type.getStructInfo());
+				TypeInfo& resolved_type = gTypeInfo[type_info->type_index_];
+				struct_info = resolved_type.getStructInfo();
 			}
 		}
 		if (!struct_info) {
@@ -2088,7 +2087,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Pattern: inline constexpr Type ClassName::member_name(initializer);
 		// This must be checked BEFORE assuming it's a function definition
 		StringHandle member_name_handle = function_name_token.handle();
-		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle);
+		StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle);
 		if (static_member != nullptr && peek() == "("_tok) {
 			// This is a static member variable definition with parenthesized initializer
 			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition: ", 
@@ -2378,8 +2377,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 		}
 	
-		FunctionDeclarationNode& existing_func_ref = const_cast<FunctionDeclarationNode&>(
-			existing_member->function_decl.as<FunctionDeclarationNode>());
+		FunctionDeclarationNode& existing_func_ref = existing_member->function_decl.as<FunctionDeclarationNode>();
 	
 		// Phase 7: Use unified signature validation
 		auto validation_result = validate_signature_match(existing_func_ref, func_ref);
@@ -2989,8 +2987,8 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 		return ParseResult::error("Unknown class in out-of-line constructor/destructor", class_name_token);
 	}
 	
-	const TypeInfo* type_info = struct_iter->second;
-	StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_info->getStructInfo());
+	TypeInfo* type_info = struct_iter->second;
+	StructTypeInfo* struct_info = type_info->getStructInfo();
 	if (!struct_info) {
 		FLASH_LOG(Parser, Error, "'", class_name, "' is not a struct/class type");
 		return ParseResult::error("Not a struct/class type", class_name_token);
@@ -3110,8 +3108,7 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	// Get mutable reference to constructor for adding member initializers
 	ConstructorDeclarationNode* ctor_ref = nullptr;
 	if (!is_destructor && existing_member->function_decl.is<ConstructorDeclarationNode>()) {
-		ctor_ref = &const_cast<ConstructorDeclarationNode&>(
-			existing_member->function_decl.as<ConstructorDeclarationNode>());
+		ctor_ref = &existing_member->function_decl.as<ConstructorDeclarationNode>();
 	}
 	
 	// Enter function scope with RAII guard - need to do this before parsing initializer list
@@ -3234,8 +3231,7 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	// Set the definition on the existing declaration
 	if (body_result.node().has_value()) {
 		if (is_destructor && existing_member->function_decl.is<DestructorDeclarationNode>()) {
-			DestructorDeclarationNode& dtor = const_cast<DestructorDeclarationNode&>(
-				existing_member->function_decl.as<DestructorDeclarationNode>());
+			DestructorDeclarationNode& dtor = existing_member->function_decl.as<DestructorDeclarationNode>();
 			if (!dtor.set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Destructor '", class_name, "::~", class_name, "' already has a definition");
 				member_function_context_stack_.pop_back();
@@ -5541,9 +5537,8 @@ ParseResult Parser::parse_struct_declaration()
 								.commit();
 							auto nested_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_nested_name));
 							if (nested_type_it != gTypesByName.end()) {
-								const StructTypeInfo* nested_info_const = nested_type_it->second->getStructInfo();
-								if (nested_info_const) {
-									StructTypeInfo* nested_info = const_cast<StructTypeInfo*>(nested_info_const);
+								StructTypeInfo* nested_info = nested_type_it->second->getStructInfo();
+								if (nested_info) {
 									struct_info->addNestedClass(nested_info);
 								}
 
@@ -7474,7 +7469,7 @@ ParseResult Parser::parse_struct_declaration()
 			
 			// Create member function call: this->operator<=>(other)
 			auto spaceship_call = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(this_node, const_cast<FunctionDeclarationNode&>(*spaceship_func), std::move(spaceship_args), operator_name_token));
+				MemberFunctionCallNode(this_node, *spaceship_func, std::move(spaceship_args), operator_name_token));
 			
 			// Create numeric literal for 0
 			Token zero_token(Token::Type::Literal, "0"sv,
@@ -10592,17 +10587,16 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	return saved_position.success(decl_node);
 }
 
-ParseResult Parser::finalize_static_member_init(const StructStaticMember* static_member,
+ParseResult Parser::finalize_static_member_init(StructStaticMember* static_member,
                                                  std::optional<ASTNode> init_expr,
                                                  DeclarationNode& decl_node,
                                                  const Token& name_token,
                                                  ScopedTokenPosition& saved_position) {
-	StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
 	ASTNode return_type_node = decl_node.type_node();
 	auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, name_token);
 
 	if (init_expr.has_value()) {
-		mutable_member->initializer = *init_expr;
+		static_member->initializer = *init_expr;
 		auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_expr);
 		return saved_position.success(var_node);
 	}

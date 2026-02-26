@@ -68,7 +68,7 @@ TargetDataModel g_target_data_model = TargetDataModel::LP64;   // Linux/Unix: lo
 #endif
 
 std::deque<TypeInfo> gTypeInfo;
-std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
+std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
 TypeInfo& add_user_type(StringHandle name, int type_size_in_bits) {
@@ -89,10 +89,7 @@ TypeInfo& add_struct_type(StringHandle name) {
     if (existing_it != gTypesByName.end()) {
         // Type already exists - return the existing one
         // This handles the case where we have a forward declaration followed by a full definition
-        // The const_cast is safe because gTypeInfo owns the TypeInfo objects as non-const,
-        // and gTypesByName just holds const pointers for read-only lookup purposes.
-        // This function is allowed to return non-const references since it's the owner interface.
-        return const_cast<TypeInfo&>(*existing_it->second);
+        return *existing_it->second;
     }
     
     auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, gTypeInfo.size(), 0);

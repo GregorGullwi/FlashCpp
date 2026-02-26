@@ -525,7 +525,7 @@
 		}
 		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
 		if (type_it != gTypesByName.end()) {
-			TypeInfo* closure_type = const_cast<TypeInfo*>(type_it->second);
+			TypeInfo* closure_type = type_it->second;
 			StructTypeInfo* struct_info = closure_type->getStructInfo();
 			if (struct_info) {
 				// Create a FunctionDeclarationNode for operator()

@@ -317,7 +317,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					}
 
 					FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
-						const_cast<DeclarationNode&>(func_decl.decl_node()),
+						func_decl.decl_node(),
 						std::move(substituted_args_nodes),
 						call.called_from()
 					);
@@ -414,7 +414,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					}
 
 					FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
-						const_cast<DeclarationNode&>(func_decl.decl_node()),
+						func_decl.decl_node(),
 						std::move(substituted_args_nodes),
 						call.called_from()
 					);
@@ -499,7 +499,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				
 				// Create a new FunctionCallNode with the instantiated function
 				FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
-					const_cast<DeclarationNode&>(instantiated_func.decl_node()),
+					instantiated_func.decl_node(),
 					std::move(substituted_args),
 					call.called_from()
 				);
