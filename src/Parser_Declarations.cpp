@@ -4460,7 +4460,7 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	// Check for 'final' keyword before base class list (C++ standard: class-key identifier final(opt) base-clause(opt))
-	if (peek() == "final"_tok || (peek().is_identifier() && peek_info().value() == "final")) {
+	if (peek() == "final"_tok) {
 		advance();  // consume 'final'
 		struct_ref.set_is_final(true);
 		struct_info->is_final = true;

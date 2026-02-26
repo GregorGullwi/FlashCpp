@@ -1256,8 +1256,10 @@ ParseResult Parser::parse_template_declaration() {
 			// Check for out-of-line member class definition: template<> class Foo<Args>::Bar { ... }
 			// E.g., template<> class basic_ostream<char, char_traits<char>>::sentry { ... };
 			if (peek() == "::"_tok) {
+				auto scope_check = save_token_position();
 				advance(); // consume '::'
 				if (peek().is_identifier()) {
+					discard_saved_token(scope_check);
 					std::string_view member_class_name = peek_info().value();
 					advance(); // consume member class name
 					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition (full spec): {}::{}",
@@ -1285,6 +1287,8 @@ ParseResult Parser::parse_template_declaration() {
 					
 					return saved_position.success();
 				}
+				// Not an identifier after '::' - restore parser position
+				restore_token_position(scope_check);
 			}
 
 			// Check for forward declaration: template<> struct ClassName<Args>;
@@ -1637,7 +1641,7 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						// Skip 'final' specifier if present
-						if (peek() == "final"_tok || (peek().is_identifier() && peek_info().value() == "final")) {
+						if (peek() == "final"_tok) {
 							advance();
 						}
 						
@@ -2577,8 +2581,10 @@ ParseResult Parser::parse_template_declaration() {
 			// This defines a nested class member of a class template outside the class body.
 			// We skip the body here since instantiation uses the nested class from the primary template.
 			if (peek() == "::"_tok) {
+				auto scope_check = save_token_position();
 				advance(); // consume '::'
 				if (peek().is_identifier()) {
+					discard_saved_token(scope_check);
 					std::string_view member_class_name = peek_info().value();
 					advance(); // consume member class name
 					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition: {}::{}",
@@ -2606,6 +2612,8 @@ ParseResult Parser::parse_template_declaration() {
 					
 					return saved_position.success();
 				}
+				// Not an identifier after '::' - restore parser position
+				restore_token_position(scope_check);
 			}
 			
 			// Generate a unique name for the pattern template
@@ -2969,7 +2977,7 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						// Skip 'final' specifier if present
-						if (peek() == "final"_tok || (peek().is_identifier() && peek_info().value() == "final")) {
+						if (peek() == "final"_tok) {
 							advance();
 						}
 						

@@ -63,19 +63,19 @@
 				return generateTemplateParameterReferenceIr(expr);
 			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
-				return { Type::Int, 32, 0ULL, 0ULL };
+				throw std::runtime_error("Unexpanded fold expression in codegen (pack expression parsing not yet implemented for complex expressions like variable template invocations)");
 			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				return generatePseudoDestructorCallIr(expr);
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				return generatePointerToMemberAccessIr(expr);
 			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
-				return { Type::Int, 32, 0ULL, 0ULL };
+				throw std::runtime_error("Unexpanded pack expansion in codegen (pack expression parsing not yet implemented for complex expressions)");
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				return generateInitializerListConstructionIr(expr);
 			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
-				return { Type::Void, 0, 0ULL, 0ULL };
+				return {};
 			} else {
 				static_assert(!std::is_same_v<T, T>, "Unhandled ExpressionNode variant");
 			}

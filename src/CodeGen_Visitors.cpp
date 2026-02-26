@@ -205,7 +205,11 @@ public:
 					continue;
 				}
 				generated_lambda_ids_.insert(lambda_info.lambda_id);
-				generateLambdaFunctions(lambda_info);
+				try {
+					generateLambdaFunctions(lambda_info);
+				} catch (const std::exception& ex) {
+					FLASH_LOG(Codegen, Error, "Exception while generating lambda (id=", lambda_info.lambda_id, "): ", ex.what());
+				}
 			}
 			processed_count = current_size;
 		}
@@ -220,7 +224,12 @@ public:
 			current_function_name_ = member_info.enclosing_function_name;
 			
 			// Visit the member function
-			visit(member_info.member_function_node);
+			try {
+				visit(member_info.member_function_node);
+			} catch (const std::exception& ex) {
+				FLASH_LOG(Codegen, Error, "Exception while generating local struct member in ",
+				          StringTable::getStringView(member_info.struct_name), ": ", ex.what());
+			}
 			
 			// Restore
 			current_function_name_ = saved_function;
@@ -241,6 +250,7 @@ public:
 			current_function_name_ = StringHandle();
 			current_namespace_stack_ = info.namespace_stack;
 			
+			try {
 			if (info.function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
 				// If the function has no body, it may be a lazily-registered template member.
@@ -271,6 +281,10 @@ public:
 				if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
 				}
+			}
+			} catch (const std::exception& ex) {
+				FLASH_LOG(Codegen, Error, "Exception while visiting deferred member function in struct ",
+				          StringTable::getStringView(info.struct_name), ": ", ex.what());
 			}
 			
 			current_function_name_ = saved_function;
