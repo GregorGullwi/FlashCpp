@@ -7474,7 +7474,7 @@ ParseResult Parser::parse_struct_declaration()
 			
 			// Create member function call: this->operator<=>(other)
 			auto spaceship_call = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(this_node, const_cast<FunctionDeclarationNode&>(*spaceship_func), std::move(spaceship_args), operator_name_token));
+				MemberFunctionCallNode(this_node, *spaceship_func, std::move(spaceship_args), operator_name_token));
 			
 			// Create numeric literal for 0
 			Token zero_token(Token::Type::Literal, "0"sv,

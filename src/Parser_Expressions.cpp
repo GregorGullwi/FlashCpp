@@ -853,7 +853,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		args.push_back(*type_result.node());  // Pass type node as second argument
 		
 		auto builtin_call = emplace_node<ExpressionNode>(
-			FunctionCallNode(const_cast<DeclarationNode&>(func_decl), std::move(args), builtin_token));
+			FunctionCallNode(func_decl, std::move(args), builtin_token));
 		
 		return ParseResult::success(builtin_call);
 	}
@@ -1362,7 +1362,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						}
 
 						auto call_node = emplace_node<ExpressionNode>(
-							FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args_result.args), member_token));
+							FunctionCallNode(*decl_ptr, std::move(args_result.args), member_token));
 						if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
 							std::get<FunctionCallNode>(call_node.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
 						}
@@ -3228,7 +3228,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				
 				// Create function call node
 				auto function_call_node = emplace_node<ExpressionNode>(
-					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), final_identifier));
+					FunctionCallNode(*decl_ptr, std::move(args), final_identifier));
 				
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
@@ -4586,7 +4586,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Create function call node with the qualified identifier
 			auto function_call_node = emplace_node<ExpressionNode>(
-				FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), qual_id.identifier_token()));
+				FunctionCallNode(*decl_ptr, std::move(args), qual_id.identifier_token()));
 			// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 			if (identifierType->is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
@@ -5173,7 +5173,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						result = emplace_node<ExpressionNode>(
-							FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), member_token));
+							FunctionCallNode(*decl_ptr, std::move(args), member_token));
 						
 						// Set mangled name if available
 						if (member_lookup.has_value() && member_lookup->is<FunctionDeclarationNode>()) {
@@ -5333,7 +5333,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				FLASH_LOG(Parser, Debug, "Creating FunctionCallNode for qualified identifier with template args");
 				// Create function call node with the qualified identifier
 				result = emplace_node<ExpressionNode>(
-					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), qual_id.identifier_token()));
+					FunctionCallNode(*decl_ptr, std::move(args), qual_id.identifier_token()));
 				
 				// If explicit template arguments were provided, store them in the FunctionCallNode
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
@@ -6022,7 +6022,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// Create function call node with the qualified identifier
 				auto function_call_node = emplace_node<ExpressionNode>(
-					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), final_identifier));
+					FunctionCallNode(*decl_ptr, std::move(args), final_identifier));
 				
 				// If explicit template arguments were provided, store them in the FunctionCallNode
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
@@ -6347,7 +6347,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
 				const auto& func = template_func_inst->as<FunctionDeclarationNode>();
 				auto function_call_node = emplace_node<ExpressionNode>(
-					FunctionCallNode(const_cast<DeclarationNode&>(func.decl_node()), std::move(args), idenfifier_token));
+					FunctionCallNode(func.decl_node(), std::move(args), idenfifier_token));
 				
 				// Set the mangled name on the function call if the instantiated function has one
 				if (func.has_mangled_name()) {
@@ -6769,7 +6769,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
 						const auto& func = template_func_inst->as<FunctionDeclarationNode>();
 						result = emplace_node<ExpressionNode>(
-							FunctionCallNode(const_cast<DeclarationNode&>(func.decl_node()), std::move(args), idenfifier_token));
+							FunctionCallNode(func.decl_node(), std::move(args), idenfifier_token));
 						return ParseResult::success(*result);
 					} else {
 						FLASH_LOG(Parser, Error, "Template instantiation failed or didn't return FunctionDeclarationNode");
@@ -6903,7 +6903,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					result = emplace_node<ExpressionNode>(
 						MemberFunctionCallNode(this_node, func_decl, std::move(args), idenfifier_token));
 				} else {
-					auto function_call_node = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+					auto function_call_node = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
 					// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 					if (identifierType->is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
@@ -8251,7 +8251,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (!decl_ptr) {
 						return ParseResult::error("Invalid function pointer declaration", idenfifier_token);
 					}
-					result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+					result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
 					
 					// Mark this as an indirect call (function pointer/reference)
 					std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_indirect_call(true);
@@ -8293,7 +8293,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (!decl_ptr) {
 										return ParseResult::error("Invalid function declaration", idenfifier_token);
 									}
-									result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+									result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
 									
 									// Copy mangled name if available
 									if (identifierType->is<FunctionDeclarationNode>()) {
@@ -8390,7 +8390,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										if (!decl_ptr) {
 											return ParseResult::error("Invalid template instantiation", idenfifier_token);
 										}
-										result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+										result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
 										
 										// Copy mangled name if available
 										if (instantiated_func->is<FunctionDeclarationNode>()) {
@@ -8413,7 +8413,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										const DeclarationNode& decl_ref = placeholder_decl.as<DeclarationNode>();
 										
 										// Create FunctionCallNode with the placeholder
-										result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(decl_ref), std::move(args), idenfifier_token));
+										result = emplace_node<ExpressionNode>(FunctionCallNode(decl_ref, std::move(args), idenfifier_token));
 										
 										// Store the template arguments in the FunctionCallNode for later resolution
 										FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
@@ -8447,7 +8447,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											if (!decl_ptr) {
 												return ParseResult::error("Invalid template instantiation", idenfifier_token);
 											}
-											result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+											result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
 											
 											// Copy mangled name if available
 											if (instantiated_func->is<FunctionDeclarationNode>()) {
@@ -8492,7 +8492,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												if (!decl_ptr) {
 													return ParseResult::error("Invalid template instantiation", idenfifier_token);
 												}
-												result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+												result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
 												
 												// Copy mangled name if available
 												if (instantiated_func->is<FunctionDeclarationNode>()) {
@@ -8518,7 +8518,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												return ParseResult::error("Invalid function declaration", idenfifier_token);
 											}
 
-											result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+											result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
 											
 											// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 											// This is important for functions in namespaces accessed via using directives
@@ -11218,7 +11218,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 	}
 	
-	auto result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), func_token));
+	auto result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), func_token));
 	
 	// Set the mangled name on the function call if we have the function declaration
 	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {

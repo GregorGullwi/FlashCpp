@@ -20202,7 +20202,7 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 			
-			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
+			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(func_call.function_declaration(), std::move(substituted_args), func_call.called_from()));
 			// Copy mangled name if present (important for template instantiation)
 			if (func_call.has_mangled_name()) {
 				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_mangled_name(func_call.mangled_name());
@@ -20750,7 +20750,7 @@ ASTNode Parser::substituteTemplateParameters(
 
 		// For now, don't substitute the function declaration itself
 		// Create new function call with substituted arguments
-		ASTNode new_func_call = emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from());
+		ASTNode new_func_call = emplace_node<FunctionCallNode>(func_call.function_declaration(), std::move(substituted_args), func_call.called_from());
 		// Copy mangled name if present (important for template instantiation)
 		if (func_call.has_mangled_name()) {
 			new_func_call.as<FunctionCallNode>().set_mangled_name(func_call.mangled_name());
@@ -21148,7 +21148,7 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 				new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
 			}
 			ASTNode new_call = emplace_node<ExpressionNode>(
-				FunctionCallNode(const_cast<DeclarationNode&>(call.function_declaration()), std::move(new_args), call.called_from()));
+				FunctionCallNode(call.function_declaration(), std::move(new_args), call.called_from()));
 			if (call.has_template_arguments()) {
 				std::vector<ASTNode> new_template_args;
 				for (const auto& ta : call.template_arguments()) {
@@ -21219,7 +21219,7 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 		for (size_t i = 0; i < call.arguments().size(); ++i) {
 			new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
 		}
-		return emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(call.function_declaration()), std::move(new_args), call.called_from());
+		return emplace_node<FunctionCallNode>(call.function_declaration(), std::move(new_args), call.called_from());
 	}
 
 	return expr;

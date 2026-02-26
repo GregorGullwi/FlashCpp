@@ -2036,7 +2036,7 @@ private:
 
 class FunctionCallNode {
 public:
-	explicit FunctionCallNode(DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+	explicit FunctionCallNode(const DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
 		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	const auto& arguments() const { return arguments_; }
@@ -2074,7 +2074,7 @@ public:
 	bool is_indirect_call() const { return is_indirect_call_; }
 
 private:
-	DeclarationNode& func_decl_;
+	const DeclarationNode& func_decl_;
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 	StringHandle mangled_name_;  // Pre-computed mangled name
@@ -3125,7 +3125,7 @@ private:
 // Member function call node (e.g., obj.method(args))
 class MemberFunctionCallNode {
 public:
-	explicit MemberFunctionCallNode(ASTNode object, FunctionDeclarationNode& func_decl,
+	explicit MemberFunctionCallNode(ASTNode object, const FunctionDeclarationNode& func_decl,
 	                                ChunkedVector<ASTNode>&& arguments, Token called_from_token)
 		: object_(object), func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
@@ -3138,7 +3138,7 @@ public:
 
 private:
 	ASTNode object_;                    // The object on which the method is called
-	FunctionDeclarationNode& func_decl_; // The member function declaration
+	const FunctionDeclarationNode& func_decl_; // The member function declaration
 	ChunkedVector<ASTNode> arguments_;   // Arguments to the function call
 	Token called_from_;                  // Token for error reporting
 };
