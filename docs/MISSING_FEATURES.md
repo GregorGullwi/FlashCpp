@@ -47,6 +47,7 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - Perfect forwarding: `std::forward` preserves reference types
 - SFINAE: Substitution failures handled gracefully
 - Out-of-line template member definitions
+- Variable template partial specialization: structural pattern matching (multi-arg, dependent initializers/types). *Note*: patterns requiring recursive inner argument deduction (e.g., `v<pair<T,U>>`) do not yet deduce inner type parameters.
 
 **Modern Syntax (A)**
 - Constexpr if: `if constexpr (condition)` with nesting

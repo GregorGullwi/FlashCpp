@@ -213,7 +213,7 @@ struct TemplateTypeArg {
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
 		, type_index(type_spec.type_index())
-		, is_reference(type_spec.is_reference())
+		, is_reference(type_spec.is_lvalue_reference())
 		, is_rvalue_reference(type_spec.is_rvalue_reference())
 		, pointer_depth(type_spec.pointer_depth())
 		, pointer_cv_qualifiers()
@@ -953,6 +953,8 @@ struct TemplatePattern {
 		
 			// Find which template parameter this pattern arg refers to
 			// base_type == Type::UserDefined (15) means it's a template parameter reference
+			// BUT it could also be a dependent template instantiation placeholder
+			// (e.g., ratio<_Num, _Den> stored as UserDefined with isTemplateInstantiation())
 			if (pattern_arg.base_type != Type::UserDefined) {
 				// This is a concrete type or value in the pattern
 				// (e.g., partial specialization Container<int, T> or enable_if<true, T>)
@@ -989,6 +991,44 @@ struct TemplatePattern {
 				}
 				FLASH_LOG(Templates, Trace, "    SUCCESS: concrete type/value matches");
 				continue;  // No substitution needed for concrete types/values - don't increment param_index
+			}
+		
+			// Check if this UserDefined pattern arg is a dependent template instantiation
+			// (e.g., ratio<_Num, _Den> stored as a placeholder like ratio$hash)
+			// If so, the concrete arg must be a template instantiation of the same base template
+			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
+				const TypeInfo& pattern_type_info = gTypeInfo[pattern_arg.type_index];
+				if (pattern_type_info.isTemplateInstantiation()) {
+					// Pattern is a template instantiation — concrete must match base template
+					StringHandle pattern_base = pattern_type_info.baseTemplateName();
+					if (concrete_arg.base_type != Type::UserDefined && concrete_arg.base_type != Type::Struct) {
+						FLASH_LOG(Templates, Trace, "  FAILED: pattern is template instantiation '",
+						          StringTable::getStringView(pattern_base), 
+						          "' but concrete is fundamental type");
+						return false;
+					}
+					if (concrete_arg.type_index < gTypeInfo.size()) {
+						const TypeInfo& concrete_type_info = gTypeInfo[concrete_arg.type_index];
+						StringHandle concrete_base = concrete_type_info.isTemplateInstantiation() 
+							? concrete_type_info.baseTemplateName() 
+							: concrete_type_info.name();
+						if (pattern_base != concrete_base) {
+							FLASH_LOG(Templates, Trace, "  FAILED: template base mismatch: pattern='",
+							          StringTable::getStringView(pattern_base), "' concrete='",
+							          StringTable::getStringView(concrete_base), "'");
+							return false;
+						}
+					} else {
+						return false;
+					}
+					FLASH_LOG(Templates, Trace, "  SUCCESS: template instantiation base matches '",
+					          StringTable::getStringView(pattern_base), "'");
+					// Don't bind as a simple parameter — the inner args will be bound separately
+					// For now, skip param binding and just accept the match
+					// TODO: For patterns like pair<T,U>, recursively match inner template args
+					// to deduce T and U from concrete args like pair<int,float>
+					continue;
+				}
 			}
 		
 			// Find the template parameter name for this pattern arg
@@ -1037,9 +1077,31 @@ struct TemplatePattern {
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Reused parameter ", StringTable::getStringView(param_name), " - consistency check passed");
 				// Don't increment param_index - we reused an existing parameter binding
 			} else {
-				// Bind this parameter to the concrete type
-				param_substitutions[param_name] = concrete_arg;
-				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", StringTable::getStringView(param_name), " to concrete type");
+				// Bind this parameter to the concrete type, stripping pattern qualifiers.
+				// Per C++ deduction rules: for pattern T&, T is deduced as int (not int&).
+				TemplateTypeArg deduced_arg = concrete_arg;
+				if (pattern_arg.is_reference) deduced_arg.is_reference = false;
+				if (pattern_arg.is_rvalue_reference) deduced_arg.is_rvalue_reference = false;
+				if (pattern_arg.pointer_depth > 0 && deduced_arg.pointer_depth >= pattern_arg.pointer_depth) {
+					deduced_arg.pointer_depth -= pattern_arg.pointer_depth;
+					// Strip the first pattern_arg.pointer_depth CV qualifiers by rebuilding the vector
+					InlineVector<CVQualifier, 4> remaining;
+					for (size_t pd = pattern_arg.pointer_depth; pd < deduced_arg.pointer_cv_qualifiers.size(); ++pd) {
+						remaining.push_back(deduced_arg.pointer_cv_qualifiers[pd]);
+					}
+					deduced_arg.pointer_cv_qualifiers = std::move(remaining);
+				}
+				if (pattern_arg.is_array) {
+					deduced_arg.is_array = false;
+					deduced_arg.array_size = std::nullopt;
+				}
+				// Strip cv_qualifier contributed by the pattern (e.g., const T → T=int, not T=const int)
+				if (pattern_arg.cv_qualifier != CVQualifier::None) {
+					deduced_arg.cv_qualifier = static_cast<CVQualifier>(
+						static_cast<uint8_t>(deduced_arg.cv_qualifier) & ~static_cast<uint8_t>(pattern_arg.cv_qualifier));
+				}
+				param_substitutions[param_name] = deduced_arg;
+				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", StringTable::getStringView(param_name), " to concrete type (qualifiers stripped)");
 				// Increment param_index since we bound a new template parameter
 				++param_index;
 			}
@@ -1254,6 +1316,55 @@ public:
 		auto it = variable_templates_.find(name);
 		if (it != variable_templates_.end()) {
 			return it->second;
+		}
+		return std::nullopt;
+	}
+
+	// Register a variable template partial specialization with its pattern args
+	void registerVariableTemplateSpecialization(std::string_view base_name,
+	                                             const std::vector<ASTNode>& template_params,
+	                                             const std::vector<TemplateTypeArg>& pattern_args,
+	                                             ASTNode specialized_node) {
+		StringHandle key = StringTable::getOrInternStringHandle(base_name);
+		variable_template_specializations_[key].push_back(
+			TemplatePattern{template_params, pattern_args, specialized_node, std::nullopt});
+	}
+
+	// Find the best matching variable template partial specialization for concrete args.
+	// Returns the specialized ASTNode and the deduced parameter substitutions.
+	struct VarTemplateSpecMatch {
+		ASTNode node;
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
+	};
+
+	std::optional<VarTemplateSpecMatch> findVariableTemplateSpecialization(
+	    std::string_view base_name,
+	    const std::vector<TemplateTypeArg>& concrete_args) const
+	{
+		StringHandle key = StringTable::getOrInternStringHandle(base_name);
+		auto it = variable_template_specializations_.find(key);
+		if (it == variable_template_specializations_.end()) {
+			return std::nullopt;
+		}
+		
+		const TemplatePattern* best_match = nullptr;
+		int best_specificity = -1;
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> best_subs;
+		
+		for (const auto& pattern : it->second) {
+			std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> subs;
+			if (pattern.matches(concrete_args, subs)) {
+				int spec = pattern.specificity();
+				if (spec > best_specificity) {
+					best_specificity = spec;
+					best_match = &pattern;
+					best_subs = std::move(subs);
+				}
+			}
+		}
+		
+		if (best_match) {
+			return VarTemplateSpecMatch{best_match->specialized_node, std::move(best_subs)};
 		}
 		return std::nullopt;
 	}
@@ -1859,6 +1970,7 @@ public:
 		specialization_patterns_.clear();
 		alias_templates_.clear();
 		variable_templates_.clear();
+		variable_template_specializations_.clear();
 		deduction_guides_.clear();
 		instantiation_to_pattern_.clear();
 		class_template_names_.clear();
@@ -1925,6 +2037,9 @@ private:
 
 	// Map from variable template name to TemplateVariableDeclarationNode (StringHandle key for fast lookup)
 	std::unordered_map<StringHandle, ASTNode, StringHandleHash, std::equal_to<>> variable_templates_;
+
+	// Map from variable template base name to partial specialization patterns (structural matching)
+	std::unordered_map<StringHandle, std::vector<TemplatePattern>, StringHandleHash, std::equal_to<>> variable_template_specializations_;
 
 	// Map from class template name to deduction guides (StringHandle key for fast lookup)
 	std::unordered_map<StringHandle, std::vector<ASTNode>, StringHandleHash, std::equal_to<>> deduction_guides_;
