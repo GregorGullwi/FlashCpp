@@ -993,26 +993,157 @@ struct TemplatePattern {
 						          "' but concrete is fundamental type");
 						return false;
 					}
-					if (concrete_arg.type_index < gTypeInfo.size()) {
-						const TypeInfo& concrete_type_info = gTypeInfo[concrete_arg.type_index];
-						StringHandle concrete_base = concrete_type_info.isTemplateInstantiation() 
-							? concrete_type_info.baseTemplateName() 
-							: concrete_type_info.name();
-						if (pattern_base != concrete_base) {
-							FLASH_LOG(Templates, Trace, "  FAILED: template base mismatch: pattern='",
-							          StringTable::getStringView(pattern_base), "' concrete='",
-							          StringTable::getStringView(concrete_base), "'");
-							return false;
-						}
-					} else {
+					if (concrete_arg.type_index >= gTypeInfo.size()) {
+						return false;
+					}
+					const TypeInfo& concrete_type_info = gTypeInfo[concrete_arg.type_index];
+					StringHandle concrete_base = concrete_type_info.isTemplateInstantiation() 
+						? concrete_type_info.baseTemplateName() 
+						: concrete_type_info.name();
+					if (pattern_base != concrete_base) {
+						FLASH_LOG(Templates, Trace, "  FAILED: template base mismatch: pattern='",
+						          StringTable::getStringView(pattern_base), "' concrete='",
+						          StringTable::getStringView(concrete_base), "'");
 						return false;
 					}
 					FLASH_LOG(Templates, Trace, "  SUCCESS: template instantiation base matches '",
 					          StringTable::getStringView(pattern_base), "'");
-					// Don't bind as a simple parameter — the inner args will be bound separately
-					// For now, skip param binding and just accept the match
-					// TODO: For patterns like pair<T,U>, recursively match inner template args
-					// to deduce T and U from concrete args like pair<int,float>
+					// Recursively match inner template args to deduce parameters
+					// e.g., for pattern pair<T,U> and concrete pair<int,float>, deduce T=int, U=float
+					{
+						const auto& pattern_inner_args = pattern_type_info.templateArgs();
+						const auto& concrete_inner_args = concrete_type_info.templateArgs();
+						
+						if (pattern_inner_args.size() != concrete_inner_args.size()) {
+							FLASH_LOG(Templates, Trace, "  FAILED: inner arg count mismatch: pattern=",
+							          pattern_inner_args.size(), " concrete=", concrete_inner_args.size());
+							return false;
+						}
+						
+						bool inner_match_ok = true;
+						for (size_t j = 0; j < pattern_inner_args.size(); ++j) {
+							const auto& p_inner = pattern_inner_args[j];
+							const auto& c_inner = concrete_inner_args[j];
+							
+							FLASH_LOG(Templates, Trace, "  Inner arg[", j, "]: p_inner.is_value=", p_inner.is_value,
+							          " base_type=", static_cast<int>(p_inner.base_type),
+							          " type_index=", p_inner.type_index,
+							          " | c_inner.is_value=", c_inner.is_value,
+							          " base_type=", static_cast<int>(c_inner.base_type));
+							
+							// First, check if pattern inner arg is a dependent template parameter
+							// This handles both type params (T, U) and non-type params (_Num, _Den)
+							// where the pattern stores them as type references (is_value=false)
+							bool bound_param = false;
+							StringHandle inner_name;
+							if (!p_inner.is_value && (p_inner.base_type == Type::UserDefined || p_inner.base_type == Type::Struct)) {
+								// Try to get the parameter name from type_index or dependent_name
+								if (p_inner.type_index > 0 && p_inner.type_index < gTypeInfo.size()) {
+									inner_name = gTypeInfo[p_inner.type_index].name();
+								} else if (p_inner.dependent_name.isValid()) {
+									inner_name = p_inner.dependent_name;
+								}
+								if (inner_name.isValid()) {
+									for (const auto& tp : template_params) {
+										if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == inner_name) {
+										// Build TemplateTypeArg from concrete inner arg
+										TemplateTypeArg deduced;
+										if (c_inner.is_value) {
+											// Non-type parameter: concrete is a value
+											deduced.is_value = true;
+											deduced.value = c_inner.intValue();
+											deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
+										} else {
+											// Type parameter: concrete is a type
+											deduced.base_type = c_inner.base_type;
+											deduced.type_index = c_inner.type_index;
+											deduced.cv_qualifier = c_inner.cv_qualifier;
+											deduced.pointer_depth = static_cast<uint8_t>(c_inner.pointer_depth);
+											deduced.ref_qualifier = c_inner.ref_qualifier;
+											deduced.pointer_cv_qualifiers = c_inner.pointer_cv_qualifiers;
+											deduced.is_array = c_inner.is_array;
+											deduced.array_size = c_inner.array_size;
+										}
+										
+										auto sub_it = param_substitutions.find(inner_name);
+										if (sub_it != param_substitutions.end()) {
+											if (deduced.is_value) {
+												if (!sub_it->second.is_value || sub_it->second.value != deduced.value) {
+													inner_match_ok = false; break;
+												}
+											} else {
+												if (sub_it->second.base_type != deduced.base_type ||
+												    sub_it->second.type_index != deduced.type_index) {
+													FLASH_LOG(Templates, Trace, "  FAILED: inconsistent inner deduction for '",
+													          StringTable::getStringView(inner_name), "'");
+													inner_match_ok = false; break;
+												}
+											}
+										} else {
+											param_substitutions[inner_name] = deduced;
+											FLASH_LOG(Templates, Trace, "  Deduced inner param '",
+											          StringTable::getStringView(inner_name), "' from inner arg[", j, "]");
+										}
+										bound_param = true;
+										break;
+									}
+								}
+								}
+							}
+							
+							if (bound_param) continue;
+							
+							// Handle non-type value arguments (both pattern and concrete are values)
+							if (p_inner.is_value && c_inner.is_value) {
+								bool bound_value = false;
+								if (std::holds_alternative<StringHandle>(p_inner.value)) {
+									StringHandle val_name = std::get<StringHandle>(p_inner.value);
+									if (val_name.isValid()) {
+										for (const auto& tp : template_params) {
+											if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == val_name) {
+												TemplateTypeArg deduced;
+												deduced.is_value = true;
+												deduced.value = c_inner.intValue();
+												deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
+												auto sub_it = param_substitutions.find(val_name);
+												if (sub_it != param_substitutions.end()) {
+													if (sub_it->second.value != deduced.value) { inner_match_ok = false; break; }
+												} else {
+													param_substitutions[val_name] = deduced;
+												}
+												bound_value = true;
+												break;
+											}
+										}
+									}
+								}
+								if (!bound_value) {
+									if (p_inner.intValue() != c_inner.intValue()) {
+										FLASH_LOG(Templates, Trace, "  FAILED: inner value mismatch at index ", j);
+										inner_match_ok = false; break;
+									}
+								}
+								continue;
+							}
+							
+							if (p_inner.is_value != c_inner.is_value) {
+								FLASH_LOG(Templates, Trace, "  FAILED: inner arg value/type mismatch at index ", j);
+								inner_match_ok = false; break;
+							}
+							
+							// Concrete type in pattern - must match exactly
+							if (p_inner.base_type != c_inner.base_type) {
+								FLASH_LOG(Templates, Trace, "  FAILED: inner concrete type mismatch at index ", j);
+								inner_match_ok = false; break;
+							}
+							if ((p_inner.base_type == Type::UserDefined || p_inner.base_type == Type::Struct ||
+							     p_inner.base_type == Type::Enum) && p_inner.type_index != c_inner.type_index) {
+								FLASH_LOG(Templates, Trace, "  FAILED: inner concrete type_index mismatch at index ", j);
+								inner_match_ok = false; break;
+							}
+						}
+						if (!inner_match_ok) return false;
+					}
 					continue;
 				}
 			}
@@ -1137,6 +1268,14 @@ struct TemplatePattern {
 	
 		for (const auto& arg : pattern_args) {
 			// Base score: any pattern parameter = 0
+		
+			// Template instantiation pattern (e.g., pair<T,U>) is more specific than bare T
+			if (arg.base_type == Type::UserDefined && arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+				const TypeInfo& ti = gTypeInfo[arg.type_index];
+				if (ti.isTemplateInstantiation()) {
+					score += 2 + static_cast<int>(ti.templateArgs().size());
+				}
+			}
 		
 			// Pointer modifier adds specificity (T* is more specific than T)
 			score += arg.pointer_depth;  // T* = +1, T** = +2, etc.

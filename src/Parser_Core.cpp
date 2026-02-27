@@ -130,6 +130,7 @@ static InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const
 		info.array_size = arg.array_size;
 		info.value = arg.value;
 		info.is_value = arg.is_value;
+		info.dependent_name = arg.dependent_name;
 		result.push_back(info);
 	}
 	return result;
