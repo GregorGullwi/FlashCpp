@@ -213,7 +213,7 @@ struct TemplateTypeArg {
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
 		, type_index(type_spec.type_index())
-		, is_reference(type_spec.is_reference())
+		, is_reference(type_spec.is_lvalue_reference())
 		, is_rvalue_reference(type_spec.is_rvalue_reference())
 		, pointer_depth(type_spec.pointer_depth())
 		, pointer_cv_qualifiers()
