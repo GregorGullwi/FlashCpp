@@ -11422,11 +11422,19 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					// (partial specializations have template_params; full specializations don't)
 					const auto& spec_params = spec_template.template_parameters();
 					if (!spec_params.empty()) {
-						// Build TemplateArgument vector from template_args
+						// Deduce the specialization's template parameters by stripping
+						// pattern qualifiers from the caller's arguments.
+						// E.g., for pattern T&  matched by int&,  T = int  (strip &)
+						//        for pattern T&& matched by int&&, T = int  (strip &&)
+						//        for pattern T*  matched by int*,  T = int  (strip *)
 						std::vector<TemplateArgument> converted_args;
 						converted_args.reserve(template_args.size());
 						for (const auto& ta : template_args) {
-							converted_args.push_back(toTemplateArgument(ta));
+							TemplateTypeArg deduced = ta;
+							deduced.is_reference = false;
+							deduced.is_rvalue_reference = false;
+							deduced.pointer_depth = 0;
+							converted_args.push_back(toTemplateArgument(deduced));
 						}
 						// Substitute template parameters in the initializer
 						init_expr = substituteTemplateParameters(
