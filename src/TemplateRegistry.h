@@ -1141,12 +1141,12 @@ struct TemplatePattern {
 			// Pointer modifier adds specificity (T* is more specific than T)
 			score += arg.pointer_depth;  // T* = +1, T** = +2, etc.
 		
-			// Reference modifier adds specificity
-			if (arg.is_reference()) {
+			if (arg.is_lvalue_reference()) {
 				score += 1;  // T& is more specific than T
 			}
 			if (arg.is_rvalue_reference()) {
 				score += 1;  // T&& is more specific than T
+			}
 			}
 		
 			// Array modifiers add specificity
