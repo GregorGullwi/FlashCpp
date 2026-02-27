@@ -1292,6 +1292,14 @@ struct TemplatePattern {
 									}
 								}
 							}
+						} else if (inner_arg.is_value && inner_arg.dependent_name.isValid()) {
+							// Non-type value inner arg: check if dependent_name matches a template parameter
+							for (const auto& tp : template_params) {
+								if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == inner_arg.dependent_name) {
+									is_dependent = true;
+									break;
+								}
+							}
 						}
 						if (!is_dependent) {
 							score += 1;  // concrete inner arg adds specificity
