@@ -1084,9 +1084,12 @@ struct TemplatePattern {
 				if (pattern_arg.is_rvalue_reference) deduced_arg.is_rvalue_reference = false;
 				if (pattern_arg.pointer_depth > 0 && deduced_arg.pointer_depth >= pattern_arg.pointer_depth) {
 					deduced_arg.pointer_depth -= pattern_arg.pointer_depth;
-					for (size_t pd = 0; pd < pattern_arg.pointer_depth && !deduced_arg.pointer_cv_qualifiers.empty(); ++pd) {
-						deduced_arg.pointer_cv_qualifiers.erase(deduced_arg.pointer_cv_qualifiers.begin());
+					// Strip the first pattern_arg.pointer_depth CV qualifiers by rebuilding the vector
+					InlineVector<CVQualifier, 4> remaining;
+					for (size_t pd = pattern_arg.pointer_depth; pd < deduced_arg.pointer_cv_qualifiers.size(); ++pd) {
+						remaining.push_back(deduced_arg.pointer_cv_qualifiers[pd]);
 					}
+					deduced_arg.pointer_cv_qualifiers = std::move(remaining);
 				}
 				if (pattern_arg.is_array) {
 					deduced_arg.is_array = false;
