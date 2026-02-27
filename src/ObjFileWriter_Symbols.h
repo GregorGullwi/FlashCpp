@@ -1,3 +1,6 @@
+// ObjFileWriter_Symbols.h - Function symbol, relocation, and signature methods
+// Part of ObjFileWriter class body (unity build shard) - included inside class ObjectFileWriter
+
 	// Add function signature information for member functions with class name
 	// Returns the mangled name for the function
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false) {

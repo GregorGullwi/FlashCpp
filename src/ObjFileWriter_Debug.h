@@ -1,3 +1,5 @@
+// ObjFileWriter_Debug.h - Debug info and CodeView methods
+// Part of ObjFileWriter class body (unity build shard) - included inside class ObjectFileWriter
 
 	// --- Helper structs for exception info sub-functions ---
 

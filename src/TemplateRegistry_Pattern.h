@@ -1,6 +1,7 @@
 #pragma once
 #include "TemplateRegistry_Types.h"
 
+// Template argument - can be a type, a value, or a template
 struct TemplateArgument {
 	enum class Kind {
 		Type,

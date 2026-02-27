@@ -1,3 +1,6 @@
+// ObjFileWriter_EH.h - Exception handling (SEH/C++ EH) and unwind methods
+// Part of ObjFileWriter class body (unity build shard) - included inside class ObjectFileWriter
+
 	void build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start,
 	                           const std::vector<SehTryBlockInfo>& seh_try_blocks,
 	                           std::vector<ScopeTableReloc>& scope_relocs) {

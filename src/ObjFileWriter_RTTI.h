@@ -1,3 +1,5 @@
+// ObjFileWriter_RTTI.h - Global variable, RTTI, vtable methods and private data members
+// Part of ObjFileWriter class body (unity build shard) - included inside class ObjectFileWriter
 
 	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}, uint32_t stack_frame_size = 0) {
 		// Check if exception info has already been added for this function

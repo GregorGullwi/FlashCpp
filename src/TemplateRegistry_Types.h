@@ -528,4 +528,3 @@ inline std::string_view generateInstantiatedNameFromArgs(
 
 } // namespace FlashCpp
 
-// Template argument - can be a type, a value, or a template
