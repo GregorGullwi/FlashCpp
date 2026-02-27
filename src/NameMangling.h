@@ -527,9 +527,9 @@ inline void appendItaniumTypeTemplateArgs(
 			}
 			
 			// Handle references
-			if (arg.is_rvalue_reference) {
+			if (arg.is_rvalue_reference()) {
 				output += 'O';  // rvalue reference
-			} else if (arg.is_reference) {
+			} else if (arg.is_reference()) {
 				output += 'R';  // lvalue reference
 			}
 			

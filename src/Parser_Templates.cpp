@@ -986,10 +986,8 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Parse reference qualifier
 					ReferenceQualifier ref = parse_reference_qualifier();
-					if (ref == ReferenceQualifier::LValueReference) {
-						type_spec.set_reference(false);
-					} else if (ref == ReferenceQualifier::RValueReference) {
-						type_spec.set_reference(true);
+					if (ref != ReferenceQualifier::None) {
+						type_spec.set_reference_qualifier(ref);
 					}
 					
 					// Parse array bounds: [_Nm] or []
@@ -1013,8 +1011,7 @@ ParseResult Parser::parse_template_declaration() {
 					arg.is_value = false;
 					arg.cv_qualifier = type_spec.cv_qualifier();
 					arg.pointer_depth = type_spec.pointer_depth();
-					arg.is_reference = type_spec.is_lvalue_reference();
-					arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+					arg.ref_qualifier = type_spec.reference_qualifier();
 					arg.is_array = is_array;
 					// Mark as dependent only for partial specializations
 					// For full specializations (template<>), the types are concrete, not dependent
@@ -1639,7 +1636,7 @@ ParseResult Parser::parse_template_declaration() {
 				{
 					// Skip declaration specifiers (constexpr, inline, etc.)
 					auto specs = parse_declaration_specifiers();
-					ctor_is_constexpr = specs.is_constexpr;
+					ctor_is_constexpr = specs.is_constexpr();
 					// Also skip 'explicit' which is constructor-specific
 					while (peek() == "explicit"_tok) {
 						ctor_is_explicit = true;
@@ -1924,8 +1921,8 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_noexcept(true);
 					}
 					
-					bool is_defaulted = dtor_func_specs.is_defaulted;
-					bool is_deleted = dtor_func_specs.is_deleted;
+					bool is_defaulted = dtor_func_specs.is_defaulted();
+					bool is_deleted = dtor_func_specs.is_deleted();
 					
 					// Handle defaulted destructors
 					if (is_defaulted) {
@@ -2138,11 +2135,11 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_node,
 						current_access,
 						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
-						func_specs.is_pure_virtual,
+						func_specs.is_pure_virtual(),
 						func_specs.is_override,
 						func_specs.is_final,
-						member_quals.is_const,
-						member_quals.is_volatile
+						member_quals.is_const(),
+						member_quals.is_volatile()
 					);
 					
 					// Also add to StructTypeInfo so out-of-line definitions can find the declaration
@@ -2151,11 +2148,11 @@ ParseResult Parser::parse_template_declaration() {
 						struct_info->addMemberFunction(func_name_handle, member_func_node,
 							current_access,
 							!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
-							func_specs.is_pure_virtual, func_specs.is_override, func_specs.is_final);
+							func_specs.is_pure_virtual(), func_specs.is_override, func_specs.is_final);
 						// Set const/volatile on the last added member
 						if (!struct_info->member_functions.empty()) {
-							struct_info->member_functions.back().is_const = member_quals.is_const;
-							struct_info->member_functions.back().is_volatile = member_quals.is_volatile;
+							struct_info->member_functions.back().is_const = member_quals.is_const();
+							struct_info->member_functions.back().is_volatile = member_quals.is_volatile();
 						}
 					}
 					
@@ -2620,9 +2617,9 @@ ParseResult Parser::parse_template_declaration() {
 					pattern_name_builder.append("MPF");
 				}
 				// Add reference markers
-				if (arg.is_rvalue_reference) {
+				if (arg.is_rvalue_reference()) {
 					pattern_name_builder.append("RR");
-				} else if (arg.is_reference) {
+				} else if (arg.is_reference()) {
 					pattern_name_builder.append("R");
 				}
 				// Add const/volatile markers
@@ -2819,9 +2816,9 @@ ParseResult Parser::parse_template_declaration() {
 					for (size_t i = 0; i < arg.pointer_depth; ++i) {
 						pattern_key.append("P");
 					}
-					if (arg.is_rvalue_reference) {
+					if (arg.is_rvalue_reference()) {
 						pattern_key.append("RR");
-					} else if (arg.is_reference) {
+					} else if (arg.is_reference()) {
 						pattern_key.append("R");
 					}
 				}
@@ -3304,8 +3301,8 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_noexcept(true);
 					}
 					
-					bool is_defaulted = dtor_func_specs.is_defaulted;
-					bool is_deleted = dtor_func_specs.is_deleted;
+					bool is_defaulted = dtor_func_specs.is_defaulted();
+					bool is_deleted = dtor_func_specs.is_deleted();
 					
 					// Handle defaulted destructors
 					if (is_defaulted) {
@@ -3490,8 +3487,8 @@ ParseResult Parser::parse_template_declaration() {
 					}
 					
 					// Extract parsed specifiers
-					bool is_defaulted = func_specs.is_defaulted;
-					bool is_deleted = func_specs.is_deleted;
+					bool is_defaulted = func_specs.is_defaulted();
+					bool is_deleted = func_specs.is_deleted();
 					
 					// Handle defaulted functions: create implicit function with empty body
 					if (is_defaulted) {
@@ -4511,7 +4508,7 @@ ParseResult Parser::parse_requires_expression() {
 				// Expect & or * for function reference/pointer
 				if (peek() == "&"_tok) {
 					advance(); // consume '&'
-					type_spec.set_reference(false);  // lvalue reference
+					type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 				} else if (peek() == "*"_tok) {
 					advance(); // consume '*'
 					type_spec.add_pointer_level(CVQualifier::None);
@@ -5300,9 +5297,9 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Parse storage class specifiers (constexpr, inline, static, etc.)
 	// This must be done BEFORE parse_type_and_name() to capture constexpr for template functions
 	auto specs = parse_declaration_specifiers();
-	bool is_constexpr = specs.is_constexpr;
-	bool is_consteval = specs.is_consteval;
-	bool is_constinit = specs.is_constinit;
+	bool is_constexpr = specs.is_constexpr();
+	bool is_consteval = specs.is_consteval();
+	bool is_constinit = specs.is_constinit();
 	
 	// Parse the function declaration (type and name)
 	auto type_and_name_result = parse_type_and_name();
@@ -5640,9 +5637,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				// Handles 'explicit constexpr' where constexpr comes after explicit
 				{
 					auto more_specs = parse_declaration_specifiers();
-					if (more_specs.is_constexpr) specs.is_constexpr = true;
-					if (more_specs.is_consteval) specs.is_consteval = true;
-					if (more_specs.is_constinit) specs.is_constinit = true;
+					if (more_specs.constexpr_spec != FlashCpp::ConstexprSpecifier::None)
+						specs.constexpr_spec = more_specs.constexpr_spec;
 					if (more_specs.is_inline) specs.is_inline = true;
 				}
 				
@@ -5662,7 +5658,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				
 				// Apply specifiers to constructor
 				ctor_ref.set_explicit(is_explicit);
-				ctor_ref.set_constexpr(specs.is_constexpr);
+				ctor_ref.set_constexpr(specs.is_constexpr());
 				
 				// Parse parameters
 				FlashCpp::ParsedParameterList params;
@@ -5928,7 +5924,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						// Register as a member function template on the struct
 						struct_node.add_member_function(template_func_node, access,
 						                                false, false, false, false,
-						                                member_quals.is_const, member_quals.is_volatile);
+						                                member_quals.is_const(), member_quals.is_volatile());
 
 						auto qualified_name = StringTable::getOrInternStringHandle(
 							StringBuilder().append(struct_node.name()).append("::"sv).append(operator_name));
@@ -6314,9 +6310,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				pattern_name.append("MPF"sv);
 			}
 			// Add reference markers
-			if (arg.is_rvalue_reference) {
+			if (arg.is_rvalue_reference()) {
 				pattern_name.append("RR"sv);
-			} else if (arg.is_reference) {
+			} else if (arg.is_reference()) {
 				pattern_name.append("R"sv);
 			}
 			// Add const/volatile markers
@@ -8487,9 +8483,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 						
 						if (is_lvalue_ref) {
-							type_node.set_reference(false);  // lvalue reference
+							type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 						} else if (is_rvalue_ref) {
-							type_node.set_reference(true);   // rvalue reference
+							type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);   // rvalue reference
 						}
 						
 						discard_saved_token(paren_saved_pos);
@@ -9075,8 +9071,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					const auto& concept_params = concept_node.template_params();
 					// Strip lvalue reference that deduction adds for lvalue arguments.
 					TemplateTypeArg concept_arg = explicit_types[arg_idx];
-					concept_arg.is_reference = false;
-					concept_arg.is_rvalue_reference = false;
+					concept_arg.ref_qualifier = ReferenceQualifier::None;
 					std::vector<TemplateTypeArg> concept_args = { concept_arg };
 					std::vector<std::string_view> concept_param_names;
 					if (!concept_params.empty()) {
@@ -9189,9 +9184,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	for (const auto& ptr_level : orig_return_type.pointer_levels()) {
 		return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 	}
-	if (orig_return_type.is_reference() || orig_return_type.is_rvalue_reference()) {
-		return_type_ref.set_reference(orig_return_type.is_rvalue_reference());
-	}
+	return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
@@ -9223,9 +9216,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			for (const auto& ptr_level : orig_param_type.pointer_levels()) {
 				param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 			}
-			if (orig_param_type.is_reference() || orig_param_type.is_rvalue_reference()) {
-				param_type_ref.set_reference(orig_param_type.is_rvalue_reference());
-			}
+			param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
 
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			new_func_ref.add_parameter_node(new_param_decl);
@@ -9772,8 +9763,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeSpecifierNode& type_spec = arg.type_specifier.value();
 				type_arg.base_type = type_spec.type();
 				type_arg.type_index = type_spec.type_index();
-				type_arg.is_reference = type_spec.is_lvalue_reference();
-				type_arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+				type_arg.ref_qualifier = type_spec.reference_qualifier();
 				type_arg.pointer_depth = type_spec.pointer_depth();
 				type_arg.cv_qualifier = type_spec.cv_qualifier();
 			} else {
@@ -9876,8 +9866,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// For abbreviated function templates (ConceptName auto x), the deduced
 					// type T is the parameter type without reference qualification.
 					TemplateTypeArg concept_arg = template_args_as_type_args[arg_idx];
-					concept_arg.is_reference = false;
-					concept_arg.is_rvalue_reference = false;
+					concept_arg.ref_qualifier = ReferenceQualifier::None;
 					std::vector<TemplateTypeArg> concept_args = { concept_arg };
 					std::vector<std::string_view> concept_param_names;
 					if (!concept_params.empty()) {
@@ -10023,10 +10012,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			
 			if (is_punctuator_or_operator && is_ampamp) {
 				advance();  // Consume &&
-				rt.set_reference(true);  // Set rvalue reference
+				rt.set_reference_qualifier(ReferenceQualifier::RValueReference);  // Set rvalue reference
 			} else if (is_punctuator_or_operator && is_amp) {
 				advance();  // Consume &
-				rt.set_lvalue_reference(true);  // Set lvalue reference
+				rt.set_reference_qualifier(ReferenceQualifier::LValueReference);  // Set lvalue reference
 			}
 		}
 		
@@ -10129,13 +10118,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_enum, ", type_index=", return_type_index);
 		
 		// Preserve reference qualifiers from original return type
-		if (orig_return_type.is_reference()) {
-			if (orig_return_type.is_rvalue_reference()) {
-				new_return_type.set_reference(true);  // true = rvalue reference
-			} else {
-				new_return_type.set_lvalue_reference(true);
-			}
-		}
+		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
 		
 		// Preserve pointer levels
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
@@ -10332,15 +10315,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						if (arg_type.is_lvalue_reference()) {
 							// Deduced type is lvalue reference (e.g., int&)
 							// Applying && gives int& && which collapses to int&
-							param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
 						} else if (arg_type.is_rvalue_reference()) {
 							// Deduced type is rvalue reference (e.g., int&&)
 							// Applying && gives int&& && which collapses to int&&
-							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
 						} else {
 							// Deduced type is non-reference (e.g., int from literal)
 							// Applying && gives int&&
-							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
 						}
 					}
 				
@@ -10437,18 +10420,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (orig_param_type.is_rvalue_reference() && arg_type_index < arg_types.size()) {
 					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
 					if (arg_type.is_lvalue_reference()) {
-						param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
 					} else if (arg_type.is_rvalue_reference()) {
-						param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
 					} else if (arg_type.is_reference()) {
-						param_type.as<TypeSpecifierNode>().set_reference(arg_type.is_rvalue_reference());
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(arg_type.reference_qualifier());
 					} else {
-						param_type.as<TypeSpecifierNode>().set_reference(true);  // T && → T&&
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // T && → T&&
 					}
 				} else if (orig_param_type.is_lvalue_reference()) {
-					param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
 				} else if (orig_param_type.is_rvalue_reference()) {
-					param_type.as<TypeSpecifierNode>().set_reference(true);
+					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
 				}
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
@@ -10578,8 +10561,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				subst.substituted_type.is_value = false;
 				subst.substituted_type.is_dependent = false;  // These are concrete types
 				if (arg.type_specifier.has_value()) {
-					subst.substituted_type.is_reference = arg.type_specifier->is_lvalue_reference();
-					subst.substituted_type.is_rvalue_reference = arg.type_specifier->is_rvalue_reference();
+					subst.substituted_type.ref_qualifier = arg.type_specifier->reference_qualifier();
 					subst.substituted_type.pointer_depth = arg.type_specifier->pointer_levels().size();
 				}
 				template_param_substitutions_.push_back(subst);
@@ -10900,11 +10882,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 				new_type.set_type_index(arg.type_index);
 				
 				// Apply cv-qualifiers, references, and pointers from template argument
-				if (arg.is_rvalue_reference) {
-					new_type.set_reference(true);
-				} else if (arg.is_reference) {
-					new_type.set_lvalue_reference(true);
-				}
+				new_type.set_reference_qualifier(arg.ref_qualifier);
 				for (size_t p = 0; p < arg.pointer_depth; ++p) {
 					new_type.add_pointer_level(CVQualifier::None);
 				}
@@ -10939,11 +10917,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 							new_type.set_type_index(arg.type_index);
 							
 							// Apply cv-qualifiers, references, and pointers from template argument
-							if (arg.is_rvalue_reference) {
-								new_type.set_reference(true);
-							} else if (arg.is_reference) {
-								new_type.set_lvalue_reference(true);
-							}
+							new_type.set_reference_qualifier(arg.ref_qualifier);
 							for (size_t p = 0; p < arg.pointer_depth; ++p) {
 								new_type.add_pointer_level(CVQualifier::None);
 							}
@@ -11072,11 +11046,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					unop.get_token()
 				);
 				// Apply cv-qualifiers, references, and pointers from template argument
-				if (arg.is_rvalue_reference) {
-					new_type.set_reference(true);
-				} else if (arg.is_reference) {
-					new_type.set_lvalue_reference(true);
-				}
+				new_type.set_reference_qualifier(arg.ref_qualifier);
 				for (size_t p = 0; p < arg.pointer_depth; ++p) {
 					new_type.add_pointer_level(CVQualifier::None);
 				}
@@ -11213,8 +11183,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 								FLASH_LOG(Templates, Debug, "Deduction fallback for param '",
 								          tp.name(), "': using arg[", converted_args.size(), "] with qualifiers stripped");
 								TemplateTypeArg deduced = resolved_args[converted_args.size()];
-								deduced.is_reference = false;
-								deduced.is_rvalue_reference = false;
+								deduced.ref_qualifier = ReferenceQualifier::None;
 								deduced.pointer_depth = 0;
 								deduced.pointer_cv_qualifiers.clear();
 								deduced.is_array = false;
@@ -11363,11 +11332,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					orig_token
 				);
 				// Apply cv-qualifiers, references, and pointers from template argument
-				if (arg.is_rvalue_reference) {
-					substituted_type.set_reference(true);
-				} else if (arg.is_reference) {
-					substituted_type.set_lvalue_reference(true);
-				}
+				substituted_type.set_reference_qualifier(arg.ref_qualifier);
 				for (size_t p = 0; p < arg.pointer_depth; ++p) {
 					substituted_type.add_pointer_level(CVQualifier::None);
 				}
@@ -14253,8 +14218,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (subst_it != name_substitution_map.end()) {
 							TemplateTypeArg subst = subst_it->second;
 							subst.pointer_depth = type_spec.pointer_depth();
-							subst.is_reference = type_spec.is_reference();
-							subst.is_rvalue_reference = type_spec.is_rvalue_reference();
+							subst.ref_qualifier = type_spec.reference_qualifier();
 							subst.cv_qualifier = type_spec.cv_qualifier();
 							resolved_args.push_back(subst);
 							resolved = true;
@@ -14279,8 +14243,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									inst_arg.base_type = Type::Struct;
 									inst_arg.type_index = inst_it->second->type_index_;
 									inst_arg.pointer_depth = type_spec.pointer_depth();
-									inst_arg.is_reference = type_spec.is_reference();
-									inst_arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+									inst_arg.ref_qualifier = type_spec.reference_qualifier();
 									inst_arg.cv_qualifier = type_spec.cv_qualifier();
 									resolved_args.push_back(inst_arg);
 									resolved = true;
@@ -14293,8 +14256,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									if (identifier_matches(type_name, subst_entry.first)) {
 										TemplateTypeArg subst = subst_entry.second;
 										subst.pointer_depth = type_spec.pointer_depth();
-										subst.is_reference = type_spec.is_reference();
-										subst.is_rvalue_reference = type_spec.is_rvalue_reference();
+										subst.ref_qualifier = type_spec.reference_qualifier();
 										subst.cv_qualifier = type_spec.cv_qualifier();
 										resolved_args.push_back(subst);
 										resolved = true;
@@ -14853,11 +14815,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		// Preserve reference qualifiers from the original type
-		if (type_spec.is_rvalue_reference()) {
-			substituted_type_spec.set_reference(true);  // true for rvalue reference
-		} else if (type_spec.is_reference()) {
-			substituted_type_spec.set_reference(false);  // false for lvalue reference
-		}
+		substituted_type_spec.set_reference_qualifier(type_spec.reference_qualifier());
 		
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
@@ -15987,11 +15945,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				if (return_type_spec.is_rvalue_reference()) {
-					substituted_return_type.set_reference(true);
-				} else if (return_type_spec.is_reference()) {
-					substituted_return_type.set_reference(false);
-				}
+				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -16028,11 +15982,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
-						if (param_type_spec.is_rvalue_reference()) {
-							substituted_param_type.set_reference(true);
-						} else if (param_type_spec.is_reference()) {
-							substituted_param_type.set_reference(false);
-						}
+						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -16122,11 +16072,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				if (return_type_spec.is_rvalue_reference()) {
-					substituted_return_type.set_reference(true);
-				} else if (return_type_spec.is_reference()) {
-					substituted_return_type.set_reference(false);
-				}
+				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -16163,11 +16109,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
-						if (param_type_spec.is_rvalue_reference()) {
-							substituted_param_type.set_reference(true);
-						} else if (param_type_spec.is_reference()) {
-							substituted_param_type.set_reference(false);
-						}
+						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -16225,8 +16167,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 						
 						// Copy reference qualifiers from template arg
-						type_info.is_reference_ = template_args_to_use[i].is_reference;
-						type_info.is_rvalue_reference_ = template_args_to_use[i].is_rvalue_reference;
+						type_info.is_reference_ = template_args_to_use[i].is_lvalue_reference();
+						type_info.is_rvalue_reference_ = template_args_to_use[i].is_rvalue_reference();
 						
 						gTypesByName.emplace(type_info.name(), &type_info);
 						template_scope.addParameter(&type_info);
@@ -16413,11 +16355,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				if (return_type_spec.is_rvalue_reference()) {
-					substituted_return_type.set_reference(true);
-				} else if (return_type_spec.is_reference()) {
-					substituted_return_type.set_reference(false);
-				}
+				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -16453,11 +16391,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
-						if (param_type_spec.is_rvalue_reference()) {
-							substituted_param_type.set_reference(true);
-						} else if (param_type_spec.is_reference()) {
-							substituted_param_type.set_reference(false);
-						}
+						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 						auto substituted_param_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto [param_decl_node, param_decl_ref] = emplace_node_ref<DeclarationNode>(
@@ -16560,11 +16494,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 								substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 							}
-							if (param_type_spec.is_rvalue_reference()) {
-								substituted_param_type.set_reference(true);
-							} else if (param_type_spec.is_reference()) {
-								substituted_param_type.set_reference(false);
-							}
+							substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 							auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 							auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -16750,8 +16680,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_return_spec.set_type_index(ret_type_index);
 				for (const auto& pl : return_type_spec.pointer_levels())
 					new_return_spec.add_pointer_level(pl.cv_qualifier);
-				if (return_type_spec.is_rvalue_reference()) new_return_spec.set_reference(true);
-				else if (return_type_spec.is_reference()) new_return_spec.set_reference(false);
+				new_return_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
 				
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 					new_return_type, decl_node.identifier_token());
@@ -16782,8 +16711,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_param_spec.set_type_index(new_param_type_index);
 						for (const auto& pl : param_type_spec.pointer_levels())
 							new_param_spec.add_pointer_level(pl.cv_qualifier);
-						if (param_type_spec.is_rvalue_reference()) new_param_spec.set_reference(true);
-						else if (param_type_spec.is_reference()) new_param_spec.set_reference(false);
+						new_param_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
 						
 						auto new_param_decl = emplace_node<DeclarationNode>(
 							new_param_type_node, param_decl.identifier_token());
@@ -18281,11 +18209,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 		substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 	}
-	if (return_type_spec.is_rvalue_reference()) {
-		substituted_return_type.set_reference(true);
-	} else if (return_type_spec.is_reference()) {
-		substituted_return_type.set_reference(false);
-	}
+	substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 
 	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -18322,11 +18246,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 				substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 			}
-			if (param_type_spec.is_rvalue_reference()) {
-				substituted_param_type.set_reference(true);
-			} else if (param_type_spec.is_reference()) {
-				substituted_param_type.set_reference(false);
-			}
+			substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 			auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -18379,8 +18299,8 @@ if (param_decl.has_default_value()) {
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 			
 			// Copy reference qualifiers from template arg
-			type_info.is_reference_ = lazy_info.template_args[i].is_reference;
-			type_info.is_rvalue_reference_ = lazy_info.template_args[i].is_rvalue_reference;
+			type_info.is_reference_ = lazy_info.template_args[i].is_lvalue_reference();
+			type_info.is_rvalue_reference_ = lazy_info.template_args[i].is_rvalue_reference();
 			
 			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);
@@ -19989,8 +19909,7 @@ ASTNode Parser::substituteTemplateParameters(
 						TemplateTypeArg arg;
 						arg.base_type = parg.base_type;
 						arg.type_index = parg.type_index;
-						arg.is_reference = (parg.ref_qualifier == ReferenceQualifier::LValueReference);
-						arg.is_rvalue_reference = (parg.ref_qualifier == ReferenceQualifier::RValueReference);
+						arg.ref_qualifier = parg.ref_qualifier;
 						arg.pointer_depth = parg.pointer_depth;
 						arg.cv_qualifier = parg.cv_qualifier;
 						

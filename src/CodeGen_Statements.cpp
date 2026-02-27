@@ -3509,10 +3509,10 @@
 				// If this is a reference binding (auto& or auto&&), mark the type as a reference
 				if (is_reference_binding) {
 					if (node.is_lvalue_reference()) {
-						binding_type.set_reference(false);  // false = lvalue reference
+						binding_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // false = lvalue reference
 					} else if (node.is_rvalue_reference()) {
 						// For auto&&, bindings to array elements become lvalue references
-						binding_type.set_reference(false);  // false = lvalue reference
+						binding_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // false = lvalue reference
 					}
 				}
 				
@@ -3921,12 +3921,12 @@
 			// If this is a reference binding (auto& or auto&&), mark the type as a reference
 			if (is_reference_binding) {
 				if (node.is_lvalue_reference()) {
-					binding_type.set_reference(false);  // false = lvalue reference
+					binding_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // false = lvalue reference
 				} else if (node.is_rvalue_reference()) {
 					// For auto&&, the binding type depends on value category
 					// Since we're binding to members of the hidden variable, they're lvalues
 					// So auto&& bindings to struct members become lvalue references
-					binding_type.set_reference(false);  // false = lvalue reference
+					binding_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // false = lvalue reference
 				}
 			}
 			

@@ -1853,20 +1853,20 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 		// Handle cv-qualifiers
 		if (token.type() == Token::Type::Keyword && 
 			(token.value() == "const" || token.value() == "volatile")) {
-			if (token.value() == "const") out_quals.is_const = true;
-			else out_quals.is_volatile = true;
+			if (token.value() == "const") out_quals.cv |= CVQualifier::Const;
+			else out_quals.cv |= CVQualifier::Volatile;
 			advance();
 			continue;
 		}
 		
 		// Handle ref-qualifiers (& and &&)
 		if (peek() == "&"_tok) {
-			out_quals.is_lvalue_ref = true;
+			out_quals.ref_qualifier = ReferenceQualifier::LValueReference;
 			advance();
 			continue;
 		}
 		if (peek() == "&&"_tok) {
-			out_quals.is_rvalue_ref = true;
+			out_quals.ref_qualifier = ReferenceQualifier::RValueReference;
 			advance();
 			continue;
 		}
@@ -1980,10 +1980,10 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	}
 	if (peek() == "&&"_tok) {
 		advance();
-		type_spec.set_reference(true);
+		type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
 	} else if (peek() == "&"_tok) {
 		advance();
-		type_spec.set_reference(false);
+		type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
 	}
 }
 
@@ -2191,7 +2191,7 @@ bool Parser::parse_static_member_function(
 	FLASH_LOG(Templates, Debug, "Adding static member function '", decl_node.identifier_token().value(), "' to struct '", StringTable::getStringView(struct_name_handle), "'");
 	struct_ref.add_member_function(member_func_node, current_access,
 	                               false, false, false, false,
-	                               member_quals.is_const, member_quals.is_volatile);
+	                               member_quals.is_const(), member_quals.is_volatile());
 	FLASH_LOG(Templates, Debug, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
 	
 	// Also register in StructTypeInfo
@@ -2203,8 +2203,8 @@ bool Parser::parse_static_member_function(
 		false,  // is_pure_virtual
 		false   // is_override
 	);
-	registered.is_const = member_quals.is_const;
-	registered.is_volatile = member_quals.is_volatile;
+	registered.is_const = member_quals.is_const();
+	registered.is_volatile = member_quals.is_volatile();
 
 	return true;  // Successfully handled as a function
 }
@@ -6244,7 +6244,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						);
 						if (is_lvalue) {
 							// Mark as lvalue reference for perfect forwarding template deduction
-							arg_type_node.set_lvalue_reference(true);
+							arg_type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);
 						}
 						arg_types.push_back(arg_type_node);
 					}
@@ -6293,7 +6293,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
 											if (decl->type_node().is<TypeSpecifierNode>()) {
 												arg_types.back() = decl->type_node().as<TypeSpecifierNode>();
-												arg_types.back().set_lvalue_reference(true);
+												arg_types.back().set_reference_qualifier(ReferenceQualifier::LValueReference);
 											}
 										}
 									}
@@ -6303,7 +6303,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
 										if (decl->type_node().is<TypeSpecifierNode>()) {
 											TypeSpecifierNode arg_type_node_pack = decl->type_node().as<TypeSpecifierNode>();
-											arg_type_node_pack.set_lvalue_reference(true);
+											arg_type_node_pack.set_reference_qualifier(ReferenceQualifier::LValueReference);
 											arg_types.push_back(arg_type_node_pack);
 										}
 									}
@@ -8343,7 +8343,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									
 									if (is_lvalue) {
 										// For forwarding reference deduction: Args&& deduces to T& for lvalues
-										arg_type_node.set_lvalue_reference(true);
+										arg_type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);
 									}
 								}
 							
@@ -12003,7 +12003,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (operand_type.is_reference()) {
 				// Dereferencing a reference gives the underlying type
 				TypeSpecifierNode result = operand_type;
-				result.set_reference(false);
+				result.set_reference_qualifier(ReferenceQualifier::LValueReference);
 				return result;
 			} else if (operand_type.pointer_levels().size() > 0) {
 				// Dereferencing a pointer removes one level of pointer

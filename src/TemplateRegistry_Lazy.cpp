@@ -1245,8 +1245,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					TemplateTypeArg type_arg;
 					type_arg.base_type = type_spec.type();
 					type_arg.type_index = type_spec.type_index();
-					type_arg.is_reference = type_spec.is_lvalue_reference();
-					type_arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+					type_arg.ref_qualifier = type_spec.reference_qualifier();
 					type_arg.pointer_depth = type_spec.pointer_depth();
 					type_arg.cv_qualifier = type_spec.cv_qualifier();
 					concept_args.push_back(type_arg);
@@ -1475,8 +1474,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			Type base_type = Type::Invalid;
 			TypeIndex type_index = 0;
 			uint8_t pointer_depth = 0;
-			bool is_reference = false;
-			bool is_rvalue_reference = false;
+			ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 			CVQualifier cv_qualifier = CVQualifier::None;
 		};
 		
@@ -1490,12 +1488,12 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					if (template_param_names[i] == name) {
 						const auto& arg = template_args[i];
 						return {arg.base_type, arg.type_index, arg.pointer_depth,
-						        arg.is_reference, arg.is_rvalue_reference, arg.cv_qualifier};
+						        arg.ref_qualifier, arg.cv_qualifier};
 					}
 				}
 			}
 			return {ts.type(), ts.type_index(), static_cast<uint8_t>(ts.pointer_depth()),
-			        ts.is_lvalue_reference(), ts.is_rvalue_reference(), ts.cv_qualifier()};
+			        ts.reference_qualifier(), ts.cv_qualifier()};
 		};
 		
 		auto first = resolve_type(trait_expr.type_node());
@@ -1507,16 +1505,15 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					auto second = resolve_type(trait_expr.second_type_node());
 					FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.base_type), 
 						", idx=", first.type_index, ", ptr=", static_cast<int>(first.pointer_depth),
-						", ref=", first.is_reference, ", rref=", first.is_rvalue_reference,
+						", ref_qual=", static_cast<int>(first.ref_qualifier),
 						", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.base_type),
 						", idx=", second.type_index, ", ptr=", static_cast<int>(second.pointer_depth),
-						", ref=", second.is_reference, ", rref=", second.is_rvalue_reference,
+						", ref_qual=", static_cast<int>(second.ref_qualifier),
 						", cv=", static_cast<int>(second.cv_qualifier), "}");
 					result = (first.base_type == second.base_type &&
 					          first.type_index == second.type_index &&
 					          first.pointer_depth == second.pointer_depth &&
-					          first.is_reference == second.is_reference &&
-					          first.is_rvalue_reference == second.is_rvalue_reference &&
+					          first.ref_qualifier == second.ref_qualifier &&
 					          first.cv_qualifier == second.cv_qualifier);
 				}
 				break;
@@ -1528,26 +1525,26 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				         first.base_type == Type::UnsignedChar || first.base_type == Type::UnsignedShort ||
 				         first.base_type == Type::UnsignedInt || first.base_type == Type::UnsignedLong ||
 				         first.base_type == Type::UnsignedLongLong)
-				         && !first.is_reference && !first.is_rvalue_reference && first.pointer_depth == 0;
+				         && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsFloatingPoint:
 				result = (first.base_type == Type::Float || first.base_type == Type::Double || first.base_type == Type::LongDouble)
-				         && !first.is_reference && !first.is_rvalue_reference && first.pointer_depth == 0;
+				         && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsVoid:
-				result = (first.base_type == Type::Void && !first.is_reference && !first.is_rvalue_reference && first.pointer_depth == 0);
+				result = (first.base_type == Type::Void && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0);
 				break;
 			case TypeTraitKind::IsPointer:
-				result = (first.pointer_depth > 0) && !first.is_reference && !first.is_rvalue_reference;
+				result = (first.pointer_depth > 0) && first.ref_qualifier == ReferenceQualifier::None;
 				break;
 			case TypeTraitKind::IsReference:
-				result = first.is_reference || first.is_rvalue_reference;
+				result = first.ref_qualifier != ReferenceQualifier::None;
 				break;
 			case TypeTraitKind::IsLvalueReference:
-				result = first.is_reference && !first.is_rvalue_reference;
+				result = first.ref_qualifier == ReferenceQualifier::LValueReference;
 				break;
 			case TypeTraitKind::IsRvalueReference:
-				result = first.is_rvalue_reference;
+				result = first.ref_qualifier == ReferenceQualifier::RValueReference;
 				break;
 			case TypeTraitKind::IsConst:
 				result = (static_cast<uint8_t>(first.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;

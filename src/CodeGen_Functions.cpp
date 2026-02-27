@@ -216,7 +216,7 @@
 							
 							// Type for mangling is rvalue reference to closure type
 							TypeSpecifierNode self_type(Type::Struct, closure_type_index, 8, Token());
-							self_type.set_reference(true);
+							self_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 							arg_types.push_back(self_type);
 						} else {
 							// Normal argument - visit the expression
@@ -1329,11 +1329,7 @@
 								// Deduce type from argument, preserving reference flags from auto&& parameter
 								TypeSpecifierNode deduced_type = arg_types[arg_idx];
 								// Copy reference flags from auto parameter (e.g., auto&& -> T&&)
-								if (param_type.is_rvalue_reference()) {
-									deduced_type.set_reference(true);  // rvalue reference (&&)
-								} else if (param_type.is_reference()) {
-									deduced_type.set_reference(false);  // lvalue reference (&)
-								}
+								deduced_type.set_reference_qualifier(param_type.reference_qualifier());
 								deduced_param_types.push_back(deduced_type);
 								param_types.push_back(deduced_type);
 							} else {
@@ -1487,7 +1483,7 @@
 									object_decl->identifier_token()
 								);
 								// Preserve rvalue reference flag
-								object_type.set_reference(true);
+								object_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 							}
 						}
 					}
@@ -2159,7 +2155,7 @@
 														decl->identifier_token()
 													);
 													// Preserve rvalue reference flag
-													type_node.set_reference(true);
+													type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);
 												}
 											}
 										}
@@ -2192,11 +2188,7 @@
 								if (param_type.type() == Type::Auto && arg_idx < arg_types.size()) {
 									// Deduce type from argument, preserving reference flags from auto&& parameter
 									TypeSpecifierNode deduced_type = arg_types[arg_idx];
-									if (param_type.is_rvalue_reference()) {
-										deduced_type.set_reference(true);  // rvalue reference (&&)
-									} else if (param_type.is_reference()) {
-										deduced_type.set_reference(false);  // lvalue reference (&)
-									}
+									deduced_type.set_reference_qualifier(param_type.reference_qualifier());
 									param_types.push_back(deduced_type);
 									
 									// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction

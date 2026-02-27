@@ -453,8 +453,8 @@ ParseResult Parser::parse_variable_declaration()
 	FlashCpp::DeclarationSpecifiers specs = parse_declaration_specifiers();
 	
 	// Extract values for backward compatibility (will be removed in later phases)
-	bool is_constexpr = specs.is_constexpr;
-	bool is_constinit = specs.is_constinit;
+	bool is_constexpr = specs.is_constexpr();
+	bool is_constinit = specs.is_constinit();
 	StorageClass storage_class = specs.storage_class;
 	[[maybe_unused]] Linkage linkage = specs.linkage;
 
@@ -1841,9 +1841,9 @@ bool Parser::match_template_parameter_type(TypeSpecifierNode param_type,
 		if (requires_rvalue && argument_type.is_reference() && !argument_type.is_rvalue_reference()) {
 			return false;
 		}
-		param_type.set_lvalue_reference(false);
+		param_type.set_reference_qualifier(ReferenceQualifier::None);
 		if (argument_type.is_reference()) {
-			argument_type.set_lvalue_reference(false);
+			argument_type.set_reference_qualifier(ReferenceQualifier::None);
 		}
 	}
 

@@ -167,8 +167,7 @@ struct TemplateArgumentValue {
 struct TemplateTypeArg {
 	Type base_type;
 	TypeIndex type_index;  // For user-defined types
-	bool is_reference;
-	bool is_rvalue_reference;
+	ReferenceQualifier ref_qualifier;
 	uint8_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
 	InlineVector<CVQualifier, 4> pointer_cv_qualifiers;  // CV for each pointer level
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
@@ -191,11 +190,14 @@ struct TemplateTypeArg {
 	bool is_template_template_arg;  // true if this is a template template argument
 	StringHandle template_name_handle;  // name of the template (e.g., "HasType")
 	
+	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
+	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
+	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
+
 	TemplateTypeArg()
 		: base_type(Type::Invalid)
 		, type_index(0)
-		, is_reference(false)
-		, is_rvalue_reference(false)
+		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
 		, cv_qualifier(CVQualifier::None)
@@ -213,8 +215,7 @@ struct TemplateTypeArg {
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
 		, type_index(type_spec.type_index())
-		, is_reference(type_spec.is_lvalue_reference())
-		, is_rvalue_reference(type_spec.is_rvalue_reference())
+		, ref_qualifier(type_spec.reference_qualifier())
 		, pointer_depth(type_spec.pointer_depth())
 		, pointer_cv_qualifiers()
 		, cv_qualifier(type_spec.cv_qualifier())
@@ -236,8 +237,7 @@ struct TemplateTypeArg {
 	explicit TemplateTypeArg(int64_t val)
 		: base_type(Type::Int)  // Default to int for values
 		, type_index(0)
-		, is_reference(false)
-		, is_rvalue_reference(false)
+		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
 		, cv_qualifier(CVQualifier::None)
@@ -255,8 +255,7 @@ struct TemplateTypeArg {
 	TemplateTypeArg(int64_t val, Type type)
 		: base_type(type)
 		, type_index(0)
-		, is_reference(false)
-		, is_rvalue_reference(false)
+		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
 		, cv_qualifier(CVQualifier::None)
@@ -297,8 +296,7 @@ struct TemplateTypeArg {
 		
 		return base_type_match &&
 		       type_index_match &&
-		       is_reference == other.is_reference &&
-		       is_rvalue_reference == other.is_rvalue_reference &&
+		       ref_qualifier == other.ref_qualifier &&
 		       pointer_depth == other.pointer_depth &&
 		       pointer_cv_qualifiers == other.pointer_cv_qualifiers &&
 		       cv_qualifier == other.cv_qualifier &&
@@ -314,14 +312,9 @@ struct TemplateTypeArg {
 		return is_pack;
 	}
 	
-	// Get reference qualifier as enum instead of bools
+	// Get reference qualifier as enum
 	ReferenceQualifier reference_qualifier() const {
-		if (is_rvalue_reference) {
-			return ReferenceQualifier::RValueReference;
-		} else if (is_reference) {
-			return ReferenceQualifier::LValueReference;
-		}
-		return ReferenceQualifier::None;
+		return ref_qualifier;
 	}
 
 	// Get string representation for mangling
@@ -400,9 +393,9 @@ struct TemplateTypeArg {
 		}
 
 		// Add reference markers
-		if (is_rvalue_reference) {
+		if (ref_qualifier == ReferenceQualifier::RValueReference) {
 			result += "RR";  // rvalue reference
-		} else if (is_reference) {
+		} else if (ref_qualifier == ReferenceQualifier::LValueReference) {
 			result += "R";   // lvalue reference
 		}
 
@@ -417,8 +410,7 @@ struct TemplateTypeArg {
 		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
 			hash ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
-		hash ^= std::hash<bool>{}(is_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(is_rvalue_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -446,8 +438,7 @@ struct TemplateTypeArgHash {
 		if (arg.base_type == Type::Struct || arg.base_type == Type::Enum || arg.base_type == Type::UserDefined) {
 			hash ^= std::hash<size_t>{}(arg.type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
-		hash ^= std::hash<bool>{}(arg.is_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(arg.is_rvalue_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<size_t>{}(arg.pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.cv_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<bool>{}(arg.is_array) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -649,8 +640,7 @@ inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 			const auto& ts = *arg.type_specifier;
 			result.base_type = ts.type();
 			result.type_index = ts.type_index();
-			result.is_reference = ts.is_reference();
-			result.is_rvalue_reference = ts.is_rvalue_reference();
+			result.ref_qualifier = ts.reference_qualifier();
 			result.pointer_depth = ts.pointer_levels().size();
 			result.pointer_cv_qualifiers.reserve(ts.pointer_levels().size());
 			for (const auto& level : ts.pointer_levels()) {
@@ -899,12 +889,8 @@ struct TemplatePattern {
 			// 7. Reference/pointer/const modifiers must match
 		
 			// Check if modifiers match
-			if (pattern_arg.is_reference != concrete_arg.is_reference) {
-				FLASH_LOG(Templates, Trace, "  FAILED: is_reference mismatch");
-				return false;
-			}
-			if (pattern_arg.is_rvalue_reference != concrete_arg.is_rvalue_reference) {
-				FLASH_LOG(Templates, Trace, "  FAILED: is_rvalue_reference mismatch");
+			if (pattern_arg.ref_qualifier != concrete_arg.ref_qualifier) {
+				FLASH_LOG(Templates, Trace, "  FAILED: ref_qualifier mismatch");
 				return false;
 			}
 			if (pattern_arg.pointer_depth != concrete_arg.pointer_depth) {
@@ -1080,8 +1066,7 @@ struct TemplatePattern {
 				// Bind this parameter to the concrete type, stripping pattern qualifiers.
 				// Per C++ deduction rules: for pattern T&, T is deduced as int (not int&).
 				TemplateTypeArg deduced_arg = concrete_arg;
-				if (pattern_arg.is_reference) deduced_arg.is_reference = false;
-				if (pattern_arg.is_rvalue_reference) deduced_arg.is_rvalue_reference = false;
+				if (pattern_arg.is_reference()) deduced_arg.ref_qualifier = ReferenceQualifier::None;
 				if (pattern_arg.pointer_depth > 0 && deduced_arg.pointer_depth >= pattern_arg.pointer_depth) {
 					deduced_arg.pointer_depth -= pattern_arg.pointer_depth;
 					// Strip the first pattern_arg.pointer_depth CV qualifiers by rebuilding the vector
@@ -1156,11 +1141,10 @@ struct TemplatePattern {
 			// Pointer modifier adds specificity (T* is more specific than T)
 			score += arg.pointer_depth;  // T* = +1, T** = +2, etc.
 		
-			// Reference modifier adds specificity
-			if (arg.is_reference) {
+			if (arg.is_lvalue_reference()) {
 				score += 1;  // T& is more specific than T
 			}
-			if (arg.is_rvalue_reference) {
+			if (arg.is_rvalue_reference()) {
 				score += 1;  // T&& is more specific than T
 			}
 		
@@ -1565,8 +1549,7 @@ public:
 				ta.type_index = arg.type_index;
 				if (arg.type_specifier.has_value()) {
 					const auto& ts = *arg.type_specifier;
-					ta.is_reference = ts.is_reference();
-					ta.is_rvalue_reference = ts.is_rvalue_reference();
+					ta.ref_qualifier = ts.reference_qualifier();
 					ta.cv_qualifier = ts.cv_qualifier();
 					ta.pointer_depth = static_cast<uint8_t>(ts.pointer_levels().size());
 				}
