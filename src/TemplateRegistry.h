@@ -1940,14 +1940,11 @@ public:
 		}
 		
 		specialization_patterns_[template_name].push_back(std::move(pattern));
+		const auto& stored_pattern = specialization_patterns_[template_name].back();
 		FLASH_LOG(Templates, Debug, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
-		if (pattern.sfinae_condition.has_value()) {
-			// Note: pattern has been moved, we need to access the stored one
-			const auto& stored_pattern = specialization_patterns_[template_name].back();
-			if (stored_pattern.sfinae_condition.has_value()) {
-				FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index, 
-				          "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
-			}
+		if (stored_pattern.sfinae_condition.has_value()) {
+			FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index, 
+			          "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
 		}
 	}
 
