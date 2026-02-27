@@ -2796,6 +2796,62 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			continue;
 		}
 		
+		// Check for function call operator () - e.g., static_cast<T&&>(x)(args...)
+		if (peek().is_punctuator() && peek() == "("_tok) {
+			Token paren_token = peek_info();
+			advance(); // consume '('
+
+			// Parse function arguments
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
+
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after function call arguments", current_token_);
+			}
+
+			// Create operator() call as a member function call
+			Token operator_token(Token::Type::Identifier, "operator()"sv,
+			                     paren_token.line(), paren_token.column(), paren_token.file_index());
+			auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, operator_token);
+			auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
+			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+
+			result = emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(*result, func_ref, std::move(args), operator_token));
+			continue;
+		}
+
+		// Check for array subscript operator [] - e.g., static_cast<T*>(p)[i]
+		if (peek().is_punctuator() && peek() == "["_tok) {
+			Token bracket_token = peek_info();
+			advance(); // consume '['
+
+			ParseResult index_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (index_result.is_error()) {
+				return index_result;
+			}
+
+			if (peek() != "]"_tok) {
+				return ParseResult::error("Expected ']' after array index", current_token_);
+			}
+			advance(); // consume ']'
+
+			if (auto index_node = index_result.node()) {
+				result = emplace_node<ExpressionNode>(
+					ArraySubscriptNode(*result, *index_node, bracket_token));
+				continue;
+			} else {
+				return ParseResult::error("Invalid array index expression", bracket_token);
+			}
+		}
+
 		// No more postfix operators we handle here - break
 		break;
 	}
