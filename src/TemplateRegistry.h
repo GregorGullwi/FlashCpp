@@ -806,6 +806,25 @@ struct TemplatePattern {
 	ASTNode specialized_node;  // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition;  // Optional SFINAE check for void_t patterns
 	
+	// Cached set of template parameter names for O(1) lookup in matches()/specificity().
+	// Built lazily on first access; invalidated if template_params changes.
+	mutable std::unordered_set<StringHandle, StringHandleHash> cached_template_param_names_;
+	mutable bool template_param_names_valid_ = false;
+	
+	const std::unordered_set<StringHandle, StringHandleHash>& getTemplateParamNames() const {
+		if (!template_param_names_valid_) {
+			cached_template_param_names_.clear();
+			cached_template_param_names_.reserve(template_params.size());
+			for (const auto& tp : template_params) {
+				if (tp.is<TemplateParameterNode>()) {
+					cached_template_param_names_.insert(tp.as<TemplateParameterNode>().nameHandle());
+				}
+			}
+			template_param_names_valid_ = true;
+		}
+		return cached_template_param_names_;
+	}
+	
 	// Check if this pattern matches the given concrete arguments
 	// For example, pattern T& matches int&, float&, etc.
 	// Returns true if match succeeds, and fills param_substitutions with T->int mapping
@@ -849,13 +868,8 @@ struct TemplatePattern {
 	
 		param_substitutions.clear();
 
-		// Build a hash set of template parameter names for O(1) lookup
-		std::unordered_set<StringHandle, StringHandleHash> template_param_names;
-		for (const auto& tp : template_params) {
-			if (tp.is<TemplateParameterNode>()) {
-				template_param_names.insert(tp.as<TemplateParameterNode>().nameHandle());
-			}
-		}
+		// Use cached hash set of template parameter names for O(1) lookup
+		const auto& template_param_names = getTemplateParamNames();
 	
 		// Check each pattern argument against the corresponding concrete argument
 		// Track template parameter index separately from pattern argument index
@@ -1264,13 +1278,8 @@ struct TemplatePattern {
 	{
 		int score = 0;
 
-		// Build a hash set of template parameter names for O(1) lookup
-		std::unordered_set<StringHandle, StringHandleHash> template_param_names;
-		for (const auto& tp : template_params) {
-			if (tp.is<TemplateParameterNode>()) {
-				template_param_names.insert(tp.as<TemplateParameterNode>().nameHandle());
-			}
-		}
+		// Use cached hash set of template parameter names for O(1) lookup
+		const auto& template_param_names = getTemplateParamNames();
 	
 		for (const auto& arg : pattern_args) {
 			// Base score: any pattern parameter = 0
