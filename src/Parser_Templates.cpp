@@ -11446,6 +11446,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 							deduced.is_reference = false;
 							deduced.is_rvalue_reference = false;
 							deduced.pointer_depth = 0;
+							deduced.pointer_cv_qualifiers.clear();
 							deduced.is_array = false;
 							converted_args.push_back(toTemplateArgument(deduced));
 						}
