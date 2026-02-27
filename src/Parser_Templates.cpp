@@ -11418,7 +11418,22 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Use the specialization's actual initializer if present
 				std::optional<ASTNode> init_expr;
 				if (spec_var_decl.initializer().has_value()) {
-					init_expr = *spec_var_decl.initializer();
+					// Check if the initializer needs template parameter substitution
+					// (partial specializations have template_params; full specializations don't)
+					const auto& spec_params = spec_template.template_parameters();
+					if (!spec_params.empty()) {
+						// Build TemplateArgument vector from template_args
+						std::vector<TemplateArgument> converted_args;
+						for (const auto& ta : template_args) {
+							converted_args.push_back(toTemplateArgument(ta));
+						}
+						// Substitute template parameters in the initializer
+						init_expr = substituteTemplateParameters(
+							*spec_var_decl.initializer(), spec_params, converted_args);
+					} else {
+						// Full specialization (template<>) — initializer is concrete
+						init_expr = *spec_var_decl.initializer();
+					}
 				} else if (spec_decl.type_node().is<TypeSpecifierNode>() &&
 				           spec_decl.type_node().as<TypeSpecifierNode>().type() == Type::Bool) {
 					// Default to 'true' only for bool-typed specializations (e.g., is_reference_v<T&>)
