@@ -1237,6 +1237,10 @@ ParseResult Parser::parse_template_declaration() {
 			parsing_template_class_ = true;
 			parsing_template_body_ = true;
 
+			// Save position before struct/class keyword — used if this turns out to be an
+			// out-of-line nested class definition so parse_struct_declaration() can re-parse it
+			SaveHandle struct_keyword_pos = save_token_position();
+
 			bool is_class = consume("class"_tok);
 			bool is_union = false;
 			if (!is_class) {
@@ -1267,6 +1271,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Check for out-of-line member class definition: template<> class Foo<Args>::Bar { ... }
 			// E.g., template<> class basic_ostream<char, char_traits<char>>::sentry { ... };
+			// Register it so the body is re-parsed during template instantiation.
 			if (peek() == "::"_tok) {
 				auto scope_check = save_token_position();
 				advance(); // consume '::'
@@ -1293,6 +1298,20 @@ ParseResult Parser::parse_template_declaration() {
 					// Consume trailing semicolon
 					consume(";"_tok);
 					
+					// Register the out-of-line nested class definition
+					// struct_keyword_pos points at the struct/class keyword so parse_struct_declaration()
+					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation.
+					// For full specializations (template<>), store the concrete template_args so the
+					// nested class is only applied when instantiation arguments match.
+					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
+						template_params,
+						StringTable::getOrInternStringHandle(member_class_name),
+						struct_keyword_pos, template_param_names, is_class,
+						template_args  // concrete specialization args (e.g., <int>)
+					});
+					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class (full spec): {}::{}",
+					                 template_name, member_class_name);
+					
 					// Reset parsing context flags
 					parsing_template_class_ = false;
 					parsing_template_body_ = false;
@@ -1302,6 +1321,10 @@ ParseResult Parser::parse_template_declaration() {
 				// Not an identifier after '::' - restore parser position
 				restore_token_position(scope_check);
 			}
+
+			// struct_keyword_pos was only needed for OOL nested class registration above;
+			// discard it so it doesn't leak in all other specialization paths.
+			discard_saved_token(struct_keyword_pos);
 
 			// Check for forward declaration: template<> struct ClassName<Args>;
 			if (peek() == ";"_tok) {
@@ -2561,6 +2584,10 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Handle partial specialization (template<typename T> struct X<T&>)
 		if (is_partial_specialization) {
+			// Save position before struct/class keyword — used if this turns out to be an
+			// out-of-line nested class definition so parse_struct_declaration() can re-parse it
+			SaveHandle struct_keyword_pos = save_token_position();
+
 			// Parse the struct/class/union keyword
 			bool is_class = consume("class"_tok);
 			bool is_union = false;
@@ -2591,7 +2618,7 @@ ParseResult Parser::parse_template_declaration() {
 			// E.g., template<typename _CharT, typename _Traits>
 			//        class basic_ostream<_CharT, _Traits>::sentry { ... };
 			// This defines a nested class member of a class template outside the class body.
-			// We skip the body here since instantiation uses the nested class from the primary template.
+			// Register it so the body is re-parsed during template instantiation.
 			if (peek() == "::"_tok) {
 				auto scope_check = save_token_position();
 				advance(); // consume '::'
@@ -2618,8 +2645,22 @@ ParseResult Parser::parse_template_declaration() {
 					// Consume trailing semicolon
 					consume(";"_tok);
 					
+					// Register the out-of-line nested class definition
+					// struct_keyword_pos points at the struct/class keyword so parse_struct_declaration()
+					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation.
+					// Partial specializations leave specialization_args empty — applies to all instantiations.
+					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
+						template_params,
+						StringTable::getOrInternStringHandle(member_class_name),
+						struct_keyword_pos, template_param_names, is_class,
+						{}  // no specialization args — applies to all instantiations
+					});
+					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class: {}::{}",
+					                 template_name, member_class_name);
+					
 					// Clean up template parameter context
 					current_template_param_names_.clear();
+					parsing_template_class_ = false;
 					parsing_template_body_ = false;
 					
 					return saved_position.success();
@@ -2627,6 +2668,10 @@ ParseResult Parser::parse_template_declaration() {
 				// Not an identifier after '::' - restore parser position
 				restore_token_position(scope_check);
 			}
+			
+			// struct_keyword_pos was only needed for OOL nested class registration above;
+			// discard it so it doesn't leak in all other partial specialization paths.
+			discard_saved_token(struct_keyword_pos);
 			
 			// Generate a unique name for the pattern template
 			// We use the template parameter names + modifiers to create unique pattern names
@@ -15770,6 +15815,86 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 		}
+	}
+
+	// Process out-of-line nested class definitions
+	// These are patterns like: template<typename T> struct Outer<T>::Inner { T data; };
+	// The definition was saved during parsing and is now re-parsed with template parameter substitution.
+	auto ool_nested_classes = gTemplateRegistry.getOutOfLineNestedClasses(template_name);
+	FLASH_LOG(Templates, Debug, "Processing ", ool_nested_classes.size(), " out-of-line nested class definitions for ", template_name);
+	for (const auto& ool_nested : ool_nested_classes) {
+		// Full specializations (template<>) store concrete args — skip if they don't match
+		// this instantiation's arguments (e.g., Wrapper<int>::Nested shouldn't apply to Wrapper<float>).
+		if (!ool_nested.specialization_args.empty() &&
+		    (ool_nested.specialization_args.size() != template_args_to_use.size() ||
+		     !std::equal(ool_nested.specialization_args.begin(), ool_nested.specialization_args.end(),
+		                 template_args_to_use.begin()))) {
+			continue;
+		}
+
+		std::string_view nested_name = StringTable::getStringView(ool_nested.nested_class_name);
+		auto qualified_name = StringTable::getOrInternStringHandle(
+			StringBuilder().append(instantiated_name).append("::"sv).append(nested_name));
+		
+		// Check if already registered - skip only if it has actual members (from inline definition)
+		// Forward-declared nested classes are registered with no members; those need to be replaced.
+		auto existing_it = gTypesByName.find(qualified_name);
+		if (existing_it != gTypesByName.end()) {
+			TypeInfo* existing_nested_type = existing_it->second;
+			if (existing_nested_type->getStructInfo() && !existing_nested_type->getStructInfo()->members.empty()) {
+				FLASH_LOG(Templates, Debug, "Out-of-line nested class already has members: ", StringTable::getStringView(qualified_name));
+				continue;
+			}
+			FLASH_LOG(Templates, Debug, "Replacing forward-declared nested class: ", StringTable::getStringView(qualified_name));
+		}
+		
+		// Save current lexer position and parser state
+		SaveHandle saved_pos = save_token_position();
+		auto saved_template_body = parsing_template_body_;
+		auto saved_template_class = parsing_template_class_;
+		auto saved_param_names = current_template_param_names_;
+		auto saved_delayed_bodies = std::move(delayed_function_bodies_);
+		delayed_function_bodies_.clear();
+		
+		// Set up template parsing context so template parameter types resolve correctly
+		parsing_template_body_ = true;
+		parsing_template_class_ = true;
+		current_template_param_names_ = ool_nested.template_param_names;
+
+		// Restore lexer to the saved position (at the struct/class keyword).
+		// Push the instantiated template onto struct_parsing_context_stack_ so that
+		// parse_struct_declaration() builds the correct qualified name (e.g., "Wrapper$hash::Nested")
+		restore_lexer_position_only(ool_nested.body_start);
+		
+		struct_parsing_context_stack_.push_back({
+			StringTable::getStringView(instantiated_name),
+			nullptr,  // struct_node — not needed; parse_struct_declaration() creates its own
+			struct_info.get(),
+			gSymbolTable.get_current_namespace_handle(),
+			{}
+		});
+		
+		// Reuse parse_struct_declaration() which handles everything: type registration,
+		// base class parsing, constructors, destructors, using declarations, member
+		// functions, data members, layout computation, StructTypeInfo finalization, etc.
+		auto nested_result = parse_struct_declaration();
+		
+		struct_parsing_context_stack_.pop_back();
+		
+		if (nested_result.is_error()) {
+			FLASH_LOG(Templates, Warning, "Failed to parse out-of-line nested class: ",
+			          StringTable::getStringView(qualified_name));
+		} else {
+			FLASH_LOG(Templates, Debug, "Parsed out-of-line nested class via parse_struct_declaration(): ",
+			          StringTable::getStringView(qualified_name));
+		}
+		
+		// Restore parser state
+		current_template_param_names_ = saved_param_names;
+		parsing_template_body_ = saved_template_body;
+		parsing_template_class_ = saved_template_class;
+		delayed_function_bodies_ = std::move(saved_delayed_bodies);
+		restore_lexer_position_only(saved_pos);
 	}
 
 	// Fix up struct members whose types were unresolved nested classes.

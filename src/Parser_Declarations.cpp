@@ -4282,34 +4282,27 @@ ParseResult Parser::parse_struct_declaration()
 
 	auto struct_name = name_token.handle();
 
-	// Handle out-of-line nested class definitions: class Outer::Inner { ... }
-	// The parser consumes the qualified name and uses the last identifier as the struct name
-	while (peek() == "::"_tok) {
-		advance(); // consume '::'
-		if (peek().is_identifier()) {
-			name_token = advance();
-			struct_name = name_token.handle();
+	// Handle out-of-line nested class definitions and template specializations.
+	// Patterns: class Outer::Inner { ... }
+	//           class Wrapper<T>::Nested { ... }  (template out-of-line nested class)
+	//           struct MyStruct<int> { ... }       (template specialization)
+	// Loop handles interleaved <Args> and ::Name components in any order.
+	for (;;) {
+		if (peek() == "<"_tok) {
+			// Skip template specialization arguments: <T>, <int, float>, <pair<int,int>>, etc.
+			// Uses skip_template_arguments() which properly handles >> tokens for nested templates
+			skip_template_arguments();
+		} else if (peek() == "::"_tok) {
+			// Scope resolution — consume :: and the following identifier as the actual struct name
+			advance(); // consume '::'
+			if (peek().is_identifier()) {
+				name_token = advance();
+				struct_name = name_token.handle();
+			} else {
+				break;
+			}
 		} else {
 			break;
-		}
-	}
-
-	// Check for template specialization arguments after struct name
-	// e.g., struct MyStruct<int>, struct MyStruct<T&>
-	if (peek() == "<"_tok) {
-		// This is a template specialization - skip the template arguments
-		// Full implementation would parse and store these properly
-		int angle_bracket_depth = 0;
-		advance(); // consume '<'
-		angle_bracket_depth = 1;
-		
-		while (!peek().is_eof() && angle_bracket_depth > 0) {
-			if (peek() == "<"_tok) {
-				angle_bracket_depth++;
-			} else if (peek() == ">"_tok) {
-				angle_bracket_depth--;
-			}
-			advance();
 		}
 	}
 
