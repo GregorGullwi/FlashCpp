@@ -696,11 +696,7 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 		}
 		
 		// Set reference qualifiers
-		if (arg.is_rvalue_reference()) {
-			new_type.set_reference(true);  // true for rvalue reference
-		} else if (arg.is_reference()) {
-			new_type.set_reference(false);  // false for lvalue reference
-		}
+		new_type.set_reference_qualifier(arg.ref_qualifier);
 		
 		return ASTNode(&new_type);
 	}
