@@ -1025,7 +1025,8 @@ struct TemplatePattern {
 					          StringTable::getStringView(pattern_base), "'");
 					// Don't bind as a simple parameter — the inner args will be bound separately
 					// For now, skip param binding and just accept the match
-					// TODO: recursively match inner template args for proper deduction
+					// TODO: For patterns like pair<T,U>, recursively match inner template args
+					// to deduce T and U from concrete args like pair<int,float>
 					continue;
 				}
 			}

@@ -11212,6 +11212,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						} else {
 							// Fallback: use resolved arg with qualifiers stripped
 							if (converted_args.size() < template_args.size()) {
+								FLASH_LOG(Templates, Debug, "Deduction fallback for param '",
+								          tp.name(), "': using arg[", converted_args.size(), "] with qualifiers stripped");
 								TemplateTypeArg deduced = template_args[converted_args.size()];
 								deduced.is_reference = false;
 								deduced.is_rvalue_reference = false;
@@ -11219,6 +11221,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 								deduced.pointer_cv_qualifiers.clear();
 								deduced.is_array = false;
 								converted_args.push_back(toTemplateArgument(deduced));
+							} else {
+								FLASH_LOG(Templates, Warning, "Cannot deduce param '",
+								          tp.name(), "': no substitution and no remaining args");
 							}
 						}
 					}
