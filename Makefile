@@ -56,6 +56,7 @@ UNITY_SOURCES := $(SRCDIR)/FlashCppUnity.h $(SRCDIR)/Globals.cpp \
     $(SRCDIR)/Parser_Core.cpp $(SRCDIR)/Parser_Declarations.cpp \
     $(SRCDIR)/Parser_Types.cpp $(SRCDIR)/Parser_Statements.cpp \
     $(SRCDIR)/Parser_Expressions.cpp $(SRCDIR)/Parser_Templates.cpp \
+    $(SRCDIR)/Parser_Templates_NameResolution.cpp \
     $(SRCDIR)/CodeGen_Visitors.cpp $(SRCDIR)/CodeGen_Statements.cpp \
     $(SRCDIR)/CodeGen_Expressions.cpp $(SRCDIR)/CodeGen_Functions.cpp \
     $(SRCDIR)/CodeGen_Lambdas.cpp \

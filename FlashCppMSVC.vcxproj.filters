@@ -16,6 +16,7 @@
     <ClInclude Include="src\Parser_Statements.cpp" />
     <ClInclude Include="src\Parser_Expressions.cpp" />
     <ClInclude Include="src\Parser_Templates.cpp" />
+    <ClInclude Include="src\Parser_Templates_NameResolution.cpp" />
     <ClInclude Include="src\CodeGen_Visitors.cpp" />
     <ClInclude Include="src\CodeGen_Statements.cpp" />
     <ClInclude Include="src\CodeGen_Expressions.cpp" />

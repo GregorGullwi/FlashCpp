@@ -59,6 +59,9 @@
     <ClInclude Include="src\Parser_Templates.cpp">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\Parser_Templates_NameResolution.cpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\CodeGen_Visitors.cpp">
       <Filter>Source Files</Filter>
     </ClInclude>
