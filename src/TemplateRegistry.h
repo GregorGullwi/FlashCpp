@@ -1147,7 +1147,6 @@ struct TemplatePattern {
 			if (arg.is_rvalue_reference()) {
 				score += 1;  // T&& is more specific than T
 			}
-			}
 		
 			// Array modifiers add specificity
 			if (arg.is_array) {
