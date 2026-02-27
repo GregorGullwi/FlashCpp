@@ -2660,6 +2660,7 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Clean up template parameter context
 					current_template_param_names_.clear();
+					parsing_template_class_ = false;
 					parsing_template_body_ = false;
 					
 					return saved_position.success();
