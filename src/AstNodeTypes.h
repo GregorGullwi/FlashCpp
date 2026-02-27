@@ -1281,6 +1281,7 @@ struct TypeInfo
 		bool is_value = false;           // true if this is a non-type argument
 		bool is_array = false;
 		std::optional<size_t> array_size = std::nullopt;
+		StringHandle dependent_name;     // Name of the dependent template parameter (for inner deduction)
 		
 		// Helper methods for value access
 		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }
