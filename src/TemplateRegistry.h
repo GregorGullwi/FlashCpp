@@ -1090,9 +1090,9 @@ struct TemplatePattern {
 									}
 									if (!inner_match_ok) break;
 								}
-								}
 							}
 							
+							if (!inner_match_ok) break;
 							if (bound_param) continue;
 							
 							// Handle non-type value arguments (both pattern and concrete are values)
