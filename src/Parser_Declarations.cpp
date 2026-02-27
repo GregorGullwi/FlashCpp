@@ -4289,17 +4289,9 @@ ParseResult Parser::parse_struct_declaration()
 	// Loop handles interleaved <Args> and ::Name components in any order.
 	for (;;) {
 		if (peek() == "<"_tok) {
-			// Skip template specialization arguments: <T>, <int, float>, etc.
-			advance(); // consume '<'
-			int angle_bracket_depth = 1;
-			while (!peek().is_eof() && angle_bracket_depth > 0) {
-				if (peek() == "<"_tok) {
-					angle_bracket_depth++;
-				} else if (peek() == ">"_tok) {
-					angle_bracket_depth--;
-				}
-				advance();
-			}
+			// Skip template specialization arguments: <T>, <int, float>, <pair<int,int>>, etc.
+			// Uses skip_template_arguments() which properly handles >> tokens for nested templates
+			skip_template_arguments();
 		} else if (peek() == "::"_tok) {
 			// Scope resolution — consume :: and the following identifier as the actual struct name
 			advance(); // consume '::'
