@@ -1014,7 +1014,7 @@ ParseResult Parser::parse_template_declaration() {
 					arg.type_index = type_spec.type_index();
 					arg.is_value = false;
 					arg.cv_qualifier = type_spec.cv_qualifier();
-					arg.pointer_depth = ptr_depth + type_spec.pointer_levels().size();
+					arg.pointer_depth = ptr_depth;
 					arg.is_reference = type_spec.is_lvalue_reference();
 					arg.is_rvalue_reference = type_spec.is_rvalue_reference();
 					arg.is_array = is_array;
