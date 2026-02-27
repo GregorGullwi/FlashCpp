@@ -11424,6 +11424,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					if (!spec_params.empty()) {
 						// Build TemplateArgument vector from template_args
 						std::vector<TemplateArgument> converted_args;
+						converted_args.reserve(template_args.size());
 						for (const auto& ta : template_args) {
 							converted_args.push_back(toTemplateArgument(ta));
 						}
