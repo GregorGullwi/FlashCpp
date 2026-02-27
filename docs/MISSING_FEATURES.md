@@ -2,18 +2,18 @@
 
 This document tracks missing C++20 features and implementation gaps in FlashCpp.
 
-**Last Updated**: 2026-02-11
-**Overall C++20 Conformance Grade**: **A-**
-- **Parser**: 95% complete
-- **AST**: 95% complete
-- **Code Generation**: 85% complete
-- **Standard Library**: Partial support
+**Last Updated**: 2026-02-27
+**Overall C++20 Conformance Grade**: **A**
+- **Parser**: 97% complete
+- **AST**: 97% complete
+- **Code Generation**: 90% complete
+- **Standard Library**: 81% of headers compile on Linux/GCC mode
 
 ## Summary
 
 **Core C++20 Parsing**: Nearly complete! The parser has excellent coverage of C++20 features including concepts, requires expressions, templates, and modern syntax. Most missing features are in code generation edge cases and advanced language constructs.
 
-**Status**: All critical parsing features for C++20 are implemented. Main gaps are:
+**Status**: All critical parsing features for C++20 are implemented. Main remaining gaps are:
 1. Coroutines (keywords recognized, parsing incomplete)
 2. Modules (not implemented)
 3. Some code generation edge cases
@@ -35,6 +35,8 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
   - Compound requirements: `{ expr } noexcept -> Concept;`
   - Nested requirements: `requires constraint;`
 - Constraint composition: conjunctions and disjunctions
+- Abbreviated function templates: `void func(Concept auto x)`
+- Concept subsumption and ordering
 
 **Template System (A)**
 - Template parameters: type, non-type, template template parameters
@@ -43,21 +45,37 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - Template specializations: partial and full
 - Fold expressions: `(args + ...)` and all variants
 - Template template parameters: `template<typename> class Container`
-- Variadic templates: Basic patterns working
+- Variadic templates: All patterns including nested instantiation
 - Perfect forwarding: `std::forward` preserves reference types
 - SFINAE: Substitution failures handled gracefully
 - Out-of-line template member definitions
-- Variable template partial specialization: structural pattern matching (multi-arg, dependent initializers/types). *Note*: patterns requiring recursive inner argument deduction (e.g., `v<pair<T,U>>`) do not yet deduce inner type parameters.
+- Out-of-line nested class member definitions: `template<T> class Foo<T>::Bar { ... }`
+
+**Spaceship Operator `<=>` (A+)**
+- Parsing: Complete
+- Defaulted `operator<=>` with memberwise comparison: ✅ Implemented
+- Synthesized comparison operators (==, !=, <, >, <=, >=) from defaulted `<=>`: ✅ Implemented
+- Multi-member structs compared in declaration order: ✅ Works
+- Nested struct member delegation (calls inner `<=>` for struct members): ✅ Implemented
+- Inline expression use `(a <=> b) < 0` in ternary/if/comparisons: ✅ Implemented
+- Mixed member types (int + char + short + long long): ✅ Works
+- Signed/unsigned member comparisons: ✅ Correct (uses `isSignedType()`)
+- User-defined `operator<=>` with custom return types: ✅ Works
+- Reversed operand order and self-comparison: ✅ Works
+- Template struct `operator<=>`: ✅ Works
+- `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types: ✅ Works (`<compare>` header compiles)
 
 **Modern Syntax (A)**
 - Constexpr if: `if constexpr (condition)` with nesting
+- Range-based for loops: `for (auto x : container)` with arrays, begin/end iterators, const refs
 - Range-based for with initializer: `for (int i = 0; auto x : container)`
-- Spaceship operator `<=>`: Parsing complete
-- Designated initializers: Partial support (C-style)
+- Spaceship operator `<=>`: Complete (see above)
+- Designated initializers: Partial support (see Partially Implemented)
 - Auto type deduction: Basic patterns working
 - Structured bindings: `auto [a, b] = expr;`
 - Using declarations and aliases: Full support
 - Enum classes: Full support
+- constinit variables: Full support (global and local static)
 
 **Type System (A)**
 - Type traits: 37+ compiler intrinsics (`__is_integral`, `__is_void`, etc.)
@@ -72,11 +90,22 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 
 **Control Flow (A)**
 - All loops: for/while/do-while (with C++20 init statements)
+- Range-based for: Arrays and user-defined iterator types
 - Switch statements: case/default labels, fallthrough
 - Goto: Basic support
-- Exception handling: try/catch/throw (basic patterns)
+- Exception handling: try/catch/throw with multiple handlers, rethrow, nested try-catch
 - Return statements: With and without expressions
 - Break/continue: Full support
+
+**Exception Handling (A)**
+- Try/catch/throw: Full implementation
+- Multiple catch handlers and catch-by-type matching
+- Nested try-catch blocks
+- Rethrow (`throw;`)
+- LSDA (.gcc_except_table) generation
+- .eh_frame / DWARF CFI generation
+- Funclet-style catch block codegen
+- Integration with `__cxa_throw`, `__cxa_begin_catch`, `__cxa_end_catch`
 
 **OOP Features (A)**
 - Classes and structs: Full support
@@ -88,24 +117,25 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - Static members: Full support
 - Const member functions: Full support
 - Access specifiers: public/protected/private
+- `final` keyword: Full support (class-level and method-level)
+
+**Variadic Functions (A)**
+- System V AMD64 ABI: Fully implemented
+- Register save area for integer and floating-point registers
+- va_list structure initialization
+- va_arg with integer, floating-point, and struct arguments (≤8 bytes and 9–16 bytes)
+- Overflow to stack arguments
+- `__VA_OPT__` preprocessor macro: Fully implemented
 
 ### Partially Implemented ⚠️
 
+**Variable Template Partial Specialization (90% complete)**
+- Structural pattern matching for multi-arg and dependent initializers/types: ✅ Works
+- Simple type, pointer, reference, rvalue-reference specializations: ✅ Works
+- *Known limitation*: Patterns requiring recursive inner argument deduction (e.g., `v<pair<T,U>>`) do not yet deduce inner type parameters
+
 **Code Generation Edge Cases**
-- Spaceship operator `<=>` (98% complete)
-  - Parsing: Complete
-  - Defaulted `operator<=>` with memberwise comparison: ✅ Implemented
-  - Synthesized comparison operators (==, !=, <, >, <=, >=) from defaulted `<=>`: ✅ Implemented
-  - Multi-member structs compared in declaration order: ✅ Works
-  - Nested struct member delegation (calls inner `<=>` for struct members): ✅ Implemented
-  - Inline expression use `(a <=> b) < 0` in ternary/if/comparisons: ✅ Implemented
-  - Mixed member types (int + char + short + long long): ✅ Works
-  - Signed/unsigned member comparisons: ✅ Correct (uses `isSignedType()`)
-  - User-defined `operator<=>` with custom return types: ✅ Works
-  - Reversed operand order and self-comparison: ✅ Works
-  - Template struct `operator<=>`: ✅ Works (is_operator_overload and is_implicit propagated)
-  - Remaining: `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types (requires `<compare>` header)
-- Some complex template instantiations (90% complete)
+- Complex template instantiations (90% complete)
   - Basic specializations: Work
   - Complex dependent types: May have issues
 - Designated initializers (92% complete)
@@ -113,7 +143,7 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
   - Partial init with defaults `{.y = 5}` (omitted fields use default member values): ✅ Implemented
   - Nested designated init `{.inner = {.a = 1}}`: ✅ Works
   - Explicit type designated init as function arg `func(Point{.x = 1, .y = 2})`: ✅ Works
-  - Remaining: implicit designated init as function arguments (`func({.x = 1})` without type name) — requires function parameter type inference during expression parsing
+  - Remaining: implicit designated init as function arguments (`func({.x = 1})` without type name)
 - Advanced pack expansion patterns:
   - Simple pack expansion: Works
   - Nested pack expansion: May have issues
@@ -127,39 +157,32 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - Awaitable type checking not implemented
 - Required for: `<coroutine>` header support
 
+**consteval Functions (40% complete)**
+- Keyword recognized: `consteval`
+- Parsed and stored in AST (`is_consteval` flag)
+- Treated as `constexpr` during code generation
+- Compile-time-only enforcement not implemented (calls at non-constant context are not rejected)
+
 **Standard Library Support**
-- `<type_traits>`: Good support (most common traits work)
-  - Primary type categories: 14 intrinsics
-  - Composite type categories: 6 intrinsics
-  - Type properties: 12 intrinsics
-  - Type relationships: 3 intrinsics
-  - Total: 37+ intrinsics fully implemented
-- `<utility>`: Partial support
-  - `std::forward`: Works
-  - `std::move`: Works
-  - `std::swap`: Basic patterns
-  - Other utilities: May be missing
-- `<initializer_list>`: Partial support
-  - Basic parsing works
-  - Constructor overloads: May need work
-- Ranges: Concepts supported, adaptors not fully implemented
-  - Range concepts (`std::range`, `std::view`): Work
-  - Range adaptors (`std::transform_view`, etc.): Not implemented
-  - Range algorithms: Not implemented
+- Linux/GCC mode (55/68 headers compile, 81%):
+  - Compiling: `<limits>`, `<type_traits>`, `<compare>`, `<version>`, `<source_location>`, `<numbers>`, `<initializer_list>`, `<optional>`, `<any>`, `<utility>`, `<concepts>`, `<bit>`, `<string_view>`, `<string>`, `<algorithm>`, `<span>`, `<tuple>`, `<vector>`, `<map>`, `<set>`, `<iostream>`, `<atomic>`, `<new>`, `<exception>`, `<typeinfo>`, `<typeindex>`, `<numeric>`, `<variant>` pending fix, `<cset*>`, `<c*>` C headers, `<barrier>`, `<latch>`, `<stdfloat>`, `<spanstream>`, `<print>`, `<expected>`, `<text_encoding>`, `<stacktrace>`, and more
+  - Parse errors remaining: `<ratio>`, `<array>`, `<memory>`, `<functional>`, `<ranges>`, `<chrono>`, `<shared_mutex>`, `<coroutine>`, `<variant>`
+- MSVC/Windows mode: Limited support (most headers fail on MSVC-specific constructs)
+- `<type_traits>`: Good support (most common traits work, 37+ intrinsics)
+- `<utility>`: `std::forward`, `std::move`, `std::swap` work
 
 ### Not Implemented ❌
 
 **Modules (0% complete)**
 - No `import` keyword support
-- No `export` keyword support (for modules)
 - No `module` keyword support
 - No module dependency tracking
 - No module interface/unit separation
 - Traditional header-based compilation only
 - Required for: C++20 module system
 
-**Ranges Library (Partial)**
-- Range concepts: Implemented
+**Ranges Library (range views/adaptors)**
+- Range concepts: Implemented (via `<concepts>`)
 - Range views/adaptors: Not implemented
   - `std::views::transform`
   - `std::views::filter`
@@ -173,39 +196,16 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
   - Other algorithms
 
 **Advanced C++20 Features**
-- consteval functions:
-  - Keyword may be recognized
-  - Compile-time evaluation not complete
-- constinit variables:
-  - Keyword may be recognized
-  - Constinit semantics not enforced
-- Comparison category types:
-  - `std::strong_ordering` parsing may work
-  - Full semantics not implemented
+- Comparison category types enforcement:
+  - `std::strong_ordering` parsing: works via `<compare>` header
+  - Compiler-synthesized comparison categories: Not auto-selected
 - Some constexpr evaluation edge cases
-- Constexpr std::string and std::vector
+- Constexpr `std::string` and `std::vector`
 - Advanced SFINAE patterns (very complex cases)
 
-**Preprocessor Limitations**
-- Basic macros: Work
-- Conditional compilation: Works
-- Macro arguments: Work
-- Stringification (`#`): Works
-- Token pasting (`##`): Works
-- Variadic macros: Basic support
-- Complex macro expressions: May have issues
-- `__VA_OPT__`: Not implemented (C++20)
-- Preprocessor recursion detection: Not implemented
-
-**Standard Library Headers**
-Most headers have limited support:
-- `<iostream>`: Very basic (cout, cin)
-- `<string>`: Partial support
-- `<vector>`: Partial support (basic operations)
-- `<algorithm>`: Very limited
-- `<functional>`: Basic support
-- `<memory>`: Basic smart pointer support
-- Most other headers: Not tested or not implemented
+**MSVC Standard Library Compatibility**
+- Most MSVC headers fail at parse time due to SAL annotations, `_When_` macros, and UCRT wrapper patterns
+- Current top blockers: SAL macro parse path, UCRT formatted I/O wrapper call resolution, MSVC STL `yvals.h` compatibility
 
 ---
 
@@ -213,24 +213,22 @@ Most headers have limited support:
 
 ### High Priority (Blocking Real-World Code)
 
-1. **Code Generation Edge Cases**
-   - ~~Fix remaining spaceship operator codegen issues~~ ✅ Defaulted `<=>` and synthesized operators implemented
-   - ~~Fix designated initializer edge cases~~ ✅ Default member values for omitted fields implemented
-   - Improve complex template instantiation
-   - Stabilize pack expansion in all contexts
-   - Add spaceship support for non-integral member types
-   - Add designated init as function argument support
+1. **Standard Library Remaining Parse Errors**
+   - Fix brace-init expression parsing for template types (`Type<Args>{init}`)
+   - Fix aggregate brace initialization for template types (`std::array<int,5> arr = {1,2,3,4,5}`)
+   - Fix dependent base class resolution in template structs
+   - Fix variable template evaluation in `static_assert` contexts
+   - Fix `<variant>` struct/class definition parse error
 
-2. **Standard Library Support**
-   - Expand `<type_traits>` to cover all standard traits
-   - Implement more `<algorithm>` functions
-   - Improve `<string>` and `<vector>` support
-   - Add missing containers (`<map>`, `<unordered_map>`, etc.)
+2. **MSVC Standard Library Compatibility**
+   - Improve SAL annotation handling
+   - Fix UCRT wrapper call resolution
+   - Improve MSVC STL compatibility
 
 3. **Constexpr Evaluation**
    - Improve constexpr evaluation engine
    - Support constexpr in more contexts
-   - Fix consteval/constinit parsing and semantics
+   - Enforce consteval semantics (compile-time-only)
 
 ### Medium Priority (Important Features)
 
@@ -245,10 +243,10 @@ Most headers have limited support:
    - Implement range algorithms
    - Add range constraint checking
 
-6. **Exception Handling**
-   - Improve try/catch error recovery
-   - Add better exception type checking
-   - Support exception specifications better
+6. **Code Generation Edge Cases**
+   - Improve complex template instantiation reliability
+   - Stabilize pack expansion in all contexts
+   - Add implicit designated init as function argument support
 
 ### Low Priority (Advanced Features)
 
@@ -267,7 +265,7 @@ Most headers have limited support:
 
 ## Grammar Coverage Analysis
 
-### Expression Grammar: 95% Complete
+### Expression Grammar: 97% Complete
 
 **Implemented:**
 - All binary operators (precedence 3-17)
@@ -278,8 +276,9 @@ Most headers have limited support:
 - Ternary conditional operator
 - Spaceship operator `<=>`
 - Fold expressions
-- Lambda expressions (including captures)
+- Lambda expressions (including captures, constexpr lambdas, template lambdas)
 - Requires expressions
+- Range-based for loop syntax
 
 **Partially Implemented:**
 - Some complex expression patterns may fail
@@ -291,20 +290,23 @@ Most headers have limited support:
 - All declaration forms
 - Function declarations and definitions
 - Variable declarations with all initialization forms
-- Class and struct declarations
+- Class and struct declarations (including `final`)
 - Template declarations (all forms)
 - Concept declarations
 - Enum declarations
 - Using declarations and aliases
 - Namespace declarations
 - Out-of-line member definitions
+- Out-of-line nested class member definitions
 - Conversion operators
+- consteval/constexpr/constinit specifiers
 
-### Statement Grammar: 95% Complete
+### Statement Grammar: 97% Complete
 
 **Implemented:**
 - if/else (with C++20 init statements)
 - for loops (with C++20 init statements)
+- Range-based for loops
 - while loops
 - do-while loops
 - switch statements
@@ -318,7 +320,7 @@ Most headers have limited support:
 **Partially Implemented:**
 - Some complex control flow patterns may have issues
 
-### Template Grammar: 95% Complete
+### Template Grammar: 97% Complete
 
 **Implemented:**
 - Type parameters (`typename T`, `class T`)
@@ -333,10 +335,11 @@ Most headers have limited support:
 - Template aliases
 - Template argument deduction
 - SFINAE
+- Out-of-line nested class definitions
 
 **Partially Implemented:**
 - Some complex template patterns may fail
-- Template template parameters in some contexts
+- Variable template inner-type deduction (e.g., `v<pair<T,U>>`)
 
 ---
 
@@ -361,7 +364,7 @@ Code Reuse Opportunities:
 
 ## Test Coverage
 
-**Total Test Cases: 600+**
+**Total Test Cases: 1280+** (1248 `.cpp` files in `tests/`, plus 34 standard header tests in `tests/std/`)
 
 Categories with Good Coverage:
 - Basic arithmetic: ✅
@@ -371,16 +374,20 @@ Categories with Good Coverage:
 - Type traits: ✅
 - SFINAE: ✅
 - OOP features: ✅
+- Exception handling: ✅
+- Variadic functions: ✅
+- Spaceship operator: ✅
+- Range-based for: ✅
 
 Categories with Partial Coverage:
-- Standard library headers: ⚠️
+- Standard library headers: ⚠️ (55/68 on Linux/GCC, limited on MSVC)
 - Complex templates: ⚠️
-- Exception handling: ⚠️
+- Constexpr evaluation edge cases: ⚠️
 
 Categories with Poor Coverage:
 - Coroutines: ❌
 - Modules: ❌
-- Ranges: ⚠️
+- Ranges library (adaptors/algorithms): ⚠️
 
 ---
 
@@ -411,8 +418,13 @@ When implementing a missing feature:
 **AST Definitions**: `src/AstNodeTypes.h` - AST node types
 **Code Generator**: `src/CodeGen.h` - AST to IR translation
 **IR Converter**: `src/IRConverter.h` - IR to assembly conversion
+**ELF Writer**: `src/ElfFileWriter.h` - ELF object file generation (exception tables, DWARF)
+**LSDA Generator**: `src/LSDAGenerator.h` - Language-Specific Data Area for exceptions
 
-**Test Directory**: `tests/` - Test suite (600+ test cases)
+**Test Directory**: `tests/` - Test suite (1200+ test cases)
 - `tests/cpp20_integration/` - C++20 feature tests
+- `tests/std/` - Standard library header tests
 - `tests/test_type_traits_intrinsics.cpp` - Type trait intrinsics
 - `tests/test_sfinae_*.cpp` - SFINAE test cases
+- `tests/test_exceptions_*.cpp` - Exception handling tests
+- `tests/test_spaceship_*.cpp` - Spaceship operator tests
