@@ -16215,7 +16215,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 						
 						// Copy reference qualifiers from template arg
-						type_info.is_reference_ = template_args_to_use[i].is_reference();
+						type_info.is_reference_ = template_args_to_use[i].is_lvalue_reference();
 						type_info.is_rvalue_reference_ = template_args_to_use[i].is_rvalue_reference();
 						
 						gTypesByName.emplace(type_info.name(), &type_info);
@@ -18369,7 +18369,7 @@ if (param_decl.has_default_value()) {
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 			
 			// Copy reference qualifiers from template arg
-			type_info.is_reference_ = lazy_info.template_args[i].is_reference();
+			type_info.is_reference_ = lazy_info.template_args[i].is_lvalue_reference();
 			type_info.is_rvalue_reference_ = lazy_info.template_args[i].is_rvalue_reference();
 			
 			gTypesByName.emplace(type_info.name(), &type_info);
