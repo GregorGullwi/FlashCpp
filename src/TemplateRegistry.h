@@ -1010,6 +1010,7 @@ struct TemplatePattern {
 					          StringTable::getStringView(pattern_base), "'");
 					// Recursively match inner template args to deduce parameters
 					// e.g., for pattern pair<T,U> and concrete pair<int,float>, deduce T=int, U=float
+					const size_t subs_before_inner = param_substitutions.size();
 					{
 						const auto& pattern_inner_args = pattern_type_info.templateArgs();
 						const auto& concrete_inner_args = concrete_type_info.templateArgs();
@@ -1140,7 +1141,7 @@ struct TemplatePattern {
 					}
 					// Advance param_index past inner-deduced parameters so that
 					// subsequent pattern args use the correct fallback index.
-					param_index += param_substitutions.size();
+					param_index += param_substitutions.size() - subs_before_inner;
 					continue;
 				}
 			}
