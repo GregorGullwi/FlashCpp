@@ -4649,9 +4649,9 @@ ParseResult Parser::parse_struct_declaration()
 								for (size_t i = 0; i < targ.pointer_depth; ++i) {
 									type_node.add_pointer_level();
 								}
-								if (targ.is_rvalue_reference) {
+								if (targ.is_rvalue_reference()) {
 									type_node.set_reference(true);
-								} else if (targ.is_reference) {
+								} else if (targ.is_reference()) {
 									type_node.set_reference(false);
 								}
 								if (targ.is_array) {
