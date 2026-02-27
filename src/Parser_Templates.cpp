@@ -5639,9 +5639,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				// Handles 'explicit constexpr' where constexpr comes after explicit
 				{
 					auto more_specs = parse_declaration_specifiers();
-					if (more_specs.is_constexpr()) specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Constexpr;
-					if (more_specs.is_consteval()) specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Consteval;
-					if (more_specs.is_constinit()) specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Constinit;
+					if (more_specs.constexpr_spec != FlashCpp::ConstexprSpecifier::None)
+						specs.constexpr_spec = more_specs.constexpr_spec;
 					if (more_specs.is_inline) specs.is_inline = true;
 				}
 				
