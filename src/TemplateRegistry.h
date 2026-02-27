@@ -1277,6 +1277,31 @@ struct TemplatePattern {
 				const TypeInfo& ti = gTypeInfo[arg.type_index];
 				if (ti.isTemplateInstantiation()) {
 					score += 2 + static_cast<int>(ti.templateArgs().size());
+					// Concrete inner args (not template parameters) add extra specificity
+					// e.g., pair<int,U> is more specific than pair<T,U>
+					for (const auto& inner_arg : ti.templateArgs()) {
+						bool is_dependent = false;
+						if (!inner_arg.is_value &&
+						    (inner_arg.base_type == Type::UserDefined || inner_arg.base_type == Type::Struct)) {
+							StringHandle iname;
+							if (inner_arg.type_index > 0 && inner_arg.type_index < gTypeInfo.size()) {
+								iname = gTypeInfo[inner_arg.type_index].name();
+							} else if (inner_arg.dependent_name.isValid()) {
+								iname = inner_arg.dependent_name;
+							}
+							if (iname.isValid()) {
+								for (const auto& tp : template_params) {
+									if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == iname) {
+										is_dependent = true;
+										break;
+									}
+								}
+							}
+						}
+						if (!is_dependent) {
+							score += 1;  // concrete inner arg adds specificity
+						}
+					}
 				}
 			}
 		
