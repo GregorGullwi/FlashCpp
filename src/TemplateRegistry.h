@@ -806,8 +806,15 @@ struct TemplatePattern {
 	ASTNode specialized_node;  // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition;  // Optional SFINAE check for void_t patterns
 	
+	// Constructor to avoid aggregate initialization issues with mutable cache fields
+	TemplatePattern() = default;
+	TemplatePattern(std::vector<ASTNode> tp, std::vector<TemplateTypeArg> pa,
+	                ASTNode sn, std::optional<SfinaeCondition> sc)
+		: template_params(std::move(tp)), pattern_args(std::move(pa)),
+		  specialized_node(std::move(sn)), sfinae_condition(std::move(sc)) {}
+	
 	// Cached set of template parameter names for O(1) lookup in matches()/specificity().
-	// Built lazily on first access; invalidated if template_params changes.
+	// Built lazily on first access. Assumes template_params is not modified after construction.
 	mutable std::unordered_set<StringHandle, StringHandleHash> cached_template_param_names_;
 	mutable bool template_param_names_valid_ = false;
 	
