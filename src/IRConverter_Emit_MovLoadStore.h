@@ -1,6 +1,5 @@
 // IRConverter_Emit_MovLoadStore.h - MOV/Load/Store/LEA emit helper functions (free functions)
 // Part of IRConverter.h unity build - do not add #pragma once
- */
 inline void emitLoadFromAddressInRAX(std::vector<uint8_t>& textSectionData, int element_size_bytes) {
 	if (element_size_bytes == 1) {
 		// MOVZX EAX, BYTE PTR [RAX] - zero-extend byte to 32-bit
@@ -349,6 +348,7 @@ inline void emitStoreToMemory(std::vector<uint8_t>& textSectionData, X64Register
  *
  * @param textSectionData The vector to append opcodes to
  * @param value_reg The source register containing the value to store
+ */
 inline void emitStoreToRSP(std::vector<uint8_t>& textSectionData, X64Register value_reg, int32_t offset) {
 	uint8_t reg_bits = static_cast<uint8_t>(value_reg) & 0x07;
 	bool reg_extended = static_cast<uint8_t>(value_reg) >= static_cast<uint8_t>(X64Register::R8);
@@ -375,6 +375,8 @@ inline void emitStoreToRSP(std::vector<uint8_t>& textSectionData, X64Register va
 		textSectionData.push_back((offset_u32 >> (i * 8)) & 0xFF);
 	}
 }
+/**
+ * @brief Emits LEA RAX, [RBP + offset] for loading array base address.
  * @param offset The offset from RBP
  */
 inline void emitLEAArrayBase(std::vector<uint8_t>& textSectionData, int64_t offset) {

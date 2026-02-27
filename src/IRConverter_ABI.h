@@ -480,14 +480,4 @@ struct RegisterAllocator
 	}
 };
 
-/**
- * @brief Emits x64 opcodes to load a value from [RAX] with size-appropriate instruction.
- *
- * Generates the correct load instruction based on element size:
- * - 1 byte: MOVZX EAX, BYTE PTR [RAX]  (0x0F 0xB6 0x00) - zero-extend byte to 32-bit
- * - 2 bytes: MOVZX EAX, WORD PTR [RAX] (0x0F 0xB7 0x00) - zero-extend word to 32-bit
- * - 4 bytes: MOV EAX, DWORD PTR [RAX]  (0x8B 0x00) - 32-bit load (no REX.W prefix)
- * - 8 bytes: MOV RAX, QWORD PTR [RAX]  (0x48 0x8B 0x00) - 64-bit load (with REX.W prefix)
- *
- * @param textSectionData The vector to append opcodes to
- * @param element_size_bytes The size of the element (1, 2, 4, or 8 bytes)
+
