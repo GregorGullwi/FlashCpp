@@ -806,6 +806,32 @@ struct TemplatePattern {
 	ASTNode specialized_node;  // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition;  // Optional SFINAE check for void_t patterns
 	
+	// Constructor to avoid aggregate initialization issues with mutable cache fields
+	TemplatePattern() = default;
+	TemplatePattern(std::vector<ASTNode> tp, std::vector<TemplateTypeArg> pa,
+	                ASTNode sn, std::optional<SfinaeCondition> sc)
+		: template_params(std::move(tp)), pattern_args(std::move(pa)),
+		  specialized_node(std::move(sn)), sfinae_condition(std::move(sc)) {}
+	
+	// Cached set of template parameter names for O(1) lookup in matches()/specificity().
+	// Built lazily on first access. Assumes template_params is not modified after construction.
+	mutable std::unordered_set<StringHandle, StringHandleHash> cached_template_param_names_;
+	mutable bool template_param_names_valid_ = false;
+	
+	const std::unordered_set<StringHandle, StringHandleHash>& getTemplateParamNames() const {
+		if (!template_param_names_valid_) {
+			cached_template_param_names_.clear();
+			cached_template_param_names_.reserve(template_params.size());
+			for (const auto& tp : template_params) {
+				if (tp.is<TemplateParameterNode>()) {
+					cached_template_param_names_.insert(tp.as<TemplateParameterNode>().nameHandle());
+				}
+			}
+			template_param_names_valid_ = true;
+		}
+		return cached_template_param_names_;
+	}
+	
 	// Check if this pattern matches the given concrete arguments
 	// For example, pattern T& matches int&, float&, etc.
 	// Returns true if match succeeds, and fills param_substitutions with T->int mapping
@@ -848,6 +874,9 @@ struct TemplatePattern {
 		}
 	
 		param_substitutions.clear();
+
+		// Use cached hash set of template parameter names for O(1) lookup
+		const auto& template_param_names = getTemplateParamNames();
 	
 		// Check each pattern argument against the corresponding concrete argument
 		// Track template parameter index separately from pattern argument index
@@ -1044,44 +1073,39 @@ struct TemplatePattern {
 								} else if (p_inner.dependent_name.isValid()) {
 									inner_name = p_inner.dependent_name;
 								}
-								if (inner_name.isValid()) {
-									for (const auto& tp : template_params) {
-										if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == inner_name) {
-											// Build TemplateTypeArg from concrete inner arg
-											TemplateTypeArg deduced;
-											if (c_inner.is_value) {
-												// Non-type parameter: concrete is a value
-												deduced.is_value = true;
-												deduced.value = c_inner.intValue();
-												deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
-											} else {
-												// Type parameter: concrete is a type
-												deduced.base_type = c_inner.base_type;
-												deduced.type_index = c_inner.type_index;
-												deduced.cv_qualifier = c_inner.cv_qualifier;
-												deduced.pointer_depth = static_cast<uint8_t>(c_inner.pointer_depth);
-												deduced.ref_qualifier = c_inner.ref_qualifier;
-												deduced.pointer_cv_qualifiers = c_inner.pointer_cv_qualifiers;
-												deduced.is_array = c_inner.is_array;
-												deduced.array_size = c_inner.array_size;
-											}
-											
-											auto sub_it = param_substitutions.find(inner_name);
-											if (sub_it != param_substitutions.end()) {
-												if (!(sub_it->second == deduced)) {
-													FLASH_LOG(Templates, Trace, "  FAILED: inconsistent inner deduction for '",
-													          StringTable::getStringView(inner_name), "'");
-													inner_match_ok = false; break;
-												}
-											} else {
-												param_substitutions[inner_name] = deduced;
-												FLASH_LOG(Templates, Trace, "  Deduced inner param '",
-												          StringTable::getStringView(inner_name), "' from inner arg[", j, "]");
-											}
-											bound_param = true;
-											break;
-										}
+								if (inner_name.isValid() && template_param_names.count(inner_name)) {
+									// Build TemplateTypeArg from concrete inner arg
+									TemplateTypeArg deduced;
+									if (c_inner.is_value) {
+										// Non-type parameter: concrete is a value
+										deduced.is_value = true;
+										deduced.value = c_inner.intValue();
+										deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
+									} else {
+										// Type parameter: concrete is a type
+										deduced.base_type = c_inner.base_type;
+										deduced.type_index = c_inner.type_index;
+										deduced.cv_qualifier = c_inner.cv_qualifier;
+										deduced.pointer_depth = static_cast<uint8_t>(c_inner.pointer_depth);
+										deduced.ref_qualifier = c_inner.ref_qualifier;
+										deduced.pointer_cv_qualifiers = c_inner.pointer_cv_qualifiers;
+										deduced.is_array = c_inner.is_array;
+										deduced.array_size = c_inner.array_size;
 									}
+									
+									auto sub_it = param_substitutions.find(inner_name);
+									if (sub_it != param_substitutions.end()) {
+										if (!(sub_it->second == deduced)) {
+											FLASH_LOG(Templates, Trace, "  FAILED: inconsistent inner deduction for '",
+											          StringTable::getStringView(inner_name), "'");
+											inner_match_ok = false;
+										}
+									} else {
+										param_substitutions[inner_name] = deduced;
+										FLASH_LOG(Templates, Trace, "  Deduced inner param '",
+										          StringTable::getStringView(inner_name), "' from inner arg[", j, "]");
+									}
+									bound_param = true;
 									if (!inner_match_ok) break;
 								}
 							}
@@ -1094,23 +1118,20 @@ struct TemplatePattern {
 								bool bound_value = false;
 								// Check if this value arg has a dependent_name (e.g., _Num in ratio<_Num, _Den>)
 								if (p_inner.dependent_name.isValid()) {
-									for (const auto& tp : template_params) {
-										if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == p_inner.dependent_name) {
-											TemplateTypeArg deduced;
-											deduced.is_value = true;
-											deduced.value = c_inner.intValue();
-											deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
-											auto sub_it = param_substitutions.find(p_inner.dependent_name);
-											if (sub_it != param_substitutions.end()) {
-												if (!(sub_it->second == deduced)) { inner_match_ok = false; break; }
-											} else {
-												param_substitutions[p_inner.dependent_name] = deduced;
-											}
-											bound_value = true;
-											break;
+									if (template_param_names.count(p_inner.dependent_name)) {
+										TemplateTypeArg deduced;
+										deduced.is_value = true;
+										deduced.value = c_inner.intValue();
+										deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
+										auto sub_it = param_substitutions.find(p_inner.dependent_name);
+										if (sub_it != param_substitutions.end()) {
+											if (!(sub_it->second == deduced)) { inner_match_ok = false; }
+										} else {
+											param_substitutions[p_inner.dependent_name] = deduced;
 										}
+										bound_value = true;
+										if (!inner_match_ok) break;
 									}
-									if (!inner_match_ok) break;
 								}
 								if (!bound_value) {
 									if (p_inner.intValue() != c_inner.intValue()) {
@@ -1263,6 +1284,9 @@ struct TemplatePattern {
 	int specificity() const
 	{
 		int score = 0;
+
+		// Use cached hash set of template parameter names for O(1) lookup
+		const auto& template_param_names = getTemplateParamNames();
 	
 		for (const auto& arg : pattern_args) {
 			// Base score: any pattern parameter = 0
@@ -1285,21 +1309,11 @@ struct TemplatePattern {
 								iname = inner_arg.dependent_name;
 							}
 							if (iname.isValid()) {
-								for (const auto& tp : template_params) {
-									if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == iname) {
-										is_dependent = true;
-										break;
-									}
-								}
+								is_dependent = template_param_names.count(iname) > 0;
 							}
 						} else if (inner_arg.is_value && inner_arg.dependent_name.isValid()) {
 							// Non-type value inner arg: check if dependent_name matches a template parameter
-							for (const auto& tp : template_params) {
-								if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == inner_arg.dependent_name) {
-									is_dependent = true;
-									break;
-								}
-							}
+							is_dependent = template_param_names.count(inner_arg.dependent_name) > 0;
 						}
 						if (!is_dependent) {
 							score += 1;  // concrete inner arg adds specificity
@@ -1933,14 +1947,11 @@ public:
 		}
 		
 		specialization_patterns_[template_name].push_back(std::move(pattern));
+		const auto& stored_pattern = specialization_patterns_[template_name].back();
 		FLASH_LOG(Templates, Debug, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
-		if (pattern.sfinae_condition.has_value()) {
-			// Note: pattern has been moved, we need to access the stored one
-			const auto& stored_pattern = specialization_patterns_[template_name].back();
-			if (stored_pattern.sfinae_condition.has_value()) {
-				FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index, 
-				          "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
-			}
+		if (stored_pattern.sfinae_condition.has_value()) {
+			FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index, 
+			          "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
 		}
 	}
 
