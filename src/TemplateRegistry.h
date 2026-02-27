@@ -1095,6 +1095,11 @@ struct TemplatePattern {
 					deduced_arg.is_array = false;
 					deduced_arg.array_size = std::nullopt;
 				}
+				// Strip cv_qualifier contributed by the pattern (e.g., const T → T=int, not T=const int)
+				if (pattern_arg.cv_qualifier != CVQualifier::None) {
+					deduced_arg.cv_qualifier = static_cast<CVQualifier>(
+						static_cast<uint8_t>(deduced_arg.cv_qualifier) & ~static_cast<uint8_t>(pattern_arg.cv_qualifier));
+				}
 				param_substitutions[param_name] = deduced_arg;
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", StringTable::getStringView(param_name), " to concrete type (qualifiers stripped)");
 				// Increment param_index since we bound a new template parameter
