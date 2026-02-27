@@ -1077,9 +1077,23 @@ struct TemplatePattern {
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Reused parameter ", StringTable::getStringView(param_name), " - consistency check passed");
 				// Don't increment param_index - we reused an existing parameter binding
 			} else {
-				// Bind this parameter to the concrete type
-				param_substitutions[param_name] = concrete_arg;
-				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", StringTable::getStringView(param_name), " to concrete type");
+				// Bind this parameter to the concrete type, stripping pattern qualifiers.
+				// Per C++ deduction rules: for pattern T&, T is deduced as int (not int&).
+				TemplateTypeArg deduced_arg = concrete_arg;
+				if (pattern_arg.is_reference) deduced_arg.is_reference = false;
+				if (pattern_arg.is_rvalue_reference) deduced_arg.is_rvalue_reference = false;
+				if (pattern_arg.pointer_depth > 0 && deduced_arg.pointer_depth >= pattern_arg.pointer_depth) {
+					deduced_arg.pointer_depth -= pattern_arg.pointer_depth;
+					for (size_t pd = 0; pd < pattern_arg.pointer_depth && !deduced_arg.pointer_cv_qualifiers.empty(); ++pd) {
+						deduced_arg.pointer_cv_qualifiers.erase(deduced_arg.pointer_cv_qualifiers.begin());
+					}
+				}
+				if (pattern_arg.is_array) {
+					deduced_arg.is_array = false;
+					deduced_arg.array_size = std::nullopt;
+				}
+				param_substitutions[param_name] = deduced_arg;
+				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", StringTable::getStringView(param_name), " to concrete type (qualifiers stripped)");
 				// Increment param_index since we bound a new template parameter
 				++param_index;
 			}
