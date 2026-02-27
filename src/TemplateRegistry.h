@@ -1067,17 +1067,10 @@ struct TemplatePattern {
 											
 											auto sub_it = param_substitutions.find(inner_name);
 											if (sub_it != param_substitutions.end()) {
-												if (deduced.is_value) {
-													if (!sub_it->second.is_value || sub_it->second.value != deduced.value) {
-														inner_match_ok = false; break;
-													}
-												} else {
-													if (sub_it->second.base_type != deduced.base_type ||
-													    sub_it->second.type_index != deduced.type_index) {
-														FLASH_LOG(Templates, Trace, "  FAILED: inconsistent inner deduction for '",
-														          StringTable::getStringView(inner_name), "'");
-														inner_match_ok = false; break;
-													}
+												if (!(sub_it->second == deduced)) {
+													FLASH_LOG(Templates, Trace, "  FAILED: inconsistent inner deduction for '",
+													          StringTable::getStringView(inner_name), "'");
+													inner_match_ok = false; break;
 												}
 											} else {
 												param_substitutions[inner_name] = deduced;
@@ -1098,27 +1091,25 @@ struct TemplatePattern {
 							// Handle non-type value arguments (both pattern and concrete are values)
 							if (p_inner.is_value && c_inner.is_value) {
 								bool bound_value = false;
-								if (std::holds_alternative<StringHandle>(p_inner.value)) {
-									StringHandle val_name = std::get<StringHandle>(p_inner.value);
-									if (val_name.isValid()) {
-										for (const auto& tp : template_params) {
-											if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == val_name) {
-												TemplateTypeArg deduced;
-												deduced.is_value = true;
-												deduced.value = c_inner.intValue();
-												deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
-												auto sub_it = param_substitutions.find(val_name);
-												if (sub_it != param_substitutions.end()) {
-													if (sub_it->second.value != deduced.value) { inner_match_ok = false; break; }
-												} else {
-													param_substitutions[val_name] = deduced;
-												}
-												bound_value = true;
-												break;
+								// Check if this value arg has a dependent_name (e.g., _Num in ratio<_Num, _Den>)
+								if (p_inner.dependent_name.isValid()) {
+									for (const auto& tp : template_params) {
+										if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == p_inner.dependent_name) {
+											TemplateTypeArg deduced;
+											deduced.is_value = true;
+											deduced.value = c_inner.intValue();
+											deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
+											auto sub_it = param_substitutions.find(p_inner.dependent_name);
+											if (sub_it != param_substitutions.end()) {
+												if (!(sub_it->second == deduced)) { inner_match_ok = false; break; }
+											} else {
+												param_substitutions[p_inner.dependent_name] = deduced;
 											}
+											bound_value = true;
+											break;
 										}
-										if (!inner_match_ok) break;
 									}
+									if (!inner_match_ok) break;
 								}
 								if (!bound_value) {
 									if (p_inner.intValue() != c_inner.intValue()) {
@@ -1147,6 +1138,9 @@ struct TemplatePattern {
 						}
 						if (!inner_match_ok) return false;
 					}
+					// Advance param_index past inner-deduced parameters so that
+					// subsequent pattern args use the correct fallback index.
+					param_index += param_substitutions.size();
 					continue;
 				}
 			}
