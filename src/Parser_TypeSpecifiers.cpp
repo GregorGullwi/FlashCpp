@@ -2364,7 +2364,7 @@ ParseResult Parser::parse_decltype_specifier()
 		if (next_expr.is_error()) {
 			// In template context, create dependent type and skip to closing paren.
 			// Restore to position before the failed parse_expression to ensure
-			// reliable paren depth counting (matches the recovery at lines 2228-2230).
+			// reliable paren depth counting (mirrors the first-expression recovery above).
 			if ((parsing_template_body_ || !current_template_param_names_.empty()) && !in_sfinae_context_) {
 				restore_token_position(comma_expr_pos);
 				int paren_depth = 1;
