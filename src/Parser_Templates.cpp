@@ -1639,7 +1639,7 @@ ParseResult Parser::parse_template_declaration() {
 				{
 					// Skip declaration specifiers (constexpr, inline, etc.)
 					auto specs = parse_declaration_specifiers();
-					ctor_is_constexpr = specs.is_constexpr;
+					ctor_is_constexpr = specs.is_constexpr();
 					// Also skip 'explicit' which is constructor-specific
 					while (peek() == "explicit"_tok) {
 						ctor_is_explicit = true;
@@ -1924,8 +1924,8 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_noexcept(true);
 					}
 					
-					bool is_defaulted = dtor_func_specs.is_defaulted;
-					bool is_deleted = dtor_func_specs.is_deleted;
+					bool is_defaulted = dtor_func_specs.is_defaulted();
+					bool is_deleted = dtor_func_specs.is_deleted();
 					
 					// Handle defaulted destructors
 					if (is_defaulted) {
@@ -2138,11 +2138,11 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_node,
 						current_access,
 						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
-						func_specs.is_pure_virtual,
+						func_specs.is_pure_virtual(),
 						func_specs.is_override,
 						func_specs.is_final,
-						member_quals.is_const,
-						member_quals.is_volatile
+						member_quals.is_const(),
+						member_quals.is_volatile()
 					);
 					
 					// Also add to StructTypeInfo so out-of-line definitions can find the declaration
@@ -2151,11 +2151,11 @@ ParseResult Parser::parse_template_declaration() {
 						struct_info->addMemberFunction(func_name_handle, member_func_node,
 							current_access,
 							!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
-							func_specs.is_pure_virtual, func_specs.is_override, func_specs.is_final);
+							func_specs.is_pure_virtual(), func_specs.is_override, func_specs.is_final);
 						// Set const/volatile on the last added member
 						if (!struct_info->member_functions.empty()) {
-							struct_info->member_functions.back().is_const = member_quals.is_const;
-							struct_info->member_functions.back().is_volatile = member_quals.is_volatile;
+							struct_info->member_functions.back().is_const = member_quals.is_const();
+							struct_info->member_functions.back().is_volatile = member_quals.is_volatile();
 						}
 					}
 					
@@ -3304,8 +3304,8 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_noexcept(true);
 					}
 					
-					bool is_defaulted = dtor_func_specs.is_defaulted;
-					bool is_deleted = dtor_func_specs.is_deleted;
+					bool is_defaulted = dtor_func_specs.is_defaulted();
+					bool is_deleted = dtor_func_specs.is_deleted();
 					
 					// Handle defaulted destructors
 					if (is_defaulted) {
@@ -3490,8 +3490,8 @@ ParseResult Parser::parse_template_declaration() {
 					}
 					
 					// Extract parsed specifiers
-					bool is_defaulted = func_specs.is_defaulted;
-					bool is_deleted = func_specs.is_deleted;
+					bool is_defaulted = func_specs.is_defaulted();
+					bool is_deleted = func_specs.is_deleted();
 					
 					// Handle defaulted functions: create implicit function with empty body
 					if (is_defaulted) {
@@ -5300,9 +5300,9 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Parse storage class specifiers (constexpr, inline, static, etc.)
 	// This must be done BEFORE parse_type_and_name() to capture constexpr for template functions
 	auto specs = parse_declaration_specifiers();
-	bool is_constexpr = specs.is_constexpr;
-	bool is_consteval = specs.is_consteval;
-	bool is_constinit = specs.is_constinit;
+	bool is_constexpr = specs.is_constexpr();
+	bool is_consteval = specs.is_consteval();
+	bool is_constinit = specs.is_constinit();
 	
 	// Parse the function declaration (type and name)
 	auto type_and_name_result = parse_type_and_name();
@@ -5640,9 +5640,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				// Handles 'explicit constexpr' where constexpr comes after explicit
 				{
 					auto more_specs = parse_declaration_specifiers();
-					if (more_specs.is_constexpr) specs.is_constexpr = true;
-					if (more_specs.is_consteval) specs.is_consteval = true;
-					if (more_specs.is_constinit) specs.is_constinit = true;
+					if (more_specs.is_constexpr()) specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Constexpr;
+					if (more_specs.is_consteval()) specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Consteval;
+					if (more_specs.is_constinit()) specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Constinit;
 					if (more_specs.is_inline) specs.is_inline = true;
 				}
 				
@@ -5662,7 +5662,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				
 				// Apply specifiers to constructor
 				ctor_ref.set_explicit(is_explicit);
-				ctor_ref.set_constexpr(specs.is_constexpr);
+				ctor_ref.set_constexpr(specs.is_constexpr());
 				
 				// Parse parameters
 				FlashCpp::ParsedParameterList params;
@@ -5928,7 +5928,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						// Register as a member function template on the struct
 						struct_node.add_member_function(template_func_node, access,
 						                                false, false, false, false,
-						                                member_quals.is_const, member_quals.is_volatile);
+						                                member_quals.is_const(), member_quals.is_volatile());
 
 						auto qualified_name = StringTable::getOrInternStringHandle(
 							StringBuilder().append(struct_node.name()).append("::"sv).append(operator_name));

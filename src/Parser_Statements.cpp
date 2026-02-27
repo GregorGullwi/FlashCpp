@@ -453,8 +453,8 @@ ParseResult Parser::parse_variable_declaration()
 	FlashCpp::DeclarationSpecifiers specs = parse_declaration_specifiers();
 	
 	// Extract values for backward compatibility (will be removed in later phases)
-	bool is_constexpr = specs.is_constexpr;
-	bool is_constinit = specs.is_constinit;
+	bool is_constexpr = specs.is_constexpr();
+	bool is_constinit = specs.is_constinit();
 	StorageClass storage_class = specs.storage_class;
 	[[maybe_unused]] Linkage linkage = specs.linkage;
 

@@ -2920,12 +2920,12 @@ ParseResult Parser::parse_function_trailing_specifiers(
 
 		// Parse CV qualifiers (const, volatile)
 		if (token.kind() == "const"_tok) {
-			out_quals.is_const = true;
+			out_quals.cv |= CVQualifier::Const;
 			advance();
 			continue;
 		}
 		if (token.kind() == "volatile"_tok) {
-			out_quals.is_volatile = true;
+			out_quals.cv |= CVQualifier::Volatile;
 			advance();
 			continue;
 		}
@@ -2933,12 +2933,12 @@ ParseResult Parser::parse_function_trailing_specifiers(
 		// Parse ref qualifiers (& and &&)
 		if (token.kind() == "&"_tok) {
 			advance();
-			out_quals.is_lvalue_ref = true;
+			out_quals.ref_qualifier = ReferenceQualifier::LValueReference;
 			continue;
 		}
 		if (token.kind() == "&&"_tok) {
 			advance();
-			out_quals.is_rvalue_ref = true;
+			out_quals.ref_qualifier = ReferenceQualifier::RValueReference;
 			continue;
 		}
 
@@ -3071,20 +3071,20 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				if (peek_info(1).value() == "0") {
 					advance(); // consume '='
 					advance(); // consume '0'
-					out_specs.is_pure_virtual = true;
+					out_specs.definition = FlashCpp::DefinitionSpecifier::PureVirtual;
 					continue;
 				}
 			}
 			if (next_kind == "default"_tok) {
 				advance(); // consume '='
 				advance(); // consume 'default'
-				out_specs.is_defaulted = true;
+				out_specs.definition = FlashCpp::DefinitionSpecifier::Defaulted;
 				continue;
 			}
 			if (next_kind == "delete"_tok) {
 				advance(); // consume '='
 				advance(); // consume 'delete'
-				out_specs.is_deleted = true;
+				out_specs.definition = FlashCpp::DefinitionSpecifier::Deleted;
 				continue;
 			}
 			// '=' followed by something else - not a trailing specifier
@@ -3192,11 +3192,11 @@ ParseResult Parser::parse_function_header(
 		if (out_header.specifiers.is_override || out_header.specifiers.is_final) {
 			return ParseResult::error("Free functions cannot use override/final", out_header.name_token);
 		}
-		if (out_header.specifiers.is_pure_virtual) {
+		if (out_header.specifiers.is_pure_virtual()) {
 			return ParseResult::error("Free functions cannot be pure virtual", out_header.name_token);
 		}
 		// CV qualifiers don't apply to free functions
-		if (out_header.member_quals.is_const || out_header.member_quals.is_volatile) {
+		if (out_header.member_quals.is_const() || out_header.member_quals.is_volatile()) {
 			return ParseResult::error("Free functions cannot have const/volatile qualifiers", out_header.name_token);
 		}
 	}
@@ -3206,7 +3206,7 @@ ParseResult Parser::parse_function_header(
 		if (out_header.specifiers.is_virtual) {
 			return ParseResult::error("Static member functions cannot be virtual", out_header.name_token);
 		}
-		if (out_header.member_quals.is_const || out_header.member_quals.is_volatile) {
+		if (out_header.member_quals.is_const() || out_header.member_quals.is_volatile()) {
 			return ParseResult::error("Static member functions cannot have const/volatile qualifiers", out_header.name_token);
 		}
 	}
@@ -3301,8 +3301,8 @@ ParseResult Parser::create_function_from_header(
 	}
 
 	// Set constexpr/consteval
-	func_ref.set_is_constexpr(header.storage.is_constexpr);
-	func_ref.set_is_consteval(header.storage.is_consteval);
+	func_ref.set_is_constexpr(header.storage.is_constexpr());
+	func_ref.set_is_consteval(header.storage.is_consteval());
 
 	return func_node;
 }
@@ -3325,7 +3325,7 @@ ParseResult Parser::parse_function_body_with_context(
 	out_body = std::nullopt;
 
 	// Handle = default
-	if (header.specifiers.is_defaulted) {
+	if (header.specifiers.is_defaulted()) {
 		auto [block_node, block_ref] = create_node_ref(BlockNode());
 		out_body = block_node;
 		// Note: semicolon should already be consumed by the caller after parsing specifiers
@@ -3333,14 +3333,14 @@ ParseResult Parser::parse_function_body_with_context(
 	}
 
 	// Handle = delete
-	if (header.specifiers.is_deleted) {
+	if (header.specifiers.is_deleted()) {
 		// No body for deleted functions
 		// Note: semicolon should already be consumed by the caller after parsing specifiers
 		return ParseResult::success();
 	}
 
 	// Handle pure virtual (= 0)
-	if (header.specifiers.is_pure_virtual) {
+	if (header.specifiers.is_pure_virtual()) {
 		// No body for pure virtual functions
 		// Note: semicolon should already be consumed by the caller after parsing specifiers
 		return ParseResult::success();

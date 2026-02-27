@@ -1853,20 +1853,20 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 		// Handle cv-qualifiers
 		if (token.type() == Token::Type::Keyword && 
 			(token.value() == "const" || token.value() == "volatile")) {
-			if (token.value() == "const") out_quals.is_const = true;
-			else out_quals.is_volatile = true;
+			if (token.value() == "const") out_quals.cv |= CVQualifier::Const;
+			else out_quals.cv |= CVQualifier::Volatile;
 			advance();
 			continue;
 		}
 		
 		// Handle ref-qualifiers (& and &&)
 		if (peek() == "&"_tok) {
-			out_quals.is_lvalue_ref = true;
+			out_quals.ref_qualifier = ReferenceQualifier::LValueReference;
 			advance();
 			continue;
 		}
 		if (peek() == "&&"_tok) {
-			out_quals.is_rvalue_ref = true;
+			out_quals.ref_qualifier = ReferenceQualifier::RValueReference;
 			advance();
 			continue;
 		}
@@ -2191,7 +2191,7 @@ bool Parser::parse_static_member_function(
 	FLASH_LOG(Templates, Debug, "Adding static member function '", decl_node.identifier_token().value(), "' to struct '", StringTable::getStringView(struct_name_handle), "'");
 	struct_ref.add_member_function(member_func_node, current_access,
 	                               false, false, false, false,
-	                               member_quals.is_const, member_quals.is_volatile);
+	                               member_quals.is_const(), member_quals.is_volatile());
 	FLASH_LOG(Templates, Debug, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
 	
 	// Also register in StructTypeInfo
@@ -2203,8 +2203,8 @@ bool Parser::parse_static_member_function(
 		false,  // is_pure_virtual
 		false   // is_override
 	);
-	registered.is_const = member_quals.is_const;
-	registered.is_volatile = member_quals.is_volatile;
+	registered.is_const = member_quals.is_const();
+	registered.is_volatile = member_quals.is_volatile();
 
 	return true;  // Successfully handled as a function
 }

@@ -1564,13 +1564,13 @@ FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers()
 	while (!done && peek().is_keyword()) {
 		std::string_view kw = peek_info().value();
 		if (kw == "constexpr") {
-			specs.is_constexpr = true;
+			specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Constexpr;
 			advance();
 		} else if (kw == "constinit") {
-			specs.is_constinit = true;
+			specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Constinit;
 			advance();
 		} else if (kw == "consteval") {
-			specs.is_consteval = true;
+			specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Consteval;
 			advance();
 		} else if (kw == "inline" || kw == "__inline" || kw == "__forceinline") {
 			specs.is_inline = true;
@@ -1833,9 +1833,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	FlashCpp::DeclarationSpecifiers specs = parse_declaration_specifiers();
 	
 	// Extract values for backward compatibility (will be removed in later phases)
-	bool is_constexpr = specs.is_constexpr;
-	bool is_constinit = specs.is_constinit;
-	bool is_consteval = specs.is_consteval;
+	bool is_constexpr = specs.is_constexpr();
+	bool is_constinit = specs.is_constinit();
+	bool is_consteval = specs.is_consteval();
 	[[maybe_unused]] bool is_inline = specs.is_inline;
 	
 	// Create AttributeInfo for backward compatibility with existing code paths
@@ -2234,8 +2234,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		size_t def_param_count = func_ref.parameter_nodes().size();
 		for (auto& member : struct_info->member_functions) {
 			if (member.getName() == function_name_token.handle() &&
-				member.is_const == member_quals.is_const &&
-				member.is_volatile == member_quals.is_volatile) {
+				member.is_const == member_quals.is_const() &&
+				member.is_volatile == member_quals.is_volatile()) {
 				// Also check parameter count for overload resolution
 				if (member.function_decl.is<FunctionDeclarationNode>()) {
 					const auto& decl_func = member.function_decl.as<FunctionDeclarationNode>();
@@ -2259,8 +2259,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			for (const auto& member : struct_info->member_functions) {
 				if (member.getName() == function_name_token.handle()) {
 					has_name_match = true;
-					if (member.is_const == member_quals.is_const &&
-						member.is_volatile == member_quals.is_volatile) {
+					if (member.is_const == member_quals.is_const() &&
+						member.is_volatile == member_quals.is_volatile()) {
 						has_qualifier_match = true;
 					}
 				}
@@ -2295,8 +2295,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				/*is_final_func=*/false);
 			// Propagate const/volatile qualifiers to the newly added member
 			if (!struct_info->member_functions.empty()) {
-				struct_info->member_functions.back().is_const = member_quals.is_const;
-				struct_info->member_functions.back().is_volatile = member_quals.is_volatile;
+				struct_info->member_functions.back().is_const = member_quals.is_const();
+				struct_info->member_functions.back().is_volatile = member_quals.is_volatile();
 			}
 
 			// Check for declaration only (;) or function definition ({)
@@ -6255,13 +6255,13 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Extract parsed specifiers for use in member function registration
-			bool is_const_member = member_quals.is_const;
-			bool is_volatile_member = member_quals.is_volatile;
+			bool is_const_member = member_quals.is_const();
+			bool is_volatile_member = member_quals.is_volatile();
 			bool is_override = func_specs.is_override;
 			bool is_final = func_specs.is_final;
-			bool is_pure_virtual = func_specs.is_pure_virtual;
-			bool is_defaulted = func_specs.is_defaulted;
-			bool is_deleted = func_specs.is_deleted;
+			bool is_pure_virtual = func_specs.is_pure_virtual();
+			bool is_defaulted = func_specs.is_defaulted();
+			bool is_deleted = func_specs.is_deleted();
 
 			// Handle defaulted functions: set implicit flag and create empty body
 			if (is_defaulted) {

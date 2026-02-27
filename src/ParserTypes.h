@@ -81,10 +81,21 @@ enum class FunctionKind {
 
 // CV and ref qualifiers for member functions
 struct MemberQualifiers {
-	bool is_const = false;
-	bool is_volatile = false;
-	bool is_lvalue_ref = false;   // &
-	bool is_rvalue_ref = false;   // &&
+	CVQualifier cv = CVQualifier::None;
+	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
+
+	bool is_const() const { return hasCVQualifier(cv, CVQualifier::Const); }
+	bool is_volatile() const { return hasCVQualifier(cv, CVQualifier::Volatile); }
+	bool is_lvalue_ref() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
+	bool is_rvalue_ref() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
+};
+
+// Specifier for mutually exclusive function definition modifiers (= 0, = default, = delete)
+enum class DefinitionSpecifier : uint8_t {
+	None,
+	PureVirtual,  // = 0
+	Defaulted,    // = default
+	Deleted,      // = delete
 };
 
 // Function specifiers (can appear after parameters)
@@ -92,12 +103,14 @@ struct FunctionSpecifiers {
 	bool is_virtual = false;
 	bool is_override = false;
 	bool is_final = false;
-	bool is_pure_virtual = false;  // = 0
-	bool is_defaulted = false;     // = default
-	bool is_deleted = false;       // = delete
+	DefinitionSpecifier definition = DefinitionSpecifier::None;
 	bool is_noexcept = false;
 	std::optional<ASTNode> noexcept_expr;  // For noexcept(expr)
 	bool is_implicit = false;      // Compiler-generated (implicit copy ctor, operator=, etc.)
+
+	bool is_pure_virtual() const { return definition == DefinitionSpecifier::PureVirtual; }
+	bool is_defaulted() const { return definition == DefinitionSpecifier::Defaulted; }
+	bool is_deleted() const { return definition == DefinitionSpecifier::Deleted; }
 };
 
 // Leading specifiers on struct/class members (before the declaration)
@@ -117,16 +130,27 @@ inline MemberLeadingSpecifiers& operator|=(MemberLeadingSpecifiers& a, MemberLea
 	return a = a | b;
 }
 
+// Constexpr/consteval/constinit are mutually exclusive per C++20 [dcl.constexpr]
+enum class ConstexprSpecifier : uint8_t {
+	None,
+	Constexpr,
+	Consteval,
+	Constinit,
+};
+
 // Storage and linkage specifiers
 struct StorageSpecifiers {
-	bool is_static = false;
+	StorageClass storage_class = StorageClass::None;
+	ConstexprSpecifier constexpr_spec = ConstexprSpecifier::None;
 	bool is_inline = false;
-	bool is_constexpr = false;
-	bool is_consteval = false;
-	bool is_constinit = false;
-	bool is_extern = false;
 	Linkage linkage = Linkage::None;
 	CallingConvention calling_convention = CallingConvention::Default;
+
+	bool is_static() const { return storage_class == StorageClass::Static; }
+	bool is_extern() const { return storage_class == StorageClass::Extern; }
+	bool is_constexpr() const { return constexpr_spec == ConstexprSpecifier::Constexpr; }
+	bool is_consteval() const { return constexpr_spec == ConstexprSpecifier::Consteval; }
+	bool is_constinit() const { return constexpr_spec == ConstexprSpecifier::Constinit; }
 };
 
 // Phase 1 Consolidation: Combined declaration specifiers for shared parsing
@@ -136,10 +160,8 @@ struct DeclarationSpecifiers {
 	// Storage class specifier (static, extern, register, mutable)
 	StorageClass storage_class = StorageClass::None;
 	
-	// Constexpr/consteval/constinit specifiers
-	bool is_constexpr = false;
-	bool is_consteval = false;
-	bool is_constinit = false;
+	// Constexpr/consteval/constinit specifiers (mutually exclusive)
+	ConstexprSpecifier constexpr_spec = ConstexprSpecifier::None;
 	
 	// Inline specifier
 	bool is_inline = false;
@@ -149,6 +171,10 @@ struct DeclarationSpecifiers {
 	
 	// Calling convention (from __cdecl, __stdcall, etc.)
 	CallingConvention calling_convention = CallingConvention::Default;
+
+	bool is_constexpr() const { return constexpr_spec == ConstexprSpecifier::Constexpr; }
+	bool is_consteval() const { return constexpr_spec == ConstexprSpecifier::Consteval; }
+	bool is_constinit() const { return constexpr_spec == ConstexprSpecifier::Constinit; }
 };
 
 // Context for parsing a function (where it lives)
