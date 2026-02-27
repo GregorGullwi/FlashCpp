@@ -978,10 +978,8 @@ ParseResult Parser::parse_template_declaration() {
 					type_spec.add_cv_qualifier(cv);
 				
 					// Parse pointer/reference declarators
-					size_t ptr_depth = 0;
 					while (peek() == "*"_tok) {
 						advance(); // consume '*'
-						ptr_depth++;
 						CVQualifier ptr_cv = parse_cv_qualifiers();
 						type_spec.add_pointer_level(ptr_cv);
 					}
@@ -1014,7 +1012,7 @@ ParseResult Parser::parse_template_declaration() {
 					arg.type_index = type_spec.type_index();
 					arg.is_value = false;
 					arg.cv_qualifier = type_spec.cv_qualifier();
-					arg.pointer_depth = ptr_depth;
+					arg.pointer_depth = type_spec.pointer_depth();
 					arg.is_reference = type_spec.is_lvalue_reference();
 					arg.is_rvalue_reference = type_spec.is_rvalue_reference();
 					arg.is_array = is_array;
@@ -11211,10 +11209,10 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 							converted_args.push_back(toTemplateArgument(it->second));
 						} else {
 							// Fallback: use resolved arg with qualifiers stripped
-							if (converted_args.size() < template_args.size()) {
+							if (converted_args.size() < resolved_args.size()) {
 								FLASH_LOG(Templates, Debug, "Deduction fallback for param '",
 								          tp.name(), "': using arg[", converted_args.size(), "] with qualifiers stripped");
-								TemplateTypeArg deduced = template_args[converted_args.size()];
+								TemplateTypeArg deduced = resolved_args[converted_args.size()];
 								deduced.is_reference = false;
 								deduced.is_rvalue_reference = false;
 								deduced.pointer_depth = 0;
