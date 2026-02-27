@@ -1046,47 +1046,49 @@ struct TemplatePattern {
 								if (inner_name.isValid()) {
 									for (const auto& tp : template_params) {
 										if (tp.is<TemplateParameterNode>() && tp.as<TemplateParameterNode>().nameHandle() == inner_name) {
-										// Build TemplateTypeArg from concrete inner arg
-										TemplateTypeArg deduced;
-										if (c_inner.is_value) {
-											// Non-type parameter: concrete is a value
-											deduced.is_value = true;
-											deduced.value = c_inner.intValue();
-											deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
-										} else {
-											// Type parameter: concrete is a type
-											deduced.base_type = c_inner.base_type;
-											deduced.type_index = c_inner.type_index;
-											deduced.cv_qualifier = c_inner.cv_qualifier;
-											deduced.pointer_depth = static_cast<uint8_t>(c_inner.pointer_depth);
-											deduced.ref_qualifier = c_inner.ref_qualifier;
-											deduced.pointer_cv_qualifiers = c_inner.pointer_cv_qualifiers;
-											deduced.is_array = c_inner.is_array;
-											deduced.array_size = c_inner.array_size;
-										}
-										
-										auto sub_it = param_substitutions.find(inner_name);
-										if (sub_it != param_substitutions.end()) {
-											if (deduced.is_value) {
-												if (!sub_it->second.is_value || sub_it->second.value != deduced.value) {
-													inner_match_ok = false; break;
+											// Build TemplateTypeArg from concrete inner arg
+											TemplateTypeArg deduced;
+											if (c_inner.is_value) {
+												// Non-type parameter: concrete is a value
+												deduced.is_value = true;
+												deduced.value = c_inner.intValue();
+												deduced.base_type = c_inner.base_type != Type::Invalid ? c_inner.base_type : Type::Int;
+											} else {
+												// Type parameter: concrete is a type
+												deduced.base_type = c_inner.base_type;
+												deduced.type_index = c_inner.type_index;
+												deduced.cv_qualifier = c_inner.cv_qualifier;
+												deduced.pointer_depth = static_cast<uint8_t>(c_inner.pointer_depth);
+												deduced.ref_qualifier = c_inner.ref_qualifier;
+												deduced.pointer_cv_qualifiers = c_inner.pointer_cv_qualifiers;
+												deduced.is_array = c_inner.is_array;
+												deduced.array_size = c_inner.array_size;
+											}
+											
+											auto sub_it = param_substitutions.find(inner_name);
+											if (sub_it != param_substitutions.end()) {
+												if (deduced.is_value) {
+													if (!sub_it->second.is_value || sub_it->second.value != deduced.value) {
+														inner_match_ok = false; break;
+													}
+												} else {
+													if (sub_it->second.base_type != deduced.base_type ||
+													    sub_it->second.type_index != deduced.type_index) {
+														FLASH_LOG(Templates, Trace, "  FAILED: inconsistent inner deduction for '",
+														          StringTable::getStringView(inner_name), "'");
+														inner_match_ok = false; break;
+													}
 												}
 											} else {
-												if (sub_it->second.base_type != deduced.base_type ||
-												    sub_it->second.type_index != deduced.type_index) {
-													FLASH_LOG(Templates, Trace, "  FAILED: inconsistent inner deduction for '",
-													          StringTable::getStringView(inner_name), "'");
-													inner_match_ok = false; break;
-												}
+												param_substitutions[inner_name] = deduced;
+												FLASH_LOG(Templates, Trace, "  Deduced inner param '",
+												          StringTable::getStringView(inner_name), "' from inner arg[", j, "]");
 											}
-										} else {
-											param_substitutions[inner_name] = deduced;
-											FLASH_LOG(Templates, Trace, "  Deduced inner param '",
-											          StringTable::getStringView(inner_name), "' from inner arg[", j, "]");
+											bound_param = true;
+											break;
 										}
-										bound_param = true;
-										break;
 									}
+									if (!inner_match_ok) break;
 								}
 								}
 							}
@@ -1115,6 +1117,7 @@ struct TemplatePattern {
 												break;
 											}
 										}
+										if (!inner_match_ok) break;
 									}
 								}
 								if (!bound_value) {
