@@ -1176,6 +1176,9 @@ ParseResult Parser::parse_template_declaration() {
 				for (size_t i = 0; i < arg.pointer_depth; i++) {
 					pattern_name.append("P");  // pointer
 				}
+				if (arg.is_array) {
+					pattern_name.append("A");  // array
+				}
 			}
 			std::string_view pattern_key = pattern_name.commit();
 			gTemplateRegistry.registerVariableTemplate(
@@ -11298,6 +11301,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		for (size_t i = 0; i < arg.pointer_depth; ++i) {
 			pattern_builder.append("P");  // pointer
 		}
+		if (arg.is_array) {
+			pattern_builder.append("A");  // array
+		}
 		
 		// Try to look up full specialization first (pattern includes type name)
 		std::string_view pattern_key = pattern_builder.commit();
@@ -11331,6 +11337,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			}
 			for (size_t i = 0; i < arg.pointer_depth; ++i) {
 				partial_pattern_builder.append("P");
+			}
+			if (arg.is_array) {
+				partial_pattern_builder.append("A");
 			}
 			std::string_view partial_key = partial_pattern_builder.commit();
 			if (partial_key != pattern_key) {
@@ -11377,6 +11386,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			}
 			for (size_t i = 0; i < arg.pointer_depth; ++i) {
 				qualified_pattern_builder.append("P");
+			}
+			if (arg.is_array) {
+				qualified_pattern_builder.append("A");
 			}
 			std::string_view qualified_pattern_key = qualified_pattern_builder.commit();
 			spec_opt = gTemplateRegistry.lookupVariableTemplate(qualified_pattern_key);
@@ -11434,6 +11446,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 							deduced.is_reference = false;
 							deduced.is_rvalue_reference = false;
 							deduced.pointer_depth = 0;
+							deduced.is_array = false;
 							converted_args.push_back(toTemplateArgument(deduced));
 						}
 						// Substitute template parameters in the initializer
