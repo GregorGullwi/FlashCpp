@@ -227,6 +227,7 @@ Most C++20 template features are **fully implemented**:
 - ✅ Template parameters (type, non-type, template template)
 - ✅ Parameter packs and fold expressions
 - ✅ Template specializations (partial and full)
+- ✅ Variable template partial specialization with inner argument deduction
 - ✅ Non-type template parameters with `auto`
 - ✅ SFINAE and perfect forwarding
 - ✅ Out-of-line template member definitions
