@@ -352,11 +352,7 @@ ParseResult Parser::parse_type_and_name() {
         // If we consumed reference qualifiers but it's not a structured binding,
         // apply them to the type_spec (e.g., auto& ref = x; or auto&& rvalue = temp;)
         if (ref_qualifier != ReferenceQualifier::None) {
-            if (ref_qualifier == ReferenceQualifier::RValueReference) {
-                type_spec.set_reference(true);  // true = rvalue reference
-            } else if (ref_qualifier == ReferenceQualifier::LValueReference) {
-                type_spec.set_reference(false);  // false = lvalue reference
-            }
+            type_spec.set_reference_qualifier(ref_qualifier);
         }
     }
 
@@ -474,9 +470,9 @@ ParseResult Parser::parse_type_and_name() {
                             // Successfully parsed reference-to-array pattern
                             // Set the type_spec to be a reference
                             if (is_rvalue_ref) {
-                                type_spec.set_reference(true);  // rvalue reference
+                                type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
                             } else {
-                                type_spec.set_lvalue_reference(true);  // lvalue reference
+                                type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
                             }
                             type_spec.set_array(true);
                             
@@ -3538,9 +3534,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						type_spec.set_function_signature(func_sig);
 						
 						if (is_function_ref) {
-							type_spec.set_reference(false);  // lvalue reference
+							type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 						} else if (is_rvalue_function_ref) {
-							type_spec.set_reference(true);   // rvalue reference
+							type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);   // rvalue reference
 						}
 						
 						FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type: ", 
@@ -4649,11 +4645,7 @@ ParseResult Parser::parse_struct_declaration()
 								for (size_t i = 0; i < targ.pointer_depth; ++i) {
 									type_node.add_pointer_level();
 								}
-								if (targ.is_rvalue_reference()) {
-									type_node.set_reference(true);
-								} else if (targ.is_reference()) {
-									type_node.set_reference(false);
-								}
+								type_node.set_reference_qualifier(targ.ref_qualifier);
 								if (targ.is_array) {
 									type_node.set_array(true, targ.array_size);
 								}
@@ -7047,11 +7039,7 @@ ParseResult Parser::parse_struct_declaration()
 					);
 					
 					// Copy reference qualifiers
-					if (base_param_type.is_rvalue_reference()) {
-						param_type_node.as<TypeSpecifierNode>().set_reference(true);
-					} else if (base_param_type.is_reference()) {
-						param_type_node.as<TypeSpecifierNode>().set_lvalue_reference(true);
-					}
+					param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(base_param_type.reference_qualifier());
 					
 					auto param_decl_node = emplace_node<DeclarationNode>(
 						param_type_node,
@@ -7155,7 +7143,7 @@ ParseResult Parser::parse_struct_declaration()
 		);
 
 		// Make it a reference type
-		param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
 		// Create parameter declaration
 		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
@@ -7198,7 +7186,7 @@ ParseResult Parser::parse_struct_declaration()
 			name_token,
 			CVQualifier::None
 		);
-		return_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
 		// Create declaration node for operator=
 		Token operator_name_token(Token::Type::Identifier, "operator="sv,
@@ -7220,7 +7208,7 @@ ParseResult Parser::parse_struct_declaration()
 			name_token,
 			CVQualifier::Const  // const qualifier
 		);
-		param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
 		// Create parameter declaration
 		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
@@ -7274,7 +7262,7 @@ ParseResult Parser::parse_struct_declaration()
 		);
 
 		// Make it an rvalue reference type
-		param_type_node.as<TypeSpecifierNode>().set_reference(true);  // true = rvalue reference
+		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // true = rvalue reference
 
 		// Create parameter declaration
 		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
@@ -7314,7 +7302,7 @@ ParseResult Parser::parse_struct_declaration()
 			name_token,
 			CVQualifier::None
 		);
-		return_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
 		// Create declaration node for operator=
 		Token move_operator_name_token(Token::Type::Identifier, "operator="sv,
@@ -7336,7 +7324,7 @@ ParseResult Parser::parse_struct_declaration()
 			name_token,
 			CVQualifier::None
 		);
-		move_param_type_node.as<TypeSpecifierNode>().set_reference(true);  // true = rvalue reference
+		move_param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // true = rvalue reference
 
 		// Create parameter declaration
 		Token move_param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
@@ -7413,7 +7401,7 @@ ParseResult Parser::parse_struct_declaration()
 				name_token,
 				CVQualifier::Const  // const qualifier
 			);
-			param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+			param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 			
 			// Create parameter declaration
 			Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
@@ -10205,9 +10193,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 									type_spec.set_function_signature(func_sig);
 									
 									if (is_function_ref) {
-										type_spec.set_reference(false);  // lvalue reference
+										type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 									} else if (is_rvalue_function_ref) {
-										type_spec.set_reference(true);   // rvalue reference
+										type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);   // rvalue reference
 									}
 									
 									FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type in global alias: ", 
@@ -10232,10 +10220,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					
 					// Parse reference declarators: & or &&
 					ReferenceQualifier ref_qual = parse_reference_qualifier();
-					if (ref_qual == ReferenceQualifier::RValueReference) {
-						type_spec.set_reference(true);  // true = rvalue reference
-					} else if (ref_qual == ReferenceQualifier::LValueReference) {
-						type_spec.set_reference(false);  // false = lvalue reference
+					if (ref_qual != ReferenceQualifier::None) {
+						type_spec.set_reference_qualifier(ref_qual);
 					}
 					
 					// Parse array dimensions: using _Type = _Tp[_Nm];

@@ -1188,9 +1188,9 @@ ParseResult Parser::parse_type_specifier()
 								instantiated_type.add_pointer_level(CVQualifier::None);
 							}
 							if (is_rval_ref) {
-								instantiated_type.set_reference(true);  // rvalue ref
+								instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue ref
 							} else if (is_ref) {
-								instantiated_type.set_lvalue_reference(true);  // lvalue ref
+								instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue ref
 							}
 						}
 					}
@@ -1905,9 +1905,9 @@ ParseResult Parser::parse_type_specifier()
 										instantiated_type.add_pointer_level(CVQualifier::None);
 									}
 									if (is_rval_ref) {
-										instantiated_type.set_reference(true);  // rvalue ref
+										instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue ref
 									} else if (is_ref) {
-										instantiated_type.set_lvalue_reference(true);  // lvalue ref
+										instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue ref
 									}
 								}
 							}
@@ -2189,9 +2189,9 @@ ParseResult Parser::parse_type_specifier()
 			// we need to preserve those reference qualifiers on the returned TypeSpecifierNode
 			if (original_type_info->is_reference_) {
 				if (original_type_info->is_rvalue_reference_) {
-					type_spec_node.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+					type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
 				} else {
-					type_spec_node.as<TypeSpecifierNode>().set_lvalue_reference(true);  // lvalue reference
+					type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 				}
 			}
 
@@ -2244,9 +2244,9 @@ ParseResult Parser::parse_type_specifier()
 				// Add reference qualifiers from typedef
 				if (type_info_ctx->is_reference_) {
 					if (type_info_ctx->is_rvalue_reference_) {
-						type_spec_node.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+						type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
 					} else {
-						type_spec_node.as<TypeSpecifierNode>().set_lvalue_reference(true);  // lvalue reference
+						type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 					}
 				}
 				// Copy function signature for function pointer/reference type aliases
@@ -2822,7 +2822,7 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 			}, expr);
 			
 			if (is_lvalue) {
-				arg_type_node.set_lvalue_reference(true);
+				arg_type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);
 			}
 		}
 		

@@ -986,10 +986,8 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Parse reference qualifier
 					ReferenceQualifier ref = parse_reference_qualifier();
-					if (ref == ReferenceQualifier::LValueReference) {
-						type_spec.set_reference(false);
-					} else if (ref == ReferenceQualifier::RValueReference) {
-						type_spec.set_reference(true);
+					if (ref != ReferenceQualifier::None) {
+						type_spec.set_reference_qualifier(ref);
 					}
 					
 					// Parse array bounds: [_Nm] or []
@@ -4510,7 +4508,7 @@ ParseResult Parser::parse_requires_expression() {
 				// Expect & or * for function reference/pointer
 				if (peek() == "&"_tok) {
 					advance(); // consume '&'
-					type_spec.set_reference(false);  // lvalue reference
+					type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 				} else if (peek() == "*"_tok) {
 					advance(); // consume '*'
 					type_spec.add_pointer_level(CVQualifier::None);
@@ -8485,9 +8483,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 						
 						if (is_lvalue_ref) {
-							type_node.set_reference(false);  // lvalue reference
+							type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 						} else if (is_rvalue_ref) {
-							type_node.set_reference(true);   // rvalue reference
+							type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);   // rvalue reference
 						}
 						
 						discard_saved_token(paren_saved_pos);
@@ -9186,9 +9184,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	for (const auto& ptr_level : orig_return_type.pointer_levels()) {
 		return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 	}
-	if (orig_return_type.is_reference() || orig_return_type.is_rvalue_reference()) {
-		return_type_ref.set_reference(orig_return_type.is_rvalue_reference());
-	}
+	return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
@@ -9220,9 +9216,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			for (const auto& ptr_level : orig_param_type.pointer_levels()) {
 				param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 			}
-			if (orig_param_type.is_reference() || orig_param_type.is_rvalue_reference()) {
-				param_type_ref.set_reference(orig_param_type.is_rvalue_reference());
-			}
+			param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
 
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			new_func_ref.add_parameter_node(new_param_decl);
@@ -10018,10 +10012,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			
 			if (is_punctuator_or_operator && is_ampamp) {
 				advance();  // Consume &&
-				rt.set_reference(true);  // Set rvalue reference
+				rt.set_reference_qualifier(ReferenceQualifier::RValueReference);  // Set rvalue reference
 			} else if (is_punctuator_or_operator && is_amp) {
 				advance();  // Consume &
-				rt.set_lvalue_reference(true);  // Set lvalue reference
+				rt.set_reference_qualifier(ReferenceQualifier::LValueReference);  // Set lvalue reference
 			}
 		}
 		
@@ -10124,13 +10118,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_enum, ", type_index=", return_type_index);
 		
 		// Preserve reference qualifiers from original return type
-		if (orig_return_type.is_reference()) {
-			if (orig_return_type.is_rvalue_reference()) {
-				new_return_type.set_reference(true);  // true = rvalue reference
-			} else {
-				new_return_type.set_lvalue_reference(true);
-			}
-		}
+		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
 		
 		// Preserve pointer levels
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
@@ -10327,15 +10315,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						if (arg_type.is_lvalue_reference()) {
 							// Deduced type is lvalue reference (e.g., int&)
 							// Applying && gives int& && which collapses to int&
-							param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
 						} else if (arg_type.is_rvalue_reference()) {
 							// Deduced type is rvalue reference (e.g., int&&)
 							// Applying && gives int&& && which collapses to int&&
-							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
 						} else {
 							// Deduced type is non-reference (e.g., int from literal)
 							// Applying && gives int&&
-							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
 						}
 					}
 				
@@ -10432,18 +10420,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (orig_param_type.is_rvalue_reference() && arg_type_index < arg_types.size()) {
 					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
 					if (arg_type.is_lvalue_reference()) {
-						param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
 					} else if (arg_type.is_rvalue_reference()) {
-						param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
 					} else if (arg_type.is_reference()) {
-						param_type.as<TypeSpecifierNode>().set_reference(arg_type.is_rvalue_reference());
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(arg_type.reference_qualifier());
 					} else {
-						param_type.as<TypeSpecifierNode>().set_reference(true);  // T && → T&&
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // T && → T&&
 					}
 				} else if (orig_param_type.is_lvalue_reference()) {
-					param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
 				} else if (orig_param_type.is_rvalue_reference()) {
-					param_type.as<TypeSpecifierNode>().set_reference(true);
+					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
 				}
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
@@ -10894,11 +10882,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 				new_type.set_type_index(arg.type_index);
 				
 				// Apply cv-qualifiers, references, and pointers from template argument
-				if (arg.is_rvalue_reference()) {
-					new_type.set_reference(true);
-				} else if (arg.is_reference()) {
-					new_type.set_lvalue_reference(true);
-				}
+				new_type.set_reference_qualifier(arg.ref_qualifier);
 				for (size_t p = 0; p < arg.pointer_depth; ++p) {
 					new_type.add_pointer_level(CVQualifier::None);
 				}
@@ -10933,11 +10917,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 							new_type.set_type_index(arg.type_index);
 							
 							// Apply cv-qualifiers, references, and pointers from template argument
-							if (arg.is_rvalue_reference()) {
-								new_type.set_reference(true);
-							} else if (arg.is_reference()) {
-								new_type.set_lvalue_reference(true);
-							}
+							new_type.set_reference_qualifier(arg.ref_qualifier);
 							for (size_t p = 0; p < arg.pointer_depth; ++p) {
 								new_type.add_pointer_level(CVQualifier::None);
 							}
@@ -11066,11 +11046,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					unop.get_token()
 				);
 				// Apply cv-qualifiers, references, and pointers from template argument
-				if (arg.is_rvalue_reference()) {
-					new_type.set_reference(true);
-				} else if (arg.is_reference()) {
-					new_type.set_lvalue_reference(true);
-				}
+				new_type.set_reference_qualifier(arg.ref_qualifier);
 				for (size_t p = 0; p < arg.pointer_depth; ++p) {
 					new_type.add_pointer_level(CVQualifier::None);
 				}
@@ -11356,11 +11332,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					orig_token
 				);
 				// Apply cv-qualifiers, references, and pointers from template argument
-				if (arg.is_rvalue_reference()) {
-					substituted_type.set_reference(true);
-				} else if (arg.is_reference()) {
-					substituted_type.set_lvalue_reference(true);
-				}
+				substituted_type.set_reference_qualifier(arg.ref_qualifier);
 				for (size_t p = 0; p < arg.pointer_depth; ++p) {
 					substituted_type.add_pointer_level(CVQualifier::None);
 				}
@@ -14843,11 +14815,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		// Preserve reference qualifiers from the original type
-		if (type_spec.is_rvalue_reference()) {
-			substituted_type_spec.set_reference(true);  // true for rvalue reference
-		} else if (type_spec.is_reference()) {
-			substituted_type_spec.set_reference(false);  // false for lvalue reference
-		}
+		substituted_type_spec.set_reference_qualifier(type_spec.reference_qualifier());
 		
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
@@ -15977,11 +15945,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				if (return_type_spec.is_rvalue_reference()) {
-					substituted_return_type.set_reference(true);
-				} else if (return_type_spec.is_reference()) {
-					substituted_return_type.set_reference(false);
-				}
+				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -16018,11 +15982,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
-						if (param_type_spec.is_rvalue_reference()) {
-							substituted_param_type.set_reference(true);
-						} else if (param_type_spec.is_reference()) {
-							substituted_param_type.set_reference(false);
-						}
+						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -16112,11 +16072,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				if (return_type_spec.is_rvalue_reference()) {
-					substituted_return_type.set_reference(true);
-				} else if (return_type_spec.is_reference()) {
-					substituted_return_type.set_reference(false);
-				}
+				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -16153,11 +16109,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
-						if (param_type_spec.is_rvalue_reference()) {
-							substituted_param_type.set_reference(true);
-						} else if (param_type_spec.is_reference()) {
-							substituted_param_type.set_reference(false);
-						}
+						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -16403,11 +16355,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				if (return_type_spec.is_rvalue_reference()) {
-					substituted_return_type.set_reference(true);
-				} else if (return_type_spec.is_reference()) {
-					substituted_return_type.set_reference(false);
-				}
+				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -16443,11 +16391,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
-						if (param_type_spec.is_rvalue_reference()) {
-							substituted_param_type.set_reference(true);
-						} else if (param_type_spec.is_reference()) {
-							substituted_param_type.set_reference(false);
-						}
+						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 						auto substituted_param_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto [param_decl_node, param_decl_ref] = emplace_node_ref<DeclarationNode>(
@@ -16550,11 +16494,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 								substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 							}
-							if (param_type_spec.is_rvalue_reference()) {
-								substituted_param_type.set_reference(true);
-							} else if (param_type_spec.is_reference()) {
-								substituted_param_type.set_reference(false);
-							}
+							substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 							auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 							auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -16740,8 +16680,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_return_spec.set_type_index(ret_type_index);
 				for (const auto& pl : return_type_spec.pointer_levels())
 					new_return_spec.add_pointer_level(pl.cv_qualifier);
-				if (return_type_spec.is_rvalue_reference()) new_return_spec.set_reference(true);
-				else if (return_type_spec.is_reference()) new_return_spec.set_reference(false);
+				new_return_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
 				
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 					new_return_type, decl_node.identifier_token());
@@ -16772,8 +16711,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_param_spec.set_type_index(new_param_type_index);
 						for (const auto& pl : param_type_spec.pointer_levels())
 							new_param_spec.add_pointer_level(pl.cv_qualifier);
-						if (param_type_spec.is_rvalue_reference()) new_param_spec.set_reference(true);
-						else if (param_type_spec.is_reference()) new_param_spec.set_reference(false);
+						new_param_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
 						
 						auto new_param_decl = emplace_node<DeclarationNode>(
 							new_param_type_node, param_decl.identifier_token());
@@ -18271,11 +18209,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 		substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 	}
-	if (return_type_spec.is_rvalue_reference()) {
-		substituted_return_type.set_reference(true);
-	} else if (return_type_spec.is_reference()) {
-		substituted_return_type.set_reference(false);
-	}
+	substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 
 	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -18312,11 +18246,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 				substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 			}
-			if (param_type_spec.is_rvalue_reference()) {
-				substituted_param_type.set_reference(true);
-			} else if (param_type_spec.is_reference()) {
-				substituted_param_type.set_reference(false);
-			}
+			substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 
 			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 			auto substituted_param_decl = emplace_node<DeclarationNode>(

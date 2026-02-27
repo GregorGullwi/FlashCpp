@@ -1482,18 +1482,8 @@ public:
 	bool is_rvalue_reference() const { return reference_qualifier_ == ReferenceQualifier::RValueReference; }
 	bool is_lvalue_reference() const { return reference_qualifier_ == ReferenceQualifier::LValueReference; }
 	ReferenceQualifier reference_qualifier() const { return reference_qualifier_; }
-	void set_reference(bool is_rvalue = false) {
-		reference_qualifier_ = is_rvalue ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
-	}
 	void set_reference_qualifier(ReferenceQualifier qual) {
 		reference_qualifier_ = qual;
-	}
-	void set_lvalue_reference(bool is_lvalue = true) {
-		if (is_lvalue) {
-			reference_qualifier_ = ReferenceQualifier::LValueReference;
-		} else {
-			reference_qualifier_ = ReferenceQualifier::None;
-		}
 	}
 
 	// Function pointer support

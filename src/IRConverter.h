@@ -7197,7 +7197,7 @@ private:
 				
 				// If the argument is marked as a reference, set it as such
 				if (arg_is_reference) {
-					param_type.set_reference(arg.is_rvalue_reference());  // set_reference(true) for rvalue, set_reference(false) for lvalue
+					param_type.set_reference_qualifier(arg.ref_qualifier);
 				}
 				
 				// For copy/move constructors: if parameter is the same struct type, it should be a reference
@@ -7236,7 +7236,7 @@ private:
 						}
 						
 						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv);
-						param_type.set_reference(false);  // set_reference(false) creates an lvalue reference (not rvalue)
+						param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // set_reference(false) creates an lvalue reference (not rvalue)
 					}
 				} else if (paramType == Type::Struct && arg_type_index != 0) {
 					// Not a copy constructor, but still a struct parameter - set the type_index
@@ -7247,7 +7247,7 @@ private:
 					}
 					// Also preserve the reference flag if it was set
 					if (arg_is_reference) {
-						param_type.set_reference(arg.is_rvalue_reference());  // set_reference(true) for rvalue, set_reference(false) for lvalue
+						param_type.set_reference_qualifier(arg.ref_qualifier);
 					}
 				}
 				

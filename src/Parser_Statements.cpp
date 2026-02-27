@@ -1841,9 +1841,9 @@ bool Parser::match_template_parameter_type(TypeSpecifierNode param_type,
 		if (requires_rvalue && argument_type.is_reference() && !argument_type.is_rvalue_reference()) {
 			return false;
 		}
-		param_type.set_lvalue_reference(false);
+		param_type.set_reference_qualifier(ReferenceQualifier::None);
 		if (argument_type.is_reference()) {
-			argument_type.set_lvalue_reference(false);
+			argument_type.set_reference_qualifier(ReferenceQualifier::None);
 		}
 	}
 
