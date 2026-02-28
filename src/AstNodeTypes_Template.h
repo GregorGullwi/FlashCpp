@@ -856,3 +856,5 @@ private:
 	std::vector<std::string_view> template_param_names_;  // Parameter names for lookup
 	ASTNode class_declaration_;  // StructDeclarationNode
 	std::vector<DeferredTemplateMemberBody> deferred_bodies_;  // Member function bodies to parse at instantiation
+
+};

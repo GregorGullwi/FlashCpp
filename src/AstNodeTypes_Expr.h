@@ -1,8 +1,6 @@
 #pragma once
 #include "AstNodeTypes_Template.h"
 
-};
-
 // Namespace declaration node
 class NamespaceDeclarationNode {
 public:
