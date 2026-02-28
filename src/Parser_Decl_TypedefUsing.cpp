@@ -397,8 +397,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 		
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, final_type_spec.type(), final_type_spec.type_index(), final_type_spec.size_in_bits());
-		alias_type_info.is_reference_ = final_type_spec.is_reference();
-		alias_type_info.is_rvalue_reference_ = final_type_spec.is_rvalue_reference();
+		alias_type_info.reference_qualifier_ = final_type_spec.reference_qualifier();
 		alias_type_info.pointer_depth_ = final_type_spec.pointer_depth();
 		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 		
@@ -968,7 +967,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	
 	// Also register it globally
 	auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
-	alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
+	alias_type_info.reference_qualifier_ = type_spec.reference_qualifier();
 	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 	
 	return ParseResult::success();
@@ -2034,8 +2033,7 @@ ParseResult Parser::parse_typedef_declaration()
 	// We create a TypeInfo entry that mirrors the underlying type
 	auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
-	alias_type_info.is_reference_ = type_spec.is_reference();
-	alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
+	alias_type_info.reference_qualifier_ = type_spec.reference_qualifier();
 	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
 	// Update the type_node with the modified type_spec (with pointers)

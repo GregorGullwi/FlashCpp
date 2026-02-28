@@ -2187,12 +2187,8 @@ ParseResult Parser::parse_type_specifier()
 			
 			// If this is a type alias with reference qualifiers (e.g., using ReturnType = Value&&),
 			// we need to preserve those reference qualifiers on the returned TypeSpecifierNode
-			if (original_type_info->is_reference_) {
-				if (original_type_info->is_rvalue_reference_) {
-					type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
-				} else {
-					type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
-				}
+			if (original_type_info->reference_qualifier_ != ReferenceQualifier::None) {
+				type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(original_type_info->reference_qualifier_);
 			}
 
 			// Also preserve pointer depth if the alias has pointers
@@ -2231,7 +2227,7 @@ ParseResult Parser::parse_type_specifier()
 			}
 			// Also consider reference type aliases as typedefs (they may have size 0 but have reference qualifiers)
 			// This is critical for std::move's ReturnType which is typename remove_reference<T>::type&&
-			if (!is_typedef && type_info_ctx->is_reference_) {
+			if (!is_typedef && type_info_ctx->reference_qualifier_ != ReferenceQualifier::None) {
 				is_typedef = true;
 			}
 			if (is_typedef) {
@@ -2242,12 +2238,8 @@ ParseResult Parser::parse_type_specifier()
 					resolved_type, user_type_index, type_size, type_name_token, cv_qualifier);
 				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_info_ctx->pointer_depth_);
 				// Add reference qualifiers from typedef
-				if (type_info_ctx->is_reference_) {
-					if (type_info_ctx->is_rvalue_reference_) {
-						type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue reference
-					} else {
-						type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
-					}
+				if (type_info_ctx->reference_qualifier_ != ReferenceQualifier::None) {
+					type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(type_info_ctx->reference_qualifier_);
 				}
 				// Copy function signature for function pointer/reference type aliases
 				if (type_info_ctx->function_signature_.has_value()) {

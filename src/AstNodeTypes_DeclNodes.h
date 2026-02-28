@@ -699,8 +699,7 @@ struct TypeInfo
 	size_t pointer_depth_ = 0;
 	
 	// For typedef of reference types, store the reference qualifier
-	bool is_reference_ = false;
-	bool is_rvalue_reference_ = false;
+	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;
 	
 	// For function pointer/reference type aliases, store the function signature
 	std::optional<FunctionSignature> function_signature_;

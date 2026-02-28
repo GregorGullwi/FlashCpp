@@ -126,8 +126,8 @@ if (param_decl.has_default_value()) {
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 			
 			// Copy reference qualifiers from template arg
-			type_info.is_reference_ = lazy_info.template_args[i].is_lvalue_reference();
-			type_info.is_rvalue_reference_ = lazy_info.template_args[i].is_rvalue_reference();
+			type_info.reference_qualifier_ = lazy_info.template_args[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
+				: (lazy_info.template_args[i].is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
 			
 			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);

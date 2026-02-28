@@ -407,8 +407,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			// This ensures that when T=int&, the type T is properly marked as a reference
 			if (template_args[i].type_specifier.has_value()) {
 				const auto& ts = *template_args[i].type_specifier;
-				type_info.is_reference_ = ts.is_reference();
-				type_info.is_rvalue_reference_ = ts.is_rvalue_reference();
+				type_info.reference_qualifier_ = ts.reference_qualifier();
 			}
 			
 			gTypesByName.emplace(type_info.name(), &type_info);
@@ -7302,8 +7301,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 						
 						// Copy reference qualifiers from template arg
-						type_info.is_reference_ = template_args_to_use[i].is_lvalue_reference();
-						type_info.is_rvalue_reference_ = template_args_to_use[i].is_rvalue_reference();
+						type_info.reference_qualifier_ = template_args_to_use[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
+							: (template_args_to_use[i].is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
 						
 						gTypesByName.emplace(type_info.name(), &type_info);
 						template_scope.addParameter(&type_info);

@@ -776,9 +776,7 @@ public:
 							input.type_info = &gTypeInfo[input.type_index];
 							input.base_type = input.type_info->type_;
 							input.pointer_depth = input.type_info->pointer_depth_;
-							input.ref_qualifier = input.type_info->is_rvalue_reference_
-								? ReferenceQualifier::RValueReference
-								: (input.type_info->is_reference_ ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+							input.ref_qualifier = input.type_info->reference_qualifier_;
 							input.struct_info = input.type_info->getStructInfo();
 						}
 						
