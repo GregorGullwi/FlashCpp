@@ -1088,7 +1088,9 @@ private:
 				}
 			}
 		}
-		if (!matched_func) matched_func = fallback_func;  // only one overload provided
+		// Fallback: if no exact arity match, use any operator++ / operator-- overload.
+		// This handles the common case where only one form (prefix or postfix) is defined.
+		if (!matched_func) matched_func = fallback_func;
 		if (!matched_func)
 			return std::nullopt;
 
@@ -1202,9 +1204,13 @@ private:
 		
 		if (is_pointer) {
 			// For pointers, use a BinaryOp to add/subtract element_size
+			// Extract the pointer operand value once (used in multiple BinaryOp/AssignmentOp below)
+			IrValue ptr_operand = std::holds_alternative<StringHandle>(operandIrOperands[2])
+				? IrValue(std::get<StringHandle>(operandIrOperands[2])) : IrValue{};
+			
 			if (is_prefix) {
 				BinaryOp bin_op{
-					.lhs = { Type::UnsignedLongLong, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { Type::UnsignedLongLong, 64, ptr_operand },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
@@ -1213,7 +1219,7 @@ private:
 				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
 					AssignmentOp assign_op;
 					assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
-					assign_op.lhs = { Type::UnsignedLongLong, 64, std::get<StringHandle>(operandIrOperands[2]) };
+					assign_op.lhs = { Type::UnsignedLongLong, 64, ptr_operand };
 					assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 				}
@@ -1229,7 +1235,7 @@ private:
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
 				}
 				BinaryOp bin_op{
-					.lhs = { Type::UnsignedLongLong, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { Type::UnsignedLongLong, 64, ptr_operand },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
@@ -1238,7 +1244,7 @@ private:
 				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
 					AssignmentOp assign_op;
 					assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
-					assign_op.lhs = { Type::UnsignedLongLong, 64, std::get<StringHandle>(operandIrOperands[2]) };
+					assign_op.lhs = { Type::UnsignedLongLong, 64, ptr_operand };
 					assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 				}
