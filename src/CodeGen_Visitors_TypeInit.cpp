@@ -1012,7 +1012,7 @@ private:
 	// Helper: resolve self-referential struct types in template instantiations.
 	// When a template member function references its own class (e.g., const W& in W<T>::operator+=),
 	// the type_index may point to the unfinalized template base. This resolves it to the
-	// enclosing instantiated struct's type_index.
+	// enclosing instantiated struct's type_index by mutating `type` in-place.
 	// Important: only resolves when the unfinalized type's name matches the base name of the
 	// enclosing struct — avoids incorrectly resolving outer class references in nested classes.
 	static void resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
@@ -1049,7 +1049,8 @@ private:
 	}
 
 	// Helper: generate a member function call for user-defined operator++/-- overloads on structs.
-	// Returns the IR operands for the call result, or std::nullopt if no overload was found.
+	// Returns the IR operands {result_type, result_size, ret_var, result_type_index} on success,
+	// or std::nullopt if no overload was found.
 	std::optional<std::vector<IrOperand>> generateUnaryIncDecOverloadCall(
 		std::string_view op_name,  // "++" or "--"
 		Type operandType,
@@ -1083,8 +1084,7 @@ private:
 			param_types.push_back(int_type);
 		}
 		std::vector<std::string_view> empty_namespace;
-		std::string op_func_name = "operator";
-		op_func_name += op_name;
+		auto op_func_name = StringBuilder().append("operator").append(op_name).commit();
 		auto mangled_name = NameMangling::generateMangledName(
 			op_func_name, return_type, param_types, false,
 			struct_name, empty_namespace, Linkage::CPlusPlus
