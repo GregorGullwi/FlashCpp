@@ -965,14 +965,10 @@ bool StructTypeInfo::buildVTable() {
             vtable.push_back(&func);
         }
 
-        // Validate override keyword usage
-        if (func.is_override && override_index < 0) {
-            // Base class vtable may be incomplete: template base classes are deferred during
-            // parsing and only resolved at instantiation time. Trust 'override' and add the
-            // function as a new vtable entry. A true mismatch will surface at link time.
-            func.vtable_index = static_cast<int>(vtable.size());
-            vtable.push_back(&func);
-        }
+        // Note: when func.is_override && override_index < 0, the function was already
+        // added as a new vtable entry above (line 964-965). Base class vtable may be
+        // incomplete (template base classes are deferred during parsing and only resolved
+        // at instantiation time). A true mismatch will surface at link time.
     }
 
     // Update abstract flag after building vtable
