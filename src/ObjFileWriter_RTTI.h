@@ -325,6 +325,40 @@
 			std::string base_mangled = ".?AV" + bci.name + "@@";
 			std::string base_type_desc_symbol = "??_R0" + base_mangled;
 			
+			// Ensure the base class type descriptor exists. If the base class's own
+			// add_vtable was never called (e.g., template base class whose member
+			// functions were all overridden), the symbol would be left as an unresolved
+			// external. Emit it here if needed.
+			bool base_td_exists = false;
+			{
+				auto symbols = coffi_.get_symbols();
+				for (size_t si = 0; si < symbols->size(); ++si) {
+					if ((*symbols)[si].get_name() == base_type_desc_symbol &&
+					    (*symbols)[si].get_section_number() > 0) {
+						base_td_exists = true;
+						break;
+					}
+				}
+			}
+			if (!base_td_exists) {
+				uint32_t btd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+				std::vector<char> btd_data;
+				btd_data.reserve(16 + base_mangled.size() + 1);
+				ObjectFileCommon::appendZeros(btd_data, 8);  // vtable pointer
+				ObjectFileCommon::appendZeros(btd_data, 8);  // spare pointer
+				for (char c : base_mangled) btd_data.push_back(c);
+				btd_data.push_back(0);
+				add_data(btd_data, SectionType::RDATA);
+				auto btd_sym = coffi_.add_symbol(base_type_desc_symbol);
+				btd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+				btd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+				btd_sym->set_section_number(rdata_section->get_index() + 1);
+				btd_sym->set_value(btd_offset);
+				// Update cache so get_or_create_symbol_index finds it
+				symbol_index_cache_[base_type_desc_symbol] = btd_sym->get_index();
+				if (g_enable_debug_output) std::cerr << "  Emitted base ??_R0 Type Descriptor '" << base_type_desc_symbol << "' at offset " << btd_offset << std::endl;
+			}
+			
 			uint32_t base_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 			std::string base_bcd_symbol = "??_R1" + mangled_class_name + "0" + base_mangled;
 			std::vector<char> base_bcd_data;

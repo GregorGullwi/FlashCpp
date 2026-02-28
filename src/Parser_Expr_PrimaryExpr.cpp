@@ -1915,8 +1915,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				if (auto node = argResult.node()) {
 					// Check for pack expansion (...) after the argument
-					if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == "...") {
-						Token ellipsis_token = current_token_;
+					if (peek() == "..."_tok) {
+						Token ellipsis_token = peek_info();
 						advance(); // consume '...'
 						auto pack_expr = emplace_node<ExpressionNode>(
 							PackExpansionExprNode(*node, ellipsis_token));
