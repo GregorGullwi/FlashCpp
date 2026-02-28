@@ -1129,14 +1129,10 @@ private:
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = true;
 
-		// Detect if returning struct by value (needs hidden return parameter for RVO)
-		bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
-		bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64());
-
-		if (needs_hidden_return_param) {
+		// Detect if returning struct by value (needs hidden return parameter for RVO).
+		// Small structs (≤ ABI threshold) return in registers and need no return_slot.
+		if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64())) {
 			call_op.return_slot = ret_var;
-		} else if (returns_struct_by_value) {
-			// Small struct return - no return slot needed, will return in RAX
 		}
 
 		// Take address of operand for 'this' pointer
