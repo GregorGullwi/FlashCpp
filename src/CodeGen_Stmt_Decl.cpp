@@ -73,7 +73,12 @@
 			// Create GlobalVariableDeclOp
 			GlobalVariableDeclOp op;
 			op.type = type_node.type();
-			op.size_in_bits = static_cast<int>(type_node.size_in_bits());
+			// For pointers and references, size is sizeof(void*) regardless of base type
+			if (type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer()) {
+				op.size_in_bits = static_cast<int>(sizeof(void*) * 8);
+			} else {
+				op.size_in_bits = static_cast<int>(type_node.size_in_bits());
+			}
 			op.var_name = var_name;  // Phase 3: Now using StringHandle
 			op.element_count = 1;  // Default for scalars
 			
@@ -274,9 +279,39 @@
 					}
 				} else if (init_node.is<ExpressionNode>()) {
 					// Single value initialization
+					const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+					// Handle address-of initializer: int* ptr = &x;
+					if (std::holds_alternative<UnaryOperatorNode>(init_expr)) {
+						const auto& unary = std::get<UnaryOperatorNode>(init_expr);
+						if (unary.op() == "&" && unary.get_operand().is<ExpressionNode>()) {
+							const ExpressionNode& inner = unary.get_operand().as<ExpressionNode>();
+							if (std::holds_alternative<IdentifierNode>(inner)) {
+								const auto& target_id = std::get<IdentifierNode>(inner);
+								FLASH_LOG(Codegen, Debug, "Global pointer '", decl.identifier_token().value(),
+								          "' initialized with &", target_id.name());
+								op.is_initialized = true;
+								op.init_data.resize(element_size, 0);
+								op.reloc_target = StringTable::getOrInternStringHandle(target_id.name());
+								goto global_var_initialized;
+							}
+						}
+					}
+					// Handle reference initializer: int& ref = x;
+					if (type_node.is_reference() && std::holds_alternative<IdentifierNode>(init_expr)) {
+						const auto& target_id = std::get<IdentifierNode>(init_expr);
+						FLASH_LOG(Codegen, Debug, "Global reference '", decl.identifier_token().value(),
+						          "' initialized with address of ", target_id.name());
+						op.is_initialized = true;
+						op.init_data.resize(element_size, 0);
+						op.reloc_target = StringTable::getOrInternStringHandle(target_id.name());
+						goto global_var_initialized;
+					}
+					{
 					unsigned long long value = evalToValue(init_node, type_node.type());
 					op.is_initialized = true;
 					appendValueAsBytes(op.init_data, value, element_size);
+					}
+					global_var_initialized:;
 				} else {
 					op.is_initialized = false;
 				}

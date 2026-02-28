@@ -833,9 +833,10 @@
 			if (is_global) {
 				// This is a global variable - generate GlobalLoad
 				TempVar result_temp = var_counter.next();
-				// For arrays, result is a pointer (64-bit address)
+				// For arrays, pointers, and references, result is a pointer (64-bit address)
 				bool is_array_type = decl_node.is_array() || type_node.is_array();
-				int size_bits = is_array_type ? 64 : static_cast<int>(type_node.size_in_bits());
+				bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
+				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
 				op.result.size_in_bits = size_bits;
@@ -1248,6 +1249,20 @@
 						// Use qualified name as the global symbol name: StructName::static_member
 						op.global_name = StringTable::getOrInternStringHandle(StringBuilder().append(qualified_struct_name).append("::"sv).append(qualifiedIdNode.name()));
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+
+						// For reference members, the global holds a pointer — dereference it
+						if (static_member->is_reference() || static_member->is_rvalue_reference()) {
+							TempVar deref_temp = var_counter.next();
+							DereferenceOp deref_op;
+							deref_op.result = deref_temp;
+							deref_op.pointer.type = static_member->type;
+							deref_op.pointer.size_in_bits = get_type_size_bits(static_member->type);
+							deref_op.pointer.pointer_depth = 1;
+							deref_op.pointer.value = result_temp;
+							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
+							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
+							return { static_member->type, get_type_size_bits(static_member->type), deref_temp, static_cast<unsigned long long>(type_index) };
+						}
 
 						// Return the temp variable that will hold the loaded value
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;

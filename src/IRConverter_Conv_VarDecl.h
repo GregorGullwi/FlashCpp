@@ -8,6 +8,7 @@
 		global_info.type = op.type;
 		global_info.is_initialized = op.is_initialized;
 		global_info.size_in_bytes = (op.size_in_bits / 8) * op.element_count;
+		global_info.reloc_target = op.reloc_target;
 		
 		// Copy raw init data if present
 		if (op.is_initialized) {

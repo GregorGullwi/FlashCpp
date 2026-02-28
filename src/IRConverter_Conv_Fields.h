@@ -48,6 +48,7 @@
 		size_t size_in_bytes;
 		bool is_initialized;
 		std::vector<char> init_data;  // Raw bytes for initialized data
+		StringHandle reloc_target;    // If valid, data relocation (R_X86_64_64) for this symbol
 	};
 	std::vector<GlobalVariableInfo> global_variables_;
 	

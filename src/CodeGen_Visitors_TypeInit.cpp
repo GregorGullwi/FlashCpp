@@ -589,6 +589,18 @@ public:
 							const auto& id = std::get<IdentifierNode>(init_expr);
 							FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '", 
 							          qualified_name, "'");
+							// For reference members, the initializer is an identifier whose address
+							// should be stored via a data relocation (like &x for int& ref = x)
+							if (static_member.reference_qualifier != ReferenceQualifier::None) {
+								StringHandle target_handle = StringTable::getOrInternStringHandle(id.name());
+								op.reloc_target = target_handle;
+								// Zero-fill the slot; the linker fills the actual address
+								size_t byte_count = op.size_in_bits / 8;
+								for (size_t i = 0; i < byte_count; ++i) {
+									op.init_data.push_back(0);
+								}
+								FLASH_LOG(Codegen, Debug, "  Set reloc_target='", id.name(), "' for reference static member");
+							} else {
 							// Evaluate the initializer expression
 							auto init_operands = visitExpressionNode(init_expr);
 							if (init_operands.size() >= 3) {
@@ -602,6 +614,37 @@ public:
 								size_t byte_count = op.size_in_bits / 8;
 								for (size_t i = 0; i < byte_count; ++i) {
 									op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+								}
+							}
+							}
+						} else if (std::holds_alternative<UnaryOperatorNode>(init_expr)) {
+							const auto& unary = std::get<UnaryOperatorNode>(init_expr);
+							// Handle address-of operator: &identifier
+							if (unary.op() == "&" && unary.get_operand().is<ExpressionNode>()) {
+								const ExpressionNode& inner = unary.get_operand().as<ExpressionNode>();
+								if (std::holds_alternative<IdentifierNode>(inner)) {
+									const auto& target_id = std::get<IdentifierNode>(inner);
+									FLASH_LOG(Codegen, Debug, "Processing &", target_id.name(), " initializer for static member '",
+									          qualified_name, "'");
+									StringHandle target_handle = StringTable::getOrInternStringHandle(target_id.name());
+									op.reloc_target = target_handle;
+									// Zero-fill the pointer slot; the linker fills the actual address
+									size_t byte_count = op.size_in_bits / 8;
+									for (size_t i = 0; i < byte_count; ++i) {
+										op.init_data.push_back(0);
+									}
+								} else {
+									FLASH_LOG(Codegen, Debug, "Address-of non-identifier for static member '",
+									          qualified_name, "' - zero-initializing");
+									append_bytes(0, op.size_in_bits, op.init_data);
+								}
+							} else {
+								// Other unary operators - try constexpr evaluation
+								unsigned long long evaluated_value = 0;
+								if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
+									append_bytes(evaluated_value, op.size_in_bits, op.init_data);
+								} else {
+									append_bytes(0, op.size_in_bits, op.init_data);
 								}
 							}
 						} else {
