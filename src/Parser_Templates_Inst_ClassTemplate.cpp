@@ -3267,6 +3267,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.access = static_member.access;
 				lazy_info.initializer = static_member.initializer;
 				lazy_info.cv_qualifier = static_member.cv_qualifier;
+				lazy_info.reference_qualifier = static_member.reference_qualifier;
+				lazy_info.pointer_depth = static_member.pointer_depth;
 				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.needs_substitution = true;

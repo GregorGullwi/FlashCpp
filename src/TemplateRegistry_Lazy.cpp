@@ -131,6 +131,8 @@ struct LazyStaticMemberInfo {
 	AccessSpecifier access;                    // Access specifier
 	std::optional<ASTNode> initializer;        // Original initializer (may need substitution)
 	CVQualifier cv_qualifier = CVQualifier::None; // CV qualifiers (const/volatile)
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None; // Reference qualifier (lvalue/rvalue)
+	int pointer_depth = 0;                     // Pointer depth (e.g., 1 for int*, 2 for int**)
 	std::vector<ASTNode> template_params;      // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
 	bool needs_substitution;                   // True if initializer contains template parameters

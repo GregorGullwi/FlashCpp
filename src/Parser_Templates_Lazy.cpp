@@ -463,7 +463,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			lazy_info.alignment,
 			lazy_info.access,
 			substituted_initializer,
-			lazy_info.cv_qualifier
+			lazy_info.cv_qualifier,
+			lazy_info.reference_qualifier,
+			lazy_info.pointer_depth
 		);
 	}
 	
