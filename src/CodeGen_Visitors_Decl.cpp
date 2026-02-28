@@ -407,8 +407,8 @@
 								lhs_load.object = this_handle;
 								lhs_load.member_name = member.getName();
 								lhs_load.offset = static_cast<int>(member.offset);
-								lhs_load.is_reference = member.is_reference;
-								lhs_load.is_rvalue_reference = member.is_rvalue_reference;
+								lhs_load.is_reference = member.is_reference();
+								lhs_load.is_rvalue_reference = member.is_rvalue_reference();
 								lhs_load.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
 
@@ -420,8 +420,8 @@
 								rhs_load.object = other_handle;
 								rhs_load.member_name = member.getName();
 								rhs_load.offset = static_cast<int>(member.offset);
-								rhs_load.is_reference = member.is_reference;
-								rhs_load.is_rvalue_reference = member.is_rvalue_reference;
+								rhs_load.is_reference = member.is_reference();
+								rhs_load.is_rvalue_reference = member.is_rvalue_reference();
 								rhs_load.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
 
@@ -492,8 +492,8 @@
 						lhs_load.object = this_handle;
 						lhs_load.member_name = member.getName();
 						lhs_load.offset = static_cast<int>(member.offset);
-						lhs_load.is_reference = member.is_reference;
-						lhs_load.is_rvalue_reference = member.is_rvalue_reference;
+						lhs_load.is_reference = member.is_reference();
+						lhs_load.is_rvalue_reference = member.is_rvalue_reference();
 						lhs_load.struct_type_info = nullptr;
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
 
@@ -505,8 +505,8 @@
 						rhs_load.object = other_handle;
 						rhs_load.member_name = member.getName();
 						rhs_load.offset = static_cast<int>(member.offset);
-						rhs_load.is_reference = member.is_reference;
-						rhs_load.is_rvalue_reference = member.is_rvalue_reference;
+						rhs_load.is_reference = member.is_reference();
+						rhs_load.is_rvalue_reference = member.is_rvalue_reference();
 						rhs_load.struct_type_info = nullptr;
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
 
@@ -798,8 +798,8 @@
 							member_load.object = source_param_name_handle;  // Load from source parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
-							member_load.is_reference = member.is_reference;
-							member_load.is_rvalue_reference = member.is_rvalue_reference;
+							member_load.is_reference = member.is_reference();
+							member_load.is_rvalue_reference = member.is_rvalue_reference();
 							member_load.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
@@ -813,8 +813,8 @@
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
-							member_store.is_reference = member.is_reference;
-							member_store.is_rvalue_reference = member.is_rvalue_reference;
+							member_store.is_reference = member.is_reference();
+							member_store.is_rvalue_reference = member.is_rvalue_reference();
 							member_store.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
@@ -1552,8 +1552,8 @@
 							member_load.object = StringTable::getOrInternStringHandle("other"sv);  // Load from 'other' parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
-							member_load.is_reference = member.is_reference;
-							member_load.is_rvalue_reference = member.is_rvalue_reference;
+							member_load.is_reference = member.is_reference();
+							member_load.is_rvalue_reference = member.is_rvalue_reference();
 							member_load.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), node.name_token()));
@@ -1567,8 +1567,8 @@
 							member_store.object = StringTable::getOrInternStringHandle("this"sv);
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
-							member_store.is_reference = member.is_reference;
-							member_store.is_rvalue_reference = member.is_rvalue_reference;
+							member_store.is_reference = member.is_reference();
+							member_store.is_rvalue_reference = member.is_rvalue_reference();
 							member_store.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
@@ -1750,8 +1750,8 @@
 													nested_member_store.member_name = nested_member.getName();
 													// Calculate offset: parent member offset + nested member offset
 													nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
-													nested_member_store.is_reference = nested_member.is_reference;
-													nested_member_store.is_rvalue_reference = nested_member.is_rvalue_reference;
+													nested_member_store.is_reference = nested_member.is_reference();
+													nested_member_store.is_rvalue_reference = nested_member.is_rvalue_reference();
 													nested_member_store.struct_type_info = nullptr;
 												
 													ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
@@ -1839,8 +1839,8 @@
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
-							member_store.is_reference = member.is_reference;
-							member_store.is_rvalue_reference = member.is_rvalue_reference;
+							member_store.is_reference = member.is_reference();
+							member_store.is_rvalue_reference = member.is_rvalue_reference();
 							member_store.struct_type_info = nullptr;
 	
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
@@ -1869,7 +1869,7 @@
 							// When initializing a reference member (int& ref) with a reference parameter (int& r),
 							// we need to use the pointer value that the parameter holds, not dereference it
 							bool handled_as_reference_init = false;
-							if (member.is_reference || member.is_rvalue_reference) {
+							if (member.is_reference() || member.is_rvalue_reference()) {
 								// Check if the initializer is a simple identifier
 								const ASTNode& init_expr = explicit_it->second->initializer_expr;
 								if (init_expr.is<ExpressionNode>()) {
@@ -1985,8 +1985,8 @@
 						member_store.object = StringTable::getOrInternStringHandle("this");
 						member_store.member_name = member.getName();
 						member_store.offset = static_cast<int>(member.offset);
-						member_store.is_reference = member.is_reference;
-						member_store.is_rvalue_reference = member.is_rvalue_reference;
+						member_store.is_reference = member.is_reference();
+						member_store.is_rvalue_reference = member.is_rvalue_reference();
 						member_store.struct_type_info = nullptr;
 						member_store.bitfield_width = member.bitfield_width;
 						member_store.bitfield_bit_offset = member.bitfield_bit_offset;

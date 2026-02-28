@@ -2301,9 +2301,8 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 
-				bool is_ref_member = type_spec.is_reference();
-				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
-				if (is_ref_member) {
+				ReferenceQualifier ref_qual = type_spec.reference_qualifier();
+				if (ref_qual != ReferenceQualifier::None) {
 					// Size and alignment were already set correctly above for references
 					referenced_size_bits = referenced_size_bits ? referenced_size_bits : type_spec.size_in_bits();
 				}
@@ -2317,8 +2316,7 @@ ParseResult Parser::parse_template_declaration() {
 					member_alignment,
 					member_decl.access,
 					member_decl.default_initializer,
-					is_ref_member,
-					is_rvalue_ref_member,
+					ref_qual,
 					referenced_size_bits,
 					false,
 					{},
@@ -3661,8 +3659,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Calculate member size and alignment
 				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 				
-				bool is_ref_member = type_spec.is_reference();
-				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+				ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
@@ -3673,9 +3670,8 @@ ParseResult Parser::parse_template_declaration() {
 					member_alignment,
 					member_decl.access,
 					member_decl.default_initializer,
-					is_ref_member,
-					is_rvalue_ref_member,
-					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0,
+					ref_qual,
+					ref_qual != ReferenceQualifier::None ? get_type_size_bits(type_spec.type()) : 0,
 					false,
 					{},
 					static_cast<int>(type_spec.pointer_depth()),

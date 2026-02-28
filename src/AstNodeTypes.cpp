@@ -1053,7 +1053,7 @@ const StructMember* StructTypeInfo::findMemberRecursive(StringHandle member_name
                 // Note: We can't modify the base_member, so we use a thread_local static
                 static thread_local StructMember adjusted_member(
                     StringHandle(), Type::Void, 0, 0, 0, 0,
-                    AccessSpecifier::Public, std::nullopt, false, false, 0, false, {}, 0, std::nullopt);
+                    AccessSpecifier::Public, std::nullopt, ReferenceQualifier::None, 0, false, {}, 0, std::nullopt);
                 adjusted_member = *base_member;
                 adjusted_member.offset += base.offset;  // Adjust offset by base class offset
                 return &adjusted_member;

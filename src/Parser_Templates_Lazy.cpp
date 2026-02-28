@@ -690,11 +690,6 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		// Get the name from the identifier token
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		
-		// Check if the type is a reference type
-		bool is_reference = type_spec.is_reference() || type_spec.is_lvalue_reference();
-		bool is_rvalue_reference = type_spec.is_reference() && !type_spec.is_lvalue_reference();
-		size_t referenced_size_bits = member_size * 8;
-		
 		// Add member to nested struct info
 		nested_struct_info->addMember(
 			member_name_handle,
@@ -704,9 +699,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			member_alignment,
 			member_decl.access,
 			std::nullopt,  // No default initializer for now
-			is_reference,
-			is_rvalue_reference,
-			referenced_size_bits,
+			type_spec.reference_qualifier(),
+			member_size * 8,
 			false,  // is_array
 			{},     // array_dimensions
 			static_cast<int>(type_spec.pointer_depth()),

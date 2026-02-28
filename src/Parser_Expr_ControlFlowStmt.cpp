@@ -1171,8 +1171,7 @@ ParseResult Parser::parse_lambda_expression() {
                     8,                  // Alignment
                     AccessSpecifier::Public,
                     std::nullopt,       // No initializer
-                    false,              // Not a reference
-                    false,              // Not rvalue reference
+                    ReferenceQualifier::None,  // Not a reference
                     64                  // Size in bits
                 );
                 continue;  // Skip the rest of processing for this capture
@@ -1199,8 +1198,7 @@ ParseResult Parser::parse_lambda_expression() {
                                 enclosing_struct->alignment,        // Alignment from enclosing struct
                                 AccessSpecifier::Public,
                                 std::nullopt,                       // No initializer
-                                false,                              // Not a reference
-                                false,                              // Not rvalue reference
+                                ReferenceQualifier::None,           // Not a reference
                                 enclosing_struct->total_size * 8    // Size in bits
                             );
                         }
@@ -1315,8 +1313,7 @@ ParseResult Parser::parse_lambda_expression() {
 				member_alignment,
 				AccessSpecifier::Public,
 				std::nullopt,
-				is_ref_capture,
-				false,
+				is_ref_capture ? ReferenceQualifier::LValueReference : ReferenceQualifier::None,
 				referenced_size_bits
 			);
         }

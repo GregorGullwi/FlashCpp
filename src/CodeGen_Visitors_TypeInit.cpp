@@ -991,8 +991,8 @@ public:
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
-							member_store.is_reference = member.is_reference;
-							member_store.is_rvalue_reference = member.is_rvalue_reference;
+							member_store.is_reference = member.is_reference();
+							member_store.is_rvalue_reference = member.is_rvalue_reference();
 							member_store.struct_type_info = nullptr;
 							member_store.bitfield_width = member.bitfield_width;
 							member_store.bitfield_bit_offset = member.bitfield_bit_offset;
@@ -1385,8 +1385,8 @@ private:
 				member_store.object = base_object;
 				member_store.member_name = member_name;
 				member_store.offset = base_offset + static_cast<int>(member.offset);
-				member_store.is_reference = member.is_reference;
-				member_store.is_rvalue_reference = member.is_rvalue_reference;
+				member_store.is_reference = member.is_reference();
+				member_store.is_rvalue_reference = member.is_rvalue_reference();
 				member_store.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 				continue;
@@ -1438,8 +1438,8 @@ private:
 					member_store.object = base_object;
 					member_store.member_name = member_name;
 					member_store.offset = base_offset + static_cast<int>(member.offset);
-					member_store.is_reference = member.is_reference;
-					member_store.is_rvalue_reference = member.is_rvalue_reference;
+					member_store.is_reference = member.is_reference();
+					member_store.is_rvalue_reference = member.is_rvalue_reference();
 					member_store.struct_type_info = nullptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 				} else {
@@ -1451,8 +1451,8 @@ private:
 					member_store.object = base_object;
 					member_store.member_name = member_name;
 					member_store.offset = base_offset + static_cast<int>(member.offset);
-					member_store.is_reference = member.is_reference;
-					member_store.is_rvalue_reference = member.is_rvalue_reference;
+					member_store.is_reference = member.is_reference();
+					member_store.is_rvalue_reference = member.is_rvalue_reference();
 					member_store.struct_type_info = nullptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 				}
@@ -1479,8 +1479,8 @@ private:
 				member_store.object = base_object;
 				member_store.member_name = member_name;
 				member_store.offset = base_offset + static_cast<int>(member.offset);
-				member_store.is_reference = member.is_reference;
-				member_store.is_rvalue_reference = member.is_rvalue_reference;
+				member_store.is_reference = member.is_reference();
+				member_store.is_rvalue_reference = member.is_rvalue_reference();
 				member_store.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 			}
@@ -2299,8 +2299,8 @@ private:
 						if (type_index < gTypeInfo.size()) {
 							auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, lv_info.member_name.value());
 							if (result) {
-								member_is_reference = result.member->is_reference;
-								member_is_rvalue_reference = result.member->is_rvalue_reference;
+								member_is_reference = result.member->is_reference();
+								member_is_rvalue_reference = result.member->is_rvalue_reference();
 							}
 						}
 					}

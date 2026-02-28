@@ -67,8 +67,7 @@ struct StructTypeInfo {
 	void addMember(StringHandle member_name, Type member_type, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access,
 	               std::optional<ASTNode> default_initializer,
-	               bool is_reference,
-	               bool is_rvalue_reference,
+	               ReferenceQualifier reference_qualifier,
 	               size_t referenced_size_bits,
 	               bool is_array = false,
 	               std::vector<size_t> array_dimensions = {},
@@ -148,7 +147,7 @@ struct StructTypeInfo {
 			referenced_size_bits = member_size * 8;
 		}
 		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
-			              access, std::move(default_initializer), is_reference, is_rvalue_reference,
+			              access, std::move(default_initializer), reference_qualifier,
 			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
 

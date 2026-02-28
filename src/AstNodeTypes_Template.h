@@ -486,21 +486,24 @@ struct AnonymousUnionMemberInfo {
 	size_t member_alignment;             // Alignment requirement in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
 	size_t referenced_size_bits;         // Size in bits of referenced type (for references)
-	bool is_reference;                   // True if member is a reference
-	bool is_rvalue_reference;            // True if member is an rvalue reference
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference, or RValueReference
 	bool is_array;                       // True if member is an array
 	std::vector<size_t> array_dimensions; // Dimension sizes for multidimensional arrays (e.g., {3, 3} for int[3][3])
 	int pointer_depth;                   // Pointer indirection level
+
+	// Convenience helpers
+	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 	
 	AnonymousUnionMemberInfo(StringHandle name, Type type, TypeIndex tidx, size_t size, size_t align,
 	                         std::optional<size_t> bitfield_w,
-	                         size_t ref_size_bits, bool is_ref, bool is_rvalue_ref,
+	                         size_t ref_size_bits, ReferenceQualifier ref_qual,
 	                         bool is_arr,
 	                         int ptr_depth,
 	                         std::vector<size_t> arr_dims)
 		: member_name(name), member_type(type), type_index(tidx), member_size(size),
-		  member_alignment(align), bitfield_width(bitfield_w), referenced_size_bits(ref_size_bits), is_reference(is_ref),
-		  is_rvalue_reference(is_rvalue_ref), is_array(is_arr), array_dimensions(std::move(arr_dims)),
+		  member_alignment(align), bitfield_width(bitfield_w), referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
+		  is_array(is_arr), array_dimensions(std::move(arr_dims)),
 		  pointer_depth(ptr_depth) {}
 };
 
@@ -732,7 +735,7 @@ public:
 	// Must be called after add_anonymous_union_marker()
 	void add_anonymous_union_member(StringHandle member_name, Type member_type, TypeIndex type_index,
 	                                 size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
-	                                 size_t referenced_size_bits, bool is_reference, bool is_rvalue_reference,
+	                                 size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
 	                                 bool is_array,
 	                                 int pointer_depth,
 	                                 std::vector<size_t> array_dimensions) {
@@ -740,7 +743,7 @@ public:
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
 				member_name, member_type, type_index, member_size, member_alignment,
-				bitfield_width, referenced_size_bits, is_reference, is_rvalue_reference, is_array,
+				bitfield_width, referenced_size_bits, reference_qualifier, is_array,
 				pointer_depth,
 				std::move(array_dimensions)
 			);

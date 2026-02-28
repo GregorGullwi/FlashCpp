@@ -1308,8 +1308,8 @@
 		member_load.offset = did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset);
 	
 		// Add reference metadata (required for proper handling of reference members)
-		member_load.is_reference = member->is_reference;
-		member_load.is_rvalue_reference = member->is_rvalue_reference;
+		member_load.is_reference = member->is_reference();
+		member_load.is_rvalue_reference = member->is_rvalue_reference();
 		member_load.struct_type_info = nullptr;
 		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 		member_load.bitfield_width = member->bitfield_width;
@@ -1320,7 +1320,7 @@
 		// When context is LValueAddress, skip the load and return address/metadata only
 		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
 		// because references store a pointer value that needs to be returned
-		if (context == ExpressionContext::LValueAddress && !member->is_reference) {
+		if (context == ExpressionContext::LValueAddress && !member->is_reference()) {
 			return makeMemberResult(member->type, member_size_bits, result_var, member->type_index);
 		}
 
@@ -1330,7 +1330,7 @@
 		// For reference members in LValueAddress context, the result_var now holds the
 		// pointer value loaded from the member slot. Update the LValueInfo to be Kind::Indirect
 		// so that assignment goes THROUGH the pointer (dereference store), not to the member slot.
-		if (context == ExpressionContext::LValueAddress && member->is_reference) {
+		if (context == ExpressionContext::LValueAddress && member->is_reference()) {
 			LValueInfo ref_lvalue_info(
 				LValueInfo::Kind::Indirect,
 				result_var,  // The TempVar holding the loaded pointer

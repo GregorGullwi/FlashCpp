@@ -266,18 +266,20 @@ struct StructMember {
 	size_t referenced_size_bits; // Size of the referenced value in bits (for references)
 	size_t alignment;       // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
-	bool is_reference;      // True if member is an lvalue reference
-	bool is_rvalue_reference; // True if member is an rvalue reference
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
 	bool is_array;          // True if member is an array
 	std::vector<size_t> array_dimensions;  // Dimensions for multidimensional arrays
 	int pointer_depth;      // Pointer indirection level (e.g., int* = 1, int** = 2)
 
+	// Convenience helpers for common checks
+	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
+
 	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
 	            AccessSpecifier acc,
 	            std::optional<ASTNode> init,
-	            bool is_ref,
-	            bool is_rvalue_ref,
+	            ReferenceQualifier ref_qual,
 	            size_t ref_size_bits,
 	            bool is_arr,
 	            std::vector<size_t> arr_dims,
@@ -285,7 +287,7 @@ struct StructMember {
 	            std::optional<size_t> bf_width)
 		: name(n), type(t), type_index(tidx), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
-		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),
+		  access(acc), reference_qualifier(ref_qual),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
 		  pointer_depth(ptr_depth) {}
 	

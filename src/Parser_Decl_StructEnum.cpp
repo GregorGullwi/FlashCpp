@@ -877,8 +877,7 @@ ParseResult Parser::parse_struct_declaration()
 								member_alignment,
 								AccessSpecifier::Public,
 								std::nullopt,  // no default initializer
-								false,  // is_reference
-								false,  // is_rvalue_reference
+								ReferenceQualifier::None,
 								0,      // referenced_size_bits
 								false,  // is_array
 								{},     // array_dimensions
@@ -1189,9 +1188,8 @@ ParseResult Parser::parse_struct_declaration()
 						}
 						
 						// Store the anonymous union member info for later processing during layout
-						bool is_ref_member = anon_member_type_spec.is_reference();
-						bool is_rvalue_ref_member = anon_member_type_spec.is_rvalue_reference();
-						if (is_ref_member) {
+						ReferenceQualifier ref_qual = anon_member_type_spec.reference_qualifier();
+						if (ref_qual != ReferenceQualifier::None) {
 							referenced_size_bits = referenced_size_bits ? referenced_size_bits : (anon_member_type_spec.size_in_bits());
 						}
 						
@@ -1204,8 +1202,7 @@ ParseResult Parser::parse_struct_declaration()
 							member_alignment,
 							bitfield_width,
 							referenced_size_bits,
-							is_ref_member,
-							is_rvalue_ref_member,
+							ref_qual,
 							is_array,
 							static_cast<int>(anon_member_type_spec.pointer_depth()),
 							std::move(array_dimensions)
@@ -2526,8 +2523,7 @@ ParseResult Parser::parse_struct_declaration()
 					effective_alignment,
 					AccessSpecifier::Public,  // Anonymous union members are always public
 					std::nullopt,  // No default initializer
-					union_member.is_reference,
-					union_member.is_rvalue_reference,
+					union_member.reference_qualifier,
 					union_member.referenced_size_bits,
 					union_member.is_array,
 					union_member.array_dimensions,
@@ -2602,10 +2598,9 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// Add member to struct layout with default initializer
-		bool is_ref_member = type_spec.is_reference();
-		bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+		ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 		// Reference size and alignment were already set above
-		if (is_ref_member) {
+		if (ref_qual != ReferenceQualifier::None) {
 			// Update referenced_size_bits if not already set
 			referenced_size_bits = referenced_size_bits ? referenced_size_bits : (type_spec.size_in_bits());
 		}
@@ -2619,8 +2614,7 @@ ParseResult Parser::parse_struct_declaration()
 			member_alignment,
 			member_decl.access,
 			member_decl.default_initializer,
-			is_ref_member,
-			is_rvalue_ref_member,
+			ref_qual,
 			referenced_size_bits,
 			is_array,
 			array_dimensions,
@@ -3691,8 +3685,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member()
 		pointer_alignment,
 		AccessSpecifier::Public,
 		std::nullopt,  // no default initializer
-		false,  // is_reference
-		false,  // is_rvalue_reference
+		ReferenceQualifier::None,
 		0,      // referenced_size_bits
 		false,  // is_array
 		{},     // array_dimensions
@@ -3816,8 +3809,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					nested_type_alignment,
 					AccessSpecifier::Public,
 					std::nullopt,  // no default initializer
-					false,  // is_reference
-					false,  // is_rvalue_reference
+					ReferenceQualifier::None,
 					0,      // referenced_size_bits
 					false,  // is_array
 					{},     // array_dimensions
@@ -3916,8 +3908,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			member_alignment,
 			AccessSpecifier::Public,
 			std::nullopt,  // no default initializer
-			false,  // is_reference
-			false,  // is_rvalue_reference
+			ReferenceQualifier::None,
 			referenced_size_bits,
 			!resolved_array_dimensions.empty(),  // is_array
 			std::move(resolved_array_dimensions), // array_dimensions

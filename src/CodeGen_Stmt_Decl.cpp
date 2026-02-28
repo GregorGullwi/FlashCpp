@@ -939,8 +939,8 @@
 									member_store.object = decl.identifier_token().handle();
 									member_store.member_name = member.getName();
 									member_store.offset = static_cast<int>(member.offset);
-									member_store.is_reference = member.is_reference;
-									member_store.is_rvalue_reference = member.is_rvalue_reference;
+									member_store.is_reference = member.is_reference();
+									member_store.is_rvalue_reference = member.is_rvalue_reference();
 									member_store.struct_type_info = nullptr;
 									member_store.bitfield_width = member.bitfield_width;
 									member_store.bitfield_bit_offset = member.bitfield_bit_offset;
@@ -2548,8 +2548,8 @@
 				load_op.member_name = member.name;
 				load_op.offset = static_cast<int>(member.offset);
 				load_op.struct_type_info = &type_info;
-				load_op.is_reference = member.is_reference;
-				load_op.is_rvalue_reference = member.is_rvalue_reference;
+				load_op.is_reference = member.is_reference();
+				load_op.is_rvalue_reference = member.is_rvalue_reference();
 				load_op.is_pointer_to_member = false;
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), binding_token));

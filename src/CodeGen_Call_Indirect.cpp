@@ -365,8 +365,8 @@
 									member_load.object = base_temp;
 									member_load.member_name = func_name_handle;
 									member_load.offset = static_cast<int>(member.offset);
-									member_load.is_reference = member.is_reference;
-									member_load.is_rvalue_reference = member.is_rvalue_reference;
+									member_load.is_reference = member.is_reference();
+									member_load.is_rvalue_reference = member.is_rvalue_reference();
 									member_load.struct_type_info = &member_type_info;  // MemberLoadOp expects TypeInfo*
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
@@ -564,8 +564,8 @@
 							
 							member_load.member_name = StringTable::getOrInternStringHandle(func_name);  // Member name
 							member_load.offset = static_cast<int>(member.offset);  // Member offset
-							member_load.is_reference = member.is_reference;
-							member_load.is_rvalue_reference = member.is_rvalue_reference;
+							member_load.is_reference = member.is_reference();
+							member_load.is_rvalue_reference = member.is_rvalue_reference();
 							member_load.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));

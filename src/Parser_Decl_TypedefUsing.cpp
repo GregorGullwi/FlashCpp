@@ -606,8 +606,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					member_alignment,
 					member_access,
 					std::nullopt,
-					member_type_spec.is_reference(),
-					member_type_spec.is_rvalue_reference(),
+					member_type_spec.reference_qualifier(),
 					member_type_spec.size_in_bits(),
 					false,
 					{},
@@ -1766,9 +1765,8 @@ ParseResult Parser::parse_typedef_declaration()
 				}
 			}
 
-			bool is_ref_member = member_type_spec.is_reference();
-			bool is_rvalue_ref_member = member_type_spec.is_rvalue_reference();
-			if (is_ref_member) {
+			ReferenceQualifier ref_qual = member_type_spec.reference_qualifier();
+			if (ref_qual != ReferenceQualifier::None) {
 				// Size and alignment were already set correctly above for references
 				referenced_size_bits = referenced_size_bits ? referenced_size_bits : member_type_spec.size_in_bits();
 			}
@@ -1782,8 +1780,7 @@ ParseResult Parser::parse_typedef_declaration()
 				member_alignment,
 				member_decl.access,
 				member_decl.default_initializer,
-				is_ref_member,
-				is_rvalue_ref_member,
+				ref_qual,
 				referenced_size_bits,
 				false,
 				{},

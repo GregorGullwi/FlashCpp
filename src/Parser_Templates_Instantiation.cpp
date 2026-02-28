@@ -2715,9 +2715,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			member_alignment,
 			member_decl.access,
 			member_decl.default_initializer,
-			type_spec.is_reference(),
-			type_spec.is_rvalue_reference(),
-			(type_spec.is_reference() || type_spec.is_rvalue_reference()) ? get_type_size_bits(member_type) : 0,
+			type_spec.reference_qualifier(),
+			type_spec.reference_qualifier() != ReferenceQualifier::None ? get_type_size_bits(member_type) : 0,
 			false,
 			{},
 			static_cast<int>(type_spec.pointer_depth()),
@@ -3750,8 +3749,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_alignment = get_type_alignment(member_type, member_size);
 			}
 			
-			bool is_ref_member = type_spec.is_reference();
-			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+			ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 			
 			// Substitute template parameters in default member initializers
 			std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
@@ -3767,9 +3765,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_alignment,
 				member_decl.access,
 				substituted_default_initializer,
-				is_ref_member,
-				is_rvalue_ref_member,
-				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0,
+				ref_qual,
+				ref_qual != ReferenceQualifier::None ? get_type_size_bits(member_type) : 0,
 				false,
 				{},
 				static_cast<int>(ptr_depth),
@@ -6029,12 +6026,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		} else {
 			member_alignment = get_type_alignment(member_type, member_size);
 		}
-		bool is_ref_member = type_spec.is_reference();
-		bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+		ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 	
 		// For reference members, we need to pass the size of the referenced type, not the pointer size
 		size_t referenced_size_bits = 0;
-		if (is_ref_member || is_rvalue_ref_member) {
+		if (ref_qual != ReferenceQualifier::None) {
 			referenced_size_bits = get_type_size_bits(member_type);
 		}
 	
@@ -6052,8 +6048,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_alignment,
 			member_decl.access,
 			substituted_default_initializer,
-			is_ref_member,
-			is_rvalue_ref_member,
+			ref_qual,
 			referenced_size_bits,
 			false,
 			{},
@@ -6620,8 +6615,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				size_t member_alignment = get_type_alignment(substituted_type_spec.type(), member_size);
 				
-				bool is_ref_member = substituted_type_spec.is_reference();
-				bool is_rvalue_ref_member = substituted_type_spec.is_rvalue_reference();
+				ReferenceQualifier ref_qual = substituted_type_spec.reference_qualifier();
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				nested_struct_info->addMember(
@@ -6632,9 +6626,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_alignment,
 					member_decl.access,
 					member_decl.default_initializer,
-					is_ref_member,
-					is_rvalue_ref_member,
-					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0,
+					ref_qual,
+					ref_qual != ReferenceQualifier::None ? get_type_size_bits(substituted_type_spec.type()) : 0,
 					false,
 					{},
 					static_cast<int>(substituted_type_spec.pointer_depth()),
