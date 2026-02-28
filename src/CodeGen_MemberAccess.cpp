@@ -1422,13 +1422,13 @@
 					StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member) {
-						FLASH_LOG(Codegen, Debug, "sizeof(qualified): found static member, size=", static_member->size);
+						FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static member, size=", static_member->size);
 						return static_member->size;
 					}
 					// Search non-static members
 					for (const auto& member : struct_info->members) {
 						if (StringTable::getStringView(member.getName()) == member_name) {
-							FLASH_LOG(Codegen, Debug, "sizeof(qualified): found member, size=", member.size);
+							FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found member, size=", member.size);
 							return member.size;
 						}
 					}
