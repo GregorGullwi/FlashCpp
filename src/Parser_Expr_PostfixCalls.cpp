@@ -532,6 +532,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					return ParseResult::error("Expected identifier before '::'" , current_token_);
 				}
 				advance(); // consume 'operator'
+				std::vector<StringType<32>> namespaces;
+				namespaces.emplace_back(StringType<32>(namespace_name));
 				return parse_qualified_operator_call(current_token_, namespaces);
 			}
 
