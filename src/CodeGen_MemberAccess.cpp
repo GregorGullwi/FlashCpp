@@ -1471,7 +1471,7 @@
 				// The type name in gTypeInfo will contain "::" for qualified names.
 				if (type_spec.type_index() < gTypeInfo.size()) {
 					std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index()].name());
-					auto sep_pos = type_name.find("::");
+				auto sep_pos = type_name.rfind("::");
 					if (sep_pos != std::string_view::npos) {
 						std::string_view struct_name = type_name.substr(0, sep_pos);
 						std::string_view member_name = type_name.substr(sep_pos + 2);
