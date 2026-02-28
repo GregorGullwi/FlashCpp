@@ -329,18 +329,15 @@
 			// add_vtable was never called (e.g., template base class whose member
 			// functions were all overridden), the symbol would be left as an unresolved
 			// external. Emit it here if needed.
-			bool base_td_exists = false;
-			{
+			bool base_td_defined = false;
+			auto cache_it = symbol_index_cache_.find(base_type_desc_symbol);
+			if (cache_it != symbol_index_cache_.end()) {
+				// Symbol was cached - check if it's a definition (section > 0) or just a reference
 				auto symbols = coffi_.get_symbols();
-				for (size_t si = 0; si < symbols->size(); ++si) {
-					if ((*symbols)[si].get_name() == base_type_desc_symbol &&
-					    (*symbols)[si].get_section_number() > 0) {
-						base_td_exists = true;
-						break;
-					}
-				}
+				auto& sym = (*symbols)[cache_it->second];
+				base_td_defined = (sym.get_section_number() > 0);
 			}
-			if (!base_td_exists) {
+			if (!base_td_defined) {
 				uint32_t btd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 				std::vector<char> btd_data;
 				btd_data.reserve(16 + base_mangled.size() + 1);
