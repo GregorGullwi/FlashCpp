@@ -1954,6 +1954,52 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 				advance(); // consume ::
 				
+				// Handle qualified operator call: Type::operator=()
+				if (peek() == "operator"_tok) {
+					advance(); // consume 'operator'
+					// Build operator name (e.g., operator=, operator<<, operator())
+					if (peek().is_operator() || peek() == "("_tok || peek() == "["_tok) {
+						StringBuilder op_name_builder;
+						op_name_builder.append("operator");
+						op_name_builder.append(peek_info().value());
+						advance(); // consume operator symbol
+						// Handle multi-char operators like (), [], >>=
+						if (peek() == ")"_tok || peek() == "]"_tok) {
+							op_name_builder.append(peek_info().value());
+							advance();
+						}
+						std::string_view op_name = op_name_builder.commit();
+						// Check for function call
+						if (peek() == "("_tok) {
+							advance(); // consume '('
+							auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+								.handle_pack_expansion = true,
+								.collect_types = true,
+								.expand_simple_packs = false
+							});
+							if (!args_result.success) {
+								return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+							}
+							if (!consume(")"_tok)) {
+								return ParseResult::error("Expected ')' after operator call arguments", current_token_);
+							}
+							Token op_token(Token::Type::Identifier, op_name,
+								final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+							auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, op_token);
+							auto& op_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
+							result = emplace_node<ExpressionNode>(
+								FunctionCallNode(op_decl, std::move(args_result.args), op_token));
+							return ParseResult::success(*result);
+						}
+						// Not a call, just operator name as identifier
+						Token op_token(Token::Type::Identifier, op_name,
+							final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+						final_identifier = op_token;
+						break; // exit the while loop
+					}
+					return ParseResult::error("Expected operator symbol after 'operator'", peek_info());
+				}
+
 				// Get next identifier
 				if (!peek().is_identifier()) {
 					return ParseResult::error("Expected identifier after '::'", peek_info());

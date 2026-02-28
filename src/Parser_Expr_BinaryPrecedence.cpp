@@ -660,8 +660,8 @@ void Parser::skip_cpp_attributes()
 // Skip GCC-style __attribute__((...)) specifications
 void Parser::skip_gcc_attributes()
 {
-	while (!peek().is_eof() && peek_info().value() == "__attribute__") {
-		advance(); // consume "__attribute__"
+	while (!peek().is_eof() && (peek_info().value() == "__attribute__" || peek_info().value() == "__attribute")) {
+		advance(); // consume "__attribute__" or "__attribute"
 		
 		// Expect ((
 		if (peek() != "("_tok) {
