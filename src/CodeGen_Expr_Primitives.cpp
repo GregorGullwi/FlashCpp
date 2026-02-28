@@ -92,7 +92,7 @@
 
 	std::vector<IrOperand> generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
 		std::string_view type_name = dtor.has_qualified_name() 
-			? std::string_view(dtor.qualified_type_name()) 
+			? dtor.qualified_type_name().view()
 			: dtor.type_name();
 		FLASH_LOG(Codegen, Debug, "Generating explicit destructor call for type: ", type_name);
 		
