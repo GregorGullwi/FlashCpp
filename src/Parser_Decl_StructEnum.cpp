@@ -1358,12 +1358,12 @@ ParseResult Parser::parse_struct_declaration()
 			advance(); // consume 'static'
 			
 			// Check if it's const or constexpr (some may already be consumed by parse_member_leading_specifiers)
-			bool is_const = false;
+			CVQualifier cv_qual = CVQualifier::None;
 			bool is_static_constexpr = !!(member_specs & FlashCpp::MLS_Constexpr);
 			while (peek().is_keyword()) {
 				std::string_view kw = peek_info().value();
 				if (kw == "const") {
-					is_const = true;
+					cv_qual |= CVQualifier::Const;
 					advance();
 				} else if (kw == "constexpr") {
 					is_static_constexpr = true;
@@ -1459,7 +1459,7 @@ ParseResult Parser::parse_struct_declaration()
 				static_member_alignment,
 				current_access,
 				init_expr_opt,  // initializer
-				is_const,
+				cv_qual,
 				ref_qual,
 				ptr_depth
 			);

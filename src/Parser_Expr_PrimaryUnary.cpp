@@ -583,6 +583,21 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				// Now check if ')' follows
 				if (peek() == ")"_tok) {
 					is_complete_type = true;
+					
+					// Reject unresolved qualified names (e.g., Foo::val) that the type parser
+					// consumed as a qualified type name placeholder (UserDefined, size 0).
+					// When the token is a known struct name but the result is UserDefined (not Struct),
+					// parse_type_specifier consumed Foo::member as a single identifier and failed to
+					// resolve it as a type.  Fall through to expression parsing so sizeof can
+					// look up the struct member via QualifiedIdentifierNode.
+					if (type_spec.type() == Type::UserDefined && type_spec.size_in_bits() == 0 &&
+					    type_spec.token().type() == Token::Type::Identifier) {
+						StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+						auto struct_it = gTypesByName.find(tok_handle);
+						if (struct_it != gTypesByName.end() && struct_it->second->isStruct()) {
+							is_complete_type = false;
+						}
+					}
 				}
 			}
 			

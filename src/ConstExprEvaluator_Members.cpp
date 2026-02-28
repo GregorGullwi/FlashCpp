@@ -858,7 +858,7 @@ public:
 					}
 				
 					if (static_member && owner_struct) {
-						FLASH_LOG(ConstExpr, Debug, "Static member is_const: ", static_member->is_const, 
+						FLASH_LOG(ConstExpr, Debug, "Static member is_const: ", static_member->is_const(), 
 						          ", has_initializer: ", static_member->initializer.has_value());
 						
 						// If static member has no initializer, try to trigger lazy instantiation

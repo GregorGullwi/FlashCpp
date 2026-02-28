@@ -4721,16 +4721,16 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					advance(); // consume 'static'
 					
 					// Check if it's const or constexpr
-					bool is_const = false;
+					CVQualifier cv_qual = CVQualifier::None;
 					[[maybe_unused]] bool is_constexpr = false;
 					while (peek().is_keyword()) {
 						auto kw = peek();
 						if (kw == "const"_tok) {
-							is_const = true;
+							cv_qual |= CVQualifier::Const;
 							advance();
 						} else if (kw == "constexpr"_tok) {
 							is_constexpr = true;
-							is_const = true; // constexpr implies const
+							cv_qual |= CVQualifier::Const; // constexpr implies const
 							advance();
 						} else if (kw == "inline"_tok) {
 							advance();
@@ -4793,7 +4793,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							static_member_alignment,
 							current_access,
 							init_expr_opt,
-							is_const,
+							cv_qual,
 							ref_qual,
 							ptr_depth
 						);

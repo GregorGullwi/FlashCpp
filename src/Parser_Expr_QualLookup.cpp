@@ -1442,7 +1442,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						// Found the static member - return its type
 						TypeSpecifierNode member_type(static_member->type, TypeQualifier::None, static_member->size * 8);
 						member_type.set_type_index(static_member->type_index);
-						if (static_member->is_const) {
+						if (static_member->is_const()) {
 							member_type.set_cv_qualifier(CVQualifier::Const);
 						}
 						if (static_member->pointer_depth > 0) {

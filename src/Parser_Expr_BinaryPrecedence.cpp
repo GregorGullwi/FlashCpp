@@ -1131,12 +1131,12 @@ ParseResult Parser::parse_static_member_block(
 	// consume "static" already done by caller
 	
 	// Handle optional const and constexpr
-	bool is_const = false;
+	CVQualifier cv_qual = CVQualifier::None;
 	bool is_static_constexpr = false;
 	while (peek().is_keyword()) {
 		std::string_view kw = peek_info().value();
 		if (kw == "const") {
-			is_const = true;
+			cv_qual |= CVQualifier::Const;
 			advance();
 		} else if (kw == "constexpr") {
 			is_static_constexpr = true;
@@ -1243,7 +1243,7 @@ ParseResult Parser::parse_static_member_block(
 				member_alignment,
 				AccessSpecifier::Public,  // Full specializations use Public
 				init_expr_opt,
-				is_const
+				cv_qual
 			);
 		}
 	} else {
@@ -1256,7 +1256,7 @@ ParseResult Parser::parse_static_member_block(
 			member_alignment,
 			access,
 			init_expr_opt,
-			is_const
+			cv_qual
 		);
 	}
 

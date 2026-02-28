@@ -1423,9 +1423,45 @@
 
 			// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
 			// array variable, the parser may incorrectly parse it as a type.
+			// Also handles sizeof(Foo::val) where the parser treats Foo::val as a qualified type name.
 			// If size_in_bits is 0, try looking up the identifier in the symbol table.
 			if (type_spec.size_in_bits() == 0 && type_spec.token().type() == Token::Type::Identifier) {
 				StringHandle identifier = StringTable::getOrInternStringHandle(type_spec.token().value());
+				
+				// Check if this is a qualified name (e.g., Foo::val) parsed as a type placeholder.
+				// The type name in gTypeInfo will contain "::" for qualified names.
+				if (type_spec.type_index() < gTypeInfo.size()) {
+					std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index()].name());
+					auto sep_pos = type_name.find("::");
+					if (sep_pos != std::string_view::npos) {
+						std::string_view struct_name = type_name.substr(0, sep_pos);
+						std::string_view member_name = type_name.substr(sep_pos + 2);
+						FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): struct=", struct_name, " member=", member_name);
+						
+						StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
+						auto struct_type_it = gTypesByName.find(struct_name_handle);
+						if (struct_type_it != gTypesByName.end()) {
+							const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+							if (struct_info) {
+								// Search static members
+								StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+								auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
+								if (static_member) {
+									FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): found static member, size=", static_member->size);
+									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(static_member->size) };
+								}
+								
+								// Search non-static members
+								for (const auto& member : struct_info->members) {
+									if (StringTable::getStringView(member.getName()) == member_name) {
+										FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): found member, size=", member.size);
+										return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member.size) };
+									}
+								}
+							}
+						}
+					}
+				}
 				
 				// Look up the identifier in the symbol table
 				const DeclarationNode* decl = lookupDeclaration(identifier);
@@ -1706,6 +1742,40 @@
 						// If we couldn't resolve compile-time, log and fall through
 						FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not resolve '", id_node.name(), 
 						          "' at compile-time, falling back to IR generation");
+					}
+				}
+			}
+			// Special handling for qualified identifiers: sizeof(Foo::val) where val is a static member
+			else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+				const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
+				std::string_view struct_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+				std::string_view member_name = qual_id.name();
+				FLASH_LOG(Codegen, Debug, "sizeof(qualified_id): struct=", struct_name, " member=", member_name);
+				
+				// Look up the struct type
+				StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
+				auto struct_type_it = gTypesByName.find(struct_name_handle);
+				if (struct_type_it != gTypesByName.end()) {
+					const TypeInfo* type_info = struct_type_it->second;
+					const StructTypeInfo* struct_info = type_info->getStructInfo();
+					if (struct_info) {
+						// Search static members
+						StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
+						if (static_member) {
+							size_in_bytes = static_member->size;
+							FLASH_LOG(Codegen, Debug, "sizeof(qualified_id): found static member, size=", size_in_bytes);
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+						}
+						
+						// Search non-static members
+						for (const auto& member : struct_info->members) {
+							if (StringTable::getStringView(member.getName()) == member_name) {
+								size_in_bytes = member.size;
+								FLASH_LOG(Codegen, Debug, "sizeof(qualified_id): found member, size=", size_in_bytes);
+								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+							}
+						}
 					}
 				}
 			}

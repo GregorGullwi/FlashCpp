@@ -314,9 +314,9 @@ struct StructTypeInfo {
 
 	// Add static member
 	void addStaticMember(StringHandle member_name, Type type, TypeIndex type_index, size_t size, size_t member_alignment,
-	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, bool is_const = false,
+	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                     ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
-		static_members.push_back(StructStaticMember(member_name, type, type_index, size, member_alignment, access, initializer, is_const, ref_qual, ptr_depth));
+		static_members.push_back(StructStaticMember(member_name, type, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
 	}
 
 	// Update an existing static member's initializer (used for lazy instantiation)
