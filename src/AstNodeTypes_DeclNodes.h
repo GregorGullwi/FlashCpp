@@ -334,7 +334,7 @@ struct StructTypeInfo {
 	}
 
 	// Find member recursively through base classes
-	const StructMember* findMemberRecursive(StringHandle member_name) const;
+	std::optional<StructMember> findMemberRecursive(StringHandle member_name) const;
 	
 	// Find static member recursively through base classes
 	// Returns a pair of the static member and the StructTypeInfo that defines it
