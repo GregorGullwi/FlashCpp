@@ -843,6 +843,34 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
         }
         advance(); // consume ')'
 
+        // Check for pointer-to-array: (*name)[size]
+        // The '*' inside (*name) establishes the pointer level; handle it here
+        // where ptr_cv is available, mirroring Case 2 (lines 811-812).
+        if (peek() == "["_tok) {
+            advance(); // consume '['
+
+            auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+            if (size_result.is_error()) {
+                return size_result;
+            }
+            std::optional<ASTNode> array_size_expr = size_result.node();
+
+            if (!consume("]"_tok)) {
+                return ParseResult::error("Expected ']' after array size in pointer-to-array declarator", current_token_);
+            }
+
+            base_type.add_pointer_level(ptr_cv);
+            base_type.set_array(true);
+
+            return ParseResult::success(
+                emplace_node<DeclarationNode>(
+                    emplace_node<TypeSpecifierNode>(base_type),
+                    identifier_token,
+                    array_size_expr
+                )
+            );
+        }
+
         // Now parse the function parameters: '(' params ')'
         return parse_postfix_declarator(base_type, identifier_token);
     }
@@ -969,34 +997,11 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
         base_type = fp_type;
     }
 
-    // Check for array declarator: '[' size ']'
-    // This handles pointer-to-array declarations like: _Tp (*__p)[_Nm]
-    // After parsing (*__p), the '[_Nm]' makes this a pointer to array of _Tp
-    std::optional<ASTNode> array_size_expr;
-    if (peek() == "["_tok) {
-        advance(); // consume '['
-        
-        auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-        if (size_result.is_error()) {
-            return size_result;
-        }
-        array_size_expr = size_result.node();
-        
-        if (!consume("]"_tok)) {
-            return ParseResult::error("Expected ']' after array size in pointer-to-array declarator", current_token_);
-        }
-        
-        // The type is pointer-to-array: add pointer level and mark as array
-        base_type.add_pointer_level();
-        base_type.set_array(true);
-    }
-
     // Create and return declaration node
     return ParseResult::success(
         emplace_node<DeclarationNode>(
             emplace_node<TypeSpecifierNode>(base_type),
-            identifier,
-            array_size_expr
+            identifier
         )
     );
 }
