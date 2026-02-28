@@ -1523,7 +1523,6 @@
 			if (struct_it != gTypesByName.end()) {
 				TypeIndex struct_type_index = struct_it->second->type_index_;
 				bool needs_resolution = false;
-				bool needs_resolution = false;
 				// Check return type for self-referential struct
 				if (return_type.type() == Type::Struct && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size()) {
 					auto& rti = gTypeInfo[return_type.type_index()];
