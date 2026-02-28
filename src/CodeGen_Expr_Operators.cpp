@@ -501,7 +501,8 @@
 			}
 			
 			// List of binary operators that can be overloaded
-			// Skip assignment operators (=, +=, -=, etc.) as they are handled separately
+			// Assignment operators (=) are handled separately above; compound assignments (+=, etc.)
+			// fall through here when the LHS is a struct with user-defined operator overloads
 			static const std::unordered_set<std::string_view> overloadable_binary_ops = {
 				"+", "-", "*", "/", "%",           // Arithmetic
 				"==", "!=", "<", ">", "<=", ">=",  // Comparison
@@ -510,6 +511,9 @@
 				"<<", ">>",                        // Shift
 				",",                               // Comma (already handled above)
 				"<=>",                             // Spaceship (handled below)
+				// Compound assignment operators (dispatched as member function calls for structs)
+				"+=", "-=", "*=", "/=", "%=",
+				"&=", "|=", "^=", "<<=", ">>=",
 			};
 			
 			if (overloadable_binary_ops.count(op) > 0 && lhs_type_index > 0) {
