@@ -1154,70 +1154,9 @@
 			// Increment operator (prefix or postfix)
 
 			// Check for user-defined operator++ overload on struct types
-			if (operandType == Type::Struct && operandIrOperands.size() >= 4) {
-				TypeIndex operand_type_index = 0;
-				if (std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
-					operand_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operandIrOperands[3]));
-				}
-				if (operand_type_index > 0) {
-					auto overload_result = findUnaryOperatorOverload(operand_type_index, "++");
-					if (overload_result.has_overload) {
-						const StructMemberFunction& member_func = *overload_result.member_overload;
-						const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index].name());
-						TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-						// Resolve self-referential return type for template structs
-						if (return_type.type() == Type::Struct && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size()) {
-							auto& ret_ti = gTypeInfo[return_type.type_index()];
-							if (!ret_ti.struct_info_ || ret_ti.struct_info_->total_size == 0) {
-								return_type.set_type_index(operand_type_index);
-							}
-						}
-						std::vector<TypeSpecifierNode> param_types;
-						if (!unaryOperatorNode.is_prefix()) {
-							// Postfix: add dummy int parameter for mangling
-							TypeSpecifierNode int_type(Type::Int, TypeQualifier::None, 32, Token());
-							param_types.push_back(int_type);
-						}
-						std::vector<std::string_view> empty_namespace;
-						auto mangled_name = NameMangling::generateMangledName(
-							"operator++", return_type, param_types, false,
-							struct_name, empty_namespace, Linkage::CPlusPlus
-						);
-
-						TempVar ret_var = var_counter.next();
-						CallOp call_op;
-						call_op.result = ret_var;
-						call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-						call_op.return_type = return_type.type();
-						call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-						if (call_op.return_size_in_bits == 0 && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
-							call_op.return_size_in_bits = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
-						}
-						call_op.return_type_index = return_type.type_index();
-						call_op.is_member_function = true;
-
-						// Take address of operand for 'this' pointer
-						TempVar this_addr = var_counter.next();
-						AddressOfOp addr_op;
-						addr_op.result = this_addr;
-						addr_op.operand = toTypedValue(operandIrOperands);
-						addr_op.operand.pointer_depth = 0;
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-
-						TypedValue this_arg;
-						this_arg.type = operandType;
-						this_arg.size_in_bits = 64;
-						this_arg.value = this_addr;
-						call_op.args.push_back(this_arg);
-
-						int result_size = call_op.return_size_in_bits;
-						TypeIndex result_type_index = call_op.return_type_index;
-						Type result_type = call_op.return_type;
-						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
-						return { result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
-					}
-				}
+			auto inc_result = generateUnaryIncDecOverloadCall("++", operandType, operandIrOperands, unaryOperatorNode.is_prefix());
+			if (inc_result.has_value()) {
+				return *inc_result;
 			}
 			
 			// Check if this is a pointer increment (requires pointer arithmetic)
@@ -1325,64 +1264,9 @@
 			// Decrement operator (prefix or postfix)
 
 			// Check for user-defined operator-- overload on struct types
-			if (operandType == Type::Struct && operandIrOperands.size() >= 4) {
-				TypeIndex operand_type_index = 0;
-				if (std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
-					operand_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operandIrOperands[3]));
-				}
-				if (operand_type_index > 0) {
-					auto overload_result = findUnaryOperatorOverload(operand_type_index, "--");
-					if (overload_result.has_overload) {
-						const StructMemberFunction& member_func = *overload_result.member_overload;
-						const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index].name());
-						TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-						if (return_type.type() == Type::Struct && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size()) {
-							auto& ret_ti = gTypeInfo[return_type.type_index()];
-							if (!ret_ti.struct_info_ || ret_ti.struct_info_->total_size == 0) {
-								return_type.set_type_index(operand_type_index);
-							}
-						}
-						std::vector<TypeSpecifierNode> param_types;
-						if (!unaryOperatorNode.is_prefix()) {
-							TypeSpecifierNode int_type(Type::Int, TypeQualifier::None, 32, Token());
-							param_types.push_back(int_type);
-						}
-						std::vector<std::string_view> empty_namespace;
-						auto mangled_name = NameMangling::generateMangledName(
-							"operator--", return_type, param_types, false,
-							struct_name, empty_namespace, Linkage::CPlusPlus
-						);
-
-						TempVar ret_var = var_counter.next();
-						CallOp call_op;
-						call_op.result = ret_var;
-						call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-						call_op.return_type = return_type.type();
-						call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-						if (call_op.return_size_in_bits == 0 && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
-							call_op.return_size_in_bits = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
-						}
-						call_op.return_type_index = return_type.type_index();
-						call_op.is_member_function = true;
-
-						TempVar this_addr = var_counter.next();
-						AddressOfOp addr_op;
-						addr_op.result = this_addr;
-						addr_op.operand = toTypedValue(operandIrOperands);
-						addr_op.operand.pointer_depth = 0;
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-
-						TypedValue this_arg;
-						this_arg.type = operandType;
-						this_arg.size_in_bits = 64;
-						this_arg.value = this_addr;
-						call_op.args.push_back(this_arg);
-
-						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
-						return { return_type.type(), call_op.return_size_in_bits, ret_var, static_cast<unsigned long long>(return_type.type_index()) };
-					}
-				}
+			auto dec_result = generateUnaryIncDecOverloadCall("--", operandType, operandIrOperands, unaryOperatorNode.is_prefix());
+			if (dec_result.has_value()) {
+				return *dec_result;
 			}
 			
 			// Check if this is a pointer decrement (requires pointer arithmetic)

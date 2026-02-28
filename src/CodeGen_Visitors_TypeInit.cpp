@@ -1009,6 +1009,96 @@ public:
 	}
 
 private:
+	// Helper: resolve self-referential struct types in template instantiations.
+	// When a template member function references its own class (e.g., const W& in W<T>::operator+=),
+	// the type_index may point to the unfinalized template base. This resolves it to the
+	// enclosing instantiated struct's type_index.
+	static void resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
+		if (type.type() == Type::Struct && type.type_index() > 0 && type.type_index() < gTypeInfo.size()) {
+			auto& ti = gTypeInfo[type.type_index()];
+			if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
+				if (enclosing_type_index < gTypeInfo.size()) {
+					type.set_type_index(enclosing_type_index);
+				}
+			}
+		}
+	}
+
+	// Helper: generate a member function call for user-defined operator++/-- overloads on structs.
+	// Returns the IR operands for the call result, or std::nullopt if no overload was found.
+	std::optional<std::vector<IrOperand>> generateUnaryIncDecOverloadCall(
+		std::string_view op_name,  // "++" or "--"
+		Type operandType,
+		const std::vector<IrOperand>& operandIrOperands,
+		bool is_prefix
+	) {
+		if (operandType != Type::Struct || operandIrOperands.size() < 4)
+			return std::nullopt;
+
+		TypeIndex operand_type_index = 0;
+		if (std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
+			operand_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operandIrOperands[3]));
+		}
+		if (operand_type_index == 0)
+			return std::nullopt;
+
+		auto overload_result = findUnaryOperatorOverload(operand_type_index, op_name);
+		if (!overload_result.has_overload)
+			return std::nullopt;
+
+		const StructMemberFunction& member_func = *overload_result.member_overload;
+		const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+		std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index].name());
+		TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		resolveSelfReferentialType(return_type, operand_type_index);
+
+		std::vector<TypeSpecifierNode> param_types;
+		if (!is_prefix) {
+			// Postfix: add dummy int parameter for mangling
+			TypeSpecifierNode int_type(Type::Int, TypeQualifier::None, 32, Token());
+			param_types.push_back(int_type);
+		}
+		std::vector<std::string_view> empty_namespace;
+		std::string op_func_name = "operator";
+		op_func_name += op_name;
+		auto mangled_name = NameMangling::generateMangledName(
+			op_func_name, return_type, param_types, false,
+			struct_name, empty_namespace, Linkage::CPlusPlus
+		);
+
+		TempVar ret_var = var_counter.next();
+		CallOp call_op;
+		call_op.result = ret_var;
+		call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+		call_op.return_type = return_type.type();
+		call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+		if (call_op.return_size_in_bits == 0 && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
+			call_op.return_size_in_bits = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
+		}
+		call_op.return_type_index = return_type.type_index();
+		call_op.is_member_function = true;
+
+		// Take address of operand for 'this' pointer
+		TempVar this_addr = var_counter.next();
+		AddressOfOp addr_op;
+		addr_op.result = this_addr;
+		addr_op.operand = toTypedValue(operandIrOperands);
+		addr_op.operand.pointer_depth = 0;
+		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+
+		TypedValue this_arg;
+		this_arg.type = operandType;
+		this_arg.size_in_bits = 64;
+		this_arg.value = this_addr;
+		call_op.args.push_back(this_arg);
+
+		int result_size = call_op.return_size_in_bits;
+		TypeIndex result_type_index = call_op.return_type_index;
+		Type result_type = call_op.return_type;
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
+		return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
+	}
+
 	// Helper function to resolve template parameter size from struct name
 	// This is used by both ConstExpr evaluator and IR generation for sizeof(T)
 	// where T is a template parameter in a template class member function
