@@ -507,13 +507,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Handle qualified operator call on member: obj.Base::operator=()
 					if (!handled && peek() == "operator"_tok) {
 						advance(); // consume 'operator'
+						Token operator_keyword_token = current_token_;
 						std::string_view op_name;
-						if (auto err = parse_operator_name(current_token_, op_name)) {
+						if (auto err = parse_operator_name(operator_keyword_token, op_name)) {
 							discard_saved_token(saved_pos);
 							return std::move(*err);
 						}
 						Token op_token(Token::Type::Identifier, op_name,
-							current_token_.line(), current_token_.column(), current_token_.file_index());
+							operator_keyword_token.line(), operator_keyword_token.column(), operator_keyword_token.file_index());
 						if (peek() == "("_tok) {
 							advance(); // consume '('
 							auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{

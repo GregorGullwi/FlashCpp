@@ -260,6 +260,8 @@
 		if (td_cache_it != symbol_index_cache_.end()) {
 			auto symbols = coffi_.get_symbols();
 			auto& existing_sym = (*symbols)[td_cache_it->second];
+			// Cache may contain external references (section_number == 0) from
+			// get_or_create_symbol_index; only reuse if the symbol has a definition.
 			if (existing_sym.get_section_number() > 0) {
 				// Already defined — reuse existing symbol index
 				type_desc_symbol_index = td_cache_it->second;
