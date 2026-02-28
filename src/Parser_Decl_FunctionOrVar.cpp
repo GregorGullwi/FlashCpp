@@ -912,6 +912,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// This is always safe since decl_node is a DeclarationNode with a TypeSpecifierNode
 		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
 		
+		// Skip C++ [[...]] and GCC __attribute__((...)) between declarator and initializer/semicolon
+		// e.g.: int __ret __attribute__((__unused__)) = expr;
+		// Per [dcl.attr.grammar], attributes can appear after a declarator.
+		skip_cpp_attributes();
+
 		// Phase 3 Consolidation: Use shared copy initialization helper for = and = {} forms
 		if (peek() == "="_tok) {
 			auto init_result = parse_copy_initialization(decl_node, type_specifier);
