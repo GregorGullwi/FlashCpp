@@ -259,7 +259,16 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 		
 		if (argResult.node().has_value()) {
-			args.push_back(*argResult.node());
+			// Check for pack expansion (...) after the argument
+			if (peek() == "..."_tok) {
+				Token ellipsis_token = peek_info();
+				advance(); // consume '...'
+				auto pack_expr = emplace_node<ExpressionNode>(
+					PackExpansionExprNode(*argResult.node(), ellipsis_token));
+				args.push_back(pack_expr);
+			} else {
+				args.push_back(*argResult.node());
+			}
 		}
 		
 		// Check for comma between arguments

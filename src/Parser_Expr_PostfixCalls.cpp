@@ -504,6 +504,41 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						break;
 					}
 					
+					// Handle qualified operator call on member: obj.Base::operator=()
+					if (!handled && peek() == "operator"_tok) {
+						advance(); // consume 'operator'
+						Token operator_keyword_token = current_token_;
+						std::string_view op_name;
+						if (auto err = parse_operator_name(operator_keyword_token, op_name)) {
+							discard_saved_token(saved_pos);
+							return std::move(*err);
+						}
+						Token op_token(Token::Type::Identifier, op_name,
+							operator_keyword_token.line(), operator_keyword_token.column(), operator_keyword_token.file_index());
+						if (peek() == "("_tok) {
+							advance(); // consume '('
+							auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+								.handle_pack_expansion = true,
+								.collect_types = true,
+								.expand_simple_packs = false
+							});
+							if (!args_result.success) {
+								discard_saved_token(saved_pos);
+								return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+							}
+							if (!consume(")"_tok)) {
+								discard_saved_token(saved_pos);
+								return ParseResult::error("Expected ')' after qualified operator member call", current_token_);
+							}
+							auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, op_token);
+							auto& member_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
+							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+							result = emplace_node<ExpressionNode>(
+								MemberFunctionCallNode(object, func_decl_node, std::move(args_result.args), op_token));
+							handled = true;
+						}
+					}
+					
 					if (handled) {
 						discard_saved_token(saved_pos);
 						continue;
@@ -517,6 +552,26 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 			advance(); // consume '::'
 			
+			// Handle qualified operator call: Type::operator=()
+			if (peek() == "operator"_tok) {
+				// Get the namespace/class name from the current result
+				std::string_view namespace_name;
+				if (result->is<ExpressionNode>()) {
+					const ExpressionNode& expr = result->as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						namespace_name = std::get<IdentifierNode>(expr).name();
+					} else {
+						return ParseResult::error("Invalid left operand for '::'" , current_token_);
+					}
+				} else {
+					return ParseResult::error("Expected identifier before '::'" , current_token_);
+				}
+				advance(); // consume 'operator'
+				std::vector<StringType<32>> namespaces;
+				namespaces.emplace_back(StringType<32>(namespace_name));
+				return parse_qualified_operator_call(current_token_, namespaces);
+			}
+
 			// Expect an identifier after ::
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected identifier after '::'", current_token_);
@@ -547,6 +602,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 				advance(); // consume ::
 				
+				// Handle qualified operator call: A::B::operator=()
+				if (peek() == "operator"_tok) {
+					advance(); // consume 'operator'
+					return parse_qualified_operator_call(current_token_, namespaces);
+				}
+
 				if (!peek().is_identifier()) {
 					return ParseResult::error("Expected identifier after '::'", current_token_);
 				}

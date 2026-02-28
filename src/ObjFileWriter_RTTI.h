@@ -251,29 +251,52 @@
 		std::string mangled_class_name = std::string(".?AV") + std::string(class_name) + "@@";
 		
 		// ??_R0 - Type Descriptor (16 bytes header + mangled name)
-		uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 		std::string type_desc_symbol = "??_R0" + mangled_class_name;
+		uint32_t type_desc_symbol_index = 0;
+		bool type_desc_already_emitted = false;
 		
-		std::vector<char> type_desc_data;
-		type_desc_data.reserve(16 + mangled_class_name.size() + 1);  // 8+8 header + name + null
-		// vtable pointer (8 bytes) - null
-		ObjectFileCommon::appendZeros(type_desc_data, 8);
-		// spare pointer (8 bytes) - null
-		ObjectFileCommon::appendZeros(type_desc_data, 8);
-		// mangled name (null-terminated)
-		for (char c : mangled_class_name) type_desc_data.push_back(c);
-		type_desc_data.push_back(0);
+		// Check if the type descriptor was already emitted (e.g., by a derived class's
+		// add_vtable call that emitted base class type descriptors inline).
+		auto td_cache_it = symbol_index_cache_.find(type_desc_symbol);
+		if (td_cache_it != symbol_index_cache_.end()) {
+			// Use get_symbol() for correct lookup by COFFI file index (not vector index,
+			// which differs due to auxiliary entries on section symbols).
+			auto* existing_sym = coffi_.get_symbol(td_cache_it->second);
+			// Cache may contain external references (section_number == 0) from
+			// get_or_create_symbol_index; only reuse if the symbol has a definition.
+			if (existing_sym && existing_sym->get_section_number() > 0) {
+				// Already defined — reuse existing symbol index
+				type_desc_symbol_index = td_cache_it->second;
+				type_desc_already_emitted = true;
+				if (g_enable_debug_output) std::cerr << "  Reusing existing ??_R0 Type Descriptor '" << type_desc_symbol << "'" << std::endl;
+			}
+		}
 		
-		add_data(type_desc_data, SectionType::RDATA);
-		auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
-		type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		type_desc_sym->set_section_number(rdata_section->get_index() + 1);
-		type_desc_sym->set_value(type_desc_offset);
-		uint32_t type_desc_symbol_index = type_desc_sym->get_index();
-		
-		if (g_enable_debug_output) std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset " 
-		          << type_desc_offset << std::endl;
+		if (!type_desc_already_emitted) {
+			uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			
+			std::vector<char> type_desc_data;
+			type_desc_data.reserve(16 + mangled_class_name.size() + 1);  // 8+8 header + name + null
+			// vtable pointer (8 bytes) - null
+			ObjectFileCommon::appendZeros(type_desc_data, 8);
+			// spare pointer (8 bytes) - null
+			ObjectFileCommon::appendZeros(type_desc_data, 8);
+			// mangled name (null-terminated)
+			for (char c : mangled_class_name) type_desc_data.push_back(c);
+			type_desc_data.push_back(0);
+			
+			add_data(type_desc_data, SectionType::RDATA);
+			auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+			type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+			type_desc_sym->set_value(type_desc_offset);
+			type_desc_symbol_index = type_desc_sym->get_index();
+			symbol_index_cache_[type_desc_symbol] = type_desc_symbol_index;
+			
+			if (g_enable_debug_output) std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset " 
+			          << type_desc_offset << std::endl;
+		}
 		
 		// ??_R1 - Base Class Descriptors (one for self + one per base)
 		std::vector<uint32_t> bcd_offsets;
@@ -324,6 +347,37 @@
 			const auto& bci = base_class_info[i];
 			std::string base_mangled = ".?AV" + bci.name + "@@";
 			std::string base_type_desc_symbol = "??_R0" + base_mangled;
+			
+			// Ensure the base class type descriptor exists. If the base class's own
+			// add_vtable was never called (e.g., template base class whose member
+			// functions were all overridden), the symbol would be left as an unresolved
+			// external. Emit it here if needed.
+			bool base_td_defined = false;
+			auto cache_it = symbol_index_cache_.find(base_type_desc_symbol);
+			if (cache_it != symbol_index_cache_.end()) {
+				// Use get_symbol() for correct lookup by COFFI file index (not vector index,
+				// which differs due to auxiliary entries on section symbols).
+				auto* sym = coffi_.get_symbol(cache_it->second);
+				base_td_defined = (sym && sym->get_section_number() > 0);
+			}
+			if (!base_td_defined) {
+				uint32_t btd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+				std::vector<char> btd_data;
+				btd_data.reserve(16 + base_mangled.size() + 1);
+				ObjectFileCommon::appendZeros(btd_data, 8);  // vtable pointer
+				ObjectFileCommon::appendZeros(btd_data, 8);  // spare pointer
+				for (char c : base_mangled) btd_data.push_back(c);
+				btd_data.push_back(0);
+				add_data(btd_data, SectionType::RDATA);
+				auto btd_sym = coffi_.add_symbol(base_type_desc_symbol);
+				btd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+				btd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+				btd_sym->set_section_number(rdata_section->get_index() + 1);
+				btd_sym->set_value(btd_offset);
+				// Update cache so get_or_create_symbol_index finds it
+				symbol_index_cache_[base_type_desc_symbol] = btd_sym->get_index();
+				if (g_enable_debug_output) std::cerr << "  Emitted base ??_R0 Type Descriptor '" << base_type_desc_symbol << "' at offset " << btd_offset << std::endl;
+			}
 			
 			uint32_t base_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 			std::string base_bcd_symbol = "??_R1" + mangled_class_name + "0" + base_mangled;
