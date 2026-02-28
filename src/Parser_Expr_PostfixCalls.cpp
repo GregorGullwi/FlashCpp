@@ -525,10 +525,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					const ExpressionNode& expr = result->as<ExpressionNode>();
 					if (std::holds_alternative<IdentifierNode>(expr)) {
 						namespace_name = std::get<IdentifierNode>(expr).name();
+					} else {
+						return ParseResult::error("Invalid left operand for '::'" , current_token_);
 					}
+				} else {
+					return ParseResult::error("Expected identifier before '::'" , current_token_);
 				}
-				std::vector<StringType<32>> namespaces;
-				namespaces.emplace_back(StringType<32>(namespace_name));
 				advance(); // consume 'operator'
 				return parse_qualified_operator_call(current_token_, namespaces);
 			}
