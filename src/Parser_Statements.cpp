@@ -391,6 +391,17 @@ ParseResult Parser::parse_statement_or_declaration()
 				}
 			}
 			if (found_as_member_type_alias) {
+				// Check for Type::operator=() pattern - this is a qualified operator call, not a declaration
+				SaveHandle alias_check = save_token_position();
+				advance(); // consume the type alias name
+				if (peek() == "::"_tok) {
+					advance(); // consume '::'
+					if (peek() == "operator"_tok) {
+						restore_token_position(alias_check);
+						return parse_expression_statement();
+					}
+				}
+				restore_token_position(alias_check);
 				return parse_variable_declaration();
 			}
 		}

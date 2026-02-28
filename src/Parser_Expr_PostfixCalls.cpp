@@ -517,6 +517,22 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 			advance(); // consume '::'
 			
+			// Handle qualified operator call: Type::operator=()
+			if (peek() == "operator"_tok) {
+				// Get the namespace/class name from the current result
+				std::string_view namespace_name;
+				if (result->is<ExpressionNode>()) {
+					const ExpressionNode& expr = result->as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						namespace_name = std::get<IdentifierNode>(expr).name();
+					}
+				}
+				std::vector<StringType<32>> namespaces;
+				namespaces.emplace_back(StringType<32>(namespace_name));
+				advance(); // consume 'operator'
+				return parse_qualified_operator_call(current_token_, namespaces);
+			}
+
 			// Expect an identifier after ::
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected identifier after '::'", current_token_);
@@ -547,6 +563,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 				advance(); // consume ::
 				
+				// Handle qualified operator call: A::B::operator=()
+				if (peek() == "operator"_tok) {
+					advance(); // consume 'operator'
+					return parse_qualified_operator_call(current_token_, namespaces);
+				}
+
 				if (!peek().is_identifier()) {
 					return ParseResult::error("Expected identifier after '::'", current_token_);
 				}
