@@ -98,6 +98,7 @@
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					FLASH_LOG(Codegen, Debug, "  param[", i, "]: name='", param_decl.identifier_token().value()
 							  , "' type=", (int)param_type.type() 
+							  , " type_index=", param_type.type_index()
 							  , " size=", (int)param_type.size_in_bits()
 							  , " ptr_depth=", param_type.pointer_depth()
 							  , " base_cv=", (int)param_type.cv_qualifier()

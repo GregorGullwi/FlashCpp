@@ -1013,12 +1013,36 @@ private:
 	// When a template member function references its own class (e.g., const W& in W<T>::operator+=),
 	// the type_index may point to the unfinalized template base. This resolves it to the
 	// enclosing instantiated struct's type_index.
+	// Important: only resolves when the unfinalized type's name matches the base name of the
+	// enclosing struct — avoids incorrectly resolving outer class references in nested classes.
 	static void resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
 		if (type.type() == Type::Struct && type.type_index() > 0 && type.type_index() < gTypeInfo.size()) {
 			auto& ti = gTypeInfo[type.type_index()];
 			if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
 				if (enclosing_type_index < gTypeInfo.size()) {
-					type.set_type_index(enclosing_type_index);
+					// Verify this is actually a self-reference by checking that the unfinalized
+					// type's name matches the base name of the enclosing struct.
+					// For template instantiations: W (unfinalized) matches W$hash (enclosing)
+					// For nested classes: Outer (unfinalized) does NOT match Outer::Inner (enclosing)
+					auto unfinalized_name = StringTable::getStringView(ti.name());
+					auto enclosing_name = StringTable::getStringView(gTypeInfo[enclosing_type_index].name());
+					
+					// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
+					// Template hash: "Name$hash" -> "Name"
+					// Nested class: "Outer::Inner" -> "Inner"
+					auto base_name = enclosing_name;
+					auto last_scope = base_name.rfind("::");
+					if (last_scope != std::string_view::npos) {
+						base_name = base_name.substr(last_scope + 2);
+					}
+					auto dollar_pos = base_name.find('$');
+					if (dollar_pos != std::string_view::npos) {
+						base_name = base_name.substr(0, dollar_pos);
+					}
+					
+					if (unfinalized_name == base_name) {
+						type.set_type_index(enclosing_type_index);
+					}
 				}
 			}
 		}
