@@ -1422,12 +1422,24 @@
 					StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member) {
+						// sizeof on a reference yields the size of the referenced type
+						if (static_member->reference_qualifier != ReferenceQualifier::None) {
+							size_t ref_size = get_type_size_bits(static_member->type) / 8;
+							FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static ref member, referenced type size=", ref_size);
+							return ref_size;
+						}
 						FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static member, size=", static_member->size);
 						return static_member->size;
 					}
 					// Search non-static members
 					for (const auto& member : struct_info->members) {
 						if (StringTable::getStringView(member.getName()) == member_name) {
+							// sizeof on a reference yields the size of the referenced type
+							if (member.is_reference()) {
+								size_t ref_size = member.referenced_size_bits / 8;
+								FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found ref member, referenced type size=", ref_size);
+								return ref_size;
+							}
 							FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found member, size=", member.size);
 							return member.size;
 						}
