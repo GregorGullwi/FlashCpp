@@ -1423,7 +1423,7 @@
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member) {
 						// sizeof on a reference yields the size of the referenced type
-						if (static_member->reference_qualifier != ReferenceQualifier::None) {
+						if (static_member->is_reference()) {
 							size_t ref_size = get_type_size_bits(static_member->type) / 8;
 							FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static ref member, referenced type size=", ref_size);
 							return ref_size;
