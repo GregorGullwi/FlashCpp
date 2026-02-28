@@ -251,30 +251,47 @@
 		std::string mangled_class_name = std::string(".?AV") + std::string(class_name) + "@@";
 		
 		// ??_R0 - Type Descriptor (16 bytes header + mangled name)
-		uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 		std::string type_desc_symbol = "??_R0" + mangled_class_name;
+		uint32_t type_desc_symbol_index = 0;
 		
-		std::vector<char> type_desc_data;
-		type_desc_data.reserve(16 + mangled_class_name.size() + 1);  // 8+8 header + name + null
-		// vtable pointer (8 bytes) - null
-		ObjectFileCommon::appendZeros(type_desc_data, 8);
-		// spare pointer (8 bytes) - null
-		ObjectFileCommon::appendZeros(type_desc_data, 8);
-		// mangled name (null-terminated)
-		for (char c : mangled_class_name) type_desc_data.push_back(c);
-		type_desc_data.push_back(0);
+		// Check if the type descriptor was already emitted (e.g., by a derived class's
+		// add_vtable call that emitted base class type descriptors inline).
+		auto td_cache_it = symbol_index_cache_.find(type_desc_symbol);
+		if (td_cache_it != symbol_index_cache_.end()) {
+			auto symbols = coffi_.get_symbols();
+			auto& existing_sym = (*symbols)[td_cache_it->second];
+			if (existing_sym.get_section_number() > 0) {
+				// Already defined — reuse existing symbol index
+				type_desc_symbol_index = td_cache_it->second;
+				if (g_enable_debug_output) std::cerr << "  Reusing existing ??_R0 Type Descriptor '" << type_desc_symbol << "'" << std::endl;
+			}
+		}
 		
-		add_data(type_desc_data, SectionType::RDATA);
-		auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
-		type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		type_desc_sym->set_section_number(rdata_section->get_index() + 1);
-		type_desc_sym->set_value(type_desc_offset);
-		uint32_t type_desc_symbol_index = type_desc_sym->get_index();
-		symbol_index_cache_[type_desc_symbol] = type_desc_symbol_index;
-		
-		if (g_enable_debug_output) std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset " 
-		          << type_desc_offset << std::endl;
+		if (type_desc_symbol_index == 0) {
+			uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			
+			std::vector<char> type_desc_data;
+			type_desc_data.reserve(16 + mangled_class_name.size() + 1);  // 8+8 header + name + null
+			// vtable pointer (8 bytes) - null
+			ObjectFileCommon::appendZeros(type_desc_data, 8);
+			// spare pointer (8 bytes) - null
+			ObjectFileCommon::appendZeros(type_desc_data, 8);
+			// mangled name (null-terminated)
+			for (char c : mangled_class_name) type_desc_data.push_back(c);
+			type_desc_data.push_back(0);
+			
+			add_data(type_desc_data, SectionType::RDATA);
+			auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+			type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+			type_desc_sym->set_value(type_desc_offset);
+			type_desc_symbol_index = type_desc_sym->get_index();
+			symbol_index_cache_[type_desc_symbol] = type_desc_symbol_index;
+			
+			if (g_enable_debug_output) std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset " 
+			          << type_desc_offset << std::endl;
+		}
 		
 		// ??_R1 - Base Class Descriptors (one for self + one per base)
 		std::vector<uint32_t> bcd_offsets;

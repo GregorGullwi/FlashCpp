@@ -504,6 +504,40 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						break;
 					}
 					
+					// Handle qualified operator call on member: obj.Base::operator=()
+					if (!handled && peek() == "operator"_tok) {
+						advance(); // consume 'operator'
+						std::string_view op_name;
+						if (auto err = parse_operator_name(current_token_, op_name)) {
+							discard_saved_token(saved_pos);
+							return std::move(*err);
+						}
+						Token op_token(Token::Type::Identifier, op_name,
+							current_token_.line(), current_token_.column(), current_token_.file_index());
+						if (peek() == "("_tok) {
+							advance(); // consume '('
+							auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+								.handle_pack_expansion = true,
+								.collect_types = true,
+								.expand_simple_packs = false
+							});
+							if (!args_result.success) {
+								discard_saved_token(saved_pos);
+								return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+							}
+							if (!consume(")"_tok)) {
+								discard_saved_token(saved_pos);
+								return ParseResult::error("Expected ')' after qualified operator member call", current_token_);
+							}
+							auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, op_token);
+							auto& member_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
+							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+							result = emplace_node<ExpressionNode>(
+								MemberFunctionCallNode(object, func_decl_node, std::move(args_result.args), op_token));
+							handled = true;
+						}
+					}
+					
 					if (handled) {
 						discard_saved_token(saved_pos);
 						continue;
