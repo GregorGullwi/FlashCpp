@@ -1545,7 +1545,9 @@
 							resolved_params.push_back(pt);
 						}
 					}
-					return NameMangling::generateMangledName(func_name, return_type, resolved_params,
+					TypeSpecifierNode resolved_return_type_copy = return_type;
+					resolveSelfReferentialType(resolved_return_type_copy, struct_type_index);
+					return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params,
 						func_node.is_variadic(), struct_name, namespace_path, func_node.linkage()).view();
 				}
 			}
