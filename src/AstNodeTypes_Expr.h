@@ -792,28 +792,46 @@ private:
 	bool is_rethrow_;                     // True if this is a rethrow (throw)
 };
 
+// ============================================================================
+// SEH / Concepts expression nodes
+// ============================================================================
+
+// SEH filter expression node: the expression in __except(filter_expression)
+// Returns EXCEPTION_EXECUTE_HANDLER (1), EXCEPTION_CONTINUE_SEARCH (0), or EXCEPTION_CONTINUE_EXECUTION (-1)
+class SehFilterExpressionNode {
+public:
+	explicit SehFilterExpressionNode(ASTNode expression, Token except_token)
+		: expression_(expression), except_token_(except_token) {}
+
+	const ASTNode& expression() const { return expression_; }
+	const Token& except_token() const { return except_token_; }
+
+private:
+	ASTNode expression_;     // The filter expression
+	Token except_token_;     // For error reporting
+};
+
+// Requires expression node: requires { expression; }
+// Used inside concept definitions and requires clauses
+class RequiresExpressionNode {
+public:
+	explicit RequiresExpressionNode(
+		std::vector<ASTNode> requirements,
+		Token requires_token = Token())
+		: requirements_(std::move(requirements)),
+		  requires_token_(requires_token) {}
+
+	const std::vector<ASTNode>& requirements() const { return requirements_; }
+	const Token& requires_token() const { return requires_token_; }
+
+private:
+	std::vector<ASTNode> requirements_;  // List of requirement expressions
+	Token requires_token_;               // For error reporting
+};
+
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode>;
-
-/*class FunctionDefinitionNode {
-public:
-		FunctionDefinitionNode(Token definition_token, size_t definition_index,
-std::vector<size_t> parameter_indices, size_t body_index) :
-definition_token_(definition_token), definition_index_(definition_index),
-parameter_indices_(std::move(parameter_indices)), body_index_(body_index) {}
-
-		const Token& definition_token() const { return definition_token_; }
-		size_t declaration_index() const { return definition_index_; }
-		const std::vector<size_t>& parameter_indices() const { return
-parameter_indices_; } size_t body_index() const { return body_index_; }
-
-private:
-		Token definition_token_;
-		size_t definition_index_;
-		std::vector<size_t> parameter_indices_;
-		size_t body_index_;
-};*/
 
 

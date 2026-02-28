@@ -399,21 +399,6 @@ private:
 // Windows SEH (Structured Exception Handling) Support
 // ============================================================================
 
-// SEH filter expression node: the expression in __except(filter_expression)
-// Returns EXCEPTION_EXECUTE_HANDLER (1), EXCEPTION_CONTINUE_SEARCH (0), or EXCEPTION_CONTINUE_EXECUTION (-1)
-class SehFilterExpressionNode {
-public:
-	explicit SehFilterExpressionNode(ASTNode expression, Token except_token)
-		: expression_(expression), except_token_(except_token) {}
-
-	const ASTNode& expression() const { return expression_; }
-	const Token& except_token() const { return except_token_; }
-
-private:
-	ASTNode expression_;     // The filter expression
-	Token except_token_;     // For error reporting
-};
-
 // SEH __except clause node: __except(filter) { block }
 class SehExceptClauseNode {
 public:
@@ -536,24 +521,6 @@ private:
 	std::optional<ASTNode> return_type_constraint_;  // Optional -> ConceptName or -> Type
 	bool is_noexcept_;                            // Whether noexcept specifier was present
 	Token lbrace_token_;                          // For error reporting
-};
-
-// Requires expression node: requires { expression; }
-// Used inside concept definitions and requires clauses
-class RequiresExpressionNode {
-public:
-	explicit RequiresExpressionNode(
-		std::vector<ASTNode> requirements,
-		Token requires_token = Token())
-		: requirements_(std::move(requirements)),
-		  requires_token_(requires_token) {}
-
-	const std::vector<ASTNode>& requirements() const { return requirements_; }
-	const Token& requires_token() const { return requires_token_; }
-
-private:
-	std::vector<ASTNode> requirements_;  // List of requirement expressions
-	Token requires_token_;               // For error reporting
 };
 
 // Requires clause node: requires constraint
