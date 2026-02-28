@@ -890,6 +890,7 @@ bool StructTypeInfo::buildVTable() {
     bool success = true;
     
     // Step 1: Copy base class vtable entries (if any)
+    bool any_base_potentially_incomplete = false;
     for (const auto& base : base_classes) {
         if (base.type_index >= gTypeInfo.size()) {
             continue;
@@ -906,6 +907,19 @@ bool StructTypeInfo::buildVTable() {
                 }
             }
             has_vtable = true;
+        } else if (base_info == nullptr) {
+            // Base class type info not yet available. Override checks must be deferred.
+            any_base_potentially_incomplete = true;
+        } else if (!base_info->has_vtable) {
+            // Base class exists but vtable not built. Check if it has virtual functions
+            // that suggest its vtable hasn't been built yet (e.g., template instantiation
+            // whose finalization is deferred).
+            for (const auto& func : base_info->member_functions) {
+                if (func.is_virtual || func.is_override) {
+                    any_base_potentially_incomplete = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -965,10 +979,23 @@ bool StructTypeInfo::buildVTable() {
             vtable.push_back(&func);
         }
 
-        // Note: when func.is_override && override_index < 0, the function was already
-        // added as a new vtable entry above (line 964-965). Base class vtable may be
-        // incomplete (template base classes are deferred during parsing and only resolved
-        // at instantiation time). A true mismatch will surface at link time.
+        // Validate override keyword usage
+        if (func.is_override && override_index < 0) {
+            if (any_base_potentially_incomplete) {
+                // Base class vtable may be incomplete (template base classes are deferred
+                // during parsing). Defer the check to instantiation time.
+            } else {
+                // Error: 'override' specified but no base function to override
+                // Enforces [class.virtual]/4: ill-formed if override doesn't match
+                std::string error_msg = "function '" + 
+                    std::string(StringTable::getStringView(func_name)) + 
+                    "' marked 'override' but does not override any base class function in class '" +
+                    std::string(StringTable::getStringView(getName())) + "'";
+                FLASH_LOG(Parser, Error, error_msg);
+                finalization_error_ = error_msg;
+                success = false;
+            }
+        }
     }
 
     // Update abstract flag after building vtable
