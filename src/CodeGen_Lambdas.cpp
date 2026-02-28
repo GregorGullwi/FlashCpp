@@ -232,8 +232,8 @@
 									load_op.object = StringTable::getOrInternStringHandle("this");
 									load_op.member_name = enclosing_member.getName();
 									load_op.offset = static_cast<int>(enclosing_member.offset);
-									load_op.is_reference = enclosing_member.is_reference;
-									load_op.is_rvalue_reference = enclosing_member.is_rvalue_reference;
+									load_op.is_reference = enclosing_member.is_reference();
+									load_op.is_rvalue_reference = enclosing_member.is_rvalue_reference();
 									load_op.struct_type_info = nullptr;
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), lambda.lambda_token()));
 
@@ -245,8 +245,8 @@
 									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 									store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 									store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
-									store_copy_this.is_reference = enclosing_member.is_reference;
-									store_copy_this.is_rvalue_reference = enclosing_member.is_rvalue_reference;
+									store_copy_this.is_reference = enclosing_member.is_reference();
+									store_copy_this.is_rvalue_reference = enclosing_member.is_rvalue_reference();
 									store_copy_this.struct_type_info = nullptr;
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
 								}
@@ -350,8 +350,8 @@
 								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 								member_store.member_name = member->getName();
 								member_store.offset = static_cast<int>(member->offset);
-								member_store.is_reference = member->is_reference;
-								member_store.is_rvalue_reference = member->is_rvalue_reference;
+								member_store.is_reference = member->is_reference();
+								member_store.is_rvalue_reference = member->is_rvalue_reference();
 								member_store.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 							}
@@ -431,8 +431,8 @@
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
-							member_store.is_reference = member->is_reference;
-							member_store.is_rvalue_reference = member->is_rvalue_reference;
+							member_store.is_reference = member->is_reference();
+							member_store.is_rvalue_reference = member->is_rvalue_reference();
 							member_store.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						} else {
@@ -477,8 +477,8 @@
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
-							member_store.is_reference = member->is_reference;
-							member_store.is_rvalue_reference = member->is_rvalue_reference;
+							member_store.is_reference = member->is_reference();
+							member_store.is_rvalue_reference = member->is_rvalue_reference();
 							member_store.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						}
@@ -1012,6 +1012,22 @@
 		deref_op.pointer.value = pointer_value;
 		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
 		return result_var;
+	}
+
+	// ============================================================================
+	// Return IR helper
+	// ============================================================================
+	void emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token) {
+		ReturnOp ret_op;
+		ret_op.return_value = return_value;
+		ret_op.return_type = return_type;
+		ret_op.return_size = return_size;
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
+	}
+
+	void emitVoidReturn(const Token& token) {
+		ReturnOp ret_op;
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
 	}
 
 	Ir ir_;

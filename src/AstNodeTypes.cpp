@@ -1023,17 +1023,17 @@ void StructTypeInfo::updateAbstractFlag() {
 }
 
 // Find member recursively through base classes
-const StructMember* StructTypeInfo::findMemberRecursive(StringHandle member_name) const {
+std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle member_name) const {
     // Use RecursionGuard to prevent infinite recursion in variadic template patterns
     RecursionGuard guard(this);
     if (!guard.isActive()) {
-        return nullptr;  // Cycle or depth limit detected
+        return std::nullopt;  // Cycle or depth limit detected
     }
     
     // First, check own members
     for (const auto& member : members) {
         if (member.getName() == member_name) {
-            return &member;
+            return member;
         }
     }
 
@@ -1047,21 +1047,16 @@ const StructMember* StructTypeInfo::findMemberRecursive(StringHandle member_name
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (base_info) {
-            const StructMember* base_member = base_info->findMemberRecursive(member_name);
+            auto base_member = base_info->findMemberRecursive(member_name);
             if (base_member) {
-                // Found in base class - need to return adjusted member
-                // Note: We can't modify the base_member, so we use a thread_local static
-                static thread_local StructMember adjusted_member(
-                    StringHandle(), Type::Void, 0, 0, 0, 0,
-                    AccessSpecifier::Public, std::nullopt, false, false, 0, false, {}, 0, std::nullopt);
-                adjusted_member = *base_member;
-                adjusted_member.offset += base.offset;  // Adjust offset by base class offset
-                return &adjusted_member;
+                // Found in base class - adjust offset by base class offset
+                base_member->offset += base.offset;
+                return base_member;
             }
         }
     }
 
-    return nullptr;  // Not found
+    return std::nullopt;  // Not found
 }
 
 std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(StringHandle member_name) const {
