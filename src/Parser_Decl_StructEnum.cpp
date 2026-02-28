@@ -1367,6 +1367,7 @@ ParseResult Parser::parse_struct_declaration()
 					advance();
 				} else if (kw == "constexpr") {
 					is_static_constexpr = true;
+					cv_qual |= CVQualifier::Const; // constexpr implies const
 					advance();
 				} else if (kw == "inline") {
 					advance(); // consume 'inline'
