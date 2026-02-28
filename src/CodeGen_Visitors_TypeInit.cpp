@@ -1116,10 +1116,20 @@ private:
 		this_arg.value = this_addr;
 		call_op.args.push_back(this_arg);
 
+		// For postfix operators, pass dummy int argument (value 0)
+		if (!is_prefix) {
+			TypedValue dummy_arg;
+			dummy_arg.type = Type::Int;
+			dummy_arg.size_in_bits = 32;
+			dummy_arg.value = 0ULL;
+			call_op.args.push_back(dummy_arg);
+		}
+
 		int result_size = call_op.return_size_in_bits;
 		TypeIndex result_type_index = call_op.return_type_index;
 		Type result_type = call_op.return_type;
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
+		return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
 		return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
 	}
 
