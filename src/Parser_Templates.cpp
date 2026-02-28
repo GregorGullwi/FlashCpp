@@ -15,7 +15,15 @@
 //   Parser_Templates_Variable.cpp       - parse_member_template_alias, parse_member_variable_template
 //   Parser_Templates_Concepts.cpp       - concept declaration, requires_expression,
 //                                          constexpr checks for constraints
-//   Parser_Templates_Instantiation.cpp  - try_instantiate_*, instantiate_*, explicit instantiation paths
+//   Parser_Templates_Inst_Deduction.cpp      - try_instantiate_template_explicit, try_instantiate_template,
+//                                              try_instantiate_single_template (core type deduction / argument matching)
+//   Parser_Templates_Inst_Substitution.cpp   - get_instantiated_class_name, instantiate_and_register_base_template,
+//                                              substitute_template_params_in_expression, try_instantiate_variable_template,
+//                                              instantiate_full_specialization, substitute_nontype_template_param
+//   Parser_Templates_Inst_ClassTemplate.cpp  - try_instantiate_class_template (class template instantiation)
+//   Parser_Templates_Inst_MemberFunc.cpp     - try_instantiate_member_function_template,
+//                                              try_instantiate_member_function_template_explicit,
+//                                              instantiate_member_function_template_core
 //   Parser_Templates_Lazy.cpp           - instantiateLazy*, evaluateLazyTypeAlias, phase-based/lazy flows
 //   Parser_Templates_MemberOutOfLine.cpp - out-of-line template member parsing helpers
 //   Parser_Templates_Substitution.cpp   - substituteTemplateParameters, expression substitution,
@@ -26,7 +34,10 @@
 #include "Parser_Templates_Function.cpp"
 #include "Parser_Templates_Variable.cpp"
 #include "Parser_Templates_Concepts.cpp"
-#include "Parser_Templates_Instantiation.cpp"
+#include "Parser_Templates_Inst_Deduction.cpp"
+#include "Parser_Templates_Inst_Substitution.cpp"
+#include "Parser_Templates_Inst_ClassTemplate.cpp"
+#include "Parser_Templates_Inst_MemberFunc.cpp"
 #include "Parser_Templates_Lazy.cpp"
 #include "Parser_Templates_MemberOutOfLine.cpp"
 #include "Parser_Templates_Substitution.cpp"
