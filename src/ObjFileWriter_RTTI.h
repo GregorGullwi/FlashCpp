@@ -259,11 +259,12 @@
 		// add_vtable call that emitted base class type descriptors inline).
 		auto td_cache_it = symbol_index_cache_.find(type_desc_symbol);
 		if (td_cache_it != symbol_index_cache_.end()) {
-			auto symbols = coffi_.get_symbols();
-			auto& existing_sym = (*symbols)[td_cache_it->second];
+			// Use get_symbol() for correct lookup by COFFI file index (not vector index,
+			// which differs due to auxiliary entries on section symbols).
+			auto* existing_sym = coffi_.get_symbol(td_cache_it->second);
 			// Cache may contain external references (section_number == 0) from
 			// get_or_create_symbol_index; only reuse if the symbol has a definition.
-			if (existing_sym.get_section_number() > 0) {
+			if (existing_sym && existing_sym->get_section_number() > 0) {
 				// Already defined — reuse existing symbol index
 				type_desc_symbol_index = td_cache_it->second;
 				type_desc_already_emitted = true;
@@ -354,10 +355,10 @@
 			bool base_td_defined = false;
 			auto cache_it = symbol_index_cache_.find(base_type_desc_symbol);
 			if (cache_it != symbol_index_cache_.end()) {
-				// Symbol was cached - check if it's a definition (section > 0) or just a reference
-				auto symbols = coffi_.get_symbols();
-				auto& sym = (*symbols)[cache_it->second];
-				base_td_defined = (sym.get_section_number() > 0);
+				// Use get_symbol() for correct lookup by COFFI file index (not vector index,
+				// which differs due to auxiliary entries on section symbols).
+				auto* sym = coffi_.get_symbol(cache_it->second);
+				base_td_defined = (sym && sym->get_section_number() > 0);
 			}
 			if (!base_td_defined) {
 				uint32_t btd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
