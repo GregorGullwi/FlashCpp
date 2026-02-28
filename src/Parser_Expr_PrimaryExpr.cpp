@@ -1914,7 +1914,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return argResult;
 				}
 				if (auto node = argResult.node()) {
-					args.push_back(*node);
+					// Check for pack expansion (...) after the argument
+					if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == "...") {
+						Token ellipsis_token = current_token_;
+						advance(); // consume '...'
+						auto pack_expr = emplace_node<ExpressionNode>(
+							PackExpansionExprNode(*node, ellipsis_token));
+						args.push_back(pack_expr);
+					} else {
+						args.push_back(*node);
+					}
 				}
 
 				if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
