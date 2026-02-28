@@ -10,7 +10,7 @@ std::optional<ParseResult> Parser::parse_operator_name(const Token& operator_key
 			return ParseResult::error("Expected ')' after 'operator('", operator_keyword_token);
 		}
 		advance(); // consume ')'
-		static const std::string operator_call_name = "operator()";
+		static constexpr std::string_view operator_call_name = "operator()";
 		operator_name_out = operator_call_name;
 	}
 	// Check for operator[]
@@ -20,7 +20,7 @@ std::optional<ParseResult> Parser::parse_operator_name(const Token& operator_key
 			return ParseResult::error("Expected ']' after 'operator['", operator_keyword_token);
 		}
 		advance(); // consume ']'
-		static const std::string operator_subscript_name = "operator[]";
+		static constexpr std::string_view operator_subscript_name = "operator[]";
 		operator_name_out = operator_subscript_name;
 	}
 	// Check for operator symbols (+, -, =, ==, +=, <<, etc.)
@@ -30,7 +30,7 @@ std::optional<ParseResult> Parser::parse_operator_name(const Token& operator_key
 		advance(); // consume operator symbol
 
 		// Build operator name like "operator=" or "operator<<"
-		static std::unordered_map<std::string_view, std::string> operator_names = {
+		static const std::unordered_map<std::string_view, std::string_view> operator_names = {
 			{"=", "operator="},
 			{"<=>", "operator<=>"},
 			{"<<", "operator<<"},
@@ -99,12 +99,12 @@ std::optional<ParseResult> Parser::parse_operator_name(const Token& operator_key
 
 		// Build operator name
 		if (keyword_value == "new") {
-			static const std::string op_new = "operator new";
-			static const std::string op_new_array = "operator new[]";
+			static constexpr std::string_view op_new = "operator new";
+			static constexpr std::string_view op_new_array = "operator new[]";
 			operator_name_out = is_array ? op_new_array : op_new;
 		} else {
-			static const std::string op_delete = "operator delete";
-			static const std::string op_delete_array = "operator delete[]";
+			static constexpr std::string_view op_delete = "operator delete";
+			static constexpr std::string_view op_delete_array = "operator delete[]";
 			operator_name_out = is_array ? op_delete_array : op_delete;
 		}
 	}

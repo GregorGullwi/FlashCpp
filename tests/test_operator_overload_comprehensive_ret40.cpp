@@ -16,12 +16,9 @@ struct Vec2 {
     // Compound assignment
     Vec2& operator+=(const Vec2& o) { x += o.x; y += o.y; return *this; }
     Vec2& operator-=(const Vec2& o) { x -= o.x; y -= o.y; return *this; }
-};
 
-// Separate single-member struct for prefix increment (multi-member prefix ++ is a known issue)
-struct Counter {
-    int val;
-    Counter& operator++() { ++val; return *this; }
+    // Prefix increment on multi-member struct
+    Vec2& operator++() { ++x; ++y; return *this; }
 };
 
 int main() {
@@ -53,10 +50,10 @@ int main() {
     f -= b; // {10, 20}
     if (f.x == 10 && f.y == 20) result += 5;
 
-    // Test prefix increment on single-member struct
-    Counter g{5};
-    ++g; // val becomes 6
-    if (g.val == 6) result += 6;
+    // Test prefix increment on multi-member struct
+    Vec2 g{5, 5};
+    ++g; // {6, 6}
+    if (g.x == 6 && g.y == 6) result += 6;
 
     return result; // 40
 }

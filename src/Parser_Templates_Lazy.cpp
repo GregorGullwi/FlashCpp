@@ -23,6 +23,24 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		return_type_spec, lazy_info.template_params, lazy_info.template_args
 	);
 
+	// Resolve self-referential types: when a member function's return type or parameter type
+	// refers to the template class itself (e.g., W& in W<T>::operator+=), the type_index
+	// still points to the uninstantiated template base (e.g., W with size=0). We need to
+	// resolve it to the instantiated class (e.g., W<int> with correct size).
+	auto resolve_self_type = [&lazy_info](Type& type, TypeIndex& type_index) {
+		if (type == Type::Struct && type_index > 0 && type_index < gTypeInfo.size()) {
+			if (gTypeInfo[type_index].name() == lazy_info.class_template_name) {
+				// This type refers to the template base class — resolve to the instantiated class
+				auto it = gTypesByName.find(lazy_info.instantiated_class_name);
+				if (it != gTypesByName.end()) {
+					type_index = it->second->type_index_;
+				}
+			}
+		}
+	};
+
+	resolve_self_type(return_type, return_type_index);
+
 	// Create substituted return type node
 	TypeSpecifierNode substituted_return_type(
 		return_type,
@@ -58,6 +76,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			auto [param_type, param_type_index] = substitute_template_parameter(
 				param_type_spec, lazy_info.template_params, lazy_info.template_args
 			);
+
+			// Resolve self-referential class types (same as return type)
+			resolve_self_type(param_type, param_type_index);
 
 			// Create substituted parameter type
 			TypeSpecifierNode substituted_param_type(
