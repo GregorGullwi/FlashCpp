@@ -1150,7 +1150,10 @@ private:
 		call_op.args.push_back(this_arg);
 
 		// For postfix operators, pass dummy int argument (value 0)
-		if (!is_prefix) {
+		// For postfix operators, pass dummy int argument (value 0)
+		// Use the matched function's actual parameter count (not the call form) to decide,
+		// since the fallback path may match a prefix function for a postfix call or vice versa.
+		if (actual_params.size() == 1) {
 			TypedValue dummy_arg;
 			dummy_arg.type = Type::Int;
 			dummy_arg.size_in_bits = 32;
