@@ -1251,7 +1251,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 						// For reference members, the global holds a pointer — dereference it
-						if (static_member->is_reference() || static_member->is_rvalue_reference()) {
+						if (static_member->is_reference()) {
 							TempVar deref_temp = var_counter.next();
 							DereferenceOp deref_op;
 							deref_op.result = deref_temp;
