@@ -19,9 +19,14 @@ public:
 			// forward declaration (empty body) for the same name instead of appending.
 			// This ensures lookupTemplate returns the full definition, not the forward decl.
 			auto& entries = templates_[name];
-			if (!entries.empty() && isClassTemplateForwardDecl(template_node) == false) {
+			if (!entries.empty() && !isClassTemplateForwardDecl(template_node)) {
 				for (size_t i = 0; i < entries.size(); ++i) {
 					if (entries[i].is<TemplateClassDeclarationNode>() && isClassTemplateForwardDecl(entries[i])) {
+						// Per C++ standard [temp.param]/11: default template arguments
+						// may appear in a forward declaration but not be repeated in
+						// the definition.  Merge defaults from the forward declaration
+						// into the full definition so they are available at instantiation.
+						mergeDefaultTemplateArgs(entries[i], template_node);
 						entries[i] = template_node;
 						return;
 					}
@@ -37,6 +42,24 @@ public:
 	static bool isClassTemplateForwardDecl(const ASTNode& node) {
 		if (!node.is<TemplateClassDeclarationNode>()) return false;
 		return node.as<TemplateClassDeclarationNode>().class_decl_node().is_forward_declaration();
+	}
+
+	// Merge default template arguments from a forward declaration into a full
+	// definition.  Per C++ [temp.param]/11 defaults may appear on the first
+	// declaration and must not be repeated on the definition.
+	static void mergeDefaultTemplateArgs(const ASTNode& fwd_decl, ASTNode& full_def) {
+		const auto& fwd_params = fwd_decl.as<TemplateClassDeclarationNode>().template_parameters();
+		auto& def_params = full_def.as<TemplateClassDeclarationNode>().template_parameters();
+		size_t count = std::min(fwd_params.size(), def_params.size());
+		for (size_t i = 0; i < count; ++i) {
+			if (!fwd_params[i].is<TemplateParameterNode>() || !def_params[i].is<TemplateParameterNode>())
+				continue;
+			const auto& fwd_p = fwd_params[i].as<TemplateParameterNode>();
+			auto& def_p = def_params[i].as<TemplateParameterNode>();
+			if (fwd_p.has_default() && !def_p.has_default()) {
+				def_p.set_default_value(fwd_p.default_value());
+			}
+		}
 	}
 
 	// Returns true if 'name' (exact StringHandle) was registered as a class template.

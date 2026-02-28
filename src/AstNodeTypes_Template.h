@@ -829,6 +829,7 @@ public:
 		, class_declaration_(class_decl) {}
 
 	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	std::vector<ASTNode>& template_parameters() { return template_parameters_; }
 	const std::vector<std::string_view>& template_param_names() const { return template_param_names_; }
 	ASTNode class_declaration() const { return class_declaration_; }
 
