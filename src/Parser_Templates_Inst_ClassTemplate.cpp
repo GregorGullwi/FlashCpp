@@ -5359,8 +5359,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Add the static member to the instantiated struct (or update if it already exists)
 		if (out_of_line_var.type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = out_of_line_var.type_node.as<TypeSpecifierNode>();
-			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
-			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 
 			StringHandle static_member_name_handle = out_of_line_var.member_name;
 

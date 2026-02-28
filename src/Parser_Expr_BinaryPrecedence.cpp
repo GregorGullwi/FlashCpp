@@ -1221,9 +1221,10 @@ ParseResult Parser::parse_static_member_block(
 	const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 	// Register static member in struct info
-	// Calculate size and alignment for the static member
-	size_t member_size = get_type_size_bits(type_spec.type()) / 8;
-	size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+	// Calculate size and alignment for the static member (handles pointers/references correctly)
+	auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+	ReferenceQualifier ref_qual = type_spec.reference_qualifier();
+	int ptr_depth = static_cast<int>(type_spec.pointer_depth());
 
 	// Register the static member
 	StringHandle static_member_name_handle = decl.identifier_token().handle();
@@ -1243,7 +1244,9 @@ ParseResult Parser::parse_static_member_block(
 				member_alignment,
 				AccessSpecifier::Public,  // Full specializations use Public
 				init_expr_opt,
-				cv_qual
+				cv_qual,
+				ref_qual,
+				ptr_depth
 			);
 		}
 	} else {
@@ -1256,7 +1259,9 @@ ParseResult Parser::parse_static_member_block(
 			member_alignment,
 			access,
 			init_expr_opt,
-			cv_qual
+			cv_qual,
+			ref_qual,
+			ptr_depth
 		);
 	}
 

@@ -1410,6 +1410,33 @@
 	std::vector<IrOperand> generateSizeofIr(const SizeofExprNode& sizeofNode) {
 		size_t size_in_bytes = 0;
 
+		// Helper: look up sizeof a struct member (static or non-static) by qualified name.
+		// Returns the member size in bytes, or 0 if not found.
+		auto lookupStructMemberSize = [](std::string_view struct_name, std::string_view member_name) -> size_t {
+			StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
+			auto struct_type_it = gTypesByName.find(struct_name_handle);
+			if (struct_type_it != gTypesByName.end()) {
+				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+				if (struct_info) {
+					// Search static members
+					StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
+					if (static_member) {
+						FLASH_LOG(Codegen, Debug, "sizeof(qualified): found static member, size=", static_member->size);
+						return static_member->size;
+					}
+					// Search non-static members
+					for (const auto& member : struct_info->members) {
+						if (StringTable::getStringView(member.getName()) == member_name) {
+							FLASH_LOG(Codegen, Debug, "sizeof(qualified): found member, size=", member.size);
+							return member.size;
+						}
+					}
+				}
+			}
+			return 0;
+		};
+
 		if (sizeofNode.is_type()) {
 			// sizeof(type)
 			const ASTNode& type_node = sizeofNode.type_or_expr();
@@ -1437,28 +1464,9 @@
 						std::string_view struct_name = type_name.substr(0, sep_pos);
 						std::string_view member_name = type_name.substr(sep_pos + 2);
 						FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): struct=", struct_name, " member=", member_name);
-						
-						StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
-						auto struct_type_it = gTypesByName.find(struct_name_handle);
-						if (struct_type_it != gTypesByName.end()) {
-							const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
-							if (struct_info) {
-								// Search static members
-								StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-								auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
-								if (static_member) {
-									FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): found static member, size=", static_member->size);
-									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(static_member->size) };
-								}
-								
-								// Search non-static members
-								for (const auto& member : struct_info->members) {
-									if (StringTable::getStringView(member.getName()) == member_name) {
-										FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): found member, size=", member.size);
-										return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member.size) };
-									}
-								}
-							}
+						size_t member_size = lookupStructMemberSize(struct_name, member_name);
+						if (member_size > 0) {
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_size) };
 						}
 					}
 				}
@@ -1752,31 +1760,9 @@
 				std::string_view member_name = qual_id.name();
 				FLASH_LOG(Codegen, Debug, "sizeof(qualified_id): struct=", struct_name, " member=", member_name);
 				
-				// Look up the struct type
-				StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
-				auto struct_type_it = gTypesByName.find(struct_name_handle);
-				if (struct_type_it != gTypesByName.end()) {
-					const TypeInfo* type_info = struct_type_it->second;
-					const StructTypeInfo* struct_info = type_info->getStructInfo();
-					if (struct_info) {
-						// Search static members
-						StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
-						if (static_member) {
-							size_in_bytes = static_member->size;
-							FLASH_LOG(Codegen, Debug, "sizeof(qualified_id): found static member, size=", size_in_bytes);
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
-						}
-						
-						// Search non-static members
-						for (const auto& member : struct_info->members) {
-							if (StringTable::getStringView(member.getName()) == member_name) {
-								size_in_bytes = member.size;
-								FLASH_LOG(Codegen, Debug, "sizeof(qualified_id): found member, size=", size_in_bytes);
-								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
-							}
-						}
-					}
+				size_t member_size = lookupStructMemberSize(struct_name, member_name);
+				if (member_size > 0) {
+					return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_size) };
 				}
 			}
 
