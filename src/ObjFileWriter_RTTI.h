@@ -271,6 +271,7 @@
 		type_desc_sym->set_section_number(rdata_section->get_index() + 1);
 		type_desc_sym->set_value(type_desc_offset);
 		uint32_t type_desc_symbol_index = type_desc_sym->get_index();
+		symbol_index_cache_[type_desc_symbol] = type_desc_symbol_index;
 		
 		if (g_enable_debug_output) std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset " 
 		          << type_desc_offset << std::endl;
