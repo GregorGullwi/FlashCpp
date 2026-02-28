@@ -1130,7 +1130,6 @@ private:
 		Type result_type = call_op.return_type;
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
 		return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
-		return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
 	}
 
 	// Helper function to resolve template parameter size from struct name
