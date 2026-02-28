@@ -1432,7 +1432,6 @@
 							FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static ref member, referenced type size=", ref_size);
 							return ref_size;
 						}
-						}
 						FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static member, size=", static_member->size);
 						return static_member->size;
 					}
