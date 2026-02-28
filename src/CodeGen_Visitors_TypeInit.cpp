@@ -1132,6 +1132,107 @@ private:
 		return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
 	}
 
+	// Helper: generate built-in pointer or integer increment/decrement IR.
+	// Handles pointer arithmetic (add/subtract element_size) and integer pre/post inc/dec.
+	// is_increment: true for ++, false for --
+	std::vector<IrOperand> generateBuiltinIncDec(
+		bool is_increment,
+		bool is_prefix,
+		bool operandHandledAsIdentifier,
+		const UnaryOperatorNode& unaryOperatorNode,
+		const std::vector<IrOperand>& operandIrOperands,
+		Type operandType,
+		TempVar result_var
+	) {
+		// Check if this is a pointer increment/decrement (requires pointer arithmetic)
+		bool is_pointer = false;
+		int element_size = 1;
+		if (operandHandledAsIdentifier && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+				auto symbol = symbol_table.lookup(identifier.name());
+				if (symbol.has_value()) {
+					const TypeSpecifierNode* type_node = nullptr;
+					if (symbol->is<DeclarationNode>()) {
+						type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					} else if (symbol->is<VariableDeclarationNode>()) {
+						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+					}
+					
+					if (type_node && type_node->pointer_depth() > 0) {
+						is_pointer = true;
+						if (type_node->pointer_depth() > 1) {
+							element_size = 8;  // Multi-level pointer: element is a pointer
+						} else {
+							element_size = getSizeInBytes(type_node->type(), type_node->type_index(), type_node->size_in_bits());
+						}
+					}
+				}
+			}
+		}
+		
+		UnaryOp unary_op{
+			.value = toTypedValue(operandIrOperands),
+			.result = result_var
+		};
+		
+		IrOpcode arith_opcode = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
+		
+		if (is_pointer) {
+			// For pointers, use a BinaryOp to add/subtract element_size
+			if (is_prefix) {
+				BinaryOp bin_op{
+					.lhs = { Type::UnsignedLongLong, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
+					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), Token()));
+				// Store back to the pointer variable
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					AssignmentOp assign_op;
+					assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+					assign_op.lhs = { Type::UnsignedLongLong, 64, std::get<StringHandle>(operandIrOperands[2]) };
+					assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+				}
+				return { operandType, 64, result_var, 0ULL };
+			} else {
+				// Postfix: save old value, modify, return old value
+				TempVar old_value = var_counter.next();
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					AssignmentOp save_op;
+					save_op.result = old_value;
+					save_op.lhs = { Type::UnsignedLongLong, 64, old_value };
+					save_op.rhs = toTypedValue(operandIrOperands);
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
+				}
+				BinaryOp bin_op{
+					.lhs = { Type::UnsignedLongLong, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
+					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), Token()));
+				// Store back to the pointer variable
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					AssignmentOp assign_op;
+					assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+					assign_op.lhs = { Type::UnsignedLongLong, 64, std::get<StringHandle>(operandIrOperands[2]) };
+					assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+				}
+				return { operandType, 64, old_value, 0ULL };
+			}
+		} else {
+			// Regular integer increment/decrement
+			IrOpcode pre_opcode = is_increment ? IrOpcode::PreIncrement : IrOpcode::PreDecrement;
+			IrOpcode post_opcode = is_increment ? IrOpcode::PostIncrement : IrOpcode::PostDecrement;
+			ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, Token()));
+		}
+		
+		return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };
+	}
+
 	// Helper function to resolve template parameter size from struct name
 	// This is used by both ConstExpr evaluator and IR generation for sizeof(T)
 	// where T is a template parameter in a template class member function
