@@ -1067,11 +1067,32 @@ private:
 		if (operand_type_index == 0)
 			return std::nullopt;
 
-		auto overload_result = findUnaryOperatorOverload(operand_type_index, op_name);
-		if (!overload_result.has_overload)
+		// For ++/--, we need to distinguish prefix (0 params) from postfix (1 param: dummy int).
+		// findUnaryOperatorOverload returns the first match; scan all member functions to pick
+		// the overload whose parameter count matches the call form.
+		size_t expected_param_count = is_prefix ? 0 : 1;
+		const StructMemberFunction* matched_func = nullptr;
+		const StructMemberFunction* fallback_func = nullptr;
+		if (operand_type_index < gTypeInfo.size()) {
+			const StructTypeInfo* struct_info = gTypeInfo[operand_type_index].getStructInfo();
+			if (struct_info) {
+				for (const auto& mf : struct_info->member_functions) {
+					if (mf.is_operator_overload && mf.operator_symbol == op_name) {
+						const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+						if (fd.parameter_nodes().size() == expected_param_count) {
+							matched_func = &mf;
+							break;
+						}
+						if (!fallback_func) fallback_func = &mf;
+					}
+				}
+			}
+		}
+		if (!matched_func) matched_func = fallback_func;  // only one overload provided
+		if (!matched_func)
 			return std::nullopt;
 
-		const StructMemberFunction& member_func = *overload_result.member_overload;
+		const StructMemberFunction& member_func = *matched_func;
 		const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 		std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index].name());
 		TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
