@@ -9,10 +9,11 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token) {
 	}
 	StringBuilder op_name_builder;
 	op_name_builder.append("operator");
-	op_name_builder.append(peek_info().value());
+	const auto first_op_part = peek_info();
+	op_name_builder.append(first_op_part.value());
 	advance(); // consume operator symbol
-	// Handle () and [] pairs
-	if (peek() == ")"_tok || peek() == "]"_tok) {
+	// Handle () and [] pairs — validate matching brackets
+	if ((first_op_part.value() == "(" && peek() == ")"_tok) || (first_op_part.value() == "[" && peek() == "]"_tok)) {
 		op_name_builder.append(peek_info().value());
 		advance();
 	}
