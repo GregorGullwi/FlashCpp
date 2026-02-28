@@ -136,6 +136,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"const_cast", &Parser::parse_expression_statement},
 			{"reinterpret_cast", &Parser::parse_expression_statement},
 			{"typeid", &Parser::parse_expression_statement},
+			{"typename", &Parser::parse_declaration_or_function_definition},
 			{"static_assert", &Parser::parse_static_assert},
 		};
 
