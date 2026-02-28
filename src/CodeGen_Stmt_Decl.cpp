@@ -280,6 +280,7 @@
 				} else if (init_node.is<ExpressionNode>()) {
 					// Single value initialization
 					const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+					bool handled_as_reloc = false;
 					// Handle address-of initializer: int* ptr = &x;
 					if (std::holds_alternative<UnaryOperatorNode>(init_expr)) {
 						const auto& unary = std::get<UnaryOperatorNode>(init_expr);
@@ -292,26 +293,25 @@
 								op.is_initialized = true;
 								op.init_data.resize(element_size, 0);
 								op.reloc_target = StringTable::getOrInternStringHandle(target_id.name());
-								goto global_var_initialized;
+								handled_as_reloc = true;
 							}
 						}
 					}
 					// Handle reference initializer: int& ref = x;
-					if (type_node.is_reference() && std::holds_alternative<IdentifierNode>(init_expr)) {
+					if (!handled_as_reloc && type_node.is_reference() && std::holds_alternative<IdentifierNode>(init_expr)) {
 						const auto& target_id = std::get<IdentifierNode>(init_expr);
 						FLASH_LOG(Codegen, Debug, "Global reference '", decl.identifier_token().value(),
 						          "' initialized with address of ", target_id.name());
 						op.is_initialized = true;
 						op.init_data.resize(element_size, 0);
 						op.reloc_target = StringTable::getOrInternStringHandle(target_id.name());
-						goto global_var_initialized;
+						handled_as_reloc = true;
 					}
-					{
-					unsigned long long value = evalToValue(init_node, type_node.type());
-					op.is_initialized = true;
-					appendValueAsBytes(op.init_data, value, element_size);
+					if (!handled_as_reloc) {
+						unsigned long long value = evalToValue(init_node, type_node.type());
+						op.is_initialized = true;
+						appendValueAsBytes(op.init_data, value, element_size);
 					}
-					global_var_initialized:;
 				} else {
 					op.is_initialized = false;
 				}
