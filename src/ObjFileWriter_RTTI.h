@@ -253,6 +253,7 @@
 		// ??_R0 - Type Descriptor (16 bytes header + mangled name)
 		std::string type_desc_symbol = "??_R0" + mangled_class_name;
 		uint32_t type_desc_symbol_index = 0;
+		bool type_desc_already_emitted = false;
 		
 		// Check if the type descriptor was already emitted (e.g., by a derived class's
 		// add_vtable call that emitted base class type descriptors inline).
@@ -265,11 +266,12 @@
 			if (existing_sym.get_section_number() > 0) {
 				// Already defined — reuse existing symbol index
 				type_desc_symbol_index = td_cache_it->second;
+				type_desc_already_emitted = true;
 				if (g_enable_debug_output) std::cerr << "  Reusing existing ??_R0 Type Descriptor '" << type_desc_symbol << "'" << std::endl;
 			}
 		}
 		
-		if (type_desc_symbol_index == 0) {
+		if (!type_desc_already_emitted) {
 			uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 			
 			std::vector<char> type_desc_data;
