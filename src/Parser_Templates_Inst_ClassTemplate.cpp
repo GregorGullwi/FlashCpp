@@ -5382,7 +5382,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_alignment,
 					AccessSpecifier::Public,
 					substituted_initializer,
-					CVQualifier::None,  // cv_qualifier
+					type_spec.cv_qualifier(),  // cv_qualifier
 					type_spec.reference_qualifier(),
 					static_cast<int>(type_spec.pointer_depth())
 				);
