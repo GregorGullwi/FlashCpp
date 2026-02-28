@@ -1371,7 +1371,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.alignment,
 						static_member.access,
 						substituted_initializer,
-						static_member.is_const
+						static_member.cv_qualifier,
+						static_member.reference_qualifier,
+						static_member.pointer_depth
 					);
 				}
 			}
@@ -1431,7 +1433,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.alignment,
 					static_member.access,
 					substituted_initializer,
-					static_member.is_const
+					static_member.cv_qualifier,
+					static_member.reference_qualifier,
+					static_member.pointer_depth
 				);
 			}
 		}
@@ -3262,7 +3266,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.alignment = static_member.alignment;
 				lazy_info.access = static_member.access;
 				lazy_info.initializer = static_member.initializer;
-				lazy_info.cv_qualifier = static_member.is_const ? CVQualifier::Const : CVQualifier::None;
+				lazy_info.cv_qualifier = static_member.cv_qualifier;
+				lazy_info.reference_qualifier = static_member.reference_qualifier;
+				lazy_info.pointer_depth = static_member.pointer_depth;
 				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.needs_substitution = true;
@@ -3288,7 +3294,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.alignment,
 					static_member.access,
 					std::nullopt,  // Initializer will be computed lazily
-					static_member.is_const
+					static_member.cv_qualifier,
+					static_member.reference_qualifier,
+					static_member.pointer_depth
 				);
 				
 				continue;  // Skip the eager processing below
@@ -3601,7 +3609,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.alignment,
 				static_member.access,
 				substituted_initializer,
-				static_member.is_const
+				static_member.cv_qualifier,
+				static_member.reference_qualifier,
+				static_member.pointer_depth
 			);
 		}
 	}
@@ -3692,7 +3702,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.alignment,
 			static_member.access,
 			substituted_initializer,
-			static_member.is_const
+			static_member.cv_qualifier,
+			static_member.reference_qualifier,
+			static_member.pointer_depth
 		);
 		}
 	}
@@ -3785,7 +3797,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							static_member.alignment,
 							static_member.access,
 							static_member.initializer,
-							static_member.is_const
+							static_member.cv_qualifier,
+							static_member.reference_qualifier,
+							static_member.pointer_depth
 						);
 					}
 				} else {
@@ -3813,7 +3827,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								static_member.alignment,
 								static_member.access,
 								static_member.initializer,
-								static_member.is_const
+								static_member.cv_qualifier,
+								static_member.reference_qualifier,
+								static_member.pointer_depth
 							);
 						}
 					}
@@ -5345,8 +5361,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Add the static member to the instantiated struct (or update if it already exists)
 		if (out_of_line_var.type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = out_of_line_var.type_node.as<TypeSpecifierNode>();
-			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
-			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 
 			StringHandle static_member_name_handle = out_of_line_var.member_name;
 
@@ -5369,7 +5384,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_alignment,
 					AccessSpecifier::Public,
 					substituted_initializer,
-					false  // is_const
+					type_spec.cv_qualifier(),  // cv_qualifier
+					type_spec.reference_qualifier(),
+					static_cast<int>(type_spec.pointer_depth())
 				);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
@@ -5628,7 +5645,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.alignment,
 						static_member.access,
 						substituted_initializer,  // Use substituted initializer if sizeof... was replaced
-						static_member.is_const
+						static_member.cv_qualifier,
+						static_member.reference_qualifier,
+						static_member.pointer_depth
 					);
 				}
 			}

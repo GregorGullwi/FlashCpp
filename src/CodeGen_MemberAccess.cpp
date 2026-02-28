@@ -1410,6 +1410,50 @@
 	std::vector<IrOperand> generateSizeofIr(const SizeofExprNode& sizeofNode) {
 		size_t size_in_bytes = 0;
 
+		// Helper: look up sizeof a struct member (static or non-static) by qualified name.
+		// Returns the member size in bytes, or 0 if not found.
+		auto lookupStructMemberSize = [](std::string_view struct_name, std::string_view member_name) -> size_t {
+			StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
+			auto struct_type_it = gTypesByName.find(struct_name_handle);
+			if (struct_type_it != gTypesByName.end()) {
+				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+				if (struct_info) {
+					// Search static members
+					StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
+					if (static_member) {
+						// sizeof on a reference yields the size of the referenced type
+						if (static_member->is_reference()) {
+							size_t ref_size = get_type_size_bits(static_member->type) / 8;
+							if (ref_size == 0 && static_member->type == Type::Struct && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
+								const StructTypeInfo* si = gTypeInfo[static_member->type_index].getStructInfo();
+								if (si) ref_size = si->total_size;
+							}
+							FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static ref member, referenced type size=", ref_size);
+							return ref_size;
+						}
+						}
+						FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static member, size=", static_member->size);
+						return static_member->size;
+					}
+					// Search non-static members
+					for (const auto& member : struct_info->members) {
+						if (StringTable::getStringView(member.getName()) == member_name) {
+							// sizeof on a reference yields the size of the referenced type
+							if (member.is_reference()) {
+								size_t ref_size = member.referenced_size_bits / 8;
+								FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found ref member, referenced type size=", ref_size);
+								return ref_size;
+							}
+							FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found member, size=", member.size);
+							return member.size;
+						}
+					}
+				}
+			}
+			return 0;
+		};
+
 		if (sizeofNode.is_type()) {
 			// sizeof(type)
 			const ASTNode& type_node = sizeofNode.type_or_expr();
@@ -1423,9 +1467,26 @@
 
 			// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
 			// array variable, the parser may incorrectly parse it as a type.
+			// Also handles sizeof(Foo::val) where the parser treats Foo::val as a qualified type name.
 			// If size_in_bits is 0, try looking up the identifier in the symbol table.
 			if (type_spec.size_in_bits() == 0 && type_spec.token().type() == Token::Type::Identifier) {
 				StringHandle identifier = StringTable::getOrInternStringHandle(type_spec.token().value());
+				
+				// Check if this is a qualified name (e.g., Foo::val) parsed as a type placeholder.
+				// The type name in gTypeInfo will contain "::" for qualified names.
+				if (type_spec.type_index() < gTypeInfo.size()) {
+					std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index()].name());
+				auto sep_pos = type_name.rfind("::");
+					if (sep_pos != std::string_view::npos) {
+						std::string_view struct_name = type_name.substr(0, sep_pos);
+						std::string_view member_name = type_name.substr(sep_pos + 2);
+						FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): struct=", struct_name, " member=", member_name);
+						size_t member_size = lookupStructMemberSize(struct_name, member_name);
+						if (member_size > 0) {
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_size) };
+						}
+					}
+				}
 				
 				// Look up the identifier in the symbol table
 				const DeclarationNode* decl = lookupDeclaration(identifier);
@@ -1707,6 +1768,18 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not resolve '", id_node.name(), 
 						          "' at compile-time, falling back to IR generation");
 					}
+				}
+			}
+			// Special handling for qualified identifiers: sizeof(Foo::val) where val is a static member
+			else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+				const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
+				std::string_view struct_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+				std::string_view member_name = qual_id.name();
+				FLASH_LOG(Codegen, Debug, "sizeof(qualified_id): struct=", struct_name, " member=", member_name);
+				
+				size_t member_size = lookupStructMemberSize(struct_name, member_name);
+				if (member_size > 0) {
+					return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_size) };
 				}
 			}
 

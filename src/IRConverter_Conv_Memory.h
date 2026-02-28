@@ -1576,6 +1576,14 @@
 			                                global.is_initialized, global.init_data);
 		}
 
+		// Emit data section relocations for pointer/reference globals initialized with &symbol
+		for (const auto& global : global_variables_) {
+			if (global.reloc_target.isValid()) {
+				writer.add_data_relocation(StringTable::getStringView(global.name),
+				                           StringTable::getStringView(global.reloc_target));
+			}
+		}
+
 		// Emit vtables to .rdata section
 		for (const auto& vtable : vtables_) {
 			// Convert vector<string> to vector<string_view> for passing as span

@@ -145,6 +145,35 @@
 		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 	}
 
+	void add_data_relocation(std::string_view var_name, std::string_view target_name) {
+		// Find the variable's symbol to get its offset in .data
+		auto* var_symbol = coffi_.get_symbol(var_name);
+		if (!var_symbol) return;
+
+		uint32_t var_offset = var_symbol->get_value();
+
+		// Get or create the target symbol
+		auto* target_symbol = coffi_.get_symbol(target_name);
+		if (!target_symbol) {
+			target_symbol = coffi_.add_symbol(target_name);
+			target_symbol->set_value(0);
+			target_symbol->set_section_number(0);
+			target_symbol->set_type(0);
+			target_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		}
+
+		auto data_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DATA]];
+
+		COFFI::rel_entry_generic reloc;
+		reloc.virtual_address = var_offset;
+		reloc.symbol_table_index = target_symbol->get_index();
+		reloc.type = IMAGE_REL_AMD64_ADDR64;
+		data_section->add_relocation_entry(&reloc);
+
+		if (g_enable_debug_output) std::cerr << "Added data relocation: " << var_name << " -> " << target_name
+		          << " at .data offset " << var_offset << std::endl;
+	}
+
 	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, [[maybe_unused]] uint32_t xdata_offset) {
 		if (g_enable_debug_output) std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 

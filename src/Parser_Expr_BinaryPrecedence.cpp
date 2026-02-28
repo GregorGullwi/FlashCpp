@@ -1131,15 +1131,16 @@ ParseResult Parser::parse_static_member_block(
 	// consume "static" already done by caller
 	
 	// Handle optional const and constexpr
-	bool is_const = false;
+	CVQualifier cv_qual = CVQualifier::None;
 	bool is_static_constexpr = false;
 	while (peek().is_keyword()) {
 		std::string_view kw = peek_info().value();
 		if (kw == "const") {
-			is_const = true;
+			cv_qual |= CVQualifier::Const;
 			advance();
 		} else if (kw == "constexpr") {
 			is_static_constexpr = true;
+			cv_qual |= CVQualifier::Const; // constexpr implies const
 			advance();
 		} else if (kw == "inline") {
 			advance(); // consume 'inline'
@@ -1221,9 +1222,10 @@ ParseResult Parser::parse_static_member_block(
 	const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 	// Register static member in struct info
-	// Calculate size and alignment for the static member
-	size_t member_size = get_type_size_bits(type_spec.type()) / 8;
-	size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+	// Calculate size and alignment for the static member (handles pointers/references correctly)
+	auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+	ReferenceQualifier ref_qual = type_spec.reference_qualifier();
+	int ptr_depth = static_cast<int>(type_spec.pointer_depth());
 
 	// Register the static member
 	StringHandle static_member_name_handle = decl.identifier_token().handle();
@@ -1243,7 +1245,9 @@ ParseResult Parser::parse_static_member_block(
 				member_alignment,
 				AccessSpecifier::Public,  // Full specializations use Public
 				init_expr_opt,
-				is_const
+				cv_qual,
+				ref_qual,
+				ptr_depth
 			);
 		}
 	} else {
@@ -1256,7 +1260,9 @@ ParseResult Parser::parse_static_member_block(
 			member_alignment,
 			access,
 			init_expr_opt,
-			is_const
+			cv_qual,
+			ref_qual,
+			ptr_depth
 		);
 	}
 

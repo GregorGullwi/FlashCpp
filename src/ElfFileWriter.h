@@ -226,6 +226,66 @@ public:
 	}
 
 	/**
+	 * @brief Add a data section relocation (R_X86_64_64) for a global pointer/reference
+	 *        initialized with the address of another symbol.
+	 * @param var_name  The global variable whose .data slot should receive the address
+	 * @param target_name  The symbol whose absolute address is stored
+	 */
+	void add_data_relocation(std::string_view var_name, std::string_view target_name) {
+		// Find the .data section
+		auto* data_section = getSectionByName(".data");
+		if (!data_section) return;
+
+		// Find the variable's offset in .data by looking up its symbol
+		ELFIO::Elf64_Addr var_offset = 0;
+		bool found = false;
+		auto* sym_section = getSectionByName(".symtab");
+		if (sym_section) {
+			ELFIO::symbol_section_accessor sym_accessor(elf_writer_, sym_section);
+			for (ELFIO::Elf_Xword i = 0; i < sym_accessor.get_symbols_num(); ++i) {
+				std::string name;
+				ELFIO::Elf64_Addr value;
+				ELFIO::Elf_Xword size;
+				unsigned char bind, type, other;
+				ELFIO::Elf_Half section_index;
+				sym_accessor.get_symbol(i, name, value, size, bind, type, section_index, other);
+				if (name == var_name && section_index == data_section->get_index()) {
+					var_offset = value;
+					found = true;
+					break;
+				}
+			}
+		}
+		if (!found) return;
+
+		// Get or create the target symbol (may be in .data, .bss, or external)
+		auto target_index = getOrCreateSymbol(target_name, ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+
+		// Get or create .rela.data section
+		auto* rela_data = getSectionByName(".rela.data");
+		if (!rela_data) {
+			rela_data = elf_writer_.sections.add(".rela.data");
+			rela_data->set_type(ELFIO::SHT_RELA);
+			rela_data->set_flags(ELFIO::SHF_INFO_LINK);
+			rela_data->set_info(data_section->get_index());
+			rela_data->set_link(getSectionByName(".symtab")->get_index());
+			rela_data->set_addr_align(8);
+			rela_data->set_entry_size(sizeof(ELFIO::Elf64_Rela));
+		}
+
+		// Add R_X86_64_64 relocation: absolute 64-bit address
+		ELFIO::relocation_section_accessor rela_accessor(elf_writer_, rela_data);
+		ELFIO::Elf_Xword rel_info = (static_cast<ELFIO::Elf_Xword>(target_index) << 32) |
+		                             (static_cast<ELFIO::Elf_Xword>(ELFIO::R_X86_64_64) & 0xffffffffUL);
+		rela_accessor.add_entry(var_offset, rel_info, 0);
+
+		if (g_enable_debug_output) {
+			std::cerr << "Added data relocation: " << var_name << " -> " << target_name
+			          << " at offset " << var_offset << std::endl;
+		}
+	}
+
+	/**
 	 * @brief Add a string literal to .rodata section
 	 * @return Symbol name for the string literal (as string_view to stable storage)
 	 */

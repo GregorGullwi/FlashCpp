@@ -476,8 +476,6 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	// (The member was already added during template instantiation with std::nullopt initializer)
 	if (!struct_info->updateStaticMemberInitializer(lazy_info.member_name, substituted_initializer)) {
 		// Member doesn't exist yet - add it (shouldn't normally happen with lazy instantiation)
-		// Convert CVQualifier back to bool for addStaticMember (which expects bool is_const)
-		bool is_const = (lazy_info.cv_qualifier == CVQualifier::Const || lazy_info.cv_qualifier == CVQualifier::ConstVolatile);
 		struct_info->addStaticMember(
 			lazy_info.member_name,
 			substituted_type,
@@ -486,7 +484,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			lazy_info.alignment,
 			lazy_info.access,
 			substituted_initializer,
-			is_const
+			lazy_info.cv_qualifier,
+			lazy_info.reference_qualifier,
+			lazy_info.pointer_depth
 		);
 	}
 	
