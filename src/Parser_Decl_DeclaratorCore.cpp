@@ -970,13 +970,33 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
     }
 
     // Check for array declarator: '[' size ']'
-    // TODO: Implement array support
+    // This handles pointer-to-array declarations like: _Tp (*__p)[_Nm]
+    // After parsing (*__p), the '[_Nm]' makes this a pointer to array of _Tp
+    std::optional<ASTNode> array_size_expr;
+    if (peek() == "["_tok) {
+        advance(); // consume '['
+        
+        auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+        if (size_result.is_error()) {
+            return size_result;
+        }
+        array_size_expr = size_result.node();
+        
+        if (!consume("]"_tok)) {
+            return ParseResult::error("Expected ']' after array size in pointer-to-array declarator", current_token_);
+        }
+        
+        // The type is pointer-to-array: add pointer level and mark as array
+        base_type.add_pointer_level();
+        base_type.set_array(true);
+    }
 
     // Create and return declaration node
     return ParseResult::success(
         emplace_node<DeclarationNode>(
             emplace_node<TypeSpecifierNode>(base_type),
-            identifier
+            identifier,
+            array_size_expr
         )
     );
 }
