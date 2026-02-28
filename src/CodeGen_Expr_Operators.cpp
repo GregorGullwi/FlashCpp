@@ -501,7 +501,8 @@
 			}
 			
 			// List of binary operators that can be overloaded
-			// Skip assignment operators (=, +=, -=, etc.) as they are handled separately
+			// Assignment operators (=) are handled separately above; compound assignments (+=, etc.)
+			// fall through here when the LHS is a struct with user-defined operator overloads
 			static const std::unordered_set<std::string_view> overloadable_binary_ops = {
 				"+", "-", "*", "/", "%",           // Arithmetic
 				"==", "!=", "<", ">", "<=", ">=",  // Comparison
@@ -510,6 +511,9 @@
 				"<<", ">>",                        // Shift
 				",",                               // Comma (already handled above)
 				"<=>",                             // Spaceship (handled below)
+				// Compound assignment operators (dispatched as member function calls for structs)
+				"+=", "-=", "*=", "/=", "%=",
+				"&=", "|=", "^=", "<<=", ">>=",
 			};
 			
 			if (overloadable_binary_ops.count(op) > 0 && lhs_type_index > 0) {
@@ -528,14 +532,16 @@
 					std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index].name());
 					
 					// Get the return type from the function declaration
-					const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+					TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+					resolveSelfReferentialType(return_type, lhs_type_index);
 					
 					// Get the parameter types for mangling
 					std::vector<TypeSpecifierNode> param_types;
 					for (const auto& param_node : func_decl.parameter_nodes()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
-							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							TypeSpecifierNode param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							resolveSelfReferentialType(param_type, lhs_type_index);
 							param_types.push_back(param_type);
 						}
 					}
@@ -788,7 +794,8 @@
 							for (const auto& param_node : func_decl.parameter_nodes()) {
 								if (param_node.is<DeclarationNode>()) {
 									const auto& param_decl = param_node.as<DeclarationNode>();
-									const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+									TypeSpecifierNode param_type = param_decl.type_node().as<TypeSpecifierNode>();
+									resolveSelfReferentialType(param_type, lhs_type_index);
 									param_types.push_back(param_type);
 								}
 							}
@@ -1506,6 +1513,54 @@
 		
 		std::string_view struct_name = !struct_name_override.empty() ? struct_name_override
 			: (func_node.is_member_function() ? func_node.parent_struct_name() : std::string_view{});
+		
+		// For member functions, resolve self-referential parameter types in template-instantiated
+		// structs. When a template class has `operator+=(const W& other)`, the stored param type
+		// still references the template base `W` (with total_size=0) instead of the instantiation
+		// `W<int>`. Resolve by looking up the enclosing struct's type_index.
+		if (!struct_name.empty()) {
+			auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+			if (struct_it != gTypesByName.end()) {
+				TypeIndex struct_type_index = struct_it->second->type_index_;
+				bool needs_resolution = false;
+				// Check return type for self-referential struct
+				if (return_type.type() == Type::Struct && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size()) {
+					auto& rti = gTypeInfo[return_type.type_index()];
+					if (!rti.struct_info_ || rti.struct_info_->total_size == 0) {
+						needs_resolution = true;
+					}
+				}
+				if (!needs_resolution) {
+					for (const auto& param : func_node.parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+							if (pt.type() == Type::Struct && pt.type_index() > 0 && pt.type_index() < gTypeInfo.size()) {
+								auto& ti = gTypeInfo[pt.type_index()];
+								if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
+									needs_resolution = true;
+									break;
+								}
+							}
+						}
+					}
+				}
+				if (needs_resolution) {
+					std::vector<TypeSpecifierNode> resolved_params;
+					resolved_params.reserve(func_node.parameter_nodes().size());
+					for (const auto& param : func_node.parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							TypeSpecifierNode pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+							resolveSelfReferentialType(pt, struct_type_index);
+							resolved_params.push_back(pt);
+						}
+					}
+					TypeSpecifierNode resolved_return_type_copy = return_type;
+					resolveSelfReferentialType(resolved_return_type_copy, struct_type_index);
+					return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params,
+						func_node.is_variadic(), struct_name, namespace_path, func_node.linkage()).view();
+				}
+			}
+		}
 		
 		// Pass linkage from the function node to ensure extern "C" functions aren't mangled
 		return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),

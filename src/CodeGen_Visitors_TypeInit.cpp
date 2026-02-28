@@ -1009,6 +1009,270 @@ public:
 	}
 
 private:
+	// Helper: resolve self-referential struct types in template instantiations.
+	// When a template member function references its own class (e.g., const W& in W<T>::operator+=),
+	// the type_index may point to the unfinalized template base. This resolves it to the
+	// enclosing instantiated struct's type_index by mutating `type` in-place.
+	// Important: only resolves when the unfinalized type's name matches the base name of the
+	// enclosing struct — avoids incorrectly resolving outer class references in nested classes.
+	static void resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
+		if (type.type() == Type::Struct && type.type_index() > 0 && type.type_index() < gTypeInfo.size()) {
+			auto& ti = gTypeInfo[type.type_index()];
+			if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
+				if (enclosing_type_index < gTypeInfo.size()) {
+					// Verify this is actually a self-reference by checking that the unfinalized
+					// type's name matches the base name of the enclosing struct.
+					// For template instantiations: W (unfinalized) matches W$hash (enclosing)
+					// For nested classes: Outer (unfinalized) does NOT match Outer::Inner (enclosing)
+					auto unfinalized_name = StringTable::getStringView(ti.name());
+					auto enclosing_name = StringTable::getStringView(gTypeInfo[enclosing_type_index].name());
+					
+					// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
+					// Template hash: "Name$hash" -> "Name"
+					// Nested class: "Outer::Inner" -> "Inner"
+					auto base_name = enclosing_name;
+					auto last_scope = base_name.rfind("::");
+					if (last_scope != std::string_view::npos) {
+						base_name = base_name.substr(last_scope + 2);
+					}
+					auto dollar_pos = base_name.find('$');
+					if (dollar_pos != std::string_view::npos) {
+						base_name = base_name.substr(0, dollar_pos);
+					}
+					
+					if (unfinalized_name == base_name) {
+						type.set_type_index(enclosing_type_index);
+					}
+				}
+			}
+		}
+	}
+
+	// Helper: generate a member function call for user-defined operator++/-- overloads on structs.
+	// Returns the IR operands {result_type, result_size, ret_var, result_type_index} on success,
+	// or std::nullopt if no overload was found.
+	std::optional<std::vector<IrOperand>> generateUnaryIncDecOverloadCall(
+		std::string_view op_name,  // "++" or "--"
+		Type operandType,
+		const std::vector<IrOperand>& operandIrOperands,
+		bool is_prefix
+	) {
+		if (operandType != Type::Struct || operandIrOperands.size() < 4)
+			return std::nullopt;
+
+		TypeIndex operand_type_index = 0;
+		if (std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
+			operand_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operandIrOperands[3]));
+		}
+		if (operand_type_index == 0)
+			return std::nullopt;
+
+		// For ++/--, we need to distinguish prefix (0 params) from postfix (1 param: dummy int).
+		// findUnaryOperatorOverload returns the first match; scan all member functions to pick
+		// the overload whose parameter count matches the call form.
+		size_t expected_param_count = is_prefix ? 0 : 1;
+		const StructMemberFunction* matched_func = nullptr;
+		const StructMemberFunction* fallback_func = nullptr;
+		if (operand_type_index < gTypeInfo.size()) {
+			const StructTypeInfo* struct_info = gTypeInfo[operand_type_index].getStructInfo();
+			if (struct_info) {
+				for (const auto& mf : struct_info->member_functions) {
+					if (mf.is_operator_overload && mf.operator_symbol == op_name) {
+						const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+						if (fd.parameter_nodes().size() == expected_param_count) {
+							matched_func = &mf;
+							break;
+						}
+						if (!fallback_func) fallback_func = &mf;
+					}
+				}
+			}
+		}
+		// Fallback: if no exact arity match, use any operator++ / operator-- overload.
+		// This handles the common case where only one form (prefix or postfix) is defined.
+		if (!matched_func) matched_func = fallback_func;
+		if (!matched_func)
+			return std::nullopt;
+
+		const StructMemberFunction& member_func = *matched_func;
+		const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+		std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index].name());
+		TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		resolveSelfReferentialType(return_type, operand_type_index);
+
+		std::vector<TypeSpecifierNode> param_types;
+		// Use the matched function's actual parameter count for mangling, not the call form.
+		// When the fallback path is taken (e.g., only prefix defined but postfix called),
+		// we must mangle to match the definition, not the call site.
+		const auto& actual_params = func_decl.parameter_nodes();
+		if (actual_params.size() == 1 && actual_params[0].is<DeclarationNode>()) {
+			// Postfix overload has a dummy int parameter
+			TypeSpecifierNode int_type(Type::Int, TypeQualifier::None, 32, Token());
+			param_types.push_back(int_type);
+		}
+		std::vector<std::string_view> empty_namespace;
+		auto op_func_name = StringBuilder().append("operator").append(op_name).commit();
+		auto mangled_name = NameMangling::generateMangledName(
+			op_func_name, return_type, param_types, false,
+			struct_name, empty_namespace, Linkage::CPlusPlus
+		);
+
+		TempVar ret_var = var_counter.next();
+		CallOp call_op;
+		call_op.result = ret_var;
+		call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+		call_op.return_type = return_type.type();
+		call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+		if (call_op.return_size_in_bits == 0 && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
+			call_op.return_size_in_bits = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
+		}
+		call_op.return_type_index = return_type.type_index();
+		call_op.is_member_function = true;
+
+		// Detect if returning struct by value (needs hidden return parameter for RVO).
+		// Small structs (≤ ABI threshold) return in registers and need no return_slot.
+		if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64())) {
+			call_op.return_slot = ret_var;
+		}
+
+		// Take address of operand for 'this' pointer
+		TempVar this_addr = var_counter.next();
+		AddressOfOp addr_op;
+		addr_op.result = this_addr;
+		addr_op.operand = toTypedValue(operandIrOperands);
+		addr_op.operand.pointer_depth = 0;
+		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+
+		TypedValue this_arg;
+		this_arg.type = operandType;
+		this_arg.size_in_bits = 64;
+		this_arg.value = this_addr;
+		call_op.args.push_back(this_arg);
+
+		// For postfix operators, pass dummy int argument (value 0)
+		// For postfix operators, pass dummy int argument (value 0)
+		// Use the matched function's actual parameter count (not the call form) to decide,
+		// since the fallback path may match a prefix function for a postfix call or vice versa.
+		if (actual_params.size() == 1) {
+			TypedValue dummy_arg;
+			dummy_arg.type = Type::Int;
+			dummy_arg.size_in_bits = 32;
+			dummy_arg.value = 0ULL;
+			call_op.args.push_back(dummy_arg);
+		}
+
+		int result_size = call_op.return_size_in_bits;
+		TypeIndex result_type_index = call_op.return_type_index;
+		Type result_type = call_op.return_type;
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
+		return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
+	}
+
+	// Helper: generate built-in pointer or integer increment/decrement IR.
+	// Handles pointer arithmetic (add/subtract element_size) and integer pre/post inc/dec.
+	// is_increment: true for ++, false for --
+	std::vector<IrOperand> generateBuiltinIncDec(
+		bool is_increment,
+		bool is_prefix,
+		bool operandHandledAsIdentifier,
+		const UnaryOperatorNode& unaryOperatorNode,
+		const std::vector<IrOperand>& operandIrOperands,
+		Type operandType,
+		TempVar result_var
+	) {
+		// Check if this is a pointer increment/decrement (requires pointer arithmetic)
+		bool is_pointer = false;
+		int element_size = 1;
+		if (operandHandledAsIdentifier && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+				auto symbol = symbol_table.lookup(identifier.name());
+				if (symbol.has_value()) {
+					const TypeSpecifierNode* type_node = nullptr;
+					if (symbol->is<DeclarationNode>()) {
+						type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					} else if (symbol->is<VariableDeclarationNode>()) {
+						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+					}
+					
+					if (type_node && type_node->pointer_depth() > 0) {
+						is_pointer = true;
+						if (type_node->pointer_depth() > 1) {
+							element_size = 8;  // Multi-level pointer: element is a pointer
+						} else {
+							element_size = getSizeInBytes(type_node->type(), type_node->type_index(), type_node->size_in_bits());
+						}
+					}
+				}
+			}
+		}
+		
+		UnaryOp unary_op{
+			.value = toTypedValue(operandIrOperands),
+			.result = result_var
+		};
+		
+		IrOpcode arith_opcode = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
+		
+		if (is_pointer) {
+			// For pointers, use a BinaryOp to add/subtract element_size
+			// Extract the pointer operand value once (used in multiple BinaryOp/AssignmentOp below)
+			IrValue ptr_operand = std::holds_alternative<StringHandle>(operandIrOperands[2])
+				? IrValue(std::get<StringHandle>(operandIrOperands[2])) : IrValue{};
+			
+			if (is_prefix) {
+				BinaryOp bin_op{
+					.lhs = { Type::UnsignedLongLong, 64, ptr_operand },
+					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), Token()));
+				// Store back to the pointer variable
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					AssignmentOp assign_op;
+					assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+					assign_op.lhs = { Type::UnsignedLongLong, 64, ptr_operand };
+					assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+				}
+				return { operandType, 64, result_var, 0ULL };
+			} else {
+				// Postfix: save old value, modify, return old value
+				TempVar old_value = var_counter.next();
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					AssignmentOp save_op;
+					save_op.result = old_value;
+					save_op.lhs = { Type::UnsignedLongLong, 64, old_value };
+					save_op.rhs = toTypedValue(operandIrOperands);
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
+				}
+				BinaryOp bin_op{
+					.lhs = { Type::UnsignedLongLong, 64, ptr_operand },
+					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), Token()));
+				// Store back to the pointer variable
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					AssignmentOp assign_op;
+					assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+					assign_op.lhs = { Type::UnsignedLongLong, 64, ptr_operand };
+					assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+				}
+				return { operandType, 64, old_value, 0ULL };
+			}
+		} else {
+			// Regular integer increment/decrement
+			IrOpcode pre_opcode = is_increment ? IrOpcode::PreIncrement : IrOpcode::PreDecrement;
+			IrOpcode post_opcode = is_increment ? IrOpcode::PostIncrement : IrOpcode::PostDecrement;
+			ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, Token()));
+		}
+		
+		return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };
+	}
+
 	// Helper function to resolve template parameter size from struct name
 	// This is used by both ConstExpr evaluator and IR generation for sizeof(T)
 	// where T is a template parameter in a template class member function

@@ -1,30 +1,171 @@
+// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
+// Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined
+// literals, and conversion operators.
+// On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult.
+std::optional<ParseResult> Parser::parse_operator_name(const Token& operator_keyword_token, std::string_view& operator_name_out) {
+	// Check for operator()
+	if (peek() == "("_tok) {
+		advance(); // consume '('
+		if (peek() != ")"_tok) {
+			return ParseResult::error("Expected ')' after 'operator('", operator_keyword_token);
+		}
+		advance(); // consume ')'
+		static constexpr std::string_view operator_call_name = "operator()";
+		operator_name_out = operator_call_name;
+	}
+	// Check for operator[]
+	else if (peek() == "["_tok) {
+		advance(); // consume '['
+		if (peek() != "]"_tok) {
+			return ParseResult::error("Expected ']' after 'operator['", operator_keyword_token);
+		}
+		advance(); // consume ']'
+		static constexpr std::string_view operator_subscript_name = "operator[]";
+		operator_name_out = operator_subscript_name;
+	}
+	// Check for operator symbols (+, -, =, ==, +=, <<, etc.)
+	else if (!peek().is_eof() && peek_info().type() == Token::Type::Operator) {
+		Token operator_symbol_token = peek_info();
+		std::string_view operator_symbol = operator_symbol_token.value();
+		advance(); // consume operator symbol
+
+		// Build operator name like "operator=" or "operator<<"
+		static const std::unordered_map<std::string_view, std::string_view> operator_names = {
+			{"=", "operator="},
+			{"<=>", "operator<=>"},
+			{"<<", "operator<<"},
+			{">>", "operator>>"},
+			{"+", "operator+"},
+			{"-", "operator-"},
+			{"*", "operator*"},
+			{"/", "operator/"},
+			{"%", "operator%"},
+			{"&", "operator&"},
+			{"|", "operator|"},
+			{"^", "operator^"},
+			{"~", "operator~"},
+			{"!", "operator!"},
+			{"<", "operator<"},
+			{">", "operator>"},
+			{"<=", "operator<="},
+			{">=", "operator>="},
+			{"==", "operator=="},
+			{"!=", "operator!="},
+			{"&&", "operator&&"},
+			{"||", "operator||"},
+			{"++", "operator++"},
+			{"--", "operator--"},
+			{"->", "operator->"},
+			{"->*", "operator->*"},
+			{"[]", "operator[]"},
+			{",", "operator,"},
+			// Compound assignment operators
+			{"+=", "operator+="},
+			{"-=", "operator-="},
+			{"*=", "operator*="},
+			{"/=", "operator/="},
+			{"%=", "operator%="},
+			{"&=", "operator&="},
+			{"|=", "operator|="},
+			{"^=", "operator^="},
+			{"<<=", "operator<<="},
+			{">>=", "operator>>="},
+		};
+
+		auto it = operator_names.find(operator_symbol);
+		if (it != operator_names.end()) {
+			operator_name_out = it->second;
+		} else {
+			return ParseResult::error("Unsupported operator overload: operator" + std::string(operator_symbol), operator_symbol_token);
+		}
+	}
+	// Check for operator new, delete, new[], delete[]
+	else if (peek().is_keyword() &&
+			 (peek() == "new"_tok || peek() == "delete"_tok)) {
+		std::string_view keyword_value = peek_info().value();
+		advance(); // consume 'new' or 'delete'
+
+		// Check for array version: new[] or delete[]
+		bool is_array = false;
+		if (peek() == "["_tok) {
+			advance(); // consume '['
+			if (peek() == "]"_tok) {
+				advance(); // consume ']'
+				is_array = true;
+			} else {
+				return ParseResult::error("Expected ']' after 'operator " + std::string(keyword_value) + "['", operator_keyword_token);
+			}
+		}
+
+		// Build operator name
+		if (keyword_value == "new") {
+			static constexpr std::string_view op_new = "operator new";
+			static constexpr std::string_view op_new_array = "operator new[]";
+			operator_name_out = is_array ? op_new_array : op_new;
+		} else {
+			static constexpr std::string_view op_delete = "operator delete";
+			static constexpr std::string_view op_delete_array = "operator delete[]";
+			operator_name_out = is_array ? op_delete_array : op_delete;
+		}
+	}
+	// Check for user-defined literal operator: operator""suffix or operator "" suffix
+	else if (peek().is_string_literal()) {
+		Token string_token = peek_info();
+		advance(); // consume ""
+
+		// Parse the suffix identifier
+		if (peek().is_identifier()) {
+			std::string_view suffix = peek_info().value();
+			advance(); // consume suffix
+
+			StringBuilder op_name_builder;
+			operator_name_out = op_name_builder.append("operator\"\"").append(suffix).commit();
+		} else {
+			return ParseResult::error("Expected identifier suffix after operator\"\"", string_token);
+		}
+	}
+	else {
+		// Try to parse conversion operator: operator type()
+		auto type_result = parse_type_specifier();
+		if (type_result.is_error()) {
+			return type_result;
+		}
+		if (!type_result.node().has_value()) {
+			return ParseResult::error("Expected type specifier after 'operator' keyword", operator_keyword_token);
+		}
+
+		// Now expect "()"
+		if (peek() != "("_tok) {
+			return ParseResult::error("Expected '(' after conversion operator type", operator_keyword_token);
+		}
+		advance(); // consume '('
+
+		if (peek() != ")"_tok) {
+			return ParseResult::error("Expected ')' after '(' in conversion operator", operator_keyword_token);
+		}
+		advance(); // consume ')'
+
+		// Create operator name like "operator int" using StringBuilder
+		const TypeSpecifierNode& conversion_type_spec = type_result.node()->as<TypeSpecifierNode>();
+		StringBuilder op_name_builder;
+		op_name_builder.append("operator ");
+		op_name_builder.append(conversion_type_spec.getReadableString());
+		operator_name_out = op_name_builder.commit();
+	}
+
+	return std::nullopt; // success
+}
+
 // Shared helper: parse a qualified operator call after the 'operator' keyword has been
 // consumed.  Builds the operator name (e.g. "operator=", "operator()"), parses arguments
 // if followed by '(', and returns a FunctionCallNode.  `context_token` is used for
 // location information in the generated AST nodes.
 ParseResult Parser::parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces) {
-	// Build operator name (e.g., operator=, operator<<, operator())
-	if (!peek().is_operator() && peek() != "("_tok && peek() != "["_tok) {
-		return ParseResult::error("Expected operator symbol after 'operator'", peek_info());
+	// Build operator name using the shared helper
+	std::string_view op_name;
+	if (auto err = parse_operator_name(context_token, op_name)) {
+		return std::move(*err);
 	}
-	StringBuilder op_name_builder;
-	op_name_builder.append("operator");
-	const auto first_op_part = peek_info();
-	op_name_builder.append(first_op_part.value());
-	advance(); // consume operator symbol
-	// Handle () and [] pairs — validate matching brackets and report errors
-	if (first_op_part.value() == "(") {
-		if (!consume(")"_tok)) {
-			return ParseResult::error("Expected ')' to match '(' in operator name", peek_info());
-		}
-		op_name_builder.append(")");
-	} else if (first_op_part.value() == "[") {
-		if (!consume("]"_tok)) {
-			return ParseResult::error("Expected ']' to match '[' in operator name", peek_info());
-		}
-		op_name_builder.append("]");
-	}
-	std::string_view op_name = op_name_builder.commit();
 	Token op_token(Token::Type::Identifier, op_name,
 		context_token.line(), context_token.column(), context_token.file_index());
 	// Resolve namespace qualification

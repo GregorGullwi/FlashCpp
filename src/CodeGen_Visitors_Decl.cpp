@@ -98,6 +98,7 @@
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					FLASH_LOG(Codegen, Debug, "  param[", i, "]: name='", param_decl.identifier_token().value()
 							  , "' type=", (int)param_type.type() 
+							  , " type_index=", param_type.type_index()
 							  , " size=", (int)param_type.size_in_bits()
 							  , " ptr_depth=", param_type.pointer_depth()
 							  , " base_cv=", (int)param_type.cv_qualifier()
@@ -253,6 +254,13 @@
 			FunctionParam param_info;
 			param_info.type = param_type.type();
 			param_info.size_in_bits = static_cast<int>(param_type.size_in_bits());
+			// For struct types, TypeSpecifierNode.size_in_bits() may be 0 (e.g. template-instantiated
+			// struct parameters) — resolve from gTypeInfo using the type_index, same as return types.
+			if (param_info.size_in_bits == 0 && param_type.type() == Type::Struct && param_type.type_index() > 0) {
+				if (param_type.type_index() < gTypeInfo.size() && gTypeInfo[param_type.type_index()].struct_info_) {
+					param_info.size_in_bits = static_cast<int>(gTypeInfo[param_type.type_index()].struct_info_->total_size * 8);
+				}
+			}
 			
 			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());

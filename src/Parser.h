@@ -921,6 +921,10 @@ public:  // Public methods for template instantiation
         ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
         ParseResult parse_unary_expression(ExpressionContext context);
         ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
+        // Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
+        // Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined literals, and conversion operators.
+        // On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult with the error.
+        std::optional<ParseResult> parse_operator_name(const Token& operator_keyword_token, std::string_view& operator_name_out);
 
         // C++ cast operators helper
         enum class CppCastKind {
