@@ -2,7 +2,7 @@
 // consumed.  Builds the operator name (e.g. "operator=", "operator()"), parses arguments
 // if followed by '(', and returns a FunctionCallNode.  `context_token` is used for
 // location information in the generated AST nodes.
-ParseResult Parser::parse_qualified_operator_call(const Token& context_token) {
+ParseResult Parser::parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces) {
 	// Build operator name (e.g., operator=, operator<<, operator())
 	if (!peek().is_operator() && peek() != "("_tok && peek() != "["_tok) {
 		return ParseResult::error("Expected operator symbol after 'operator'", peek_info());
@@ -12,12 +12,25 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token) {
 	const auto first_op_part = peek_info();
 	op_name_builder.append(first_op_part.value());
 	advance(); // consume operator symbol
-	// Handle () and [] pairs — validate matching brackets
-	if ((first_op_part.value() == "(" && peek() == ")"_tok) || (first_op_part.value() == "[" && peek() == "]"_tok)) {
-		op_name_builder.append(peek_info().value());
-		advance();
+	// Handle () and [] pairs — validate matching brackets and report errors
+	if (first_op_part.value() == "(") {
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' to match '(' in operator name", peek_info());
+		}
+		op_name_builder.append(")");
+	} else if (first_op_part.value() == "[") {
+		if (!consume("]"_tok)) {
+			return ParseResult::error("Expected ']' to match '[' in operator name", peek_info());
+		}
+		op_name_builder.append("]");
 	}
 	std::string_view op_name = op_name_builder.commit();
+	Token op_token(Token::Type::Identifier, op_name,
+		context_token.line(), context_token.column(), context_token.file_index());
+	// Resolve namespace qualification
+	NamespaceHandle ns_handle = namespaces.empty()
+		? NamespaceRegistry::GLOBAL_NAMESPACE
+		: gSymbolTable.resolve_namespace_handle(namespaces);
 	// Check for function call
 	if (peek() == "("_tok) {
 		advance(); // consume '('
@@ -32,17 +45,21 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token) {
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after operator call arguments", current_token_);
 		}
-		Token op_token(Token::Type::Identifier, op_name,
-			context_token.line(), context_token.column(), context_token.file_index());
 		auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, op_token);
 		auto& op_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
-		auto result = emplace_node<ExpressionNode>(
-			FunctionCallNode(op_decl, std::move(args_result.args), op_token));
+		auto func_call = FunctionCallNode(op_decl, std::move(args_result.args), op_token);
+		if (!namespaces.empty()) {
+			std::string_view qualified_name = buildQualifiedNameFromHandle(ns_handle, op_name);
+			func_call.set_qualified_name(qualified_name);
+		}
+		auto result = emplace_node<ExpressionNode>(std::move(func_call));
 		return ParseResult::success(result);
 	}
-	// Not a call — return the operator name as an identifier
-	Token op_token(Token::Type::Identifier, op_name,
-		context_token.line(), context_token.column(), context_token.file_index());
+	// Not a call — return the operator name as a (qualified) identifier
+	if (!namespaces.empty()) {
+		auto result = emplace_node<QualifiedIdentifierNode>(ns_handle, op_token);
+		return ParseResult::success(result);
+	}
 	auto result = emplace_node<ExpressionNode>(IdentifierNode(op_token));
 	return ParseResult::success(result);
 }
@@ -970,7 +987,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Handle qualified operator call: Type::operator=()
 				if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "operator") {
 					advance(); // consume 'operator' — now peek() is the operator symbol
-					return parse_qualified_operator_call(final_identifier);
+					return parse_qualified_operator_call(final_identifier, namespaces);
 				}
 
 				// Get next identifier
@@ -2012,7 +2029,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Handle qualified operator call: Type::operator=()
 				if (peek() == "operator"_tok) {
 					advance(); // consume 'operator'
-					return parse_qualified_operator_call(final_identifier);
+					return parse_qualified_operator_call(final_identifier, namespaces);
 				}
 
 				// Get next identifier
