@@ -1101,8 +1101,12 @@ private:
 		resolveSelfReferentialType(return_type, operand_type_index);
 
 		std::vector<TypeSpecifierNode> param_types;
-		if (!is_prefix) {
-			// Postfix: add dummy int parameter for mangling
+		// Use the matched function's actual parameter count for mangling, not the call form.
+		// When the fallback path is taken (e.g., only prefix defined but postfix called),
+		// we must mangle to match the definition, not the call site.
+		const auto& actual_params = func_decl.parameter_nodes();
+		if (actual_params.size() == 1 && actual_params[0].is<DeclarationNode>()) {
+			// Postfix overload has a dummy int parameter
 			TypeSpecifierNode int_type(Type::Int, TypeQualifier::None, 32, Token());
 			param_types.push_back(int_type);
 		}
