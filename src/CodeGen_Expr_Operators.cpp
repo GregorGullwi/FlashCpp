@@ -1523,14 +1523,24 @@
 			if (struct_it != gTypesByName.end()) {
 				TypeIndex struct_type_index = struct_it->second->type_index_;
 				bool needs_resolution = false;
-				for (const auto& param : func_node.parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-						if (pt.type() == Type::Struct && pt.type_index() > 0 && pt.type_index() < gTypeInfo.size()) {
-							auto& ti = gTypeInfo[pt.type_index()];
-							if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
-								needs_resolution = true;
-								break;
+				bool needs_resolution = false;
+				// Check return type for self-referential struct
+				if (return_type.type() == Type::Struct && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size()) {
+					auto& rti = gTypeInfo[return_type.type_index()];
+					if (!rti.struct_info_ || rti.struct_info_->total_size == 0) {
+						needs_resolution = true;
+					}
+				}
+				if (!needs_resolution) {
+					for (const auto& param : func_node.parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+							if (pt.type() == Type::Struct && pt.type_index() > 0 && pt.type_index() < gTypeInfo.size()) {
+								auto& ti = gTypeInfo[pt.type_index()];
+								if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
+									needs_resolution = true;
+									break;
+								}
 							}
 						}
 					}
