@@ -1444,9 +1444,10 @@ ParseResult Parser::parse_struct_declaration()
 			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 			// Register static member in struct info
-			// Calculate size and alignment for the static member
-			size_t static_member_size = get_type_size_bits(type_spec.type()) / 8;
-			size_t static_member_alignment = get_type_alignment(type_spec.type(), static_member_size);
+			// Calculate size and alignment for the static member (handles pointers/references correctly)
+			auto [static_member_size, static_member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+			ReferenceQualifier ref_qual = type_spec.reference_qualifier();
+			int ptr_depth = static_cast<int>(type_spec.pointer_depth());
 
 			// Add to struct's static members
 			StringHandle static_member_name_handle = decl.identifier_token().handle();
@@ -1458,7 +1459,9 @@ ParseResult Parser::parse_struct_declaration()
 				static_member_alignment,
 				current_access,
 				init_expr_opt,  // initializer
-				is_const
+				is_const,
+				ref_qual,
+				ptr_depth
 			);
 
 			continue;

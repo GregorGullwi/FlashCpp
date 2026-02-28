@@ -464,11 +464,18 @@ struct StructStaticMember {
 	AccessSpecifier access; // Access level (public/protected/private)
 	std::optional<ASTNode> initializer;  // Optional initializer expression
 	bool is_const;          // True if declared with const qualifier
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
+	int pointer_depth = 0;  // Pointer indirection level (e.g., int* = 1, int** = 2)
+
+	// Convenience helpers for common checks
+	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 
 	StructStaticMember(StringHandle n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
-	                   std::optional<ASTNode> init = std::nullopt, bool is_const_val = false)
+	                   std::optional<ASTNode> init = std::nullopt, bool is_const_val = false,
+	                   ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0)
 		: name(n), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
-		  initializer(init), is_const(is_const_val) {}
+		  initializer(init), is_const(is_const_val), reference_qualifier(ref_qual), pointer_depth(ptr_depth) {}
 	
 	StringHandle getName() const {
 		return name;

@@ -601,11 +601,15 @@ struct StaticMemberDecl {
 	AccessSpecifier access;       // Access specifier (public/private/protected)
 	std::optional<ASTNode> initializer;  // AST node for initializer expression (e.g., sizeof(T)), used for template parameter substitution during instantiation
 	bool is_const;                // Whether member is const
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
+	int pointer_depth = 0;        // Pointer indirection level (e.g., int* = 1, int** = 2)
 
 	StaticMemberDecl(StringHandle name_, Type type_, TypeIndex type_index_, size_t size_, size_t alignment_,
-	                 AccessSpecifier access_, std::optional<ASTNode> initializer_, bool is_const_)
+	                 AccessSpecifier access_, std::optional<ASTNode> initializer_, bool is_const_,
+	                 ReferenceQualifier ref_qual_ = ReferenceQualifier::None, int ptr_depth_ = 0)
 		: name(name_), type(type_), type_index(type_index_), size(size_), alignment(alignment_),
-		  access(access_), initializer(initializer_), is_const(is_const_) {}
+		  access(access_), initializer(initializer_), is_const(is_const_),
+		  reference_qualifier(ref_qual_), pointer_depth(ptr_depth_) {}
 };
 
 class StructDeclarationNode {
@@ -718,8 +722,9 @@ public:
 
 	// Static member support (for template/partial specialization AST storage)
 	void add_static_member(StringHandle name, Type type, TypeIndex type_index, size_t size, size_t alignment,
-	                       AccessSpecifier access, std::optional<ASTNode> initializer, bool is_const) {
-		static_members_.emplace_back(name, type, type_index, size, alignment, access, initializer, is_const);
+	                       AccessSpecifier access, std::optional<ASTNode> initializer, bool is_const,
+	                       ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
+		static_members_.emplace_back(name, type, type_index, size, alignment, access, initializer, is_const, ref_qual, ptr_depth);
 	}
 
 	const std::vector<StaticMemberDecl>& static_members() const {

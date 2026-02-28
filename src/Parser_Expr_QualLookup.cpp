@@ -1445,6 +1445,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						if (static_member->is_const) {
 							member_type.set_cv_qualifier(CVQualifier::Const);
 						}
+						if (static_member->pointer_depth > 0) {
+							member_type.add_pointer_levels(static_member->pointer_depth);
+						}
+						if (static_member->reference_qualifier != ReferenceQualifier::None) {
+							member_type.set_reference_qualifier(static_member->reference_qualifier);
+						}
 						return member_type;
 					}
 				}
