@@ -918,6 +918,50 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 				advance(); // consume ::
 
+				// Handle qualified operator call: Type::operator=()
+				if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "operator") {
+					advance(); // consume 'operator'
+					// Build operator name (e.g., operator=, operator<<)
+					if (current_token_.type() == Token::Type::Operator ||
+					    current_token_.value() == "(" || current_token_.value() == "[") {
+						StringBuilder op_name_builder;
+						op_name_builder.append("operator");
+						op_name_builder.append(current_token_.value());
+						advance(); // consume operator symbol
+						// Handle () and [] pairs
+						if (current_token_.value() == ")" || current_token_.value() == "]") {
+							op_name_builder.append(current_token_.value());
+							advance();
+						}
+						std::string_view op_name = op_name_builder.commit();
+						// Parse function call arguments
+						if (current_token_.value() == "(") {
+							advance(); // consume '('
+							auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+								.handle_pack_expansion = true,
+								.collect_types = true,
+								.expand_simple_packs = false
+							});
+							if (!args_result.success) {
+								return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+							}
+							if (!consume(")"_tok)) {
+								return ParseResult::error("Expected ')' after operator call arguments", current_token_);
+							}
+							// Create a simple expression node for the qualified operator call
+							// For now, just skip it (the function body will be skipped anyway for template bodies)
+							Token op_token(Token::Type::Identifier, op_name,
+								final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+							auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, op_token);
+							auto& op_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
+							result = emplace_node<ExpressionNode>(
+								FunctionCallNode(op_decl, std::move(args_result.args), op_token));
+							return ParseResult::success(*result);
+						}
+					}
+					return ParseResult::error("Expected operator symbol after 'operator'", current_token_);
+				}
+
 				// Get next identifier
 				if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 					return ParseResult::error("Expected identifier after '::'", current_token_);

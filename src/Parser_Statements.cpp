@@ -201,6 +201,10 @@ ParseResult Parser::parse_statement_or_declaration()
 					advance();  // consume '::'
 					if (peek().is_identifier()) {
 						advance();  // consume next identifier
+					} else if (peek() == "operator"_tok) {
+						// Type::operator=(...) - qualified operator call, parse as expression
+						restore_token_position(check_pos);
+						return parse_expression_statement();
 					} else {
 						break;
 					}
@@ -234,10 +238,14 @@ ParseResult Parser::parse_statement_or_declaration()
 				if (peek() == "::"_tok) {
 					SaveHandle scope_check = save_token_position();
 					advance(); // consume '::'
-					if (peek().is_identifier()) {
-						advance(); // consume member name
+					if (peek().is_identifier() || peek() == "operator"_tok) {
+						advance(); // consume member name or 'operator' keyword
+						// For operator calls, also consume the operator symbol
+						if (peek_info().type() == Token::Type::Operator || peek() == "("_tok || peek() == "["_tok) {
+							advance(); // consume operator symbol (=, <<, etc.)
+						}
 						if (peek() == "("_tok) {
-							// This is Type<T>::member(...) - a function call expression
+							// This is Type<T>::member(...) or Type::operator=(...) - a function call expression
 							restore_token_position(scope_check);
 							restore_token_position(check_pos);
 							return parse_expression_statement();
