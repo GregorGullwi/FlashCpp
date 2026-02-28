@@ -1705,6 +1705,14 @@ ParseResult Parser::parse_template_declaration() {
 								
 								std::string_view init_name = init_name_token.value();
 								
+								// Handle namespace-qualified base class names: std::optional<_Tp>{...}
+								while (peek() == "::"_tok) {
+									advance(); // consume '::'
+									if (peek().is_identifier() || peek().is_keyword()) {
+										advance(); // consume the qualified name part
+									}
+								}
+								
 								// Check for template arguments: Tuple<Rest...>(...)
 								if (peek() == "<"_tok) {
 									// Parse and skip template arguments - they're part of the base class name
@@ -2369,6 +2377,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Finalize the struct layout with base classes
 			bool finalize_success;
+			struct_info_ptr->has_deferred_base_classes = !struct_ref.deferred_template_base_classes().empty();
 			if (!struct_ref.base_classes().empty()) {
 				finalize_success = struct_info_ptr->finalizeWithBases();
 			} else {
@@ -3083,6 +3092,14 @@ ParseResult Parser::parse_template_declaration() {
 								
 								std::string_view init_name = init_name_token.value();
 								
+								// Handle namespace-qualified base class names: std::optional<_Tp>{...}
+								while (peek() == "::"_tok) {
+									advance(); // consume '::'
+									if (peek().is_identifier() || peek().is_keyword()) {
+										advance(); // consume the qualified name part
+									}
+								}
+								
 								// Check for template arguments: Tuple<Rest...>(...)
 								if (peek() == "<"_tok) {
 									// Parse and skip template arguments - they're part of the base class name
@@ -3735,6 +3752,7 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Finalize the struct layout with base classes
 			bool finalize_success;
+			struct_info->has_deferred_base_classes = !struct_ref.deferred_template_base_classes().empty();
 			if (!struct_ref.base_classes().empty()) {
 				finalize_success = struct_info->finalizeWithBases();
 			} else {

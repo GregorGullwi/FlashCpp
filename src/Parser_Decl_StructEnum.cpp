@@ -1544,8 +1544,8 @@ ParseResult Parser::parse_struct_declaration()
 						
 						// At top level, check for end of constraint
 						if (paren_depth == 0 && angle_depth == 0) {
-							// Initializer list, body, or declaration end
-							if (tok_val == ":" || tok_val == "{" || tok_val == ";") {
+							// Initializer list, body, declaration end, or = default/delete
+							if (tok_val == ":" || tok_val == "{" || tok_val == ";" || tok_val == "=") {
 								break;
 							}
 						}
@@ -1573,8 +1573,16 @@ ParseResult Parser::parse_struct_declaration()
 					while (!peek().is_eof() &&
 					       peek() != "{"_tok &&
 					       peek() != ";"_tok) {
-						// Skip initializer name
+						// Skip initializer name (may be namespace-qualified: std::optional<_Tp>{...})
 						advance();
+						
+						// Handle namespace-qualified base class names: ns::Class or std::optional
+						while (peek() == "::"_tok) {
+							advance(); // consume '::'
+							if (peek().is_identifier() || peek().is_keyword()) {
+								advance(); // consume the qualified name part
+							}
+						}
 						
 						// Skip template arguments if present: Base<T>(...)
 						if (peek() == "<"_tok) {
@@ -3260,6 +3268,7 @@ ParseResult Parser::parse_struct_declaration()
 	// Finalize struct layout (add padding)
 	// Use finalizeWithBases() if there are base classes, otherwise use finalize()
 	bool finalize_success;
+	struct_info->has_deferred_base_classes = !struct_ref.deferred_template_base_classes().empty();
 	if (!struct_info->base_classes.empty()) {
 		finalize_success = struct_info->finalizeWithBases();
 	} else {
