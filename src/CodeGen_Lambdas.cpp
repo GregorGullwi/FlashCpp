@@ -1014,6 +1014,22 @@
 		return result_var;
 	}
 
+	// ============================================================================
+	// Return IR helper
+	// ============================================================================
+	void emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token) {
+		ReturnOp ret_op;
+		ret_op.return_value = return_value;
+		ret_op.return_type = return_type;
+		ret_op.return_size = return_size;
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
+	}
+
+	void emitVoidReturn(const Token& token) {
+		ReturnOp ret_op;
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
+	}
+
 	Ir ir_;
 	TempVar var_counter{ 0 };
 	SymbolTable symbol_table;

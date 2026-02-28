@@ -71,17 +71,17 @@
 		static size_t if_counter = 0;
 		size_t current_if = if_counter++;
 	
-	// Use a single StringBuilder and commit each label before starting the next
-	// to avoid buffer overwrites in the shared allocator
-	StringBuilder label_sb;
-	label_sb.append("if_then_").append(current_if);
-	std::string_view then_label = label_sb.commit();
+		// Use a single StringBuilder and commit each label before starting the next
+		// to avoid buffer overwrites in the shared allocator
+		StringBuilder label_sb;
+		label_sb.append("if_then_").append(current_if);
+		std::string_view then_label = label_sb.commit();
 	
-	label_sb.append("if_else_").append(current_if);
-	std::string_view else_label = label_sb.commit();
+		label_sb.append("if_else_").append(current_if);
+		std::string_view else_label = label_sb.commit();
 	
-	label_sb.append("if_end_").append(current_if);
-	std::string_view end_label = label_sb.commit();
+		label_sb.append("if_end_").append(current_if);
+		std::string_view end_label = label_sb.commit();
 
 		// Handle C++20 if-with-initializer
 		if (node.has_init()) {

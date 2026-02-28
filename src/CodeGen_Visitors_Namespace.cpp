@@ -149,22 +149,7 @@
 								store_op.offset = static_cast<int>(member.offset);
 								
 								// Create TypedValue from operands
-								Type value_type = std::get<Type>(init_operands[0]);
-								int value_size = std::get<int>(init_operands[1]);
-								IrValue ir_value;
-								
-								// Extract value from operands
-								if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-									ir_value = std::get<unsigned long long>(init_operands[2]);
-								} else if (std::holds_alternative<TempVar>(init_operands[2])) {
-									ir_value = std::get<TempVar>(init_operands[2]);
-								} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-									ir_value = std::get<StringHandle>(init_operands[2]);
-								} else if (std::holds_alternative<double>(init_operands[2])) {
-									ir_value = std::get<double>(init_operands[2]);
-								}
-								
-								store_op.value = { value_type, value_size, ir_value };
+								store_op.value = toTypedValue(init_operands);
 								store_op.is_reference = false;
 								
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), node.return_token()));
@@ -177,11 +162,7 @@
 				emitSehFinallyCallsBeforeReturn(node.return_token());
 
 				// Now return the temporary variable
-				ReturnOp ret_op;
-				ret_op.return_value = temp_var;
-				ret_op.return_type = return_type;
-				ret_op.return_size = return_size;
-				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
+				emitReturn(temp_var, return_type, return_size, node.return_token());
 				return;
 			}
 			
@@ -204,11 +185,9 @@
 							const auto& ident = std::get<IdentifierNode>(operand_expr);
 							if (ident.name() == "this") {
 								emitSehFinallyCallsBeforeReturn(node.return_token());
-								ReturnOp ret_op;
-								ret_op.return_value = StringTable::getOrInternStringHandle("this");
-								ret_op.return_type = current_function_return_type_;
-								ret_op.return_size = current_function_return_size_;
-								ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
+								emitReturn(StringTable::getOrInternStringHandle("this"),
+								           current_function_return_type_, current_function_return_size_,
+								           node.return_token());
 								return;
 							}
 						}
@@ -234,8 +213,7 @@
 				// (the expression was already evaluated for its side effects)
 				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
 					emitSehFinallyCallsBeforeReturn(node.return_token());
-					ReturnOp ret_op;  // No return value for void
-					ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
+					emitVoidReturn(node.return_token());
 					return;
 				}
 			}
@@ -402,21 +380,19 @@
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
 
-			// Create ReturnOp with the return value
-			ReturnOp ret_op;
-
 			// Check if operands has at least 3 elements before accessing
 			if (operands.size() < 3) {
 				FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed or returned insufficient operands");
 				return;
 			}
 			
-			// Extract IrValue from operand[2] - it could be various types
+			// Extract IrValue from operand[2]
+			IrValue return_value;
 			if (std::holds_alternative<unsigned long long>(operands[2])) {
-				ret_op.return_value = std::get<unsigned long long>(operands[2]);
+				return_value = std::get<unsigned long long>(operands[2]);
 			} else if (std::holds_alternative<TempVar>(operands[2])) {
 				TempVar return_temp = std::get<TempVar>(operands[2]);
-				ret_op.return_value = return_temp;
+				return_value = return_temp;
 				
 				// C++17 mandatory copy elision: Check if this is a prvalue (e.g., constructor call result)
 				// being returned - prvalues used to initialize objects of the same type must have copies elided
@@ -424,28 +400,22 @@
 					FLASH_LOG_FORMAT(Codegen, Debug,
 						"RVO opportunity detected: returning prvalue {} (constructor call result)",
 						return_temp.name());
-					// Note: Actual copy elision would require hidden return parameter support
-					// For now, we just log the opportunity
 				}
 				
 				// Mark the temp as a return value for potential NRVO analysis
 				markTempVarAsReturnValue(return_temp);
 			} else if (std::holds_alternative<StringHandle>(operands[2])) {
-				ret_op.return_value = std::get<StringHandle>(operands[2]);
+				return_value = std::get<StringHandle>(operands[2]);
 			} else if (std::holds_alternative<double>(operands[2])) {
-				ret_op.return_value = std::get<double>(operands[2]);
+				return_value = std::get<double>(operands[2]);
 			}
 			// Use the function's return type, not the expression type
-			// This is important when returning references - the function's return type is what matters
-			ret_op.return_type = current_function_return_type_;
-			ret_op.return_size = current_function_return_size_;
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
+			emitReturn(return_value, current_function_return_type_, current_function_return_size_,
+			           node.return_token());
 		}
 		else {
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
-			// For void returns, we don't need any operands
-			ReturnOp ret_op;  // No return value for void
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
+			emitVoidReturn(node.return_token());
 		}
 	}

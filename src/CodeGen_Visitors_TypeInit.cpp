@@ -1003,10 +1003,7 @@ public:
 				}
 				
 				// Emit return
-				ReturnOp ret_op;
-				// ReturnOp fields: return_value (optional), return_type (optional), return_size
-				// For void constructor, leave return_value as nullopt
-				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), Token()));
+				emitVoidReturn(Token());
 			}
 		}
 	}

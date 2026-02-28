@@ -469,11 +469,7 @@
 								// Label: diff - return the inner <=> result
 								ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = diff_label}, func_decl.identifier_token()));
 								{
-									ReturnOp ret_inner;
-									ret_inner.return_value = IrValue{call_result};
-									ret_inner.return_type = Type::Int;
-									ret_inner.return_size = 32;
-									ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_inner), func_decl.identifier_token()));
+									emitReturn(IrValue{call_result}, Type::Int, 32, func_decl.identifier_token());
 								}
 
 								// Label: next - continue to next member
@@ -548,21 +544,13 @@
 						// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = lt_label}, func_decl.identifier_token()));
 						{
-							ReturnOp ret_neg;
-							ret_neg.return_value = IrValue{0xFFFFFFFFULL};
-							ret_neg.return_type = Type::Int;
-							ret_neg.return_size = 32;
-							ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_neg), func_decl.identifier_token()));
+							emitReturn(IrValue{0xFFFFFFFFULL}, Type::Int, 32, func_decl.identifier_token());
 						}
 
 						// Label: gt - return 1
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = gt_label}, func_decl.identifier_token()));
 						{
-							ReturnOp ret_pos;
-							ret_pos.return_value = IrValue{1ULL};
-							ret_pos.return_type = Type::Int;
-							ret_pos.return_size = 32;
-							ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_pos), func_decl.identifier_token()));
+							emitReturn(IrValue{1ULL}, Type::Int, 32, func_decl.identifier_token());
 						}
 
 						// Label: next - continue to next member
@@ -572,11 +560,7 @@
 			}
 
 			// All members equal - return 0
-			ReturnOp ret_zero;
-			ret_zero.return_value = IrValue{0ULL};
-			ret_zero.return_type = Type::Int;
-			ret_zero.return_size = 32;
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_zero), func_decl.identifier_token()));
+			emitReturn(IrValue{0ULL}, Type::Int, 32, func_decl.identifier_token());
 			symbol_table.exit_scope();
 			return;
 		}
@@ -688,18 +672,10 @@
 				ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
 
 				// Return the boolean result
-				ReturnOp ret_op;
-				ret_op.return_value = IrValue{cmp_result};
-				ret_op.return_type = Type::Bool;
-				ret_op.return_size = 8;
-				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+				emitReturn(IrValue{cmp_result}, Type::Bool, 8, func_decl.identifier_token());
 			} else {
 				// Fallback: operator<=> not found, return false for all synthesized operators
-				ReturnOp ret_op;
-				ret_op.return_value = IrValue{0ULL};
-				ret_op.return_type = Type::Bool;
-				ret_op.return_size = 8;
-				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+				emitReturn(IrValue{0ULL}, Type::Bool, 8, func_decl.identifier_token());
 			}
 
 			symbol_table.exit_scope();
@@ -835,11 +811,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
 
 						// Return the dereferenced value
-						ReturnOp ret_op;
-						ret_op.return_value = this_deref;
-						ret_op.return_type = Type::Struct;
-						ret_op.return_size = static_cast<int>(struct_info->total_size * 8);
-						ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+						emitReturn(this_deref, Type::Struct, static_cast<int>(struct_info->total_size * 8), func_decl.identifier_token());
 					}
 				}
 			}
@@ -870,16 +842,11 @@
 		if (!ends_with_return) {
 			// Add implicit return for void functions
 			if (ret_type.type() == Type::Void) {
-				ReturnOp ret_op;  // No return value for void
-				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+				emitVoidReturn(func_decl.identifier_token());
 			}
 			// Special case: main() implicitly returns 0 if no return statement
 			else if (func_decl.identifier_token().value() == "main") {
-				ReturnOp ret_op;
-				ret_op.return_value = 0ULL;  // Implicit return 0
-				ret_op.return_type = Type::Int;
-				ret_op.return_size = 32;
-				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+				emitReturn(0ULL, Type::Int, 32, func_decl.identifier_token());
 			}
 			// For other non-void functions, this is an error (missing return statement)
 			// TODO: This should be a compile error, but for now we'll allow it
@@ -1354,8 +1321,7 @@
 			
 			// Delegating constructors don't execute the body or initialize members
 			// Just return
-			ReturnOp ret_op;  // No return value for void
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.name_token()));
+			emitVoidReturn(node.name_token());
 			return;
 		}
 
@@ -2004,8 +1970,7 @@
 		});
 
 		// Add implicit return for constructor (constructors don't have explicit return statements)
-		ReturnOp ret_op;  // No return value for void
-		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.name_token()));
+		emitVoidReturn(node.name_token());
 
 		symbol_table.exit_scope();
 		// Don't clear current_function_name_ here - let the top-level visitor manage it
@@ -2108,8 +2073,7 @@
 		}
 
 		// Add implicit return for destructor (destructors don't have explicit return statements)
-		ReturnOp ret_op;  // No return value for void
-		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.name_token()));
+		emitVoidReturn(node.name_token());
 
 		symbol_table.exit_scope();
 		// Don't clear current_function_name_ here - let the top-level visitor manage it

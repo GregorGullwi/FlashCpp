@@ -68,15 +68,7 @@
 					FLASH_LOG(Codegen, Error, "Placement address operands insufficient (expected 3, got ", address_operands.size(), ")");
 					return {};
 				}
-				if (std::holds_alternative<unsigned long long>(address_operands[2])) {
-					op.address = std::get<unsigned long long>(address_operands[2]);
-				} else if (std::holds_alternative<TempVar>(address_operands[2])) {
-					op.address = std::get<TempVar>(address_operands[2]);
-				} else if (std::holds_alternative<StringHandle>(address_operands[2])) {
-					op.address = std::get<StringHandle>(address_operands[2]);
-				} else if (std::holds_alternative<double>(address_operands[2])) {
-					op.address = std::get<double>(address_operands[2]);
-				}
+				op.address = toIrValue(address_operands[2]);
 
 				ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 				
@@ -193,16 +185,7 @@
 					FLASH_LOG(Codegen, Error, "Array size operands insufficient (expected 3, got ", size_operands.size(), ")");
 					return {};
 				}
-				IrValue count_value;
-				if (std::holds_alternative<unsigned long long>(size_operands[2])) {
-					count_value = op.count = std::get<unsigned long long>(size_operands[2]);
-				} else if (std::holds_alternative<TempVar>(size_operands[2])) {
-					count_value = op.count = std::get<TempVar>(size_operands[2]);
-				} else if (std::holds_alternative<StringHandle>(size_operands[2])) {
-					count_value = op.count = std::get<StringHandle>(size_operands[2]);
-				} else if (std::holds_alternative<double>(size_operands[2])) {
-					count_value = op.count = std::get<double>(size_operands[2]);
-				}
+				IrValue count_value = op.count = toIrValue(size_operands[2]);
 
 				// Check if struct type needs a cookie (has destructor)
 				bool needs_ctor_loop = false;
@@ -388,15 +371,7 @@
 				FLASH_LOG(Codegen, Error, "Placement address operands insufficient for single object (expected 3, got ", address_operands.size(), ")");
 				return {};
 			}
-			if (std::holds_alternative<unsigned long long>(address_operands[2])) {
-				op.address = std::get<unsigned long long>(address_operands[2]);
-			} else if (std::holds_alternative<TempVar>(address_operands[2])) {
-				op.address = std::get<TempVar>(address_operands[2]);
-			} else if (std::holds_alternative<StringHandle>(address_operands[2])) {
-				op.address = std::get<StringHandle>(address_operands[2]);
-			} else if (std::holds_alternative<double>(address_operands[2])) {
-				op.address = std::get<double>(address_operands[2]);
-			}
+			op.address = toIrValue(address_operands[2]);
 
 			ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 
@@ -499,16 +474,7 @@
 		Type ptr_type = std::get<Type>(ptr_operands[0]);
 
 		// Convert IrOperand to IrValue
-		IrValue ptr_value;
-		if (std::holds_alternative<unsigned long long>(ptr_operands[2])) {
-			ptr_value = std::get<unsigned long long>(ptr_operands[2]);
-		} else if (std::holds_alternative<TempVar>(ptr_operands[2])) {
-			ptr_value = std::get<TempVar>(ptr_operands[2]);
-		} else if (std::holds_alternative<StringHandle>(ptr_operands[2])) {
-			ptr_value = std::get<StringHandle>(ptr_operands[2]);
-		} else if (std::holds_alternative<double>(ptr_operands[2])) {
-			ptr_value = std::get<double>(ptr_operands[2]);
-		}
+		IrValue ptr_value = toIrValue(ptr_operands[2]);
 
 		// Check if we need to call destructor (for struct types with a user-defined destructor).
 		// ptr_operands[3] is the type_index when the expression type is Type::Struct (index 0 is invalid).
