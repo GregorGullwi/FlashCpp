@@ -3,9 +3,22 @@
 // are lexed as single tokens instead of separate number+identifier tokens
 // Pattern from <chrono>/<thread>: if (__elapsed > 128ms)
 
+struct Duration {
+    long long val;
+};
+
+constexpr Duration operator""_ms(unsigned long long v) {
+    return Duration{static_cast<long long>(v)};
+}
+
+constexpr Duration operator""_us(unsigned long long v) {
+    return Duration{static_cast<long long>(v)};
+}
+
+// Test that UDL literals are lexed as single tokens
+constexpr Duration d1 = 128_ms;
+constexpr Duration d2 = 64_us;
+
 int main() {
-    // This test verifies the lexer handles UDL suffixes correctly.
-    // The main test is that this compiles without parsing errors.
-    // (128_ms would be lexed as one token "128_ms" rather than "128" + "_ms")
     return 0;
 }

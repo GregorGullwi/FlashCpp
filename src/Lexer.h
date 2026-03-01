@@ -392,9 +392,12 @@ private:
 		}
 
 		// Handle user-defined literal suffixes (C++11): 128ms, 64us, 3.14s, 100ns, 24h, etc.
-		// UDL suffixes start with _ (user-defined) or are standard suffixes like ms, us, ns, s, h, min, etc.
-		// If the next character is alphabetic or underscore and immediately follows the numeric part,
-		// it's a UDL suffix that should be part of this token.
+		// Per C++ pp-number grammar, any sequence of digits followed by identifier characters
+		// forms a single preprocessing token. This handles both:
+		// - Standard library reserved suffixes: ms, us, ns, s, h, min (from <chrono>)
+		// - User-defined suffixes starting with _: _km, _deg, _ms (user-defined)
+		// The parser/semantic analysis determines if the suffix is valid; the lexer is
+		// intentionally permissive to match C++ maximal munch tokenization rules.
 		if (cursor_ < source_size_ && (source_[cursor_] == '_' || std::isalpha(static_cast<unsigned char>(source_[cursor_])))) {
 			while (cursor_ < source_size_ && (std::isalnum(static_cast<unsigned char>(source_[cursor_])) || source_[cursor_] == '_')) {
 				++cursor_;
