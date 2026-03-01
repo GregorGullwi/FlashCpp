@@ -881,22 +881,21 @@ public:
 						FLASH_LOG(ConstExpr, Debug, "Static member is_const: ", static_member->is_const(), 
 						          ", has_initializer: ", static_member->initializer.has_value());
 						
-						// If static member has no initializer, try to trigger lazy instantiation
-						// Note: context.parser may be null in some evaluation contexts (e.g., standalone constant evaluation)
-						// In such cases, lazy instantiation is not possible and we fall through to default value
-						if (!static_member->initializer.has_value() && context.parser != nullptr) {
-							FLASH_LOG(ConstExpr, Debug, "Triggering lazy instantiation for '", 
-							          StringTable::getStringView(owner_struct->name), "::", StringTable::getStringView(member_handle), "'");
-							
-							// Trigger lazy static member instantiation
-							// This fills in the initializer from template substitution
-							context.parser->instantiateLazyStaticMember(owner_struct->name, member_handle);
-							
-							// Re-lookup the static member after instantiation
-							auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
-							if (relookup_result.first && relookup_result.first->initializer.has_value()) {
-								FLASH_LOG(ConstExpr, Debug, "After lazy instantiation, evaluating initializer");
-								return evaluate(relookup_result.first->initializer.value(), context);
+						// Always try to trigger lazy instantiation for static members.
+						// The member might have an initializer from template parsing that
+						// still contains unsubstituted template parameters (like _R1::num).
+						// The lazy system will substitute them and update the initializer.
+						// If the member is not in the lazy registry, this is a fast no-op.
+						if (context.parser != nullptr) {
+							bool did_lazy = context.parser->instantiateLazyStaticMember(
+								owner_struct->name, member_handle);
+							if (did_lazy) {
+								// Re-lookup the static member after instantiation
+								auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
+								if (relookup_result.first && relookup_result.first->initializer.has_value()) {
+									FLASH_LOG(ConstExpr, Debug, "After lazy instantiation, evaluating initializer");
+									return evaluate(relookup_result.first->initializer.value(), context);
+								}
 							}
 						}
 						
