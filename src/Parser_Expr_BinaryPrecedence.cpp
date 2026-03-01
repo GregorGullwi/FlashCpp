@@ -893,6 +893,16 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		}
 		type_spec.add_pointer_level(ptr_cv);
 	}
+	// Handle trailing CV-qualifiers before reference (e.g., Type volatile&, Type const&)
+	// Per C++20 grammar, cv-qualifiers can appear between the type and the reference declarator.
+	while (peek() == "const"_tok || peek() == "volatile"_tok) {
+		if (peek() == "const"_tok) {
+			type_spec.add_cv_qualifier(CVQualifier::Const);
+		} else {
+			type_spec.add_cv_qualifier(CVQualifier::Volatile);
+		}
+		advance();
+	}
 	if (peek() == "&&"_tok) {
 		advance();
 		type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);

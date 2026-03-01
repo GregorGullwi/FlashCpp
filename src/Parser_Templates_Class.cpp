@@ -1415,8 +1415,15 @@ ParseResult Parser::parse_template_declaration() {
 
 						std::vector<TemplateTypeArg> base_template_args = *base_template_args_opt;
 						
+						// Handle pack expansion '...' after template base class (e.g., Base<Args>...)
+						bool is_pack_expansion_base = false;
+						if (peek() == "..."_tok) {
+							advance(); // consume '...'
+							is_pack_expansion_base = true;
+						}
+						
 						// Check if any template arguments are dependent
-						bool has_dependent_args = false;
+						bool has_dependent_args = is_pack_expansion_base;
 						for (const auto& arg : base_template_args) {
 							if (arg.is_dependent) {
 								has_dependent_args = true;
@@ -1441,7 +1448,7 @@ ParseResult Parser::parse_template_declaration() {
 							}
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base, is_pack_expansion_base);
 							continue;  // Skip to next base class or exit loop
 						}
 						
@@ -2729,8 +2736,15 @@ ParseResult Parser::parse_template_declaration() {
 						
 						std::vector<TemplateTypeArg> template_args = *template_args_opt;
 						
+						// Handle pack expansion '...' after template base class (e.g., Base<Args>...)
+						bool is_pack_expansion_base = false;
+						if (peek() == "..."_tok) {
+							advance(); // consume '...'
+							is_pack_expansion_base = true;
+						}
+						
 						// Check if any template arguments are dependent or pack expansions
-						bool has_dependent_args = false;
+						bool has_dependent_args = is_pack_expansion_base;
 						for (const auto& arg : template_args) {
 							if (arg.is_dependent || arg.is_pack) {
 								has_dependent_args = true;
@@ -2757,7 +2771,7 @@ ParseResult Parser::parse_template_declaration() {
 							}
 							
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::nullopt, base_access, is_virtual_base);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::nullopt, base_access, is_virtual_base, is_pack_expansion_base);
 							continue;  // Skip to next base class or exit loop
 						}
 						

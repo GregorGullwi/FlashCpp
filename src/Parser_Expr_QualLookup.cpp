@@ -688,6 +688,16 @@ ParseResult Parser::validate_and_add_base_class(
 	}
 	
 	if (base_type_it == gTypesByName.end()) {
+		// In template bodies, unresolved base class names might be member type aliases
+		// that depend on template parameters (e.g., using __hash_code_base = typename __hashtable_base::__hash_code_base;)
+		// Defer resolution until template instantiation.
+		if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Deferring unresolved base class '{}' in template body", base_class_name);
+			bool is_deferred = true;
+			struct_ref.add_base_class(base_class_name, 0, base_access, is_virtual_base, is_deferred);
+			struct_info->addBaseClass(base_class_name, 0, base_access, is_virtual_base, is_deferred);
+			return ParseResult::success();
+		}
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", error_token);
 	}
 

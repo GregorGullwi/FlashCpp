@@ -461,6 +461,13 @@ ParseResult Parser::parse_struct_declaration()
 			std::optional<StringHandle> member_type_name;
 			std::optional<Token> member_name_token;
 			
+			// Handle pack expansion '...' after template base class (e.g., Base<Args>...)
+			bool is_pack_expansion_base = false;
+			if (peek() == "..."_tok) {
+				advance(); // consume '...'
+				is_pack_expansion_base = true;
+			}
+			
 			// Check for member type access (e.g., ::type) after template arguments
 			// This handles patterns like: __not_<T>::type
 			auto next_token = peek_info();
@@ -480,7 +487,7 @@ ParseResult Parser::parse_struct_declaration()
 			
 			// Check if any template arguments are dependent
 			// This includes both explicit dependent flags AND types whose names contain template parameters
-			bool has_dependent_args = false;
+			bool has_dependent_args = is_pack_expansion_base;
 			auto contains_template_param = [this](StringHandle type_name_handle) -> bool {
 				std::string_view type_name = StringTable::getStringView(type_name_handle);
 				// Check if this looks like a mangled template name (contains underscores as separators)
@@ -580,7 +587,7 @@ ParseResult Parser::parse_struct_declaration()
 				}
 				
 				StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-				struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base);
+				struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base, is_pack_expansion_base);
 				
 				continue;  // Skip to next base class or exit loop
 			}
