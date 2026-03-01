@@ -1195,7 +1195,7 @@
 			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
 				op.operand.value = std::get<TempVar>(operandIrOperands[2]);
 			} else {
-				throw std::runtime_error("AddressOf operand must be StringHandle or TempVar");
+				throw InternalError("AddressOf operand must be StringHandle or TempVar");
 			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
@@ -1353,7 +1353,7 @@
 			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
 				op.pointer.value = std::get<TempVar>(operandIrOperands[2]);
 			} else {
-				throw std::runtime_error("Dereference pointer must be StringHandle or TempVar");
+				throw InternalError("Dereference pointer must be StringHandle or TempVar");
 			}
 		
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
@@ -1379,7 +1379,7 @@
 			return { operandType, element_size, result_var, result_ptr_depth };
 		}
 		else {
-			throw std::runtime_error("Unary operator not implemented yet");
+			throw InternalError("Unary operator not implemented yet");
 		}
 
 		// Return the result

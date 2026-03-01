@@ -997,13 +997,13 @@
 			if (const IdentifierNode* ident = get_identifier()) {
 				if (!setupBaseFromIdentifier(ident->name(), memberAccessNode.member_token(),
 				                             base_object, base_type, base_type_index, is_pointer_dereference)) {
-					return {};
+					throw InternalError(std::string("Failed to setup base from identifier '") + std::string(ident->name()) + "' for member access");
 				}
 			}
 			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 				auto call_result = generateMemberFunctionCallIr(*call);
 				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
-					return {};
+					throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
@@ -1012,11 +1012,10 @@
 			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
 				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
 				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
-					return {};
+					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (base_type != Type::Struct) {
-					FLASH_LOG(Codegen, Error, "nested member access on non-struct type");
-					return {};
+					throw InternalError("nested member access on non-struct type");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
@@ -1026,14 +1025,12 @@
 				const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(*expr);
 
 				if (unary_op.op() != "*") {
-					FLASH_LOG(Codegen, Error, "member access on non-dereference unary operator");
-					return {};
+					throw InternalError(std::string("member access on non-dereference unary operator '") + std::string(unary_op.op()) + "' for member '" + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 
 				const ASTNode& operand_node = unary_op.get_operand();
 				if (!operand_node.is<ExpressionNode>()) {
-					FLASH_LOG(Codegen, Error, "dereference operand is not an expression");
-					return {};
+					throw InternalError(std::string("dereference operand is not an expression for member '") + std::string(memberAccessNode.member_token().value()) + "' (unary op '" + std::string(unary_op.op()) + "')");
 				}
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 				
@@ -1107,7 +1104,7 @@
 				if (!is_lambda_this) {
 					auto pointer_operands = visitExpressionNode(operand_expr);
 					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
-						return {};
+						throw InternalError(std::string("Failed to extract base from pointer dereference for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 					}
 					is_pointer_dereference = true;
 				}
@@ -1115,21 +1112,20 @@
 			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
 				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
 				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
-					return {};
+					throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 			}
 			else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
 				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
 				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
-					return {};
+					throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
 				}
 			}
 			else {
-				FLASH_LOG(Codegen, Error, "member access on unsupported object type");
-				return {};
+				throw InternalError(std::string("member access on unsupported object expression type for member '") + std::string(memberAccessNode.member_token().value()) + "'" + (expr ? std::string(" (variant index ") + std::to_string(expr->index()) + ")" : " (no expression)"));
 			}
 		}
 
@@ -1174,7 +1170,7 @@
 				}
 			}
 			std::cerr << "error: struct type info not found\n";
-			return {};
+			throw InternalError("struct type info not found for type_index=" + std::to_string(base_type_index));
 		}
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -1226,7 +1222,7 @@
 			for (const auto& m : struct_info->members) {
 				std::cerr << "    - " << StringTable::getStringView(m.getName()) << "\n";
 			}
-			throw std::runtime_error("Member not found in struct");
+			throw InternalError("Member not found in struct");
 		}
 		
 		const StructMember* member = member_result.member;
@@ -1246,7 +1242,7 @@
 				std::cerr << " from '" << StringTable::getStringView(current_context->getName()) << "'";
 			}
 			std::cerr << "\n";
-			throw std::runtime_error("Access control violation");
+			throw CompileError("Access control violation");
 		}
 
 		// Check if base_object is a TempVar with lvalue metadata
@@ -1457,7 +1453,7 @@
 			// sizeof(type)
 			const ASTNode& type_node = sizeofNode.type_or_expr();
 			if (!type_node.is<TypeSpecifierNode>()) {
-				throw std::runtime_error("sizeof type argument must be TypeSpecifierNode");
+				throw InternalError("sizeof type argument must be TypeSpecifierNode");
 				return {};
 			}
 
@@ -1530,14 +1526,14 @@
 			else if (type == Type::Struct) {
 				size_t type_index = type_spec.type_index();
 				if (type_index >= gTypeInfo.size()) {
-					throw std::runtime_error("Invalid type index for struct");
+					throw InternalError("Invalid type index for struct");
 					return {};
 				}
 
 				const TypeInfo& type_info = gTypeInfo[type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (!struct_info) {
-					throw std::runtime_error("Struct type info not found");
+					throw InternalError("Struct type info not found");
 					return {};
 				}
 
@@ -1552,7 +1548,7 @@
 			// sizeof(expression) - evaluate the type of the expression
 			const ASTNode& expr_node = sizeofNode.type_or_expr();
 			if (!expr_node.is<ExpressionNode>()) {
-				throw std::runtime_error("sizeof expression argument must be ExpressionNode");
+				throw InternalError("sizeof expression argument must be ExpressionNode");
 				return {};
 			}
 
@@ -1797,7 +1793,7 @@
 			if (expr_type == Type::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
-				throw std::runtime_error("sizeof(struct_expression) not fully implemented yet");
+				throw InternalError("sizeof(struct_expression) not fully implemented yet");
 				return {};
 			}
 			else {
@@ -1823,7 +1819,7 @@
 			// alignof(type)
 			const ASTNode& type_node = alignofNode.type_or_expr();
 			if (!type_node.is<TypeSpecifierNode>()) {
-				throw std::runtime_error("alignof type argument must be TypeSpecifierNode");
+				throw InternalError("alignof type argument must be TypeSpecifierNode");
 				return {};
 			}
 
@@ -1834,14 +1830,14 @@
 			if (type == Type::Struct) {
 				size_t type_index = type_spec.type_index();
 				if (type_index >= gTypeInfo.size()) {
-					throw std::runtime_error("Invalid type index for struct");
+					throw InternalError("Invalid type index for struct");
 					return {};
 				}
 
 				const TypeInfo& type_info = gTypeInfo[type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (!struct_info) {
-					throw std::runtime_error("Struct type info not found");
+					throw InternalError("Struct type info not found");
 					return {};
 				}
 
@@ -1857,7 +1853,7 @@
 			// alignof(expression) - determine the alignment of the expression's type
 			const ASTNode& expr_node = alignofNode.type_or_expr();
 			if (!expr_node.is<ExpressionNode>()) {
-				throw std::runtime_error("alignof expression argument must be ExpressionNode");
+				throw InternalError("alignof expression argument must be ExpressionNode");
 				return {};
 			}
 
@@ -1912,7 +1908,7 @@
 			if (expr_type == Type::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
-				throw std::runtime_error("alignof(struct_expression) not fully implemented yet");
+				throw InternalError("alignof(struct_expression) not fully implemented yet");
 				return {};
 			}
 			else {
@@ -1934,20 +1930,20 @@
 		// offsetof(struct_type, member)
 		const ASTNode& type_node = offsetofNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
-			throw std::runtime_error("offsetof type argument must be TypeSpecifierNode");
+			throw InternalError("offsetof type argument must be TypeSpecifierNode");
 			return {};
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 		if (type_spec.type() != Type::Struct) {
-			throw std::runtime_error("offsetof requires a struct type");
+			throw InternalError("offsetof requires a struct type");
 			return {};
 		}
 
 		// Get the struct type info
 		size_t type_index = type_spec.type_index();
 		if (type_index >= gTypeInfo.size()) {
-			throw std::runtime_error("Invalid type index for struct");
+			throw InternalError("Invalid type index for struct");
 			return {};
 		}
 
@@ -1957,7 +1953,7 @@
 			static_cast<TypeIndex>(type_index),
 			StringTable::getOrInternStringHandle(std::string(member_name)));
 		if (!member_result) {
-			throw std::runtime_error("Member not found in struct");
+			throw InternalError("Member not found in struct");
 			return {};
 		}
 
@@ -2018,7 +2014,7 @@
 		// For traits that require type arguments, extract the type information
 		const ASTNode& type_node = traitNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
-			throw std::runtime_error("Type trait argument must be TypeSpecifierNode");
+			throw InternalError("Type trait argument must be TypeSpecifierNode");
 			return {};
 		}
 

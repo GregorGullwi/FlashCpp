@@ -475,6 +475,7 @@ int main_impl(int argc, char *argv[]) {
 
     // IR conversion (visiting AST nodes)
     bool ir_conversion_had_errors = false;
+    bool has_compile_errors = false;
     {
         PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
         for (auto& node_handle : ast) {
@@ -490,6 +491,14 @@ int main_impl(int argc, char *argv[]) {
             }
             try {
                 converter.visit(node_handle);
+            } catch (const CompileError& e) {
+                // Semantic errors (explicit ctor violations, etc.) - these are real compilation failures
+                std::string node_desc = node_handle.type_name();
+                if (node_handle.is<FunctionDeclarationNode>()) {
+                    node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+                }
+                FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
+                has_compile_errors = true;
             } catch (const std::bad_any_cast& e) {
                 // Log and skip nodes that cause bad_any_cast during IR conversion
                 // This allows compilation to continue past problematic template instantiations
@@ -499,9 +508,18 @@ int main_impl(int argc, char *argv[]) {
                 }
                 FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
                 ir_conversion_had_errors = true;
+            } catch (const InternalError& e) {
+                // Codegen limitation errors (unsupported types, register allocation, etc.)
+                // These are non-fatal - skip the function and continue generating the .o file
+                std::string node_desc = node_handle.type_name();
+                if (node_handle.is<FunctionDeclarationNode>()) {
+                    node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+                }
+                FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+                ir_conversion_had_errors = true;
             } catch (const std::runtime_error& e) {
-                // Log and skip nodes that cause runtime errors during IR conversion
-                // This handles deliberate compilation errors (deleted constructors, explicit violations, etc.)
+                // Codegen limitation errors (unsupported types, register allocation, etc.)
+                // These are non-fatal - skip the function and continue generating the .o file
                 std::string node_desc = node_handle.type_name();
                 if (node_handle.is<FunctionDeclarationNode>()) {
                     node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
@@ -513,32 +531,32 @@ int main_impl(int argc, char *argv[]) {
     }
 
     // Deferred generation (lambdas and local struct member functions)
-    bool deferred_gen_had_errors = false;
+    size_t deferred_gen_error_count = 0;
     {
         PhaseTimer deferred_timer("Deferred Gen", false, &deferred_gen_time);
         try {
             // Generate all collected lambdas after visiting all nodes
             converter.generateCollectedLambdas();
+        } catch (const CompileError&) {
+            throw;  // Semantic errors must propagate
         } catch (const std::exception& e) {
             FLASH_LOG(General, Error, "Deferred lambda generation failed: ", e.what());
-            deferred_gen_had_errors = true;
+            ++deferred_gen_error_count;
         }
 
         try {
             // Generate all collected local struct member functions after visiting all nodes
             converter.generateCollectedLocalStructMembers();
+        } catch (const CompileError&) {
+            throw;  // Semantic errors must propagate
         } catch (const std::exception& e) {
             FLASH_LOG(General, Error, "Local struct member generation failed: ", e.what());
-            deferred_gen_had_errors = true;
+            ++deferred_gen_error_count;
         }
 
-        try {
-            // Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
-            converter.generateDeferredMemberFunctions();
-        } catch (const std::exception& e) {
-            FLASH_LOG(General, Error, "Deferred member function generation failed: ", e.what());
-            deferred_gen_had_errors = true;
-        }
+        // Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
+        // Per-function try-catch is inside generateDeferredMemberFunctions to avoid one failure blocking all.
+        deferred_gen_error_count += converter.generateDeferredMemberFunctions();
 
         // Note: Template instantiations happen during parsing, not here
     }
@@ -553,9 +571,18 @@ int main_impl(int argc, char *argv[]) {
         FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
     }
 
-    if (ir_conversion_had_errors || deferred_gen_had_errors) {
-        FLASH_LOG(General, Error, "Compilation failed due to IR conversion errors");
-        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+    // Individual function IR conversion errors are non-fatal - the .o file is still
+    // generated with the successfully converted functions. This allows std library
+    // headers to compile even when some template instantiations fail.
+    if (ir_conversion_had_errors || deferred_gen_error_count > 0) {
+        FLASH_LOG(General, Warning, "Some functions had IR conversion errors (skipped ",
+                  (ir_conversion_had_errors ? "some" : "0"), " top-level, ",
+                  deferred_gen_error_count, " deferred)");
+    }
+
+    // Semantic compile errors (explicit constructor violations, etc.) are fatal
+    if (has_compile_errors) {
+        FLASH_LOG(General, Error, "Compilation failed due to semantic errors");
         return 1;
     }
 

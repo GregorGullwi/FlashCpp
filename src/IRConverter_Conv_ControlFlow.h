@@ -527,7 +527,7 @@
 				StringHandle index_var_name = std::get<StringHandle>(op.index.value);
 				auto it = variable_scopes.back().variables.find(index_var_name);
 				if (it == variable_scopes.back().variables.end()) {
-					throw std::runtime_error("Index variable not found in scope");
+					throw InternalError("Index variable not found in scope");
 					return;
 				}
 				int64_t index_offset = it->second.offset;
@@ -564,7 +564,7 @@
 		
 		// Legacy operand-based format
 		// All array element address now uses typed payload - no legacy code path
-		throw std::runtime_error("ArrayElementAddress without typed payload - should not happen");
+		throw InternalError("ArrayElementAddress without typed payload - should not happen");
 	}
 
 
@@ -857,7 +857,7 @@
 				StringHandle index_handle = std::get<StringHandle>(op.index.value);
 				auto it = variable_scopes.back().variables.find(index_handle);
 				if (it == variable_scopes.back().variables.end()) {
-					throw std::runtime_error("Index variable not found in scope");
+					throw InternalError("Index variable not found in scope");
 					return;
 				}
 				int64_t index_var_offset = it->second.offset;
@@ -906,13 +906,13 @@
 					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 				}
 			} else {
-				throw std::runtime_error("ArrayStore index must be constant, TempVar, or StringHandle");
+				throw InternalError("ArrayStore index must be constant, TempVar, or StringHandle");
 			}
 			return;
 		}
 		
 		// All array store now uses typed payload - no legacy code path
-		throw std::runtime_error("ArrayStore without typed payload - should not happen");
+		throw InternalError("ArrayStore without typed payload - should not happen");
 	}
 
 

@@ -774,7 +774,7 @@
 								FLASH_LOG(General, Error, "  In function call at argument ", arg_index);
 								FLASH_LOG(General, Error, "  Use explicit construction: ", 
 									StringTable::getStringView(target_type_info.name()), "(value)");
-								throw std::runtime_error("Cannot use implicit conversion with explicit constructor in function argument");
+								throw CompileError("Cannot use implicit conversion with explicit constructor in function argument");
 							}
 						}
 					}
@@ -889,12 +889,12 @@
 				if (!symbol.has_value()) {
 					FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");
 					FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
-					throw std::runtime_error("Missing symbol for function argument");
+					throw InternalError("Missing symbol for function argument");
 				}
 				const DeclarationNode* decl_ptr = get_decl_from_symbol(*symbol);
 				if (!decl_ptr) {
 					FLASH_LOG(Codegen, Error, "Function argument '", identifier.name(), "' is not a DeclarationNode");
-					throw std::runtime_error("Unexpected symbol type for function argument");
+					throw InternalError("Unexpected symbol type for function argument");
 				}
 
 				const auto& decl_node = *decl_ptr;

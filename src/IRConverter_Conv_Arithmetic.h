@@ -660,7 +660,7 @@
 			return UnaryOperandLocation::global(StringTable::getOrInternStringHandle(instruction.getOperandAs<std::string>(operand_index)));
 		}
 
-		throw std::runtime_error("Unsupported operand type for unary operation");
+		throw InternalError("Unsupported operand type for unary operation");
 		return UnaryOperandLocation::stack(0);
 	}
 
@@ -968,7 +968,7 @@
 				loadValueFromGlobal(location.global_name, size_in_bits, target_reg);
 				break;
 			default:
-				throw std::runtime_error("Unhandled UnaryOperandLocation kind in loadUnaryOperandValue");
+				throw InternalError("Unhandled UnaryOperandLocation kind in loadUnaryOperandValue");
 				break;
 		}
 	}
@@ -982,7 +982,7 @@
 				storeValueToGlobal(location.global_name, size_in_bits, source_reg);
 				break;
 			default:
-				throw std::runtime_error("Unhandled UnaryOperandLocation kind in storeUnaryOperandValue");
+				throw InternalError("Unhandled UnaryOperandLocation kind in storeUnaryOperandValue");
 				break;
 		}
 	}
@@ -1009,7 +1009,7 @@
 
 		// IrValue can also contain immediate values (unsigned long long, double)
 		// For inc/dec operations, these should not occur
-		throw std::runtime_error("Unsupported typed value for unary operand location (immediate values not allowed)");
+		throw InternalError("Unsupported typed value for unary operand location (immediate values not allowed)");
 		return UnaryOperandLocation::stack(0);
 	}
 
@@ -1126,11 +1126,11 @@
 			} else {
 				// It's a global variable - this shouldn't happen for unary ops on locals
 				// but we need to handle it for completeness
-				throw std::runtime_error("Global variables not yet supported in unary operations");
+				throw InternalError("Global variables not yet supported in unary operations");
 			}
 			regAlloc.flushSingleDirtyRegister(result_physical_reg);
 		} else {
-			throw std::runtime_error("Unsupported operand type for unary operation");
+			throw InternalError("Unsupported operand type for unary operation");
 			result_physical_reg = X64Register::RAX;
 		}
 		
@@ -1366,10 +1366,12 @@
 				emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 			}
 		} else {
-			assert(std::holds_alternative<StringHandle>(op.from.value) && "Expected StringHandle or TempVar type");
+			if (!std::holds_alternative<StringHandle>(op.from.value))
+				throw InternalError("handleFloatToInt: Expected StringHandle or TempVar type");
 			StringHandle var_name = std::get<StringHandle>(op.from.value);
 			auto var_it = variable_scopes.back().variables.find(var_name);
-			assert(var_it != variable_scopes.back().variables.end() && "Variable not found in variables");
+			if (var_it == variable_scopes.back().variables.end())
+				throw InternalError("handleFloatToInt: Variable not found in variables");
 			// Check if the value is already in an XMM register
 			if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->second.offset); existing_reg.has_value()) {
 				source_xmm = existing_reg.value();
@@ -1745,7 +1747,7 @@
 				int32_t ptr_offset = getStackOffsetFromTempVar(ptr_var);
 				emitMovFromFrame(ptr_reg, ptr_offset);
 			} else {
-				throw std::runtime_error("Pointer store LHS must be a TempVar");
+				throw InternalError("Pointer store LHS must be a TempVar");
 				return;
 			}
 			
@@ -1773,7 +1775,7 @@
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 				emitMovFromFrameBySize(value_reg, rhs_offset, op.rhs.size_in_bits);
 			} else {
-				throw std::runtime_error("Unsupported RHS type for pointer store");
+				throw InternalError("Unsupported RHS type for pointer store");
 				return;
 			}
 			
@@ -1803,7 +1805,7 @@
 			}
 
 			if (lhs_offset == -1) {
-				throw std::runtime_error("LHS variable not found in function pointer assignment");
+				throw InternalError("LHS variable not found in function pointer assignment");
 				return;
 			}
 
@@ -1857,7 +1859,7 @@
 			}
 
 			if (lhs_offset == -1) {
-				throw std::runtime_error("LHS variable not found in struct assignment");
+				throw InternalError("LHS variable not found in struct assignment");
 				return;
 			}
 
@@ -1876,7 +1878,7 @@
 			}
 
 			if (rhs_offset == -1) {
-				throw std::runtime_error("RHS variable not found in struct assignment");
+				throw InternalError("RHS variable not found in struct assignment");
 				return;
 			}
 

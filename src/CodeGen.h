@@ -19,6 +19,7 @@
 #include <unordered_set>
 #include <assert.h>
 #include <stdexcept>
+#include "CompileError.h"
 #include <cstdint>
 #include <typeinfo>
 #include <limits>

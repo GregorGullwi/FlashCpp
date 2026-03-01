@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <type_traits>
 
+#include "CompileError.h"
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 #include "ElfFileWriter.h"

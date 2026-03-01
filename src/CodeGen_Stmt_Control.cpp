@@ -349,7 +349,7 @@
 		// Process the switch body to collect case labels
 		auto body = node.get_body();
 		if (!body.is<BlockNode>()) {
-			throw std::runtime_error("Switch body must be a BlockNode");
+			throw InternalError("Switch body must be a BlockNode");
 			return;
 		}
 
@@ -879,7 +879,7 @@
 		
 		// Create the loop variable declaration with initialization
 		if (!loop_var_decl.is<VariableDeclarationNode>()) {
-			throw std::runtime_error("loop_var_decl must be a VariableDeclarationNode");
+			throw InternalError("loop_var_decl must be a VariableDeclarationNode");
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();

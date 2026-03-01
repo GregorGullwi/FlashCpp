@@ -30,7 +30,21 @@
 		#endif
 
 		auto ir_processing_start = std::chrono::high_resolution_clock::now();
-		for (const auto& instruction : ir.getInstructions()) {
+		const auto& instructions = ir.getInstructions();
+		bool skipping_function = false;  // When true, skip until next FunctionDecl
+		for (size_t ir_idx = 0; ir_idx < instructions.size(); ++ir_idx) {
+			const auto& instruction = instructions[ir_idx];
+			
+			// If we're skipping a failed function, only stop at the next FunctionDecl
+			if (skipping_function) {
+				if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
+					skipping_function = false;
+					// fall through to process this FunctionDecl
+				} else {
+					continue;
+				}
+			}
+
 			#if ENABLE_DETAILED_PROFILING
 			auto instr_start = std::chrono::high_resolution_clock::now();
 			#endif
@@ -40,6 +54,7 @@
 				addLineMapping(instruction.getLineNumber());
 			}
 
+			try {
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
 				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::FunctionDecl");
@@ -406,8 +421,24 @@
 				handleSehAbnormalTermination(instruction);
 				break;
 			default:
-				throw std::runtime_error("Not implemented yet");
+				throw InternalError("Not implemented yet");
 				break;
+			}
+			} catch (const CompileError&) {
+				// Semantic errors must propagate — they are real compilation failures
+				throw;
+			} catch (const InternalError& e) {
+				// Per-function error recovery: skip to the next function declaration
+				FLASH_LOG(Codegen, Error, "Code generation error in function, skipping: ", e.what());
+				skipping_function = true;
+				skip_previous_function_finalization_ = true;
+				continue;
+			} catch (const std::exception& e) {
+				// Per-function error recovery: skip to the next function declaration
+				FLASH_LOG(Codegen, Error, "Code generation error in function, skipping: ", e.what());
+				skipping_function = true;
+				skip_previous_function_finalization_ = true;
+				continue;
 			}
 
 			#if ENABLE_DETAILED_PROFILING
