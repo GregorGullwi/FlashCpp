@@ -4205,6 +4205,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	}
 
 	// Build the full qualified name: ns1::ns2::ClassName
+	// Handle namespace-qualified names: std::_Rb_tree_merge_helper
 	std::string_view qualified_name = consume_qualified_name_suffix(advance().value());
 
 	// Expect semicolon

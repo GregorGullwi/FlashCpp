@@ -247,6 +247,8 @@ ParseResult Parser::parse_statement_or_declaration()
 					}
 					if (peek().is_identifier()) {
 						advance(); // consume member name
+						// Handle deeper nesting: Type::Inner::func(
+						skip_qualified_name_parts();
 						if (peek() == "("_tok) {
 							// This is Type<T>::member(...) - a function call expression
 							restore_token_position(scope_check);
@@ -327,6 +329,8 @@ ParseResult Parser::parse_statement_or_declaration()
 						advance(); // consume '::'
 						if (peek().is_identifier()) {
 							advance(); // consume member name
+							// Handle deeper nesting: Base<T>::Inner::func(
+							skip_qualified_name_parts();
 							if (peek() == "("_tok) {
 								// This is Base<T>::member(...) - a function call expression
 								restore_token_position(template_check);
