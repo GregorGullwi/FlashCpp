@@ -791,7 +791,6 @@
 				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(), 
 				          "' of '", struct_info->getName(), "'", context_str);
 				throw CompileError("Access control violation");
-				return { Type::Int, 32, TempVar{0} };
 			}
 		}
 
