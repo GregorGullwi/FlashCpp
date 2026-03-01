@@ -295,14 +295,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			// We need to consume the full qualified name to peek at what comes after
 			advance(); // consume the first identifier
 			// If the template name is qualified (e.g., ns::myfunc), consume all :: and identifiers
-			while (peek() == "::"_tok) {
-				advance(); // consume '::'
-				if (peek().is_identifier()) {
-					advance(); // consume next identifier
-				} else {
-					break;
-				}
-			}
+			skip_qualified_name_parts();
 			// Peek ahead to see if this is a function call (template_name(...))
 			// or a variable declaration (template_name<...> var)
 			if (!peek().is_eof()) {

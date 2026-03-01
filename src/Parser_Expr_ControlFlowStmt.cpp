@@ -1409,12 +1409,7 @@ ParseResult Parser::parse_if_statement() {
         auto lookahead = save_token_position();
         advance(); // skip potential type name
         // Skip qualified name components: ns::inner::Type
-        while (peek() == "::"_tok) {
-            advance(); // skip '::'
-            if (peek().is_identifier()) {
-                advance(); // skip next component
-            }
-        }
+        skip_qualified_name_parts();
         if (peek() == "<"_tok) {
             skip_template_arguments();
         }

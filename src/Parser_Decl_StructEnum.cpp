@@ -3955,17 +3955,7 @@ ParseResult Parser::parse_friend_declaration()
 
 		// Handle qualified names: friend class locale::_Impl;
 		// Build full qualified name for proper friend resolution
-		std::string qualified_friend_name(class_name_token.value());
-		while (peek() == "::"_tok) {
-			advance(); // consume '::'
-			if (peek().is_identifier()) {
-				qualified_friend_name += "::";
-				class_name_token = advance();
-				qualified_friend_name += class_name_token.value();
-			} else {
-				break;
-			}
-		}
+		std::string_view qualified_friend_name = consume_qualified_name_suffix(class_name_token.value());
 
 		// Skip template arguments if present: friend class SomeTemplate<T>;
 		if (peek() == "<"_tok) {
@@ -4215,20 +4205,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	}
 
 	// Build the full qualified name: ns1::ns2::ClassName
-	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(advance().value());
-
-	// Handle namespace-qualified names: std::_Rb_tree_merge_helper
-	while (peek() == "::"_tok) {
-		advance(); // consume '::'
-		if (peek().is_identifier()) {
-			qualified_name_builder.append("::");
-			qualified_name_builder.append(advance().value());
-		} else {
-			break;
-		}
-	}
-	std::string_view qualified_name = qualified_name_builder.commit();
+	std::string_view qualified_name = consume_qualified_name_suffix(advance().value());
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
