@@ -1686,7 +1686,7 @@
 											StringTable::getStringView(type_info.name()), "'");
 										FLASH_LOG(General, Error, "  Use direct initialization: ", 
 											decl.identifier_token().value(), "(value) instead of = value");
-										throw std::runtime_error("Cannot use copy initialization with explicit constructor");
+										throw CompileError("Cannot use copy initialization with explicit constructor");
 									}
 								}
 							}

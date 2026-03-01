@@ -1030,7 +1030,7 @@
 
 				const ASTNode& operand_node = unary_op.get_operand();
 				if (!operand_node.is<ExpressionNode>()) {
-					throw std::runtime_error("dereference operand is not an expression");
+					throw std::runtime_error(std::string("dereference operand is not an expression for member '") + std::string(memberAccessNode.member_token().value()) + "' (unary op '" + std::string(unary_op.op()) + "')");
 				}
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 				
@@ -1104,7 +1104,7 @@
 				if (!is_lambda_this) {
 					auto pointer_operands = visitExpressionNode(operand_expr);
 					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
-						throw std::runtime_error("Failed to extract base from pointer expression");
+						throw std::runtime_error(std::string("Failed to extract base from pointer dereference for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 					}
 					is_pointer_dereference = true;
 				}
@@ -1112,20 +1112,20 @@
 			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
 				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
 				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
-					throw std::runtime_error("Failed to extract base from array subscript");
+					throw std::runtime_error(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 			}
 			else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
 				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
 				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
-					throw std::runtime_error("Failed to extract base from function call result");
+					throw std::runtime_error(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
 				}
 			}
 			else {
-				throw std::runtime_error("member access on unsupported object type");
+				throw std::runtime_error(std::string("member access on unsupported object expression type for member '") + std::string(memberAccessNode.member_token().value()) + "'" + (expr ? std::string(" (variant index ") + std::to_string(expr->index()) + ")" : " (no expression)"));
 			}
 		}
 

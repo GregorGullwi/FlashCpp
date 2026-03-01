@@ -774,7 +774,7 @@
 								FLASH_LOG(General, Error, "  In function call at argument ", arg_index);
 								FLASH_LOG(General, Error, "  Use explicit construction: ", 
 									StringTable::getStringView(target_type_info.name()), "(value)");
-								throw std::runtime_error("Cannot use implicit conversion with explicit constructor in function argument");
+								throw CompileError("Cannot use implicit conversion with explicit constructor in function argument");
 							}
 						}
 					}

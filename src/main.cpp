@@ -475,6 +475,7 @@ int main_impl(int argc, char *argv[]) {
 
     // IR conversion (visiting AST nodes)
     bool ir_conversion_had_errors = false;
+    bool has_compile_errors = false;
     {
         PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
         for (auto& node_handle : ast) {
@@ -490,6 +491,14 @@ int main_impl(int argc, char *argv[]) {
             }
             try {
                 converter.visit(node_handle);
+            } catch (const CompileError& e) {
+                // Semantic errors (explicit ctor violations, etc.) - these are real compilation failures
+                std::string node_desc = node_handle.type_name();
+                if (node_handle.is<FunctionDeclarationNode>()) {
+                    node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+                }
+                FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
+                has_compile_errors = true;
             } catch (const std::bad_any_cast& e) {
                 // Log and skip nodes that cause bad_any_cast during IR conversion
                 // This allows compilation to continue past problematic template instantiations
@@ -500,8 +509,8 @@ int main_impl(int argc, char *argv[]) {
                 FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
                 ir_conversion_had_errors = true;
             } catch (const std::runtime_error& e) {
-                // Log and skip nodes that cause runtime errors during IR conversion
-                // This handles deliberate compilation errors (deleted constructors, explicit violations, etc.)
+                // Codegen limitation errors (unsupported types, register allocation, etc.)
+                // These are non-fatal - skip the function and continue generating the .o file
                 std::string node_desc = node_handle.type_name();
                 if (node_handle.is<FunctionDeclarationNode>()) {
                     node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
@@ -556,6 +565,12 @@ int main_impl(int argc, char *argv[]) {
         FLASH_LOG(General, Warning, "Some functions had IR conversion errors (skipped ",
                   (ir_conversion_had_errors ? "some" : "0"), " top-level, ",
                   deferred_gen_error_count, " deferred)");
+    }
+
+    // Semantic compile errors (explicit constructor violations, etc.) are fatal
+    if (has_compile_errors) {
+        FLASH_LOG(General, Error, "Compilation failed due to semantic errors");
+        return 1;
     }
 
     // Platform detection: Use ELF on Linux/Unix, COFF on Windows
