@@ -472,10 +472,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 						if (val < 0) {
 							// For negative values, create UnaryOperator('-', NumericLiteral(abs(val)))
 							// to avoid uint64_t cast producing wrong string/value
-							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(-val)).commit();
+							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(-static_cast<uint64_t>(val))).commit();
 							Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 							auto& literal_node = emplace_node_ref<ExpressionNode>(
-								NumericLiteralNode(num_token, static_cast<unsigned long long>(-val), Type::Int, TypeQualifier::None, 64)).second;
+								NumericLiteralNode(num_token, static_cast<unsigned long long>(-static_cast<uint64_t>(val)), Type::Int, TypeQualifier::None, 64)).second;
 							Token minus_token(Token::Type::Operator, "-"sv, 0, 0, 0);
 							substituted_initializer = emplace_node<ExpressionNode>(
 								UnaryOperatorNode(minus_token, ASTNode(&literal_node), true, false));
