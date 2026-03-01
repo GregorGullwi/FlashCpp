@@ -391,6 +391,17 @@ private:
 			++column_;
 		}
 
+		// Handle user-defined literal suffixes (C++11): 128ms, 64us, 3.14s, 100ns, 24h, etc.
+		// UDL suffixes start with _ (user-defined) or are standard suffixes like ms, us, ns, s, h, min, etc.
+		// If the next character is alphabetic or underscore and immediately follows the numeric part,
+		// it's a UDL suffix that should be part of this token.
+		if (cursor_ < source_size_ && (source_[cursor_] == '_' || std::isalpha(static_cast<unsigned char>(source_[cursor_])))) {
+			while (cursor_ < source_size_ && (std::isalnum(static_cast<unsigned char>(source_[cursor_])) || source_[cursor_] == '_')) {
+				++cursor_;
+				++column_;
+			}
+		}
+
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::Literal, value, line_, column_, current_file_index_);
 	}

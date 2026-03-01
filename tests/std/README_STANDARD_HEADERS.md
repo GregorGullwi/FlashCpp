@@ -6,48 +6,48 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~119ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~184ms |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~122ms |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~187ms |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~10ms |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~22ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~22ms |
 | `<numbers>` | N/A | ✅ Compiled | ~194ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~15ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~277ms. ratio_equal works; ratio_less needs default parameter evaluation |
-| `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~597ms |
-| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~274ms |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~362ms |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~215ms |
-| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~261ms |
-| `<string_view>` | `test_std_string_view.cpp` | ✅ Compiled | ~1207ms |
-| `<string>` | `test_std_string.cpp` | ✅ Compiled | ~2095ms |
+| `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~598ms |
+| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~275ms |
+| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~367ms |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~218ms |
+| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~264ms |
+| `<string_view>` | `test_std_string_view.cpp` | ✅ Compiled | ~1223ms |
+| `<string>` | `test_std_string.cpp` | ✅ Compiled | ~2131ms |
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | Aggregate brace initialization not supported for template types (`std::array<int,5> arr = {1,2,3,4,5}`) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ✅ Compiled | ~1362ms |
-| `<span>` | `test_std_span.cpp` | ✅ Compiled | ~937ms |
-| `<tuple>` | `test_std_tuple.cpp` | ✅ Compiled | ~901ms |
-| `<vector>` | `test_std_vector.cpp` | ✅ Compiled | ~1750ms |
-| `<deque>` | `test_std_deque.cpp` | ✅ Compiled | ~1520ms |
-| `<list>` | `test_std_list.cpp` | ✅ Compiled | ~1358ms |
-| `<queue>` | `test_std_queue.cpp` | ✅ Compiled | ~1921ms |
-| `<stack>` | `test_std_stack.cpp` | ✅ Compiled | ~1528ms |
-| `<memory>` | `test_std_memory.cpp` | ❌ Crash/Timeout | Stack overflow during template instantiation (6200+ templates) |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Base class `__hash_code_base` not found in `<hashtable.h>` (dependent base class) |
-| `<map>` | `test_std_map.cpp` | ✅ Compiled | ~1808ms |
-| `<set>` | `test_std_set.cpp` | ✅ Compiled | ~1538ms |
+| `<algorithm>` | `test_std_algorithm.cpp` | ✅ Compiled | ~1404ms |
+| `<span>` | `test_std_span.cpp` | ✅ Compiled | ~941ms |
+| `<tuple>` | `test_std_tuple.cpp` | ✅ Compiled | ~904ms |
+| `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | member '_M_start' not found in struct '_Vector_impl' (base class member access) |
+| `<deque>` | `test_std_deque.cpp` | ✅ Compiled | ~1561ms |
+| `<list>` | `test_std_list.cpp` | ❌ Codegen Error | member '_M_impl' not found in struct 'std::__cxx11::list' |
+| `<queue>` | `test_std_queue.cpp` | ✅ Compiled | ~2003ms |
+| `<stack>` | `test_std_stack.cpp` | ✅ Compiled | ~1574ms |
+| `<memory>` | `test_std_memory.cpp` | 💥 Crash | Stack overflow during template instantiation (6200+ templates) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Forward type reference `__diff_type` in `__boyer_moore_array_base` constructor body (line 1294) |
+| `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
+| `<set>` | `test_std_set.cpp` | ✅ Compiled | ~1566ms |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Ambiguous call to `__to_unsigned_like` |
-| `<iostream>` | `test_std_iostream.cpp` | ✅ Compiled | ~3139ms |
-| `<sstream>` | `test_std_sstream.cpp` | ✅ Compiled | ~3267ms |
-| `<fstream>` | `test_std_fstream.cpp` | ✅ Compiled | ~3374ms |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | Access control violation in codegen |
+| `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | Access control violation in codegen |
+| `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | struct type info not found |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates); previously parse error on brace-init |
-| `<atomic>` | `test_std_atomic.cpp` | ✅ Compiled | ~1081ms |
-| `<new>` | `test_std_new.cpp` | ✅ Compiled | ~33ms |
-| `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~247ms |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | ✅ Compiled | ~2129ms |
+| `<atomic>` | `test_std_atomic.cpp` | ✅ Compiled | ~1091ms |
+| `<new>` | `test_std_new.cpp` | ✅ Compiled | ~32ms |
+| `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~251ms |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | ✅ Compiled | ~2216ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~32ms |
 | `<typeindex>` | N/A | ✅ Compiled | ~284ms |
-| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~566ms |
-| `<iterator>` | `test_std_iterator.cpp` | ✅ Compiled | ~2614ms |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Expected ';' after struct/class definition at variant:1137 |
+| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~573ms |
+| `<iterator>` | `test_std_iterator.cpp` | ✅ Compiled | ~1669ms (some codegen warnings) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parser fails to close `_Copy_assign_base` struct body (lambda/if-constexpr in template); variant:1137 |
 | `<csetjmp>` | N/A | ✅ Compiled | ~18ms |
 | `<csignal>` | N/A | ✅ Compiled | ~103ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~3ms (C++23) |
@@ -58,7 +58,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~25ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ✅ Compiled | ~650ms |
+| `<latch>` | `test_std_latch.cpp` | ✅ Compiled | ~658ms |
 | `<shared_mutex>` | N/A | ❌ Parse Error | Fails on `chrono::duration<long double>{__secs}` brace-init expression (via `<chrono>`) |
 | `<cstdlib>` | N/A | ✅ Compiled | ~76ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~43ms |
@@ -78,19 +78,34 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ctime>` | N/A | ✅ Compiled | ~34ms |
 | `<climits>` | N/A | ✅ Compiled | ~14ms |
 | `<cfloat>` | N/A | ✅ Compiled | ~14ms |
-| `<cmath>` | `test_std_cmath.cpp` | ✅ Compiled | ~3999ms |
+| `<cmath>` | `test_std_cmath.cpp` | ✅ Compiled | ~3743ms |
+| `<system_error>` | N/A | ✅ Compiled | (some codegen warnings) |
+| `<scoped_allocator>` | N/A | ✅ Compiled | |
+| `<charconv>` | N/A | ✅ Compiled | |
+| `<numbers>` | N/A | ✅ Compiled | |
+| `<mdspan>` | N/A | ✅ Compiled | (C++23) |
+| `<flat_map>` | N/A | ✅ Compiled | (C++23) |
+| `<flat_set>` | N/A | ✅ Compiled | (C++23) |
+| `<unordered_set>` | N/A | ❌ Codegen Error | struct type info not found (parsing succeeds) |
+| `<unordered_map>` | N/A | ❌ Codegen Error | Cannot use implicit conversion with explicit std::pair constructor |
+| `<mutex>` | N/A | ❌ Parse Error | Expected primary expression |
+| `<condition_variable>` | N/A | 💥 Crash | Stack overflow |
+| `<thread>` | N/A | ❌ Parse Error | Expected ')' after if condition |
+| `<semaphore>` | N/A | ❌ Parse Error | Expected ')' after if condition |
+| `<stop_token>` | N/A | ❌ Parse Error | Expected ')' after if condition |
+| `<bitset>` | N/A | ❌ Parse Error | Expected identifier token |
+| `<execution>` | N/A | ❌ Parse Error | Expected ';' after for loop initialization (forward type ref) |
+| `<generator>` | N/A | ❌ Parse Error | Ambiguous call to `__to_unsigned_like` (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-### Summary (2026-03-01)
+### Summary (2026-03-01, updated)
 
-**Total headers tested:** 77
-**Compiling successfully:** 66 (86%) — up from 65 (84%) on 2026-03-01 (ratio fixed)
-**Parse errors:** 8
-**Codegen crashes/fatal errors:** 3 (barrier, memory, chrono — all stack overflow during deep template instantiation)
-**Headers newly compiling this session:** `<deque>`, `<list>`, `<queue>`, `<stack>`, `<sstream>`, `<fstream>`, `<iterator>`, `<stdexcept>`, `<numeric>` (test files), plus many existing headers now produce .o files reliably
-
-> **Note:** All 66 "compiled" headers generate `.o` object files. Some have codegen warnings about fold expressions, pack expansions, or unsupported arithmetic types that weren't fully handled, but these don't prevent compilation — individual function code generation errors are now non-fatal and the failing functions are skipped.
+**Total headers tested:** 96
+**Compiling successfully (parse + codegen):** 65 (68%)
+**Codegen errors (parsing succeeds but codegen fails):** 8 (vector, list, map, iostream, sstream, fstream, unordered_set, unordered_map)
+**Parse errors:** 16 (array, functional, ranges, variant, coroutine, shared_mutex, mutex, thread, semaphore, stop_token, bitset, execution, generator, complex, regex, format)
+**Crashes:** 4 (barrier, memory, chrono, condition_variable — all stack overflow during deep template instantiation)
 
 ### Known Blockers
 
@@ -100,11 +115,27 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 2. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because FlashCpp treats `{}` as constructor lookup rather than aggregate initialization. Affects: `<array>`.
 
-3. **Dependent base class resolution**: Base classes that depend on template parameters (like `__hash_code_base` in `_Hashtable`) are not found during struct definition parsing. Affects: `<functional>` (via `<hashtable.h>`), `<unordered_set>`, `<unordered_map>`.
+3. **Forward type references in class bodies**: Member type aliases declared later in a class body are not visible in constructor bodies parsed earlier (e.g., `__diff_type` used in `__boyer_moore_array_base` constructor before `using __diff_type = _Tp;`). In C++, all member declarations are visible throughout the class body. Affects: `<functional>`.
 
-4. **Variant struct/class definition parsing**: The `<variant>` header has a complex struct definition with pack expansion in base class lists that fails with "Expected ';' after struct/class definition" at variant:1137. Affects: `<variant>`.
+4. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Everything after `_Copy_assign_base` gets registered as its members. Affects: `<variant>`.
 
-5. **Stack overflow during deep template instantiation**: Headers like `<memory>`, `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<memory>`, `<barrier>`, `<chrono>`.
+5. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
+
+6. **Stack overflow during deep template instantiation**: Headers like `<memory>`, `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<memory>`, `<barrier>`, `<chrono>`.
+
+7. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). The parser correctly identifies base classes, but the code generator doesn't properly traverse the base class hierarchy for member lookup. Affects: `<vector>`, `<list>`, `<map>`, `<iostream>`, `<sstream>`, `<fstream>`.
+
+### Recent Fixes (2026-03-01, session 3)
+
+1. **Pack expansion `...` in template base class lists**: The parser now correctly handles `Base<Args>...` in base class lists (e.g., `struct Derived : Base<Indices, Type>...`). The `...` after template base classes is consumed and stored as `is_pack_expansion` in `DeferredTemplateBaseClassSpecifier`. This was the primary blocker for `<variant>`'s `_Variant_hash_base` partial specialization. Regression test: `tests/test_pack_expansion_base_class_ret0.cpp`.
+
+2. **Deferred unresolved base class resolution in template bodies**: When parsing a template body, base class names that are not found in the global type registry (e.g., member type aliases like `__hash_code_base` in `_Hashtable`) are now deferred instead of producing an error. The base class is added with `is_deferred=true` and will be resolved during template instantiation. Previously unblocked: `<functional>` past `__hash_code_base`, `<unordered_set>`, `<unordered_map>`. Regression test: `tests/test_deferred_base_class_template_ret0.cpp`.
+
+3. **Parenthesized `>` in template parameter defaults**: Inside parenthesized expressions within template argument context, `>` is now correctly treated as the greater-than operator rather than a template closing bracket. This fixes patterns like `bool _IsPlaceholder = (is_placeholder<_Arg>::value > 0)` from `<functional>`. The fix changes the `ExpressionContext` to `Normal` when entering parenthesized subexpressions from `TemplateArgument` context. Regression test: `tests/test_paren_gt_template_default_ret0.cpp`.
+
+4. **Trailing `volatile&` / `const volatile&` type parsing**: The `consume_pointer_ref_modifiers` function now handles CV-qualifiers (const, volatile) that appear between the type name and a reference declarator (e.g., `Type volatile&`). Uses lookahead to ensure CV-qualifiers are only consumed when actually followed by `&` or `&&`, preventing false positives in other contexts. Previously failed on `__volget`'s return type `__tuple_element_t<...> volatile&` in `<functional>`. Regression test: `tests/test_volatile_ref_type_ret0.cpp`.
+
+5. **Updated status of previously-documented headers**: Investigation confirmed that `<vector>`, `<list>`, `<map>`, `<iostream>`, `<sstream>`, and `<fstream>` have codegen errors (not parsing errors) that were pre-existing before this session. The README has been updated to accurately reflect their current status with specific error messages.
 
 ### Recent Fixes (2026-03-01, session 2)
 
