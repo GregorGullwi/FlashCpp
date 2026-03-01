@@ -640,6 +640,59 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	return nullptr;
 }
 
+// Helper: After parsing template arguments for a base class specifier, consume
+// optional ::member type access and ... pack expansion in the correct order.
+BaseClassPostTemplateInfo Parser::consume_base_class_qualifiers_after_template_args() {
+	BaseClassPostTemplateInfo info;
+
+	// Some parsing paths leave current_token_ pointing at '::' after template args
+	if (current_token_.value() == "::" && !info.member_type_name.has_value()) {
+		if (peek().is_identifier()) {
+			info.member_type_name = peek_info().handle();
+			info.member_name_token = peek_info();
+			advance(); // consume member name
+		}
+	}
+
+	// Standard path: '::' is in peek position after '>' was consumed
+	if (!info.member_type_name.has_value() && peek() == "::"_tok) {
+		advance(); // consume ::
+		if (peek().is_identifier()) {
+			info.member_type_name = peek_info().handle();
+			info.member_name_token = peek_info();
+			advance(); // consume member name
+		}
+	}
+
+	// Pack expansion '...' must be consumed AFTER ::member (handles both
+	// Base<Args>... and Base<Args>::type... patterns)
+	if (peek() == "..."_tok) {
+		advance(); // consume '...'
+		info.is_pack_expansion = true;
+	}
+
+	return info;
+}
+
+// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
+std::vector<TemplateArgumentNodeInfo> Parser::build_template_arg_infos(
+	const std::vector<TemplateTypeArg>& template_args,
+	const std::vector<ASTNode>& template_arg_nodes)
+{
+	std::vector<TemplateArgumentNodeInfo> arg_infos;
+	arg_infos.reserve(template_args.size());
+	for (size_t i = 0; i < template_args.size(); ++i) {
+		TemplateArgumentNodeInfo info;
+		info.is_pack = template_args[i].is_pack;
+		info.is_dependent = template_args[i].is_dependent;
+		if (i < template_arg_nodes.size()) {
+			info.node = template_arg_nodes[i];
+		}
+		arg_infos.push_back(std::move(info));
+	}
+	return arg_infos;
+}
+
 // Helper: Validate and add a base class (consolidates lookup, validation, and registration)
 ParseResult Parser::validate_and_add_base_class(
 	std::string_view base_class_name,

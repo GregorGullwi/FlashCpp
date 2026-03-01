@@ -458,36 +458,16 @@ ParseResult Parser::parse_struct_declaration()
 			}
 			
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
-			std::optional<StringHandle> member_type_name;
-			std::optional<Token> member_name_token;
 			
-			// Handle pack expansion '...' after template base class (e.g., Base<Args>...)
-			bool is_pack_expansion_base = false;
-			if (peek() == "..."_tok) {
-				advance(); // consume '...'
-				is_pack_expansion_base = true;
-			}
-			
-			// Check for member type access (e.g., ::type) after template arguments
-			// This handles patterns like: __not_<T>::type
-			auto next_token = peek_info();
-			if (next_token.kind() == "::"_tok) {
-				advance(); // consume ::
-				next_token = peek_info();
-				if (!next_token.kind().is_identifier()) {
-					return ParseResult::error("Expected member name after ::", next_token);
-				}
-				StringHandle member_name = next_token.handle();
-				advance(); // consume member name
-				
-				member_type_name = member_name;
-				member_name_token = next_token;
-				FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}::{}", base_class_name, next_token.value());
+			// Consume optional ::member type access and ... pack expansion
+			auto post_info = consume_base_class_qualifiers_after_template_args();
+			if (post_info.member_type_name.has_value()) {
+				FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}::{}", base_class_name, StringTable::getStringView(*post_info.member_type_name));
 			}
 			
 			// Check if any template arguments are dependent
 			// This includes both explicit dependent flags AND types whose names contain template parameters
-			bool has_dependent_args = is_pack_expansion_base;
+			bool has_dependent_args = post_info.is_pack_expansion;
 			auto contains_template_param = [this](StringHandle type_name_handle) -> bool {
 				std::string_view type_name = StringTable::getStringView(type_name_handle);
 				// Check if this looks like a mangled template name (contains underscores as separators)
@@ -574,20 +554,10 @@ ParseResult Parser::parse_struct_declaration()
 			if (has_dependent_args) {
 				FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
 				
-				std::vector<TemplateArgumentNodeInfo> arg_infos;
-				arg_infos.reserve(template_args.size());
-				for (size_t i = 0; i < template_args.size(); ++i) {
-					TemplateArgumentNodeInfo info;
-					info.is_pack = template_args[i].is_pack;
-					info.is_dependent = template_args[i].is_dependent;
-					if (i < template_arg_nodes.size()) {
-						info.node = template_arg_nodes[i];
-					}
-					arg_infos.push_back(std::move(info));
-				}
+				auto arg_infos = build_template_arg_infos(template_args, template_arg_nodes);
 				
 				StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-				struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base, is_pack_expansion_base);
+				struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
 				
 				continue;  // Skip to next base class or exit loop
 			}
@@ -598,8 +568,8 @@ ParseResult Parser::parse_struct_declaration()
 			instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
 			
 			// Resolve member type alias if present (e.g., Base<T>::type)
-			if (member_type_name.has_value()) {
-				std::string_view member_name = StringTable::getStringView(*member_type_name);
+			if (post_info.member_type_name.has_value()) {
+				std::string_view member_name = StringTable::getStringView(*post_info.member_type_name);
 				
 				// First try direct lookup
 				StringBuilder qualified_builder;
@@ -614,7 +584,7 @@ ParseResult Parser::parse_struct_declaration()
 					// Try looking up through inheritance (e.g., wrapper<true_type>::type where type is inherited)
 					alias_type_info = lookup_inherited_type_alias(base_class_name, member_name);
 					if (alias_type_info == nullptr) {
-						return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", *member_name_token);
+						return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", *post_info.member_name_token);
 					}
 					FLASH_LOG_FORMAT(Templates, Debug, "Found inherited member alias: {}", StringTable::getStringView(alias_type_info->name()));
 				} else {
@@ -645,8 +615,8 @@ ParseResult Parser::parse_struct_declaration()
 				base_class_name = StringTable::getStringView(resolved_type->name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Resolved member alias base to underlying type: {}", base_class_name);
 				
-				if (member_name_token.has_value()) {
-					base_name_token = *member_name_token;
+				if (post_info.member_name_token.has_value()) {
+					base_name_token = *post_info.member_name_token;
 				}
 			}
 		}
