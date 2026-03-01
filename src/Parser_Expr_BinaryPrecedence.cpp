@@ -902,11 +902,9 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		CVQualifier trailing_cv = CVQualifier::None;
 		while (peek() == "const"_tok || peek() == "volatile"_tok) {
 			if (peek() == "const"_tok) {
-				trailing_cv = static_cast<CVQualifier>(
-					static_cast<uint8_t>(trailing_cv) | static_cast<uint8_t>(CVQualifier::Const));
+				trailing_cv |= CVQualifier::Const;
 			} else {
-				trailing_cv = static_cast<CVQualifier>(
-					static_cast<uint8_t>(trailing_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+				trailing_cv |= CVQualifier::Volatile;
 			}
 			advance();
 		}
