@@ -674,6 +674,37 @@
 		}
 	}
 
+	// Reset per-function state between function declarations
+	void resetFunctionState() {
+		max_temp_var_index_ = 0;
+		next_temp_var_offset_ = 8;
+		current_function_try_blocks_.clear();
+		current_try_block_ = nullptr;
+		try_block_nesting_stack_.clear();
+		pending_catch_try_index_ = SIZE_MAX;
+		current_catch_handler_ = nullptr;
+		current_function_local_objects_.clear();
+		current_function_unwind_map_.clear();
+		current_exception_state_ = -1;
+		current_function_seh_try_blocks_.clear();
+		seh_try_block_stack_.clear();
+		current_seh_filter_funclet_offset_ = 0;
+		in_catch_funclet_ = false;
+		catch_funclet_return_slot_offset_ = 0;
+		catch_funclet_return_flag_slot_offset_ = 0;
+		catch_funclet_return_label_counter_ = 0;
+		catch_funclet_terminated_by_return_ = false;
+		current_catch_continuation_label_ = StringHandle();
+		catch_return_bridges_.clear();
+		catch_continuation_fixup_map_.clear();
+		catch_continuation_sub_rsp_patches_.clear();
+		eh_prologue_lea_rbp_offset_ = 0;
+		catch_funclet_lea_rbp_patches_.clear();
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			current_function_cfi_.clear();
+		}
+	}
+
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		assert(instruction.hasTypedPayload() && "FunctionDecl instruction must use typed payload");
 		
@@ -834,65 +865,13 @@
 			}
 			
 			// Reset for new function
-			max_temp_var_index_ = 0;
-			next_temp_var_offset_ = 8;  // Reset TempVar allocation offset
-			current_function_try_blocks_.clear();  // Clear exception tracking for next function
-			current_try_block_ = nullptr;
-			try_block_nesting_stack_.clear();
-			pending_catch_try_index_ = SIZE_MAX;
-			current_catch_handler_ = nullptr;
-			current_function_local_objects_.clear();  // Clear local object tracking
-			current_function_unwind_map_.clear();  // Clear unwind map
-			current_exception_state_ = -1;  // Reset state counter
-			current_function_seh_try_blocks_.clear();  // Clear SEH tracking for next function
-			seh_try_block_stack_.clear();
-			current_seh_filter_funclet_offset_ = 0;
-			in_catch_funclet_ = false;
-			catch_funclet_return_slot_offset_ = 0;
-			catch_funclet_return_flag_slot_offset_ = 0;
-			catch_funclet_return_label_counter_ = 0;
-			catch_funclet_terminated_by_return_ = false;
-			current_catch_continuation_label_ = StringHandle();
-			catch_return_bridges_.clear();
-			catch_continuation_fixup_map_.clear();
-			catch_continuation_sub_rsp_patches_.clear();
-			eh_prologue_lea_rbp_offset_ = 0;
-			catch_funclet_lea_rbp_patches_.clear();
-			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-				current_function_cfi_.clear();  // Clear CFI tracking for next function
-			}
+			resetFunctionState();
 		} else if (skip_previous_function_finalization_) {
 			// Previous function was skipped due to codegen error - just clean up state
 			if (!variable_scopes.empty()) {
 				variable_scopes.pop_back();
 			}
-			max_temp_var_index_ = 0;
-			next_temp_var_offset_ = 8;
-			current_function_try_blocks_.clear();
-			current_try_block_ = nullptr;
-			try_block_nesting_stack_.clear();
-			pending_catch_try_index_ = SIZE_MAX;
-			current_catch_handler_ = nullptr;
-			current_function_local_objects_.clear();
-			current_function_unwind_map_.clear();
-			current_exception_state_ = -1;
-			current_function_seh_try_blocks_.clear();
-			seh_try_block_stack_.clear();
-			current_seh_filter_funclet_offset_ = 0;
-			in_catch_funclet_ = false;
-			catch_funclet_return_slot_offset_ = 0;
-			catch_funclet_return_flag_slot_offset_ = 0;
-			catch_funclet_return_label_counter_ = 0;
-			catch_funclet_terminated_by_return_ = false;
-			current_catch_continuation_label_ = StringHandle();
-			catch_return_bridges_.clear();
-			catch_continuation_fixup_map_.clear();
-			catch_continuation_sub_rsp_patches_.clear();
-			eh_prologue_lea_rbp_offset_ = 0;
-			catch_funclet_lea_rbp_patches_.clear();
-			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-				current_function_cfi_.clear();
-			}
+			resetFunctionState();
 			// Clear pending branches/labels from the skipped function
 			pending_branches_.clear();
 			label_positions_.clear();
