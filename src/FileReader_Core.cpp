@@ -15,7 +15,7 @@ size_t FileReader::find_first_non_whitespace_after_hash(const std::string& str) 
 }
 
 bool FileReader::readFile(std::string_view file, long included_at_line) {
-	if (proccessedHeaders_.find(std::string(file)) != proccessedHeaders_.end())
+	if (processedHeaders_.find(std::string(file)) != processedHeaders_.end())
 		return true;
 
 	// Check for excessive include nesting depth (prevents infinite recursion)
@@ -406,7 +406,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			append_line_with_tracking("");  // Preserve line numbering
 		}
 		else if (line.find("#pragma once", 0) == 0) {
-			proccessedHeaders_.insert(std::string(filestack_.top().file_name));
+			processedHeaders_.insert(std::string(filestack_.top().file_name));
 		}
 		else if (line.find("#pragma pack", 0) == 0) {
 			processPragmaPack(line);

@@ -507,11 +507,6 @@ private:
 		build_separator_bitset_chunk(3)   // Chars 192-255
 	};
 
-	static constexpr bool is_seperator_character(char c) {
-		unsigned char uc = static_cast<unsigned char>(c);
-		return (separator_bitset[uc >> 6] >> (uc & 0x3F)) & 1;
-	}
-
 	static bool is_inside_string_literal(const std::string& str, size_t pos);
 	std::string expandMacrosForConditional(const std::string& input);
 	std::string expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros = {});
@@ -534,7 +529,7 @@ private:
 	CompileContext& settings_;
 	FileTree& tree_;
 	std::unordered_map<std::string, Directive> defines_;
-	std::unordered_set<std::string> proccessedHeaders_;
+	std::unordered_set<std::string> processedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
 	std::vector<std::string> file_paths_;  // Unique list of source file paths
