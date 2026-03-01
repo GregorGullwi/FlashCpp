@@ -435,7 +435,9 @@
 			ctx.operand_size_in_bits = 64;
 		}
 		if (!is_integer_type(ctx.result_value.type) && !is_bool_type(ctx.result_value.type) && !is_floating_point_type(ctx.result_value.type)) {
-			throw InternalError(std::string("Only integer/boolean/floating-point/pointer-like ") + operation_name + " is supported, got type " + std::to_string(static_cast<int>(ctx.result_value.type)));
+			auto type_name = getTypeName(ctx.result_value.type);
+			std::string type_desc = type_name.empty() ? std::string("type_id=") + std::to_string(static_cast<int>(ctx.result_value.type)) : std::string(type_name);
+			throw InternalError(std::string("Only integer/boolean/floating-point/pointer-like ") + operation_name + " is supported, got " + type_desc);
 		}
 
 		ctx.result_physical_reg = X64Register::Count;
