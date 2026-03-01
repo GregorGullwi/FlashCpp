@@ -1242,7 +1242,7 @@
 				std::cerr << " from '" << StringTable::getStringView(current_context->getName()) << "'";
 			}
 			std::cerr << "\n";
-			throw InternalError("Access control violation");
+			throw CompileError("Access control violation");
 		}
 
 		// Check if base_object is a TempVar with lvalue metadata

@@ -790,7 +790,7 @@
 				std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
 				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(), 
 				          "' of '", struct_info->getName(), "'", context_str);
-				throw InternalError("Access control violation");
+				throw CompileError("Access control violation");
 				return { Type::Int, 32, TempVar{0} };
 			}
 		}

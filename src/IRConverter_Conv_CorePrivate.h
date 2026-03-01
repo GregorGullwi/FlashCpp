@@ -426,11 +426,14 @@
 			       t == Type::Nullptr || t == Type::Void || t == Type::UserDefined ||
 			       t == Type::MemberFunctionPointer || t == Type::MemberObjectPointer;
 		};
-		bool treat_as_integer = is_pointer_like_type(ctx.result_value.type);
+		// Check operand type (not result type, which is Bool for comparisons)
+		bool treat_as_integer = is_pointer_like_type(ctx.operand_type);
 		if (treat_as_integer) {
 			// Pointer-like types: force 64-bit integer semantics
-			ctx.result_value.type = Type::UnsignedLongLong;
-			ctx.result_value.size_in_bits = 64;
+			if (!is_comparison) {
+				ctx.result_value.type = Type::UnsignedLongLong;
+				ctx.result_value.size_in_bits = 64;
+			}
 			ctx.operand_type = Type::UnsignedLongLong;
 			ctx.operand_size_in_bits = 64;
 		}
