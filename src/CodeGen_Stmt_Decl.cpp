@@ -586,7 +586,7 @@
 								// Check if this is an abstract class (only for non-pointer types)
 								if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
 									FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
-									throw InternalError("Cannot instantiate abstract class");
+									throw CompileError("Cannot instantiate abstract class");
 								}
 
 								const auto& initializers = init_list.initializers();
@@ -1344,7 +1344,7 @@
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
 						FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
-						throw InternalError("Cannot instantiate abstract class");
+						throw CompileError("Cannot instantiate abstract class");
 					}
 
 					if (type_info.struct_info_->hasAnyConstructor() || type_info.struct_info_->needs_default_constructor) {

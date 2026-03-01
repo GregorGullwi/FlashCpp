@@ -384,7 +384,7 @@
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
 							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
-							throw InternalError("Cannot instantiate abstract class");
+							throw CompileError("Cannot instantiate abstract class");
 						}
 
 						if (type_info.struct_info_->hasAnyConstructor()) {
@@ -431,7 +431,7 @@
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
 							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
-							throw InternalError("Cannot instantiate abstract class");
+							throw CompileError("Cannot instantiate abstract class");
 						}
 
 						if (type_info.struct_info_->hasAnyConstructor()) {
