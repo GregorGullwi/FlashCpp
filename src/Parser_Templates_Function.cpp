@@ -1115,6 +1115,14 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		// Set struct context for static member lookup
+		if (!struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			ctx.struct_node = struct_ctx.struct_node;
+			ctx.struct_info = struct_ctx.local_struct_info;
+		}
+		// Enable on-demand template instantiation for expressions like (_Pn < 0) ? -1 : 1
+		ctx.parser = this;
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
