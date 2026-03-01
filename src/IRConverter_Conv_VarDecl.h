@@ -675,6 +675,7 @@
 	}
 
 	// Reset per-function state between function declarations
+	// Reset per-function state between function declarations
 	void resetFunctionState() {
 		max_temp_var_index_ = 0;
 		next_temp_var_offset_ = 8;
@@ -700,6 +701,8 @@
 		catch_continuation_sub_rsp_patches_.clear();
 		eh_prologue_lea_rbp_offset_ = 0;
 		catch_funclet_lea_rbp_patches_.clear();
+		loop_context_stack_.clear();
+		inside_catch_handler_ = false;
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			current_function_cfi_.clear();
 		}
