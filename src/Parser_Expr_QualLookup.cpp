@@ -646,10 +646,11 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_after_template_args() {
 	BaseClassPostTemplateInfo info;
 
-	// Some parsing paths leave current_token_ pointing at '::' after template args.
-	// In this parser, peek() returns current_token_.kind(), so we must advance()
-	// past '::' first, then check the new current_token_ for the member name.
-	if (current_token_.value() == "::" && !info.member_type_name.has_value()) {
+	// Check if current_token_ is '::' (member type access like Base<Args>::type).
+	// In this parser, peek() returns current_token_.kind(), so peek() == "::"_tok
+	// is equivalent to this check. We advance() past '::' first, then check
+	// the new current_token_ for the member name.
+	if (peek() == "::"_tok) {
 		advance(); // consume ::, now current_token_ is the token after ::
 		if (current_token_.kind().is_identifier()) {
 			info.member_type_name = current_token_.handle();
@@ -658,20 +659,6 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 		} else {
 			// '::' not followed by identifier is a parse error
 			return std::nullopt;
-		}
-	}
-
-	// Standard path: '::' is in peek (i.e. current_token_) position
-	if (!info.member_type_name.has_value() && peek() == "::"_tok) {
-		SaveHandle saved = save_token_position();
-		advance(); // consume ::, now current_token_ is the token after ::
-		if (current_token_.kind().is_identifier()) {
-			info.member_type_name = current_token_.handle();
-			info.member_name_token = current_token_;
-			advance(); // consume member name
-			discard_saved_token(saved);
-		} else {
-			restore_token_position(saved);
 		}
 	}
 
@@ -755,7 +742,7 @@ ParseResult Parser::validate_and_add_base_class(
 		// In template bodies, unresolved base class names might be member type aliases
 		// that depend on template parameters (e.g., using __hash_code_base = typename __hashtable_base::__hash_code_base;)
 		// Defer resolution until template instantiation.
-		if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+		if (parsing_template_body_) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Deferring unresolved base class '{}' in template body", base_class_name);
 			bool is_deferred = true;
 			struct_ref.add_base_class(base_class_name, 0, base_access, is_virtual_base, is_deferred);
