@@ -104,13 +104,13 @@ private:
 	void visitSwitchStatementNode(const SwitchStatementNode& node);
 	void visitRangedForStatementNode(const RangedForStatementNode& node);
 	void visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
-	                         const DeclarationNode& array_decl, StringHandle loop_start_label,
-	                         StringHandle loop_body_label, StringHandle loop_increment_label,
-	                         StringHandle loop_end_label, size_t counter);
+	const DeclarationNode& array_decl, StringHandle loop_start_label,
+	StringHandle loop_body_label, StringHandle loop_increment_label,
+	StringHandle loop_end_label, size_t counter);
 	void visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
-	                            const TypeSpecifierNode& range_type, StringHandle loop_start_label,
-	                            StringHandle loop_body_label, StringHandle loop_increment_label,
-	                            StringHandle loop_end_label, size_t counter);
+	const TypeSpecifierNode& range_type, StringHandle loop_start_label,
+	StringHandle loop_body_label, StringHandle loop_increment_label,
+	StringHandle loop_end_label, size_t counter);
 	void visitBreakStatementNode(const BreakStatementNode& node);
 	void visitContinueStatementNode(const ContinueStatementNode& node);
 	void visitGotoStatementNode(const GotoStatementNode& node);
@@ -123,13 +123,13 @@ private:
 	void visitVariableDeclarationNode(const ASTNode& ast_node);
 	void visitStructuredBindingNode(const ASTNode& ast_node);
 	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 
-	                                            ExpressionContext context = ExpressionContext::Load);
+	ExpressionContext context = ExpressionContext::Load);
 	std::vector<IrOperand> generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
 	std::vector<IrOperand> generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
 	std::vector<IrOperand> generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode, 
-	                                             ExpressionContext context = ExpressionContext::Load);
+	ExpressionContext context = ExpressionContext::Load);
 	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
 	std::vector<IrOperand>
 		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
@@ -140,7 +140,7 @@ private:
 		const ExpressionNode& expr, 
 		int accumulated_offset = 0);
 	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
-	                                                 ExpressionContext context = ExpressionContext::Load);
+	ExpressionContext context = ExpressionContext::Load);
 	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
 	std::vector<IrOperand> generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {});
@@ -164,7 +164,7 @@ private:
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
 	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
-	                                                 ExpressionContext context = ExpressionContext::Load);
+	ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
@@ -186,7 +186,7 @@ private:
 		size_t& base_type_index,
 		bool& is_pointer_dereference);
 	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
-	                                               ExpressionContext context = ExpressionContext::Load);
+	ExpressionContext context = ExpressionContext::Load);
 	std::optional<size_t> calculateArraySize(const DeclarationNode& decl);
 	std::vector<IrOperand> generateSizeofIr(const SizeofExprNode& sizeofNode);
 	std::vector<IrOperand> generateAlignofIr(const AlignofExprNode& alignofNode);
@@ -237,7 +237,7 @@ private:
 	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info);
 	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
-	                                        const std::vector<ASTNode>& captured_var_decls);
+	const std::vector<ASTNode>& captured_var_decls);
 
 	// ── inline private helpers (CodeGen_Visitors_TypeInit.cpp) ──
 	// Helper: resolve self-referential struct types in template instantiations.
@@ -664,14 +664,14 @@ private:
 	bool isExpressionNoexcept(const ExpressionNode& expr) const {
 		// Literals are always noexcept
 		if (std::holds_alternative<BoolLiteralNode>(expr) ||
-		    std::holds_alternative<NumericLiteralNode>(expr) ||
-		    std::holds_alternative<StringLiteralNode>(expr)) {
+		std::holds_alternative<NumericLiteralNode>(expr) ||
+		std::holds_alternative<StringLiteralNode>(expr)) {
 			return true;
 		}
 		
 		// Identifiers (variable references) are noexcept
 		if (std::holds_alternative<IdentifierNode>(expr) ||
-		    std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+		std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 			return true;
 		}
 		
@@ -686,7 +686,7 @@ private:
 			// Recursively check operands
 			if (binop.get_lhs().is<ExpressionNode>() && binop.get_rhs().is<ExpressionNode>()) {
 				return isExpressionNoexcept(binop.get_lhs().as<ExpressionNode>()) &&
-				       isExpressionNoexcept(binop.get_rhs().as<ExpressionNode>());
+				isExpressionNoexcept(binop.get_rhs().as<ExpressionNode>());
 			}
 			// If operands are not expressions, assume noexcept for built-ins
 			return true;
@@ -766,9 +766,9 @@ private:
 		
 		// sizeof, alignof, offsetof are always noexcept
 		if (std::holds_alternative<SizeofExprNode>(expr) ||
-		    std::holds_alternative<SizeofPackNode>(expr) ||
-		    std::holds_alternative<AlignofExprNode>(expr) ||
-		    std::holds_alternative<OffsetofExprNode>(expr)) {
+		std::holds_alternative<SizeofPackNode>(expr) ||
+		std::holds_alternative<AlignofExprNode>(expr) ||
+		std::holds_alternative<OffsetofExprNode>(expr)) {
 			return true;
 		}
 		
@@ -779,7 +779,7 @@ private:
 		
 		// new/delete can throw (unless using nothrow variant)
 		if (std::holds_alternative<NewExpressionNode>(expr) ||
-		    std::holds_alternative<DeleteExpressionNode>(expr)) {
+		std::holds_alternative<DeleteExpressionNode>(expr)) {
 			return false;
 		}
 		
@@ -843,11 +843,11 @@ private:
 
 	// Implementation of recursive nested member store generation
 	void generateNestedMemberStores(
-	    const StructTypeInfo& struct_info,
-	    const InitializerListNode& init_list,
-	    StringHandle base_object,
-	    int base_offset,
-	    const Token& token)
+	const StructTypeInfo& struct_info,
+	const InitializerListNode& init_list,
+	StringHandle base_object,
+	int base_offset,
+	const Token& token)
 	{
 		// Build map of member names to initializer expressions
 		std::unordered_map<StringHandle, const ASTNode*> member_values;
@@ -896,11 +896,11 @@ private:
 					if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
 						// RECURSIVE CALL for nested struct
 						generateNestedMemberStores(
-						    *member_type_info.struct_info_,
-						    nested_init_list,
-						    base_object,
-						    base_offset + static_cast<int>(member.offset),
-						    token
+						*member_type_info.struct_info_,
+						nested_init_list,
+						base_object,
+						base_offset + static_cast<int>(member.offset),
+						token
 						);
 						continue;
 					}
@@ -998,10 +998,10 @@ private:
 	// Helper function to check if access to a member is allowed
 	// Returns true if access is allowed, false otherwise
 	bool checkMemberAccess(const StructMember* member,
-	                       const StructTypeInfo* member_owner_struct,
-	                       const StructTypeInfo* accessing_struct,
-	                       [[maybe_unused]] const BaseClassSpecifier* inheritance_path = nullptr,
-	                       const std::string_view& accessing_function = "") const {
+	const StructTypeInfo* member_owner_struct,
+	const StructTypeInfo* accessing_struct,
+	[[maybe_unused]] const BaseClassSpecifier* inheritance_path = nullptr,
+	const std::string_view& accessing_function = "") const {
 		if (!member || !member_owner_struct) {
 			return false;
 		}
@@ -1116,7 +1116,7 @@ private:
 
 	// Helper to check if accessing_struct is nested within member_owner_struct
 	bool isNestedWithin(const StructTypeInfo* accessing_struct,
-	                     const StructTypeInfo* member_owner_struct) const {
+	const StructTypeInfo* member_owner_struct) const {
 		if (!accessing_struct || !member_owner_struct) {
 			return false;
 		}
@@ -1135,7 +1135,7 @@ private:
 
 	// Helper to check if derived_struct can access protected members of base_struct
 	bool isAccessibleThroughInheritance(const StructTypeInfo* derived_struct,
-	                                     const StructTypeInfo* base_struct) const {
+	const StructTypeInfo* base_struct) const {
 		if (!derived_struct || !base_struct) {
 			return false;
 		}
@@ -1157,7 +1157,7 @@ private:
 			if (base_info == base_struct) {
 				// Protected members are accessible if inherited as public or protected
 				return base.access == AccessSpecifier::Public ||
-				       base.access == AccessSpecifier::Protected;
+				base.access == AccessSpecifier::Protected;
 			}
 
 			// Recursively check base classes
@@ -1194,9 +1194,9 @@ private:
 
 	// Helper function to check if access to a member function is allowed
 	bool checkMemberFunctionAccess(const StructMemberFunction* member_func,
-	                                const StructTypeInfo* member_owner_struct,
-	                                const StructTypeInfo* accessing_struct,
-	                                std::string_view accessing_function = "") const {
+	const StructTypeInfo* member_owner_struct,
+	const StructTypeInfo* accessing_struct,
+	std::string_view accessing_function = "") const {
 		if (!member_func || !member_owner_struct) {
 			return false;
 		}
@@ -1277,8 +1277,8 @@ private:
 	// Handles nested member access like o.inner.callback by recursively resolving types
 	// Returns true if successfully resolved, with the struct_info and member populated
 	bool resolveMemberAccessType(const MemberAccessNode& member_access,
-	                            const StructTypeInfo*& out_struct_info,
-	                            const StructMember*& out_member) const {
+	const StructTypeInfo*& out_struct_info,
+	const StructMember*& out_member) const {
 		// Get the base object expression
 		const ASTNode& base_node = member_access.object();
 		if (!base_node.is<ExpressionNode>()) {
@@ -1321,7 +1321,7 @@ private:
 			}
 			// Convert size from bytes to bits for TypeSpecifierNode
 			base_type = TypeSpecifierNode(Type::Struct, nested_member->type_index, 
-			                               nested_member->size * 8, Token());  // size in bits
+			nested_member->size * 8, Token());  // size in bits
 		} else {
 			// Unsupported base expression type
 			return false;
@@ -1375,8 +1375,8 @@ private:
 	// - Only Indirect (dereference) case is fully implemented
 	// - Future work: Extend LValueInfo or pass additional context to handle all cases
 	bool handleLValueAssignment(const std::vector<IrOperand>& lhs_operands,
-	                            const std::vector<IrOperand>& rhs_operands,
-	                            const Token& token) {
+	const std::vector<IrOperand>& rhs_operands,
+	const Token& token) {
 		// Check if LHS has a TempVar with lvalue metadata
 		if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
 			FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - size=", lhs_operands.size(), " has_tempvar=", (lhs_operands.size() >= 3 ? std::holds_alternative<TempVar>(lhs_operands[2]) : false));
@@ -1510,9 +1510,9 @@ private:
 	// Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
 	// This is similar to handleLValueAssignment but also performs the arithmetic operation
 	bool handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
-	                                     const std::vector<IrOperand>& rhs_operands,
-	                                     const Token& token,
-	                                     std::string_view op) {
+	const std::vector<IrOperand>& rhs_operands,
+	const Token& token,
+	std::string_view op) {
 		// Check if LHS has a TempVar with lvalue metadata
 		if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
 			FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - size=", lhs_operands.size(), 
@@ -1612,7 +1612,7 @@ private:
 			// Handle both TempVar and StringHandle bases for DereferenceStore
 			if (std::holds_alternative<TempVar>(base_value)) {
 				emitDereferenceStore(result_tv, std::get<Type>(lhs_operands[0]), std::get<int>(lhs_operands[1]),
-				                     std::get<TempVar>(base_value), token);
+				std::get<TempVar>(base_value), token);
 			} else {
 				// StringHandle base: emitDereferenceStore expects a TempVar, so we pass the StringHandle as the pointer
 				// Generate DereferenceStore with StringHandle directly
@@ -1878,10 +1878,10 @@ private:
 	
 	// Emit ArrayStore instruction
 	void emitArrayStore(Type element_type, int element_size_bits,
-	                    std::variant<StringHandle, TempVar> array,
-	                    const TypedValue& index, const TypedValue& value,
-	                    int64_t member_offset, bool is_pointer_to_array,
-	                    const Token& token) {
+	std::variant<StringHandle, TempVar> array,
+	const TypedValue& index, const TypedValue& value,
+	int64_t member_offset, bool is_pointer_to_array,
+	const Token& token) {
 		ArrayStoreOp payload;
 		payload.element_type = element_type;
 		payload.element_size_in_bits = element_size_bits;
@@ -1896,13 +1896,13 @@ private:
 	
 	// Emit MemberStore instruction
 	void emitMemberStore(const TypedValue& value,
-	                     std::variant<StringHandle, TempVar> object,
-	                     StringHandle member_name, int offset,
-	                     bool is_reference = false, bool is_rvalue_reference = false,
-	                     bool is_pointer_to_member = false,
-	                     const Token& token = Token(),
-	                     std::optional<size_t> bitfield_width = std::nullopt,
-	                     size_t bitfield_bit_offset = 0) {
+	std::variant<StringHandle, TempVar> object,
+	StringHandle member_name, int offset,
+	bool is_reference = false, bool is_rvalue_reference = false,
+	bool is_pointer_to_member = false,
+	const Token& token = Token(),
+	std::optional<size_t> bitfield_width = std::nullopt,
+	size_t bitfield_bit_offset = 0) {
 		MemberStoreOp member_store;
 		member_store.value = value;
 		member_store.object = object;
@@ -1921,8 +1921,8 @@ private:
 	
 	// Emit DereferenceStore instruction
 	void emitDereferenceStore(const TypedValue& value, Type pointee_type, [[maybe_unused]] int pointee_size_bits,
-	                          std::variant<StringHandle, TempVar> pointer,
-	                          const Token& token) {
+	std::variant<StringHandle, TempVar> pointer,
+	const Token& token) {
 		DereferenceStoreOp store_op;
 		store_op.value = value;
 		
@@ -1945,8 +1945,8 @@ private:
 			return node.as<DeclarationNode>();
 		} catch (...) {
 			FLASH_LOG(Codegen, Error, "BAD DeclarationNode cast in ", context,
-			          ": type_name=", node.type_name(),
-			          " has_value=", node.has_value());
+			": type_name=", node.type_name(),
+			" has_value=", node.has_value());
 			throw;
 		}
 	}
@@ -2083,7 +2083,7 @@ private:
 							
 							if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=", 
-								          type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
+								type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
 								return &member_func;
 							}
 							// Note: We intentionally don't have a permissive fallback here because it would match
@@ -2232,7 +2232,7 @@ private:
 			current_lambda_context_.captures.insert(var_name);
 			current_lambda_context_.capture_kinds[var_name] = capture.kind();
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-			    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 				current_lambda_context_.captures.insert(StringTable::getOrInternStringHandle("this"sv));
 				current_lambda_context_.capture_kinds[StringTable::getOrInternStringHandle("this"sv)] = capture.kind();
 				if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
@@ -2361,7 +2361,7 @@ private:
 	// initialized with a lambda, returns the TypeSpecifierNode for the closure struct.
 	// Returns std::nullopt if type cannot be deduced.
 	std::optional<TypeSpecifierNode> deduceLambdaClosureType(const ASTNode& symbol,
-	                                                          const Token& fallback_token) const {
+	const Token& fallback_token) const {
 		if (!symbol.is<VariableDeclarationNode>()) {
 			return std::nullopt;
 		}
@@ -2955,7 +2955,7 @@ private:
 	// and constructs an initializer_list pointing to it
 	std::vector<IrOperand> generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list) {
 		FLASH_LOG(Codegen, Debug, "Generating IR for InitializerListConstructionNode with ", 
-		          init_list.size(), " elements");
+		init_list.size(), " elements");
 		
 		// Get the target initializer_list type
 		const ASTNode& target_type_node = init_list.target_type();
@@ -3160,7 +3160,7 @@ private:
 						if (param_type.is<TypeSpecifierNode>()) {
 							const auto& pts = param_type.as<TypeSpecifierNode>();
 							if ((pts.is_reference() || pts.is_rvalue_reference()) &&
-							    is_struct_type(pts.type())) {
+							is_struct_type(pts.type())) {
 								continue;  // Skip implicit copy/move ctors
 							}
 						}
@@ -3175,7 +3175,7 @@ private:
 						bool all_have_defaults = true;
 						for (size_t i = num_args; i < params.size(); ++i) {
 							if (!params[i].is<DeclarationNode>() || 
-							    !params[i].as<DeclarationNode>().has_default_value()) {
+							!params[i].as<DeclarationNode>().has_default_value()) {
 								all_have_defaults = false;
 								break;
 							}
@@ -3257,7 +3257,7 @@ private:
 				
 				// Check if parameter expects a reference and argument is an identifier
 				if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
-				    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+				std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 					std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 					if (symbol.has_value() && symbol->is<DeclarationNode>()) {

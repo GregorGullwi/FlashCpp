@@ -101,7 +101,7 @@
 				// Look up the struct by return type index or name
 				for (size_t i = 0; i < gTypeInfo.size(); ++i) {
 					if (gTypeInfo[i].struct_info_ &&
-					    static_cast<int>(gTypeInfo[i].struct_info_->total_size * 8) == return_size) {
+					static_cast<int>(gTypeInfo[i].struct_info_->total_size * 8) == return_size) {
 						struct_info = gTypeInfo[i].struct_info_.get();
 						break;
 					}
@@ -188,8 +188,8 @@
 							if (ident.name() == "this") {
 								emitSehFinallyCallsBeforeReturn(node.return_token());
 								emitReturn(StringTable::getOrInternStringHandle("this"),
-								           current_function_return_type_, current_function_return_size_,
-								           node.return_token());
+								current_function_return_type_, current_function_return_size_,
+								node.return_token());
 								return;
 							}
 						}
@@ -287,7 +287,7 @@
 								IrValue source_value = std::visit([](auto&& arg) -> IrValue {
 									using T = std::decay_t<decltype(arg)>;
 									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-									              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+									std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 										return arg;
 									} else {
 										return 0ULL;
@@ -413,7 +413,7 @@
 			}
 			// Use the function's return type, not the expression type
 			emitReturn(return_value, current_function_return_type_, current_function_return_size_,
-			           node.return_token());
+			node.return_token());
 		}
 		else {
 			// Call any enclosing __finally funclets before returning

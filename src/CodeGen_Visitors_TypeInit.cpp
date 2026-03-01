@@ -388,7 +388,7 @@
 						if (std::holds_alternative<SizeofPackNode>(expr)) {
 							// This is an uninstantiated template - skip
 							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
-							          "' with unsubstituted sizeof... in type '", type_name, "'");
+							"' with unsubstituted sizeof... in type '", type_name, "'");
 							continue;
 						}
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
@@ -396,8 +396,8 @@
 							// Skip it (instantiated versions will have NumericLiteralNode instead)
 							const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
 							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
-							          "' with unsubstituted template parameter '", tparam.param_name(), 
-							          "' in type '", type_name, "'");
+							"' with unsubstituted template parameter '", tparam.param_name(), 
+							"' in type '", type_name, "'");
 							continue;
 						}
 						// Also skip IdentifierNode that looks like an unsubstituted template parameter
@@ -411,8 +411,8 @@
 							if (!symbol.has_value()) {
 								// Not found in global symbol table - likely a template parameter
 								FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
-								          "' with identifier initializer '", id.name(), 
-								          "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
+								"' with identifier initializer '", id.name(), 
+								"' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
 								unresolved_identifier_initializer = true;
 							}
 						}
@@ -531,7 +531,7 @@
 												}
 												evaluated_ctor = true;
 												FLASH_LOG(Codegen, Debug, "Evaluated constexpr ConstructorCallNode initializer for static member '",
-												          qualified_name, "'");
+												qualified_name, "'");
 											}
 										}
 									}
@@ -540,7 +540,7 @@
 						}
 						if (!evaluated_ctor) {
 							FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '", 
-							          qualified_name, "' - initializing to zero");
+							qualified_name, "' - initializing to zero");
 							size_t byte_count = op.size_in_bits / 8;
 							for (size_t i = 0; i < byte_count; ++i) {
 								op.init_data.push_back(0);
@@ -549,7 +549,7 @@
 					} else if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 						const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
 						FLASH_LOG(Codegen, Debug, "Processing BoolLiteralNode initializer for static member '", 
-						          qualified_name, "' value=", bool_lit.value() ? "true" : "false");
+						qualified_name, "' value=", bool_lit.value() ? "true" : "false");
 						unsigned long long value = bool_lit.value() ? 1ULL : 0ULL;
 						size_t byte_count = op.size_in_bits / 8;
 						for (size_t i = 0; i < byte_count; ++i) {
@@ -558,7 +558,7 @@
 						FLASH_LOG(Codegen, Debug, "  Wrote ", byte_count, " bytes to init_data");
 					} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '", 
-						          qualified_name, "'");
+						qualified_name, "'");
 						// Evaluate the initializer expression
 						auto init_operands = visitExpressionNode(init_expr);
 						// Convert to raw bytes
@@ -582,7 +582,7 @@
 						}
 					} else if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
 						FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '", 
-						          qualified_name, "' - should have been substituted!");
+						qualified_name, "' - should have been substituted!");
 						// Try to evaluate anyway
 						auto init_operands = visitExpressionNode(init_expr);
 						if (init_operands.size() >= 3) {
@@ -601,7 +601,7 @@
 						} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
 							const auto& id = std::get<IdentifierNode>(init_expr);
 							FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '", 
-							          qualified_name, "'");
+							qualified_name, "'");
 							// For reference members, the initializer is an identifier whose address
 							// should be stored via a data relocation (like &x for int& ref = x)
 							if (static_member.reference_qualifier != ReferenceQualifier::None) {
@@ -638,7 +638,7 @@
 								if (std::holds_alternative<IdentifierNode>(inner)) {
 									const auto& target_id = std::get<IdentifierNode>(inner);
 									FLASH_LOG(Codegen, Debug, "Processing &", target_id.name(), " initializer for static member '",
-									          qualified_name, "'");
+									qualified_name, "'");
 									StringHandle target_handle = StringTable::getOrInternStringHandle(target_id.name());
 									op.reloc_target = target_handle;
 									// Zero-fill the pointer slot; the linker fills the actual address
@@ -648,7 +648,7 @@
 									}
 								} else {
 									FLASH_LOG(Codegen, Debug, "Address-of non-identifier for static member '",
-									          qualified_name, "' - zero-initializing");
+									qualified_name, "' - zero-initializing");
 									append_bytes(0, op.size_in_bits, op.init_data);
 								}
 							} else {
@@ -664,7 +664,7 @@
 							unsigned long long evaluated_value = 0;
 							if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
 								FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
-								          qualified_name, "' = ", evaluated_value);
+								qualified_name, "' = ", evaluated_value);
 								append_bytes(evaluated_value, op.size_in_bits, op.init_data);
 							} else {
 								// Try triggering lazy instantiation for template static members
@@ -677,7 +677,7 @@
 									if (updated && updated->initializer.has_value()) {
 										if (evaluate_static_initializer(*updated->initializer, evaluated_value, struct_info)) {
 											FLASH_LOG(Codegen, Debug, "Evaluated lazy-instantiated constexpr initializer for static member '",
-											          qualified_name, "' = ", evaluated_value);
+											qualified_name, "' = ", evaluated_value);
 											append_bytes(evaluated_value, op.size_in_bits, op.init_data);
 											resolved_via_lazy = true;
 										}
@@ -685,7 +685,7 @@
 								}
 								if (!resolved_via_lazy) {
 									FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
-									          qualified_name, "' - skipping evaluation");
+									qualified_name, "' - skipping evaluation");
 									// For unknown expression types, skip evaluation to avoid crashes
 									// Initialize to zero as a safe default
 									append_bytes(0, op.size_in_bits, op.init_data);
@@ -715,7 +715,7 @@
 						const TypeInfo& resolved_type = gTypeInfo[base_type.type_index_];
 						base_info = resolved_type.getStructInfo();
 						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_), 
-						          "' to struct '", StringTable::getStringView(resolved_type.name_), "'");
+						"' to struct '", StringTable::getStringView(resolved_type.name_), "'");
 					}
 					
 					// Special handling for type aliases like "bool_constant_true::type"
@@ -731,7 +731,7 @@
 								const StructTypeInfo* actual_info = actual_struct_it->second->getStructInfo();
 								if (actual_info) {
 									FLASH_LOG(Codegen, Debug, "Using actual struct '", actual_struct_name, 
-									          "' instead of type alias '", base.name, "' for static members");
+									"' instead of type alias '", base.name, "' for static members");
 									base_info = actual_info;
 								}
 							}
@@ -791,7 +791,7 @@
 							std::string_view base_name_str = base.name;
 							
 							FLASH_LOG(Codegen, Debug, "Generating inherited static member '", member_name, 
-							          "' for ", type_name, " from base ", base_name_str);
+							"' for ", type_name, " from base ", base_name_str);
 							
 							GlobalVariableDeclOp alias_op;
 							alias_op.type = static_member_ptr->type;
@@ -804,7 +804,7 @@
 							unsigned long long inferred_value = 0;
 							
 							if (static_member_ptr->initializer.has_value() && 
-							    static_member_ptr->initializer->is<ExpressionNode>()) {
+							static_member_ptr->initializer->is<ExpressionNode>()) {
 								const ExpressionNode& init_expr = static_member_ptr->initializer->as<ExpressionNode>();
 								
 								if (std::holds_alternative<BoolLiteralNode>(init_expr)) {

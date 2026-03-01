@@ -60,7 +60,7 @@
 			
 			// Skip [this] and [*this] captures as they don't have an identifier to look up
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-			    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 				continue;
 			}
 
@@ -264,7 +264,7 @@
 					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
 						// Check if this variable is a captured variable from an enclosing lambda
 						bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
-						                                   current_lambda_context_.captures.count(var_name_str) > 0;
+						current_lambda_context_.captures.count(var_name_str) > 0;
 
 						// Handle init-captures
 						if (capture.has_initializer()) {
@@ -377,7 +377,7 @@
 								// Variable is captured from enclosing lambda - need to get address from this->x
 								auto enclosing_kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 								bool enclosing_is_ref = (enclosing_kind_it != current_lambda_context_.capture_kinds.end() &&
-								                         enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+								enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 
 								if (enclosing_is_ref) {
 									// Enclosing captured by reference - it already holds a pointer, just copy it
@@ -915,7 +915,7 @@
 	}
 
 	void AstToIr::addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
-	                                        const std::vector<ASTNode>& captured_var_decls) {
+	const std::vector<ASTNode>& captured_var_decls) {
 		// Add captured variables to the symbol table
 		// We use the stored declarations from when the lambda was created
 		size_t capture_index = 0;
@@ -928,7 +928,7 @@
 			
 			// Skip [this] and [*this] captures - they don't have variable declarations
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-			    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 				continue;
 			}
 

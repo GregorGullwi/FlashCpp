@@ -1,7 +1,7 @@
 #include "CodeGen.h"
 
 	std::vector<IrOperand> AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
-	                                            ExpressionContext context) {
+	ExpressionContext context) {
 		return std::visit([this, context](const auto& expr) -> std::vector<IrOperand> {
 			using T = std::decay_t<decltype(expr)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -128,7 +128,7 @@
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
 					FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ", 
-					         StringTable::getStringView(struct_info->getName()));
+					StringTable::getStringView(struct_info->getName()));
 					DestructorCallOp dtor_op;
 					dtor_op.struct_name = struct_info->getName();
 					dtor_op.object = StringTable::getOrInternStringHandle(object_name);
@@ -228,7 +228,7 @@
 			// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
 			if (size_bits == 0) {
 				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
-				         "' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
+				"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
 				size_bits = get_type_size_bits(type_node.type());
 			}
 		}
@@ -237,11 +237,11 @@
 	}
 
 	std::vector<IrOperand> AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
-	                                             ExpressionContext context) {
+	ExpressionContext context) {
 		// Check if this is a captured variable in a lambda
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		if (current_lambda_context_.isActive() &&
-		    current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
+		current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
 			// This is a captured variable - generate member access (this->x)
 			// Look up the closure struct type
 			auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
@@ -254,7 +254,7 @@
 					// Check if this is a by-reference capture
 					auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 					bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
-					                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+					kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 
 					if (is_reference) {
 						// By-reference capture: member is a pointer, need to dereference
@@ -521,7 +521,7 @@
 		// Skip this for [*this] lambdas - they need to access through __copy_this instead
 		// Also check that we're not in a lambda context where this would be an enclosing struct member
 		if (!symbol.has_value() && current_struct_name_.isValid() && 
-		    !isInCopyThisLambda() && !current_lambda_context_.isActive()) {
+		!isInCopyThisLambda() && !current_lambda_context_.isActive()) {
 			// Look up the struct type
 			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
@@ -608,7 +608,7 @@
 								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
 								if (enumerator) {
 									return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-									         static_cast<unsigned long long>(enumerator->value) };
+									static_cast<unsigned long long>(enumerator->value) };
 								}
 							}
 						}
@@ -644,7 +644,7 @@
 						if (enumerator) {
 							// This IS an enumerator constant - return its value using the underlying type
 							return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-							         static_cast<unsigned long long>(enumerator->value) };
+							static_cast<unsigned long long>(enumerator->value) };
 						}
 						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
 					}
@@ -1032,7 +1032,7 @@
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
 					return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-					         static_cast<unsigned long long>(enum_value) };
+					static_cast<unsigned long long>(enum_value) };
 				}
 			}
 
@@ -1129,7 +1129,7 @@
 						if (owner_type_it != gTypesByName.end() && owner_type_it->second->is_incomplete_instantiation_) {
 							std::string_view owner_name = StringTable::getStringView(owner_struct->getName());
 							FLASH_LOG(Codegen, Error, "Cannot access static member '", qualifiedIdNode.name(), 
-							          "' from incomplete template instantiation '", owner_name, "'");
+							"' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad
 							// This prevents linker errors from undefined references to incomplete instantiations
 							return { Type::Bool, 8, 0ULL, 0ULL };
@@ -1181,9 +1181,9 @@
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 								std::unordered_set<TypeIndex> visited;
 								while (resolved_type && 
-								       resolved_type->type_index_ < gTypeInfo.size() && 
-								       resolved_type->type_index_ != 0 &&
-								       !visited.contains(resolved_type->type_index_)) {
+								resolved_type->type_index_ < gTypeInfo.size() && 
+								resolved_type->type_index_ != 0 &&
+								!visited.contains(resolved_type->type_index_)) {
 									visited.insert(resolved_type->type_index_);
 									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
 									
@@ -1208,7 +1208,7 @@
 								std::string_view owner_name_str = StringTable::getStringView(qualified_struct_name);
 								bool looks_like_primary_template = 
 									(owner_name_str.find('_') == std::string_view::npos || 
-									 owner_name_str == StringTable::getStringView(owner_struct->getName()));
+									owner_name_str == StringTable::getStringView(owner_struct->getName()));
 								
 								if (looks_like_primary_template) {
 									// Search for an instantiated version that has this static member
@@ -1216,7 +1216,7 @@
 									for (const auto& emitted_handle : emitted_static_members_) {
 										std::string_view emitted = StringTable::getStringView(emitted_handle);
 										if (emitted.find(search_suffix) != std::string::npos &&
-										    emitted.find(std::string(owner_name_str) + "_") == 0) {
+										emitted.find(std::string(owner_name_str) + "_") == 0) {
 											// Found an instantiated version - extract the struct name
 											size_t colon_pos = emitted.find("::");
 											if (colon_pos != std::string::npos) {

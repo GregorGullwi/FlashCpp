@@ -160,7 +160,7 @@ inline bool returnsStructByValue(Type type, int pointer_depth, bool is_reference
 
 inline bool needsHiddenReturnParam(Type type, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {
 	return returnsStructByValue(type, pointer_depth, is_reference) &&
-	       (size_in_bits > getStructReturnThreshold(is_llp64));
+	(size_in_bits > getStructReturnThreshold(is_llp64));
 }
 
 

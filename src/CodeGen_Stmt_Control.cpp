@@ -48,7 +48,7 @@
 			
 			if (!result.success()) {
 				FLASH_LOG(Codegen, Error, "if constexpr condition is not a constant expression: ", 
-				          result.error_message);
+				result.error_message);
 				return;
 			}
 
@@ -552,12 +552,12 @@
 		if (range_decl.is_array()) {
 			// Array-based range-for loop
 			visitRangedForArray(node, range_name, range_decl, loop_start_label, loop_body_label, 
-			                    loop_increment_label, loop_end_label, ranged_for_counter - 1);
+			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		// Check if it's a struct with begin()/end() methods
 		else if (range_type.type() == Type::Struct) {
 			visitRangedForBeginEnd(node, range_name, range_type, loop_start_label, loop_body_label,
-			                       loop_increment_label, loop_end_label, ranged_for_counter - 1);
+			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		else {
 			FLASH_LOG(Codegen, Error, "Range expression must be an array or a type with begin()/end() methods");
@@ -566,9 +566,9 @@
 	}
 
 	void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
-	                         const DeclarationNode& array_decl, StringHandle loop_start_label,
-	                         StringHandle loop_body_label, StringHandle loop_increment_label,
-	                         StringHandle loop_end_label, size_t counter) {
+	const DeclarationNode& array_decl, StringHandle loop_start_label,
+	StringHandle loop_body_label, StringHandle loop_increment_label,
+	StringHandle loop_end_label, size_t counter) {
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Unified pointer-based approach: use begin/end pointers for arrays too
@@ -752,9 +752,9 @@
 	}
 
 	void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
-	                            const TypeSpecifierNode& range_type, StringHandle loop_start_label,
-	                            StringHandle loop_body_label, StringHandle loop_increment_label,
-	                            StringHandle loop_end_label, size_t counter) {
+	const TypeSpecifierNode& range_type, StringHandle loop_start_label,
+	StringHandle loop_body_label, StringHandle loop_increment_label,
+	StringHandle loop_end_label, size_t counter) {
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Get the struct type info
@@ -823,8 +823,8 @@
 		ChunkedVector<ASTNode> empty_args;
 		auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
 			MemberFunctionCallNode(range_expr_for_begin, 
-			                       begin_func_decl,
-			                       std::move(empty_args), Token())
+			begin_func_decl,
+			std::move(empty_args), Token())
 		);
 		
 		auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_call_expr);
@@ -839,8 +839,8 @@
 		ChunkedVector<ASTNode> empty_args2;
 		auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
 			MemberFunctionCallNode(range_expr_for_end,
-			                       end_func_decl,
-			                       std::move(empty_args2), Token())
+			end_func_decl,
+			std::move(empty_args2), Token())
 		);
 		
 		auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_call_expr);

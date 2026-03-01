@@ -99,7 +99,7 @@
 			
 			// Check if LHS is an array subscript or member access (lvalue expressions)
 			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr) || 
-			    std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 				
 				// Evaluate LHS with LValueAddress context (no Load instruction)
 				auto lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
@@ -184,7 +184,7 @@
 				if (capture_it != current_lambda_context_.captures.end()) {
 					auto kind_it = current_lambda_context_.capture_kinds.find(lhs_name_str);
 					if (kind_it != current_lambda_context_.capture_kinds.end() &&
-					    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference) {
+					kind_it->second == LambdaCaptureNode::CaptureKind::ByReference) {
 						// This is assignment to a captured-by-reference variable
 						// Handle via unified handler (identifiers are now marked as lvalues)
 						auto lhsIrOperands = visitExpressionNode(lhs_expr);
@@ -283,8 +283,8 @@
 					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
 						store_operands.emplace_back(std::get<TempVar>(rhsIrOperands[2]));
 					} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])
-					        || std::holds_alternative<unsigned long long>(rhsIrOperands[2])
-					        || std::holds_alternative<double>(rhsIrOperands[2])) {
+					|| std::holds_alternative<unsigned long long>(rhsIrOperands[2])
+					|| std::holds_alternative<double>(rhsIrOperands[2])) {
 						// Local variable (StringHandle) or constant: load into a temp first
 						TempVar temp = var_counter.next();
 						AssignmentOp assign_op;
@@ -312,12 +312,12 @@
 		// Use LValueAddress context for the LHS, similar to regular assignment
 		// Helper lambda to check if operator is a compound assignment
 		if (compound_assignment_ops.count(op) > 0 &&
-		    binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+		binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			
 			// Check if LHS is an array subscript or member access (lvalue expressions)
 			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr) || 
-			    std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 				
 				// Evaluate LHS with LValueAddress context (no Load instruction)
 				auto lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
@@ -368,7 +368,7 @@
 		// Try unified metadata-based handler for compound assignments on identifiers
 		// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
 		if (compound_assignment_ops.count(op) > 0 &&
-		    handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
+		handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
 			FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for compound assignment");
 			return lhsIrOperands;
 		}
@@ -525,7 +525,7 @@
 				if (overload_result.has_overload) {
 					// Found an overload! Generate a member function call instead of built-in operation
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving binary operator{} overload for type index {}", 
-					         op, lhs_type_index);
+					op, lhs_type_index);
 					
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
@@ -685,7 +685,7 @@
 					
 					// Return the result with resolved types
 					return {resolved_return_type, actual_return_size, result_var, 
-					        return_type.type_index()};
+					return_type.type_index()};
 				}
 			}
 		}

@@ -482,7 +482,7 @@
 		// ptr_operands[3] is the type_index when the expression type is Type::Struct (index 0 is invalid).
 		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
 		if (ptr_type == Type::Struct && !deleteExpr.is_array() &&
-		    ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
+		ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
 			unsigned long long type_idx_val = std::get<unsigned long long>(ptr_operands[3]);
 			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
 			if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
@@ -509,7 +509,7 @@
 			// Array delete: call destructor for each element if the type has one, using cookie
 			bool has_dtor_loop = false;
 			if (ptr_type == Type::Struct &&
-			    ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
+			ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
 				unsigned long long type_idx_val = std::get<unsigned long long>(ptr_operands[3]);
 				if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_idx_val];
@@ -789,9 +789,9 @@
 
 		// For enum to int or int to enum, we can just change the type
 		if ((source_type == Type::Enum && target_type == Type::Int) ||
-		    (source_type == Type::Int && target_type == Type::Enum) ||
-		    (source_type == Type::Enum && target_type == Type::UnsignedInt) ||
-		    (source_type == Type::UnsignedInt && target_type == Type::Enum)) {
+		(source_type == Type::Int && target_type == Type::Enum) ||
+		(source_type == Type::Enum && target_type == Type::UnsignedInt) ||
+		(source_type == Type::UnsignedInt && target_type == Type::Enum)) {
 			// Return the value with the new type
 			return { target_type, target_size, expr_operands[2], 0ULL };
 		}
@@ -804,7 +804,7 @@
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
 				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+				std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
 					// This shouldn't happen for expression values, but default to 0
@@ -829,7 +829,7 @@
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
 				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+				std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
 					throw InternalError("Couldn't match IrValue to a known type");
@@ -853,7 +853,7 @@
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
 				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+				std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
 					throw InternalError("Couldn't match IrValue to a known type");

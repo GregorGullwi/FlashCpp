@@ -21,9 +21,9 @@
 		// Check if the value is a compile-time constant (literal)
 		// operands format: [type, size, value]
 		bool is_literal = (operands.size() == 3) &&
-		                  (std::holds_alternative<unsigned long long>(operands[2]) ||
-		                   std::holds_alternative<int>(operands[2]) ||
-		                   std::holds_alternative<double>(operands[2]));
+		(std::holds_alternative<unsigned long long>(operands[2]) ||
+		std::holds_alternative<int>(operands[2]) ||
+		std::holds_alternative<double>(operands[2]));
 
 		if (is_literal) {
 			// For literal values, just convert the value directly without creating a TempVar
@@ -360,14 +360,14 @@
 	}
 
 	std::vector<IrOperand> AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
-	                                                 ExpressionContext context) {
+	ExpressionContext context) {
 		std::vector<IrOperand> irOperands;
 
 		// OPERATOR OVERLOAD RESOLUTION
 		// For full standard compliance, operator& should call overloaded operator& if it exists.
 		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
 		if (!unaryOperatorNode.is_builtin_addressof() && unaryOperatorNode.op() == "&" && 
-		    unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			
 			// For now, only handle simple identifiers
@@ -387,7 +387,7 @@
 						if (overload_result.has_overload) {
 							// Found an overload! Generate a member function call instead of built-in address-of
 							FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator& overload for type index {}", 
-							         type_node->type_index());
+							type_node->type_index());
 							
 							const StructMemberFunction& member_func = *overload_result.member_overload;
 							const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
@@ -625,7 +625,7 @@
 				// Handle general case: &obj.member (where obj is NOT an array subscript)
 				// This generates the member address directly without loading the value
 				if (!object_node.is<ExpressionNode>() || 
-				    (object_node.is<ExpressionNode>() && !std::holds_alternative<ArraySubscriptNode>(object_node.as<ExpressionNode>()))) {
+				(object_node.is<ExpressionNode>() && !std::holds_alternative<ArraySubscriptNode>(object_node.as<ExpressionNode>()))) {
 					
 					// Get the object expression (identifier, pointer dereference, etc.)
 					auto object_operands = visitExpressionNode(object_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
@@ -870,8 +870,8 @@
 		// Returns the result operands, or empty if not applicable
 		// adjusted_offset must be provided (from LazyMemberResolver result)
 		auto generateMemberIncDec = [&](StringHandle object_name, 
-		                                 const StructMember* member, bool is_reference_capture,
-		                                 const Token& token, size_t adjusted_offset) -> std::vector<IrOperand> {
+		const StructMember* member, bool is_reference_capture,
+		const Token& token, size_t adjusted_offset) -> std::vector<IrOperand> {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
@@ -956,7 +956,7 @@
 		
 		// Check if this is an increment/decrement on a captured variable in a lambda
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && 
-		    current_lambda_context_.isActive() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		current_lambda_context_.isActive() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
@@ -972,9 +972,9 @@
 						if (member_result) {
 							auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 							bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
-							                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+							kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 							return generateMemberIncDec(StringTable::getOrInternStringHandle("this"sv), member_result.member, is_reference, 
-							                            unaryOperatorNode.get_token(), member_result.adjusted_offset);
+							unaryOperatorNode.get_token(), member_result.adjusted_offset);
 						}
 					}
 				}
@@ -1009,7 +1009,7 @@
 										auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_name);
 										if (member_result) {
 											return generateMemberIncDec(object_name, member_result.member, false,
-											                            member_access.member_token(), member_result.adjusted_offset);
+											member_access.member_token(), member_result.adjusted_offset);
 										}
 									}
 								}
@@ -1058,7 +1058,7 @@
 		// Special handling for address-of non-static member: &Class::member
 		// This should produce a pointer-to-member constant (member offset)
 		if (!operandHandledAsIdentifier && unaryOperatorNode.op() == "&" && 
-		    unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operand_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<QualifiedIdentifierNode>(operand_expr)) {
 				const QualifiedIdentifierNode& qualIdNode = std::get<QualifiedIdentifierNode>(operand_expr);
@@ -1081,12 +1081,12 @@
 						if (member_result) {
 							// This is a pointer-to-member: return the member offset as a constant
 							FLASH_LOG(Codegen, Debug, "Address-of non-static member '", class_name, "::", member_name, 
-							          "' - returning offset ", member_result.adjusted_offset, " as pointer-to-member constant");
+							"' - returning offset ", member_result.adjusted_offset, " as pointer-to-member constant");
 							
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
 							return { member_result.member->type, 64, static_cast<unsigned long long>(member_result.adjusted_offset), 
-							         static_cast<unsigned long long>(member_result.member->type_index) };
+							static_cast<unsigned long long>(member_result.member->type_index) };
 						}
 					}
 				}

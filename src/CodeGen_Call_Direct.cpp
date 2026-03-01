@@ -124,7 +124,7 @@
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
 						if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-						              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+						std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 							return arg;
 						} else {
 							return 0ULL;
@@ -228,7 +228,7 @@
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
 								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-								              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+								std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 									return arg;
 								} else {
 									return 0ULL;
@@ -334,7 +334,7 @@
 		// Fallback: if pointer comparison failed (e.g., for template instantiations),
 		// try to find the function by checking if there's only one overload with this name
 		if (!matched_func_decl && scoped_overloads.size() == 1 &&
-		    (scoped_overloads[0].is<FunctionDeclarationNode>() || scoped_overloads[0].is<TemplateFunctionDeclarationNode>())) {
+		(scoped_overloads[0].is<FunctionDeclarationNode>() || scoped_overloads[0].is<TemplateFunctionDeclarationNode>())) {
 			matched_func_decl = scoped_overloads[0].is<FunctionDeclarationNode>()
 				? &scoped_overloads[0].as<FunctionDeclarationNode>()
 				: &scoped_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
@@ -344,7 +344,7 @@
 
 		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
 		if (!matched_func_decl && gSymbolTable_overloads.size() == 1 &&
-		    (gSymbolTable_overloads[0].is<FunctionDeclarationNode>() || gSymbolTable_overloads[0].is<TemplateFunctionDeclarationNode>())) {
+		(gSymbolTable_overloads[0].is<FunctionDeclarationNode>() || gSymbolTable_overloads[0].is<TemplateFunctionDeclarationNode>())) {
 			matched_func_decl = gSymbolTable_overloads[0].is<FunctionDeclarationNode>()
 				? &gSymbolTable_overloads[0].as<FunctionDeclarationNode>()
 				: &gSymbolTable_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
@@ -439,7 +439,7 @@
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 						if (func_decl.decl_node().identifier_token().value() == func_name_view
-						    && func_decl.parameter_nodes().size() == expected_param_count) {
+						&& func_decl.parameter_nodes().size() == expected_param_count) {
 							matched_func_decl = &func_decl;
 							// Use the struct type name for mangling (not parent_struct_name which
 							// may reference a template pattern)
@@ -521,7 +521,7 @@
 							if (mf.function_decl.is<FunctionDeclarationNode>()) {
 								const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
 								if (fd.decl_node().identifier_token().value() == member_name_direct
-								    && fd.parameter_nodes().size() == direct_expected_param_count) {
+								&& fd.parameter_nodes().size() == direct_expected_param_count) {
 									matched_func_decl = &fd;
 									resolveMangledName(matched_func_decl, struct_part);
 									// Queue all member functions of this struct for deferred generation
@@ -574,8 +574,8 @@
 								if (base_spec.type_index < gTypeInfo.size()) {
 									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
 									if (base_type_info.isTemplateInstantiation() && 
-									    StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
-									    base_type_info.isStruct()) {
+									StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
+									base_type_info.isStruct()) {
 										const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 										if (base_struct_info) {
 											for (const auto& member_func : base_struct_info->member_functions) {
@@ -681,7 +681,7 @@
 			// For reference-to-reference passing, we just want to pass the variable name directly,
 			// and let the IRConverter use MOV to load the address stored in the reference.
 			if (param_is_ref_like &&
-			    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				const DeclarationNode* decl_ptr = lookupDeclaration(identifier.name());
 				if (decl_ptr) {
@@ -753,7 +753,7 @@
 												bool all_have_defaults = true;
 												for (size_t i = 1; i < params.size(); ++i) {
 													if (!params[i].is<DeclarationNode>() || 
-													    !params[i].as<DeclarationNode>().has_default_value()) {
+													!params[i].as<DeclarationNode>().has_default_value()) {
 														all_have_defaults = false;
 														break;
 													}
@@ -809,7 +809,7 @@
 							IrValue source_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
 								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-								              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+								std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 									return arg;
 								} else {
 									return 0ULL;
@@ -882,7 +882,7 @@
 			// Check if visitExpressionNode returned a TempVar - this means the value was computed
 			// (e.g., global load, expression result, etc.) and we should use the TempVar directly
 			bool use_computed_result = (argumentIrOperands.size() >= 3 && 
-			                            std::holds_alternative<TempVar>(argumentIrOperands[2]));
+			std::holds_alternative<TempVar>(argumentIrOperands[2]));
 			
 			// For identifiers that returned local variable references (string_view), handle specially
 			if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
@@ -978,8 +978,8 @@
 					
 					// Check if this is a literal value (has unsigned long long or double in operand[2])
 					bool is_literal = (argumentIrOperands.size() >= 3 && 
-					                  (std::holds_alternative<unsigned long long>(argumentIrOperands[2]) ||
-					                   std::holds_alternative<double>(argumentIrOperands[2])));
+					(std::holds_alternative<unsigned long long>(argumentIrOperands[2]) ||
+					std::holds_alternative<double>(argumentIrOperands[2])));
 					
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
@@ -1033,7 +1033,7 @@
 							if (metadata_storage.hasMetadata(expr_var)) {
 								TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
 								if (metadata.category == ValueCategory::LValue ||
-								    metadata.category == ValueCategory::XValue) {
+								metadata.category == ValueCategory::XValue) {
 									is_already_address = true;
 								}
 							}
