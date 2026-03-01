@@ -894,14 +894,31 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		type_spec.add_pointer_level(ptr_cv);
 	}
 	// Handle trailing CV-qualifiers before reference (e.g., Type volatile&, Type const&)
-	// Per C++20 grammar, cv-qualifiers can appear between the type and the reference declarator.
-	while (peek() == "const"_tok || peek() == "volatile"_tok) {
-		if (peek() == "const"_tok) {
-			type_spec.add_cv_qualifier(CVQualifier::Const);
-		} else {
-			type_spec.add_cv_qualifier(CVQualifier::Volatile);
+	// Only consume const/volatile when followed by & or && (possibly with more cv-qualifiers)
+	// This avoids consuming const/volatile in non-reference contexts like member function qualifiers
+	{
+		SaveHandle cv_check = save_token_position();
+		bool found_ref = false;
+		CVQualifier trailing_cv = CVQualifier::None;
+		while (peek() == "const"_tok || peek() == "volatile"_tok) {
+			if (peek() == "const"_tok) {
+				trailing_cv = static_cast<CVQualifier>(
+					static_cast<uint8_t>(trailing_cv) | static_cast<uint8_t>(CVQualifier::Const));
+			} else {
+				trailing_cv = static_cast<CVQualifier>(
+					static_cast<uint8_t>(trailing_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+			}
+			advance();
 		}
-		advance();
+		if (trailing_cv != CVQualifier::None && (peek() == "&"_tok || peek() == "&&"_tok)) {
+			found_ref = true;
+		}
+		if (found_ref) {
+			type_spec.add_cv_qualifier(trailing_cv);
+			discard_saved_token(cv_check);
+		} else {
+			restore_token_position(cv_check);
+		}
 	}
 	if (peek() == "&&"_tok) {
 		advance();
