@@ -711,7 +711,25 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						split_right_shift_token();
 					}
 					
-					if (peek() == ">"_tok || peek() == ","_tok || peek() == "..."_tok) {
+					// Before accepting as dependent, check if a QualifiedIdentifierNode is actually
+					// a concrete type (e.g. std::ratio<1,2> which was already instantiated during
+					// expression parsing). Concrete types should fall through to type parsing,
+					// not be marked as dependent compile-time expressions.
+					bool is_concrete_qualified_type = false;
+					if (std::holds_alternative<QualifiedIdentifierNode>(expr) &&
+					    (peek() == ">"_tok || peek() == ","_tok)) {
+						const auto& qi = std::get<QualifiedIdentifierNode>(expr);
+						std::string_view qname = buildQualifiedNameFromHandle(qi.namespace_handle(), qi.name());
+						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qname));
+						if (type_it != gTypesByName.end() && type_it->second->struct_info_ != nullptr) {
+							FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qname,
+							          "' is a concrete type, falling through to type parsing");
+							is_concrete_qualified_type = true;
+							restore_token_position(arg_saved_pos);
+						}
+					}
+
+					if (!is_concrete_qualified_type && (peek() == ">"_tok || peek() == ","_tok || peek() == "..."_tok)) {
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
 						TemplateTypeArg dependent_arg;

@@ -451,7 +451,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		const TemplateVariableDeclarationNode& spec_template = structural_match->node.as<TemplateVariableDeclarationNode>();
 		const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
 		const Token& orig_token = spec_var_decl.declaration().identifier_token();
-		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
+		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, resolved_args);
 		
 		if (gSymbolTable.lookup(persistent_name).has_value()) {
 			return gSymbolTable.lookup(persistent_name);
@@ -532,7 +532,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	// Generate unique name for the instantiation using hash-based naming
 	// This ensures consistent naming with class template instantiations
-	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
+	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, resolved_args);
 	
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {
