@@ -1418,23 +1418,19 @@ private:
 			if (arg_node.is<TypeSpecifierNode>()) {
 				template_args.emplace_back(arg_node.as<TypeSpecifierNode>());
 			} else if (arg_node.is<ExpressionNode>()) {
-				const ExpressionNode& expr = arg_node.as<ExpressionNode>();
-				if (std::holds_alternative<NumericLiteralNode>(expr)) {
-					const auto& lit = std::get<NumericLiteralNode>(expr);
-					const auto& raw_value = lit.value();
-					int64_t val = 0;
-					if (std::holds_alternative<unsigned long long>(raw_value)) {
-						val = static_cast<int64_t>(std::get<unsigned long long>(raw_value));
-					} else if (std::holds_alternative<double>(raw_value)) {
-						val = static_cast<int64_t>(std::get<double>(raw_value));
-					}
-					template_args.emplace_back(val, lit.type());
-				} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
-					const auto& lit = std::get<BoolLiteralNode>(expr);
-					template_args.emplace_back(static_cast<int64_t>(lit.value() ? 1 : 0), Type::Bool);
-				} else {
-					return EvalResult::error("Cannot extract template argument value for variable template");
+				// Evaluate the expression to get a constant value for a non-type template argument.
+				// This handles literals, binary expressions like 1+2, and other constant expressions.
+				EvalResult arg_val = evaluate(arg_node, context);
+				if (!arg_val.success()) {
+					return EvalResult::error("Failed to evaluate non-type template argument: " + arg_val.error_message);
 				}
+				Type arg_type = Type::Int;
+				if (std::holds_alternative<bool>(arg_val.value)) {
+					arg_type = Type::Bool;
+				} else if (std::holds_alternative<unsigned long long>(arg_val.value)) {
+					arg_type = Type::UnsignedLongLong;
+				}
+				template_args.emplace_back(arg_val.as_int(), arg_type);
 			} else {
 				return EvalResult::error("Unsupported template argument type for variable template");
 			}

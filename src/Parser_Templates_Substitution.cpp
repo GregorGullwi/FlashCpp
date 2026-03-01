@@ -276,22 +276,9 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 			
 			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(func_call.function_declaration(), std::move(substituted_args), func_call.called_from()));
-			// Copy mangled name if present (important for template instantiation)
-			if (func_call.has_mangled_name()) {
-				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_mangled_name(func_call.mangled_name());
-			}
-			// Substitute and copy template arguments (important for variable templates like __is_ratio_v<T>)
-			if (func_call.has_template_arguments()) {
-				std::vector<ASTNode> substituted_template_args;
-				substituted_template_args.reserve(func_call.template_arguments().size());
-				for (const auto& targ : func_call.template_arguments()) {
-					substituted_template_args.push_back(substituteTemplateParameters(targ, template_params, template_args));
-				}
-				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_template_arguments(std::move(substituted_template_args));
-			}
-			if (func_call.has_qualified_name()) {
-				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_qualified_name(func_call.qualified_name());
-			}
+			substituteFunctionCallExtras(
+				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()),
+				func_call, template_params, template_args);
 			return new_func_call;
 		} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 			const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
@@ -836,22 +823,9 @@ ASTNode Parser::substituteTemplateParameters(
 		// For now, don't substitute the function declaration itself
 		// Create new function call with substituted arguments
 		ASTNode new_func_call = emplace_node<FunctionCallNode>(func_call.function_declaration(), std::move(substituted_args), func_call.called_from());
-		// Copy mangled name if present (important for template instantiation)
-		if (func_call.has_mangled_name()) {
-			new_func_call.as<FunctionCallNode>().set_mangled_name(func_call.mangled_name());
-		}
-		// Substitute and copy template arguments (important for variable templates like __is_ratio_v<T>)
-		if (func_call.has_template_arguments()) {
-			std::vector<ASTNode> substituted_template_args;
-			substituted_template_args.reserve(func_call.template_arguments().size());
-			for (const auto& targ : func_call.template_arguments()) {
-				substituted_template_args.push_back(substituteTemplateParameters(targ, template_params, template_args));
-			}
-			new_func_call.as<FunctionCallNode>().set_template_arguments(std::move(substituted_template_args));
-		}
-		if (func_call.has_qualified_name()) {
-			new_func_call.as<FunctionCallNode>().set_qualified_name(func_call.qualified_name());
-		}
+		substituteFunctionCallExtras(
+			new_func_call.as<FunctionCallNode>(),
+			func_call, template_params, template_args);
 		return new_func_call;
 
 	} else if (node.is<BinaryOperatorNode>()) {
@@ -1321,4 +1295,27 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 	}
 
 	return expr;
+}
+
+
+void Parser::substituteFunctionCallExtras(
+FunctionCallNode& new_call,
+const FunctionCallNode& old_call,
+const std::vector<ASTNode>& template_params,
+const std::vector<TemplateArgument>& template_args
+) {
+if (old_call.has_mangled_name()) {
+new_call.set_mangled_name(old_call.mangled_name());
+}
+if (old_call.has_template_arguments()) {
+std::vector<ASTNode> substituted_template_args;
+substituted_template_args.reserve(old_call.template_arguments().size());
+for (const auto& targ : old_call.template_arguments()) {
+substituted_template_args.push_back(substituteTemplateParameters(targ, template_params, template_args));
+}
+new_call.set_template_arguments(std::move(substituted_template_args));
+}
+if (old_call.has_qualified_name()) {
+new_call.set_qualified_name(old_call.qualified_name());
+}
 }

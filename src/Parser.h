@@ -827,6 +827,14 @@ public:  // Public methods for template instantiation
 		const std::vector<ASTNode>& template_params,
 		const std::vector<TemplateArgument>& template_args
 	);private:  // Resume private methods
+		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
+		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
+		void substituteFunctionCallExtras(
+			FunctionCallNode& new_call,
+			const FunctionCallNode& old_call,
+			const std::vector<ASTNode>& template_params,
+			const std::vector<TemplateArgument>& template_args
+		);
 		void register_builtin_functions();  // Register compiler builtin functions
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();

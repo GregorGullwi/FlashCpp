@@ -415,7 +415,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		    arg.type_index < gTypeInfo.size()) {
 			std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
 			for (const auto& subst : template_param_substitutions_) {
-				if (subst.is_type_param && subst.param_name == type_name) {
+				if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
 					FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
 					          "' with concrete type ", subst.substituted_type.toString());
 					arg = subst.substituted_type;
