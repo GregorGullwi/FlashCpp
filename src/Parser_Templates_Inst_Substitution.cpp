@@ -541,9 +541,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	// Perform template substitution
 	const std::vector<ASTNode>& template_params = var_template.template_parameters();
-	if (template_args.size() != template_params.size()) {
+	if (resolved_args.size() != template_params.size()) {
 		FLASH_LOG(Templates, Error, "Template argument count mismatch: expected ", template_params.size(), 
-		          ", got ", template_args.size());
+		          ", got ", resolved_args.size());
 		return std::nullopt;
 	}
 	
@@ -570,7 +570,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		if (tparam.kind() == TemplateParameterKind::Type) {
 			// For type template parameters, look up the type_index in gTypeInfo
 			// The template parameter name was registered as a type during parsing
-			const TemplateTypeArg& arg = template_args[i];
+			const TemplateTypeArg& arg = resolved_args[i];
 			
 			// Find the type_index for this template parameter by name
 			// During template parsing, template parameters are added to gTypeInfo
@@ -639,7 +639,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			}
 		} else if (tparam.kind() == TemplateParameterKind::NonType) {
 			// Handle non-type template parameters
-			const TemplateTypeArg& arg = template_args[i];
+			const TemplateTypeArg& arg = resolved_args[i];
 			if (arg.is_value) {
 				// Add to non-type substitution map
 				nontype_substitution_map[tparam.name()] = arg.value;
@@ -709,20 +709,20 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						// Try to instantiate the struct/class referenced in the qualified identifier
 						// Look it up to see if it's a template
 						auto inner_template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
-						if (inner_template_opt.has_value() && template_args.size() > 0) {
+						if (inner_template_opt.has_value() && resolved_args.size() > 0) {
 							// This is a template - try to instantiate it with the concrete arguments
 							// The template arguments from the variable template should be used
 							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup, 
-							          "' with ", template_args.size(), " args from variable template initializer");
+							          "' with ", resolved_args.size(), " args from variable template initializer");
 							
-							auto instantiated = try_instantiate_class_template(template_name_to_lookup, template_args);
+							auto instantiated = try_instantiate_class_template(template_name_to_lookup, resolved_args);
 							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 								// Add to AST so it gets codegen
 								ast_nodes_.push_back(*instantiated);
 								
 								// Now update the qualified identifier to use the correct instantiated name
 								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
-								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, template_args);
+								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, resolved_args);
 								FLASH_LOG(Templates, Debug, "Phase 3: Instantiated class name: '", instantiated_name, "'");
 								
 								// Create a new qualified identifier with the updated namespace
