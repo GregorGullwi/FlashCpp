@@ -49,19 +49,9 @@ DEBUG_DIR := $(BINDIR)/Debug
 RELEASE_DIR := $(BINDIR)/Release
 TEST_DIR := $(BINDIR)/Test
 
-# Source files included via unity build (for dependency tracking)
-UNITY_SOURCES := $(SRCDIR)/FlashCppUnity.h $(SRCDIR)/Globals.cpp \
-    $(SRCDIR)/AstNodeTypes.cpp  \
-    $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ExpressionSubstitutor.cpp \
-    $(SRCDIR)/Parser_Core.cpp $(SRCDIR)/Parser_Declarations.cpp \
-    $(SRCDIR)/Parser_Types.cpp $(SRCDIR)/Parser_Statements.cpp \
-    $(SRCDIR)/Parser_Expressions.cpp $(SRCDIR)/Parser_Templates.cpp \
-    $(SRCDIR)/CodeGen_Visitors.cpp $(SRCDIR)/CodeGen_Statements.cpp \
-    $(SRCDIR)/CodeGen_Expressions.cpp $(SRCDIR)/CodeGen_Functions.cpp \
-    $(SRCDIR)/CodeGen_Lambdas.cpp \
-    $(SRCDIR)/ConstExprEvaluator_Core.cpp $(SRCDIR)/ConstExprEvaluator_Members.cpp \
-    $(SRCDIR)/FileReader_Core.cpp $(SRCDIR)/FileReader_Macros.cpp \
-    $(SRCDIR)/TemplateRegistry_Lazy.cpp
+# All source files in the src directory (for dependency tracking with unity builds)
+# Using wildcard ensures any header or source change triggers a rebuild
+UNITY_SOURCES := $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.cpp)
 
 # Source files needed for the test (unity build - only FlashCppTest.cpp is compiled)
 TEST_SOURCES :=
