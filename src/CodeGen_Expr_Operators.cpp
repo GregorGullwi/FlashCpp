@@ -1172,7 +1172,7 @@
 				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
 			} else {
 				// LHS is an immediate value - this shouldn't happen for valid assignments
-				throw std::runtime_error("Assignment LHS cannot be an immediate value");
+				throw InternalError("Assignment LHS cannot be an immediate value");
 				return {};
 			}
 			assign_op.lhs = toTypedValue(lhsIrOperands);
@@ -1432,7 +1432,7 @@
 				else if (op == "*") float_opcode = IrOpcode::FloatMultiply;
 				else if (op == "/") float_opcode = IrOpcode::FloatDivide;
 				else {
-					throw std::runtime_error("Unsupported float operator");
+					throw InternalError("Unsupported float operator");
 					return {};
 				}
 
@@ -1458,7 +1458,7 @@
 				else if (op == ">") float_cmp_opcode = IrOpcode::FloatGreaterThan;
 				else if (op == ">=") float_cmp_opcode = IrOpcode::FloatGreaterEqual;
 				else {
-					throw std::runtime_error("Unsupported float comparison operator");
+					throw InternalError("Unsupported float comparison operator");
 					return {};
 				}
 
@@ -1476,7 +1476,7 @@
 			}
 			else {
 				// Unsupported floating-point operator
-				throw std::runtime_error("Unsupported floating-point binary operator");
+				throw InternalError("Unsupported floating-point binary operator");
 				return {};
 			}
 		}

@@ -242,7 +242,7 @@
 
 		// The object must be an ExpressionNode for regular member function calls
 		if (!object_node.is<ExpressionNode>()) {
-			throw std::runtime_error("Member function call object must be an ExpressionNode");
+			throw InternalError("Member function call object must be an ExpressionNode");
 			return {};
 		}
 
@@ -557,7 +557,7 @@
 							if (object_name.empty()) {
 								// Use temp var
 								// TODO: Need to handle object expression properly
-								throw std::runtime_error("Function pointer member call on expression not yet supported");
+								throw InternalError("Function pointer member call on expression not yet supported");
 							} else {
 								member_load.object = StringTable::getOrInternStringHandle(object_name);
 							}
@@ -790,7 +790,7 @@
 				std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
 				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(), 
 				          "' of '", struct_info->getName(), "'", context_str);
-				throw std::runtime_error("Access control violation");
+				throw InternalError("Access control violation");
 				return { Type::Int, 32, TempVar{0} };
 			}
 		}

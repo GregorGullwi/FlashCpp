@@ -28,7 +28,7 @@
 				}
 				if (!found_global) {
 					FLASH_LOG(Codegen, Error, "MemberAccess missing object: ", StringTable::getStringView(object_name_handle), "\n");
-					throw std::runtime_error("Struct object not found in scope or globals");
+					throw InternalError("Struct object not found in scope or globals");
 					return;
 				}
 			} else {
@@ -320,7 +320,7 @@
 				StringHandle object_name_handle = std::get<StringHandle>(op.object);
 				auto it = current_scope.variables.find(object_name_handle);
 				if (it == current_scope.variables.end()) {
-					throw std::runtime_error("Struct object not found in scope");
+					throw InternalError("Struct object not found in scope");
 					return;
 				}
 				object_base_offset = it->second.offset;
@@ -367,7 +367,7 @@
 			is_variable = true;
 			variable_name = std::get<StringHandle>(op.value.value);
 		} else {
-			throw std::runtime_error("Value must be TempVar, unsigned long long, double, or StringHandle");
+			throw InternalError("Value must be TempVar, unsigned long long, double, or StringHandle");
 			return;
 		}
 
@@ -405,7 +405,7 @@
 				} else if (is_variable) {
 					auto it = current_scope.variables.find(variable_name);
 					if (it == current_scope.variables.end()) {
-						throw std::runtime_error("Variable not found in scope");
+						throw InternalError("Variable not found in scope");
 						return;
 					}
 					int32_t value_offset = it->second.offset;
@@ -525,7 +525,7 @@
 			// Not a global - look in local scope
 			auto it = current_scope.variables.find(object_name_handle);
 			if (it == current_scope.variables.end()) {
-				throw std::runtime_error("Struct object not found in scope");
+				throw InternalError("Struct object not found in scope");
 				return;
 			}
 			object_base_offset = it->second.offset;
@@ -597,7 +597,7 @@
 			}
 			if (!pointer_loaded) {
 				FLASH_LOG(Codegen, Error, "Reference member initializer must be an lvalue");
-				throw std::runtime_error("Reference member initializer must be an lvalue");
+				throw InternalError("Reference member initializer must be an lvalue");
 			}
 		} else if (is_literal) {
 			if (is_double_literal) {
@@ -613,7 +613,7 @@
 			// This will be handled separately below
 			auto it = current_scope.variables.find(variable_name);
 			if (it == current_scope.variables.end()) {
-				throw std::runtime_error("Variable not found in scope");
+				throw InternalError("Variable not found in scope");
 				return;
 			}
 			int32_t value_offset = it->second.offset;
@@ -834,7 +834,7 @@
 				const StackVariableScope& current_scope = variable_scopes.back();
 				auto it = current_scope.variables.find(global_name_handle);
 				if (it == current_scope.variables.end()) {
-					throw std::runtime_error("Variable not found in scope");
+					throw InternalError("Variable not found in scope");
 					return;
 				}
 				var_offset = it->second.offset;
@@ -873,7 +873,7 @@
 		const StackVariableScope& current_scope = variable_scopes.back();
 		auto it = current_scope.variables.find(op.base_object);
 		if (it == current_scope.variables.end()) {
-			throw std::runtime_error("Base object not found in scope for AddressOfMember");
+			throw InternalError("Base object not found in scope for AddressOfMember");
 			return;
 		}
 		
@@ -915,7 +915,7 @@
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(base_name);
 			if (it == current_scope.variables.end()) {
-				throw std::runtime_error("Base variable not found in scope for ComputeAddress");
+				throw InternalError("Base variable not found in scope for ComputeAddress");
 				return;
 			}
 			base_offset = it->second.offset;
@@ -986,7 +986,7 @@
 				const StackVariableScope& current_scope = variable_scopes.back();
 				auto it = current_scope.variables.find(index_var_name);
 				if (it == current_scope.variables.end()) {
-					throw std::runtime_error("Index variable not found in scope");
+					throw InternalError("Index variable not found in scope");
 					return;
 				}
 				int64_t index_offset = it->second.offset;
@@ -1057,7 +1057,7 @@
 				StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
 				auto it = current_scope.variables.find(var_name_handle);
 				if (it == current_scope.variables.end()) {
-					throw std::runtime_error("Pointer variable not found");
+					throw InternalError("Pointer variable not found");
 					return;
 				}
 				
@@ -1241,7 +1241,7 @@
 			StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it == current_scope.variables.end()) {
-				throw std::runtime_error("Pointer variable not found in DereferenceStore");
+				throw InternalError("Pointer variable not found in DereferenceStore");
 				return;
 			}
 			emitMovFromFrame(ptr_reg, it->second.offset);

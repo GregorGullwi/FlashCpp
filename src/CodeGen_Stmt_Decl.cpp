@@ -416,7 +416,7 @@
 				if (eval_result.success()) {
 					// Insert into symbol table first
 					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						throw std::runtime_error("Expected identifier to be unique");
+						throw InternalError("Expected identifier to be unique");
 					}
 					
 					// Generate variable declaration with compile-time value
@@ -538,7 +538,7 @@
 					
 					// Add to symbol table
 					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						throw std::runtime_error("Expected identifier to be unique");
+						throw InternalError("Expected identifier to be unique");
 					}
 
 					// Generate VariableDecl with initializer
@@ -561,7 +561,7 @@
 					
 					// Add to symbol table first
 					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						throw std::runtime_error("Expected identifier to be unique");
+						throw InternalError("Expected identifier to be unique");
 					}
 
 					// Add the variable declaration without initializer
@@ -586,7 +586,7 @@
 								// Check if this is an abstract class (only for non-pointer types)
 								if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
 									FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
-									throw std::runtime_error("Cannot instantiate abstract class");
+									throw InternalError("Cannot instantiate abstract class");
 								}
 
 								const auto& initializers = init_list.initializers();
@@ -827,10 +827,10 @@
 											
 											ctor_op.arguments.push_back(std::move(tv));
 										} else {
-											throw std::runtime_error("Invalid initializer operands - expected [type, size, value]");
+											throw InternalError("Invalid initializer operands - expected [type, size, value]");
 										}
 									} else {
-										throw std::runtime_error("Initializer must be an ExpressionNode");
+										throw InternalError("Initializer must be an ExpressionNode");
 									}
 									arg_index++;
 								}
@@ -864,7 +864,7 @@
 									std::string_view error_msg = StringBuilder().append("Cannot default-initialize struct ")
 										.append(StringTable::getStringView(struct_info.name))
 										.append(" - default constructor is deleted").commit();
-									throw std::runtime_error(std::string(error_msg));
+									throw InternalError(std::string(error_msg));
 								}
 
 								// Build a map of member names to initializer expressions
@@ -923,7 +923,7 @@
 										if (init_expr.is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										} else {
-											throw std::runtime_error("Initializer must be an ExpressionNode or InitializerListNode");
+											throw InternalError("Initializer must be an ExpressionNode or InitializerListNode");
 										}
 
 										if (init_operands.size() >= 3) {
@@ -940,7 +940,7 @@
 												member_value = 0ULL;  // fallback
 											}
 										} else {
-											throw std::runtime_error("Invalid initializer operands");
+											throw InternalError("Invalid initializer operands");
 										}
 									} else {
 										// Use default member initializer if available, otherwise zero-initialize
@@ -1012,7 +1012,7 @@
 				}
 				// Lambda expression already emitted VariableDecl, so return early
 				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-					throw std::runtime_error("Expected identifier to be unique");
+					throw InternalError("Expected identifier to be unique");
 				}
 				return;
 			} else if (init_node.is<ExpressionNode>() && 
@@ -1032,7 +1032,7 @@
 				}
 				// Lambda expression already emitted VariableDecl, so return early
 				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-					throw std::runtime_error("Expected identifier to be unique");
+					throw InternalError("Expected identifier to be unique");
 				}
 				return;
 			} else {
@@ -1217,7 +1217,7 @@
 		}
 
 		if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-			throw std::runtime_error("Expected identifier to be unique");
+			throw InternalError("Expected identifier to be unique");
 		}
 
 		VariableDeclOp decl_op;
@@ -1344,7 +1344,7 @@
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
 						FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
-						throw std::runtime_error("Cannot instantiate abstract class");
+						throw InternalError("Cannot instantiate abstract class");
 					}
 
 					if (type_info.struct_info_->hasAnyConstructor() || type_info.struct_info_->needs_default_constructor) {

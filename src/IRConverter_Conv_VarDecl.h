@@ -124,7 +124,7 @@
 		
 		if (!global_info) {
 			FLASH_LOG(Codegen, Error, "Global variable not found: ", global_name);
-			throw std::runtime_error("Global variable not found during GlobalStore");
+			throw InternalError("Global variable not found during GlobalStore");
 			return;
 		}
 
@@ -313,7 +313,7 @@
 				}
 				if (!pointer_initialized) {
 					FLASH_LOG(Codegen, Error, "Reference initializer is not an addressable lvalue");
-					throw std::runtime_error("Reference initializer must be an lvalue");
+					throw InternalError("Reference initializer must be an lvalue");
 				}
 			} else {
 				moveImmediateToRegister(pointer_reg, 0);
@@ -670,7 +670,7 @@
 			case X64Register::XMM13: return 167; // CV_AMD64_XMM13
 			case X64Register::XMM14: return 168; // CV_AMD64_XMM14
 			case X64Register::XMM15: return 169; // CV_AMD64_XMM15
-			default: throw std::runtime_error("Unsupported X64Register");
+			default: throw InternalError("Unsupported X64Register");
 		}
 	}
 
@@ -1766,7 +1766,7 @@
 						if ((returnValue >> 32) == 0xFFFFFFFF) {
 							returnValue = lower32;
 						} else {
-							throw std::runtime_error("Return value exceeds 32-bit limit");
+							throw InternalError("Return value exceeds 32-bit limit");
 						}
 					}
 

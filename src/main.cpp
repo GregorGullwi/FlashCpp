@@ -508,6 +508,15 @@ int main_impl(int argc, char *argv[]) {
                 }
                 FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
                 ir_conversion_had_errors = true;
+            } catch (const InternalError& e) {
+                // Codegen limitation errors (unsupported types, register allocation, etc.)
+                // These are non-fatal - skip the function and continue generating the .o file
+                std::string node_desc = node_handle.type_name();
+                if (node_handle.is<FunctionDeclarationNode>()) {
+                    node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+                }
+                FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+                ir_conversion_had_errors = true;
             } catch (const std::runtime_error& e) {
                 // Codegen limitation errors (unsupported types, register allocation, etc.)
                 // These are non-fatal - skip the function and continue generating the .o file
@@ -528,6 +537,8 @@ int main_impl(int argc, char *argv[]) {
         try {
             // Generate all collected lambdas after visiting all nodes
             converter.generateCollectedLambdas();
+        } catch (const CompileError&) {
+            throw;  // Semantic errors must propagate
         } catch (const std::exception& e) {
             FLASH_LOG(General, Error, "Deferred lambda generation failed: ", e.what());
             ++deferred_gen_error_count;
@@ -536,6 +547,8 @@ int main_impl(int argc, char *argv[]) {
         try {
             // Generate all collected local struct member functions after visiting all nodes
             converter.generateCollectedLocalStructMembers();
+        } catch (const CompileError&) {
+            throw;  // Semantic errors must propagate
         } catch (const std::exception& e) {
             FLASH_LOG(General, Error, "Local struct member generation failed: ", e.what());
             ++deferred_gen_error_count;

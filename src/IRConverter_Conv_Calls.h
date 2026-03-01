@@ -637,7 +637,7 @@
 		
 		// All function calls should use typed payload (CallOp)
 		// Legacy operand-based path has been removed for better maintainability
-		throw std::runtime_error("Function call without typed payload - should not happen");
+		throw InternalError("Function call without typed payload - should not happen");
 	}
 
 	void handleConstructorCall(const IrInstruction& instruction) {
@@ -718,7 +718,7 @@
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			auto it = variable_scopes.back().variables.find(var_name_handle);
 			if (it == variable_scopes.back().variables.end()) {
-				throw std::runtime_error("Constructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
+				throw InternalError("Constructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
 			}
 			object_offset = it->second.offset;
 			object_is_pointer = (StringTable::getStringView(var_name_handle) == "this");
@@ -1213,7 +1213,7 @@
 			StringHandle var_name_handle = std::get<StringHandle>(dtor_op.object);
 			const VariableInfo* var_info = findVariableInfo(var_name_handle);
 			if (!var_info) {
-				throw std::runtime_error("Destructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
+				throw InternalError("Destructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
 			}
 			object_offset = var_info->offset;
 		}
@@ -1525,7 +1525,7 @@
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(count_name_handle);
 			if (it == current_scope.variables.end()) {
-				throw std::runtime_error("Array size variable not found in scope");
+				throw InternalError("Array size variable not found in scope");
 				return;
 			}
 			int count_offset = it->second.offset;
@@ -1544,7 +1544,7 @@
 				textSectionData.push_back(static_cast<uint8_t>((count_value >> (i * 8)) & 0xFF));
 			}
 		} else {
-			throw std::runtime_error("Count must be TempVar, std::string_view, or unsigned long long");
+			throw InternalError("Count must be TempVar, std::string_view, or unsigned long long");
 		}
 
 		// Multiply count by element_size: IMUL RAX, element_size
@@ -1634,12 +1634,12 @@
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it == current_scope.variables.end()) {
-				throw std::runtime_error("Variable not found in scope");
+				throw InternalError("Variable not found in scope");
 				return;
 			}
 			ptr_offset = it->second.offset;
 		} else {
-			throw std::runtime_error("HeapFree pointer must be TempVar or std::string_view");
+			throw InternalError("HeapFree pointer must be TempVar or std::string_view");
 			return;
 		}
 
@@ -1674,12 +1674,12 @@
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it == current_scope.variables.end()) {
-				throw std::runtime_error("Variable not found in scope");
+				throw InternalError("Variable not found in scope");
 				return;
 			}
 			ptr_offset = it->second.offset;
 		} else {
-			throw std::runtime_error("HeapFreeArray pointer must be TempVar or std::string_view");
+			throw InternalError("HeapFreeArray pointer must be TempVar or std::string_view");
 			return;
 		}
 
@@ -1728,7 +1728,7 @@
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(address_name_handle);
 			if (it == current_scope.variables.end()) {
-				throw std::runtime_error("Placement address variable not found in scope");
+				throw InternalError("Placement address variable not found in scope");
 				return;
 			}
 			int address_offset = it->second.offset;
@@ -1744,7 +1744,7 @@
 			uint64_t address_value = std::get<unsigned long long>(op.address);
 			emitMovImm64(X64Register::RAX, address_value);
 		} else {
-			throw std::runtime_error("Placement address must be TempVar, identifier, or unsigned long long");
+			throw InternalError("Placement address must be TempVar, identifier, or unsigned long long");
 			return;
 		}
 

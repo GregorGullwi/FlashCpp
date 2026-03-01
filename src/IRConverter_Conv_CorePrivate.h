@@ -419,10 +419,23 @@
 		};
 
 		// Support integer, boolean, floating-point, and pointer-like operations.
-		// Types like Struct, FunctionPointer, Enum, and Nullptr appear in IR for
+		// Types like Struct, FunctionPointer, Enum, Void, and Nullptr appear in IR for
 		// pointer offset calculations and should be treated as 64-bit integer ops.
+		auto is_pointer_like_type = [](Type t) {
+			return t == Type::Struct || t == Type::FunctionPointer || t == Type::Enum ||
+			       t == Type::Nullptr || t == Type::Void || t == Type::UserDefined ||
+			       t == Type::MemberFunctionPointer || t == Type::MemberObjectPointer;
+		};
+		bool treat_as_integer = is_pointer_like_type(ctx.result_value.type);
+		if (treat_as_integer) {
+			// Pointer-like types: force 64-bit integer semantics
+			ctx.result_value.type = Type::UnsignedLongLong;
+			ctx.result_value.size_in_bits = 64;
+			ctx.operand_type = Type::UnsignedLongLong;
+			ctx.operand_size_in_bits = 64;
+		}
 		if (!is_integer_type(ctx.result_value.type) && !is_bool_type(ctx.result_value.type) && !is_floating_point_type(ctx.result_value.type)) {
-			throw std::runtime_error(std::string("Only integer/boolean/floating-point ") + operation_name + " is supported, got type " + std::to_string(static_cast<int>(ctx.result_value.type)));
+			throw InternalError(std::string("Only integer/boolean/floating-point/pointer-like ") + operation_name + " is supported, got type " + std::to_string(static_cast<int>(ctx.result_value.type)));
 		}
 
 		ctx.result_physical_reg = X64Register::Count;
@@ -473,7 +486,7 @@
 				ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, operand_type, ctx.operand_size_in_bits);
 				
 				if (ctx.result_physical_reg == X64Register::Count) {
-					throw std::runtime_error("Missing variable name"); // TODO: Error handling
+					throw InternalError("Missing variable name"); // TODO: Error handling
 				}
 			}
 		}
@@ -695,7 +708,7 @@
 				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits, ctx.result_physical_reg);
 				
 				if (ctx.rhs_physical_reg == X64Register::Count) {
-					throw std::runtime_error("Missing variable name"); // TODO: Error handling
+					throw InternalError("Missing variable name"); // TODO: Error handling
 				}
 			}
 		}
@@ -1038,7 +1051,7 @@
 							// For float types, use SSE mov instructions for register-to-register moves
 							// TODO: Implement SSE register-to-register moves if needed
 							// For now, assert false since we shouldn't hit this path with current code
-							throw std::runtime_error("Float register-to-register move not yet implemented");
+							throw InternalError("Float register-to-register move not yet implemented");
 						} else {
 							auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits / 8);
 							textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
@@ -1088,7 +1101,7 @@
 
 		}
 		else {
-			throw std::runtime_error("Unhandled destination type");
+			throw InternalError("Unhandled destination type");
 		}
 
 		if (source_reg != X64Register::Count && should_release_source) {

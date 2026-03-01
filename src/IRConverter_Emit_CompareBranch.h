@@ -1167,7 +1167,7 @@
 		// No free registers - need to spill one (excluding the specified one)
 		auto reg_to_spill = regAlloc.findRegisterToSpill(exclude);
 		if (!reg_to_spill.has_value()) {
-			throw std::runtime_error("No registers available for spilling");
+			throw InternalError("No registers available for spilling");
 		}
 
 		X64Register spill_reg = reg_to_spill.value();
@@ -1200,7 +1200,7 @@
 		// No free XMM registers - need to spill one
 		auto reg_to_spill = regAlloc.findXMMRegisterToSpill();
 		if (!reg_to_spill.has_value()) {
-			throw std::runtime_error("No XMM registers available for spilling");
+			throw InternalError("No XMM registers available for spilling");
 		}
 
 		X64Register spill_reg = reg_to_spill.value();

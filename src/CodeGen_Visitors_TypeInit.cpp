@@ -227,6 +227,26 @@ public:
 		}
 	}
 	
+	// Helper to extract a readable function name from a deferred member function node
+	std::string get_deferred_func_name(const ASTNode& node) const {
+		if (node.is<FunctionDeclarationNode>()) {
+			return std::string(node.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+		}
+		if (node.is<ConstructorDeclarationNode>()) {
+			return std::string(StringTable::getStringView(node.as<ConstructorDeclarationNode>().struct_name())) + " constructor";
+		}
+		if (node.is<DestructorDeclarationNode>()) {
+			return std::string(StringTable::getStringView(node.as<DestructorDeclarationNode>().struct_name())) + " destructor";
+		}
+		if (node.is<TemplateFunctionDeclarationNode>()) {
+			const auto& tmpl = node.as<TemplateFunctionDeclarationNode>();
+			if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+				return std::string(tmpl.function_declaration().as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+			}
+		}
+		return "unknown";
+	}
+
 	// Generate deferred member functions discovered during function call resolution.
 	// Uses a worklist approach since generated functions may call other ungenerated functions.
 	// Deduplication is handled by visitFunctionDeclarationNode via generated_function_names_,
@@ -275,20 +295,13 @@ public:
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
 				}
 			}
+			} catch (const CompileError&) {
+				// Semantic errors must propagate — they are real compilation failures
+				current_function_name_ = saved_function;
+				current_namespace_stack_ = saved_namespace;
+				throw;
 			} catch (const std::exception& e) {
-				std::string func_name = "unknown";
-				if (info.function_node.is<FunctionDeclarationNode>()) {
-					func_name = std::string(info.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
-				} else if (info.function_node.is<ConstructorDeclarationNode>()) {
-					func_name = std::string(StringTable::getStringView(info.function_node.as<ConstructorDeclarationNode>().struct_name())) + " constructor";
-				} else if (info.function_node.is<DestructorDeclarationNode>()) {
-					func_name = std::string(StringTable::getStringView(info.function_node.as<DestructorDeclarationNode>().struct_name())) + " destructor";
-				} else if (info.function_node.is<TemplateFunctionDeclarationNode>()) {
-					const auto& tmpl = info.function_node.as<TemplateFunctionDeclarationNode>();
-					if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
-						func_name = std::string(tmpl.function_declaration().as<FunctionDeclarationNode>().decl_node().identifier_token().value());
-					}
-				}
+				std::string func_name = get_deferred_func_name(info.function_node);
 				FLASH_LOG(Codegen, Error, "Deferred member function '", func_name, "' generation failed: ", e.what());
 				++error_count;
 			}

@@ -63,14 +63,14 @@
 				return generateTemplateParameterReferenceIr(expr);
 			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
-				throw std::runtime_error("Unexpanded fold expression reached codegen - complex pack pattern not yet supported");
+				throw InternalError("Unexpanded fold expression reached codegen - complex pack pattern not yet supported");
 			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				return generatePseudoDestructorCallIr(expr);
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				return generatePointerToMemberAccessIr(expr);
 			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
-				throw std::runtime_error("Unexpanded pack expansion reached codegen - pack expansion in function call contexts not yet implemented");
+				throw InternalError("Unexpanded pack expansion reached codegen - pack expansion in function call contexts not yet implemented");
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				return generateInitializerListConstructionIr(expr);
 			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
@@ -620,7 +620,7 @@
 			FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
 			FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
 			FLASH_LOG(Codegen, Error, "  Current struct: ", current_struct_name_);
-			throw std::runtime_error("Expected symbol '" + std::string(identifierNode.name()) + "' to exist in code generation");
+			throw InternalError("Expected symbol '" + std::string(identifierNode.name()) + "' to exist in code generation");
 			return {};
 		}
 
@@ -1006,13 +1006,13 @@
 		if (symbol->is<TemplateVariableDeclarationNode>()) {
 			// Variable template without instantiation - should not reach codegen
 			// The parser should have instantiated it already
-			throw std::runtime_error("Uninstantiated variable template in codegen");
+			throw InternalError("Uninstantiated variable template in codegen");
 			return {};
 		}
 
 		// If we get here, the symbol is not a known type
 		FLASH_LOG(Codegen, Error, "Unknown symbol type for identifier '", identifierNode.name(), "'");
-		throw std::runtime_error("Identifier is not a DeclarationNode");
+		throw InternalError("Identifier is not a DeclarationNode");
 		return {};
 	}
 
@@ -1352,7 +1352,7 @@
 		}
 
 		// If we get here, the symbol is not a supported type
-		throw std::runtime_error("Qualified identifier is not a supported type");
+		throw InternalError("Qualified identifier is not a supported type");
 		return {};
 	}
 

@@ -384,7 +384,7 @@
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
 							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
-							throw std::runtime_error("Cannot instantiate abstract class");
+							throw InternalError("Cannot instantiate abstract class");
 						}
 
 						if (type_info.struct_info_->hasAnyConstructor()) {
@@ -431,7 +431,7 @@
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
 							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
-							throw std::runtime_error("Cannot instantiate abstract class");
+							throw InternalError("Cannot instantiate abstract class");
 						}
 
 						if (type_info.struct_info_->hasAnyConstructor()) {
@@ -811,7 +811,7 @@
 					return arg;
 				} else {
 					// This shouldn't happen for expression values, but default to 0
-					throw std::runtime_error("Couldn't match IrValue to a known type");
+					throw InternalError("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);
@@ -835,7 +835,7 @@
 				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
-					throw std::runtime_error("Couldn't match IrValue to a known type");
+					throw InternalError("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);
@@ -859,7 +859,7 @@
 				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
-					throw std::runtime_error("Couldn't match IrValue to a known type");
+					throw InternalError("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);

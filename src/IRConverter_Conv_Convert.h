@@ -421,9 +421,18 @@
 				handleSehAbnormalTermination(instruction);
 				break;
 			default:
-				throw std::runtime_error("Not implemented yet");
+				throw InternalError("Not implemented yet");
 				break;
 			}
+			} catch (const CompileError&) {
+				// Semantic errors must propagate — they are real compilation failures
+				throw;
+			} catch (const InternalError& e) {
+				// Per-function error recovery: skip to the next function declaration
+				FLASH_LOG(Codegen, Error, "Code generation error in function, skipping: ", e.what());
+				skipping_function = true;
+				skip_previous_function_finalization_ = true;
+				continue;
 			} catch (const std::exception& e) {
 				// Per-function error recovery: skip to the next function declaration
 				FLASH_LOG(Codegen, Error, "Code generation error in function, skipping: ", e.what());

@@ -889,12 +889,12 @@
 				if (!symbol.has_value()) {
 					FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");
 					FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
-					throw std::runtime_error("Missing symbol for function argument");
+					throw InternalError("Missing symbol for function argument");
 				}
 				const DeclarationNode* decl_ptr = get_decl_from_symbol(*symbol);
 				if (!decl_ptr) {
 					FLASH_LOG(Codegen, Error, "Function argument '", identifier.name(), "' is not a DeclarationNode");
-					throw std::runtime_error("Unexpected symbol type for function argument");
+					throw InternalError("Unexpected symbol type for function argument");
 				}
 
 				const auto& decl_node = *decl_ptr;
