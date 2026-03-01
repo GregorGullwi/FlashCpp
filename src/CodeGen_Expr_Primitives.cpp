@@ -1,5 +1,7 @@
-	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 
-	                                            ExpressionContext context = ExpressionContext::Load) {
+#include "CodeGen.h"
+
+	std::vector<IrOperand> AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
+	                                            ExpressionContext context) {
 		return std::visit([this, context](const auto& expr) -> std::vector<IrOperand> {
 			using T = std::decay_t<decltype(expr)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -82,7 +84,7 @@
 		}, exprNode);
 	}
 
-	std::vector<IrOperand> generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
+	std::vector<IrOperand> AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
 		bool is_noexcept = true;
 		if (noexcept_node.expr().is<ExpressionNode>()) {
 			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
@@ -90,7 +92,7 @@
 		return { Type::Bool, 8, is_noexcept ? 1ULL : 0ULL, 0ULL };
 	}
 
-	std::vector<IrOperand> generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
+	std::vector<IrOperand> AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
 		std::string_view type_name = dtor.has_qualified_name() 
 			? dtor.qualified_type_name().view()
 			: dtor.type_name();
@@ -141,7 +143,7 @@
 		return {};
 	}
 
-	std::vector<IrOperand> generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
+	std::vector<IrOperand> AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
 		auto object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
 		if (object_operands.empty()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
@@ -212,9 +214,7 @@
 		return { member_type, member_size, result_var, static_cast<unsigned long long>(member_type_index) };
 	}
 
-	// Helper function to calculate size_bits for local variables with proper fallback handling
-	// Consolidates logic for handling arrays, pointers, and regular variables
-	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
+	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
 		bool is_array_type = is_array || type_node.is_array();
 		int size_bits;
 		
@@ -236,8 +236,8 @@
 		return size_bits;
 	}
 
-	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode, 
-	                                             ExpressionContext context = ExpressionContext::Load) {
+	std::vector<IrOperand> AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
+	                                             ExpressionContext context) {
 		// Check if this is a captured variable in a lambda
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		if (current_lambda_context_.isActive() &&
@@ -1016,7 +1016,7 @@
 		return {};
 	}
 
-	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+	std::vector<IrOperand> AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
 		// Check if this is a scoped enum value (e.g., Direction::North)
 		NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
 		if (!ns_handle.isGlobal()) {
@@ -1357,7 +1357,7 @@
 	}
 
 	std::vector<IrOperand>
-		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
+		AstToIr::generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
 		// Generate IR for numeric literal using the actual type from the literal
 		// Check if it's a floating-point type
 		if (is_floating_point_type(numericLiteralNode.type())) {

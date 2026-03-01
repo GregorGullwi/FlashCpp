@@ -1,4 +1,6 @@
-	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
+#include "CodeGen.h"
+
+	std::vector<IrOperand> AstToIr::generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
 		// operands format: [type, size, value]
 		int fromSize = (operands.size() >= 2) ? std::get<int>(operands[1]) : get_type_size_bits(fromType);
@@ -158,7 +160,7 @@
 	}
 
 	std::vector<IrOperand>
-		generateStringLiteralIr(const StringLiteralNode& stringLiteralNode) {
+		AstToIr::generateStringLiteralIr(const StringLiteralNode& stringLiteralNode) {
 		// Generate IR for string literal
 		// Create a temporary variable to hold the address of the string
 		TempVar result_var = var_counter.next();
@@ -175,26 +177,9 @@
 		return { Type::Char, 64, result_var, 0ULL };
 	}
 
-	// ============================================================================
-	// Address Expression Analysis for One-Pass Address Calculation
-	// ============================================================================
-	
-	
-	// Structure to hold the components of an address expression
-	struct AddressComponents {
-		std::variant<StringHandle, TempVar> base;           // Base variable or temp
-		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
-		int total_member_offset = 0;                        // Accumulated member offsets
-		Type final_type = Type::Void;                       // Type of final result
-		int final_size_bits = 0;                            // Size in bits
-		int pointer_depth = 0;                              // Pointer depth of final result
-	};
-
-	// Analyze an expression for address calculation components
-	// Returns std::nullopt if the expression is not suitable for one-pass address calculation
-	std::optional<AddressComponents> analyzeAddressExpression(
+	std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		const ExpressionNode& expr, 
-		int accumulated_offset = 0) 
+		int accumulated_offset) 
 	{
 		// Handle Identifier (base case)
 		if (std::holds_alternative<IdentifierNode>(expr)) {
@@ -374,8 +359,8 @@
 		return std::nullopt;
 	}
 
-	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
-	                                                 ExpressionContext context = ExpressionContext::Load) {
+	std::vector<IrOperand> AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
+	                                                 ExpressionContext context) {
 		std::vector<IrOperand> irOperands;
 
 		// OPERATOR OVERLOAD RESOLUTION

@@ -1,4 +1,6 @@
-	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
+#include "CodeGen.h"
+
+	std::vector<IrOperand> AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 

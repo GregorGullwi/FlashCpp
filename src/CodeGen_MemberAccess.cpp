@@ -1,23 +1,6 @@
-	// Helper struct for multidimensional array access
-	struct MultiDimArrayAccess {
-		std::string_view base_array_name;
-		std::vector<ASTNode> indices;  // Indices from outermost to innermost
-		const DeclarationNode* base_decl = nullptr;
-		bool is_valid = false;
-	};
+#include "CodeGen.h"
 
-	// Helper struct for multidimensional member array access  
-	struct MultiDimMemberArrayAccess {
-		std::string_view object_name;
-		std::string_view member_name;
-		std::vector<ASTNode> indices;  // Indices from outermost to innermost
-		const StructMember* member_info = nullptr;
-		bool is_valid = false;
-	};
-
-	// Helper function to collect all indices from a chain of ArraySubscriptNodes for member arrays
-	// For obj.arr[i][j][k], returns {object="obj", member="arr", indices=[i, j, k]}
-	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
+	AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
 		MultiDimMemberArrayAccess result;
 		std::vector<ASTNode> indices_reversed;
 		const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
@@ -112,9 +95,7 @@
 		return result;
 	}
 
-	// Helper function to collect all indices from a chain of ArraySubscriptNodes
-	// For arr[i][j][k], returns {base="arr", indices=[i, j, k]}
-	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript) {
+	AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySubscriptNode& subscript) {
 		MultiDimArrayAccess result;
 		std::vector<ASTNode> indices_reversed;
 		const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
@@ -152,8 +133,8 @@
 		return result;
 	}
 
-	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
-	                                                 ExpressionContext context = ExpressionContext::Load) {
+	std::vector<IrOperand> AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
+	                                                 ExpressionContext context) {
 		// Generate IR for array[index] expression
 		// This computes the address: base_address + (index * element_size)
 
@@ -749,9 +730,7 @@
 		return { element_type, element_size_bits, result_var, fourth_element };
 	}
 
-	// Helper function to validate and setup identifier-based member access
-	// Returns true on success, false on error
-	bool validateAndSetupIdentifierMemberAccess(
+	bool AstToIr::validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
@@ -818,8 +797,7 @@
 		return true;
 	}
 
-	// Helper: extract base_type, base_object, and base_type_index from IR operands [type, size_bits, value, type_index?]
-	bool extractBaseFromOperands(
+	bool AstToIr::extractBaseFromOperands(
 		const std::vector<IrOperand>& operands,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
@@ -845,17 +823,14 @@
 		return true;
 	}
 
-	// Helper: build return vector for member access results — [type, size_bits, temp_var] or [type, size_bits, temp_var, type_index]
-	// type_index is only included in the result when type == Type::Struct (ignored otherwise)
-	static std::vector<IrOperand> makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index = 0) {
+	std::vector<IrOperand> AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
 		if (type == Type::Struct) {
 			return { type, size_bits, result_var, static_cast<unsigned long long>(type_index) };
 		}
 		return { type, size_bits, result_var };
 	}
 
-	// Helper: set up base object from an identifier, handling 'this' in lambdas and normal identifiers
-	bool setupBaseFromIdentifier(
+	bool AstToIr::setupBaseFromIdentifier(
 		std::string_view object_name,
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
@@ -883,8 +858,8 @@
 		return validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference);
 	}
 
-	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
-	                                               ExpressionContext context = ExpressionContext::Load) {
+	std::vector<IrOperand> AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
+	                                               ExpressionContext context) {
 		std::vector<IrOperand> irOperands;
 
 		// Get the object being accessed
@@ -1338,9 +1313,7 @@
 		return makeMemberResult(member->type, member_size_bits, result_var, member->type_index);
 	}
 
-	// Helper function to calculate array size from a DeclarationNode
-	// Returns the total size in bytes, or 0 if the array size cannot be determined
-	std::optional<size_t> calculateArraySize(const DeclarationNode& decl) {
+	std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
 		if (!decl.is_array()) {
 			return std::nullopt;
 		}
@@ -1403,7 +1376,7 @@
 		return element_size * array_count;
 	}
 
-	std::vector<IrOperand> generateSizeofIr(const SizeofExprNode& sizeofNode) {
+	std::vector<IrOperand> AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 		size_t size_in_bytes = 0;
 
 		// Helper: look up sizeof a struct member (static or non-static) by qualified name.
@@ -1812,7 +1785,7 @@
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 	}
 
-	std::vector<IrOperand> generateAlignofIr(const AlignofExprNode& alignofNode) {
+	std::vector<IrOperand> AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 		size_t alignment = 0;
 
 		if (alignofNode.is_type()) {
@@ -1926,7 +1899,7 @@
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(alignment) };
 	}
 
-	std::vector<IrOperand> generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
+	std::vector<IrOperand> AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
 		// offsetof(struct_type, member)
 		const ASTNode& type_node = offsetofNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -1962,8 +1935,7 @@
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_result.adjusted_offset) };
 	}
 
-	// Helper function to check if a type is a scalar type (arithmetic, enum, pointer, member pointer, nullptr_t)
-	bool isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
+	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
 		if (is_reference) return false;
 		if (pointer_depth > 0) return true;  // Pointers are scalar
 		return (type == Type::Bool || type == Type::Char || type == Type::Short ||
@@ -1976,20 +1948,20 @@
 		        type == Type::MemberFunctionPointer);
 	}
 
-	bool isArithmeticType(Type type) const {
+	bool AstToIr::isArithmeticType(Type type) const {
 		// Branchless: arithmetic types are Bool(1) through LongDouble(14)
 		// Using range check instead of multiple comparisons
 		return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &
 		       (static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
 	}
 
-	bool isFundamentalType(Type type) const {
+	bool AstToIr::isFundamentalType(Type type) const {
 		// Branchless: fundamental types are Void(0), Nullptr(28), or arithmetic types Bool(1) through LongDouble(14)
 		// Using bitwise OR of conditions for branchless evaluation
 		return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
 	}
 
-	std::vector<IrOperand> generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
+	std::vector<IrOperand> AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// Type traits evaluate to a compile-time boolean constant
 		bool result = false;
 

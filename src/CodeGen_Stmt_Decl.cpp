@@ -1,4 +1,6 @@
-	void visitVariableDeclarationNode(const ASTNode& ast_node) {
+#include "CodeGen.h"
+
+	void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
@@ -1885,7 +1887,7 @@
 		}
 	}
 
-	void visitStructuredBindingNode(const ASTNode& ast_node) {
+	void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		const StructuredBindingNode& node = ast_node.as<StructuredBindingNode>();
 		
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Processing structured binding with ", 

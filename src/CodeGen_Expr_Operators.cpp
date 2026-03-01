@@ -1,4 +1,6 @@
-	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
+#include "CodeGen.h"
+
+	std::vector<IrOperand> AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
 		// Ternary operator: condition ? true_expr : false_expr
 		// Generate IR:
 		// 1. Evaluate condition
@@ -69,7 +71,7 @@
 		return { result_type, result_size, result_var, 0ULL };
 	}
 
-	std::vector<IrOperand> generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
+	std::vector<IrOperand> AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
 		std::vector<IrOperand> irOperands;
 
 		const auto& op = binaryOperatorNode.op();
@@ -1492,21 +1494,15 @@
 		}
 	}
 
-	// Helper function to generate Microsoft Visual C++ mangled name for function calls
-	// Delegates to NameMangling::generateMangledName to keep all mangling logic in one place
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
+	std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path) {
 		return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_path).view();
 	}
 
-	// Overload that accepts parameter nodes directly to avoid creating a temporary vector
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
+	std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path) {
 		return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_path).view();
 	}
 
-	// Overload that accepts a FunctionDeclarationNode directly
-	// This extracts the function name, return type, parameters, and other info from the node
-	// If struct_name_override is provided, it takes precedence over node.parent_struct_name()
-	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override = "", const std::vector<std::string>& namespace_path = {}) {
+	std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, const std::vector<std::string>& namespace_path) {
 		const DeclarationNode& decl_node = func_node.decl_node();
 		const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		std::string_view func_name = decl_node.identifier_token().value();
@@ -1566,10 +1562,8 @@
 		return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
 			func_node.is_variadic(), struct_name, namespace_path, func_node.linkage()).view();
 	}
-	
-	// Helper function to handle compiler intrinsics
-	// Returns true if the function is an intrinsic and has been handled, false otherwise
-	std::optional<std::vector<IrOperand>> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
+
+	std::optional<std::vector<IrOperand>> AstToIr::tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
 		// Lookup table for intrinsic handlers using if-else chain
 		// More maintainable than multiple nested if statements
 		
@@ -1622,10 +1616,8 @@
 
 		return std::nullopt;  // Not an intrinsic
 	}
-	
-	// Generate inline IR for __builtin_labs / __builtin_llabs
-	// Uses branchless abs: abs(x) = (x XOR sign_mask) - sign_mask where sign_mask = x >> 63
-	std::vector<IrOperand> generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode) {
+
+	std::vector<IrOperand> AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_labs/__builtin_llabs requires exactly 1 argument");
 			return {Type::Long, 64, 0ULL, 0ULL};
@@ -1669,10 +1661,8 @@
 		
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
-	
-	// Generate inline IR for __builtin_fabs / __builtin_fabsf / __builtin_fabsl
-	// Uses bitwise AND to clear the sign bit
-	std::vector<IrOperand> generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name) {
+
+	std::vector<IrOperand> AstToIr::generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, func_name, " requires exactly 1 argument");
 			return {Type::Double, 64, 0ULL, 0ULL};
@@ -1702,11 +1692,8 @@
 		
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
-	
-	// Helper function to detect if a va_list argument is a simple pointer type
-	// (e.g., typedef char* va_list;) vs the proper System V AMD64 va_list structure
-	// Returns true if va_list is a pointer type, false otherwise
-	bool isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const {
+
+	bool AstToIr::isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const {
 		// Check if the argument is an identifier with pointer type
 		if (arg.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg.as<ExpressionNode>())) {
 			const auto& id = std::get<IdentifierNode>(arg.as<ExpressionNode>());
@@ -1730,10 +1717,8 @@
 		
 		return false;
 	}
-	
-	// Generate IR for __builtin_va_arg intrinsic
-	// __builtin_va_arg(va_list, type) - reads the current value and advances the appropriate offset
-	std::vector<IrOperand> generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
+
+	std::vector<IrOperand> AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
 		// __builtin_va_arg takes 2 arguments: va_list variable and type
 		// After preprocessing: __builtin_va_arg(args, int) - parser sees this as function call with 2 args
 		if (functionCallNode.arguments().size() != 2) {
@@ -2416,9 +2401,8 @@
 			}
 		}
 	}
-	
-	// Generate IR for __builtin_va_start intrinsic
-	std::vector<IrOperand> generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
+
+	std::vector<IrOperand> AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
 		// __builtin_va_start takes 2 arguments: va_list (not pointer!), and last fixed parameter
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start requires exactly 2 arguments");
@@ -2572,13 +2556,8 @@
 		// __builtin_va_start returns void
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
-	
-	// Generate IR for __builtin_unreachable intrinsic
-	// This is an optimization hint that tells the compiler a code path is unreachable
-	// Standard usage: after switch default: cases, or after functions that don't return
-	// Implementation: We generate no actual code - this is purely an optimization hint
-	// In a more advanced compiler, this would enable dead code elimination and assumptions
-	std::vector<IrOperand> generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode) {
+
+	std::vector<IrOperand> AstToIr::generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode) {
 		// Verify no arguments (some compilers allow it, we'll be strict)
 		if (functionCallNode.arguments().size() != 0) {
 			FLASH_LOG(Codegen, Warning, "__builtin_unreachable should not have arguments (ignoring)");
@@ -2595,13 +2574,8 @@
 		// Return void (this intrinsic doesn't produce a value)
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
-	
-	// Generate IR for __builtin_assume intrinsic
-	// This is an optimization hint that tells the compiler to assume a condition is true
-	// Syntax: __builtin_assume(condition)
-	// Implementation: We evaluate the condition but don't use the result
-	// In a more advanced compiler, this would enable optimizations based on the assumption
-	std::vector<IrOperand> generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode) {
+
+	std::vector<IrOperand> AstToIr::generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_assume requires exactly 1 argument (condition)");
 			return {Type::Void, 0, 0ULL, 0ULL};
@@ -2623,12 +2597,8 @@
 		// Return void (this intrinsic doesn't produce a value)
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
-	
-	// Generate IR for __builtin_expect intrinsic
-	// This is a branch prediction hint: __builtin_expect(expr, expected_value)
-	// Returns expr, but hints that expr will likely equal expected_value
-	// Common usage: if (__builtin_expect(rare_condition, 0)) { /* unlikely path */ }
-	std::vector<IrOperand> generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
+
+	std::vector<IrOperand> AstToIr::generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_expect requires exactly 2 arguments (expr, expected_value)");
 			// Return a default value matching typical usage (long type)
@@ -2654,13 +2624,8 @@
 		// Return the first argument (the expression value)
 		return expr_ir;
 	}
-	
-	// Generate IR for __builtin_launder intrinsic
-	// This prevents the compiler from assuming anything about what a pointer points to
-	// Syntax: __builtin_launder(ptr)
-	// Essential for implementing std::launder and placement new operations
-	// Returns the pointer unchanged, but creates an optimization barrier
-	std::vector<IrOperand> generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode) {
+
+	std::vector<IrOperand> AstToIr::generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_launder requires exactly 1 argument (pointer)");
 			return {Type::UnsignedLongLong, 64, 0ULL, 0ULL};
@@ -2692,11 +2657,7 @@
 		return ptr_ir;
 	}
 
-	// GetExceptionCode() - SEH intrinsic
-	// In a filter funclet: RCX = EXCEPTION_POINTERS*, reads ExceptionRecord->ExceptionCode directly
-	// In __except body: reads from a parent-frame slot that was saved during filter evaluation
-	// Returns unsigned int (DWORD)
-	std::vector<IrOperand> generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
+	std::vector<IrOperand> AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
 		TempVar result = var_counter.next();
 		if (seh_in_filter_funclet_) {
 			// Filter context: EXCEPTION_POINTERS* is in [rsp+8], read ExceptionCode from there
@@ -2718,11 +2679,7 @@
 		return {Type::UnsignedInt, 32, result, 0ULL};
 	}
 
-	// _abnormal_termination() / AbnormalTermination() - SEH intrinsic
-	// Only valid inside a __finally block.
-	// ECX is saved to [rsp+8] in the finally funclet prologue; reads from there.
-	// Returns int (0 = normal termination, non-zero = exception unwind)
-	std::vector<IrOperand> generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
+	std::vector<IrOperand> AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
 		TempVar result = var_counter.next();
 		SehAbnormalTerminationOp op;
 		op.result = result;
@@ -2730,10 +2687,7 @@
 		return {Type::Int, 32, result, 0ULL};
 	}
 
-	// GetExceptionInformation() - SEH intrinsic
-	// In a filter funclet: RCX = EXCEPTION_POINTERS*, returns the pointer directly
-	// Returns EXCEPTION_POINTERS* (pointer)
-	std::vector<IrOperand> generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
+	std::vector<IrOperand> AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
 		TempVar result = var_counter.next();
 		SehExceptionIntrinsicOp op;
 		op.result = result;

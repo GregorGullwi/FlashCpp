@@ -1,4 +1,6 @@
-	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
+#include "CodeGen.h"
+
+	void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		if (!node.get_definition().has_value() && !node.is_implicit()) {
 			return;
 		}
@@ -866,7 +868,7 @@
 		// This allows nested contexts (like local struct member functions) to work properly
 	}
 
-	void visitStructDeclarationNode(const StructDeclarationNode& node) {
+	void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 		// Struct declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
 
@@ -1143,14 +1145,14 @@
 		current_struct_name_ = saved_struct_name;
 	}
 
-	void visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {
+	void AstToIr::visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {
 		// Enum declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
 		// Enumerators are treated as compile-time constants and don't need runtime code generation
 		// For unscoped enums, the enumerators are already added to the symbol table during parsing
 	}
 
-	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
+	void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
 		// If no definition and not explicit, check if implicit
 		if (!node.get_definition().has_value()) {
 			if (node.is_implicit()) {
@@ -1984,7 +1986,7 @@
 		// Don't clear current_function_name_ here - let the top-level visitor manage it
 	}
 
-	void visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
+	void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
 		if (!node.get_definition().has_value())
 			return;
 

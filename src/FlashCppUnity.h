@@ -32,6 +32,13 @@
 #include "Lexer.h"
 #include "Parser.h"
 #include "CodeGen.h"
+
+// AstToIr method definitions (for unity build)
+#include "CodeGen_Visitors.cpp"      // AstToIr visitor methods
+#include "CodeGen_Statements.cpp"    // AstToIr statement methods
+#include "CodeGen_Expressions.cpp"   // AstToIr expression methods
+#include "CodeGen_Functions.cpp"     // AstToIr function call methods
+#include "CodeGen_Lambdas.cpp"       // AstToIr lambda methods
 #include "StackString.h"
 #include "IRTypes.h"
 #include "CrashHandler.h"

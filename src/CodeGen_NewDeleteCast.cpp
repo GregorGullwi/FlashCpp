@@ -1,4 +1,6 @@
-	std::vector<IrOperand> generateNewExpressionIr(const NewExpressionNode& newExpr) {
+#include "CodeGen.h"
+
+	std::vector<IrOperand> AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		if (!newExpr.type_node().is<TypeSpecifierNode>()) {
 			FLASH_LOG(Codegen, Error, "New expression type node is not a TypeSpecifierNode");
 			return {};
@@ -466,7 +468,7 @@
 		return { type, size_in_bits, result_var, 0ULL };
 	}
 
-	std::vector<IrOperand> generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
+	std::vector<IrOperand> AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
 		// Evaluate the expression to get the pointer to delete
 		auto ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
 
@@ -617,11 +619,10 @@
 		return {};
 	}
 
-	// Helper function to extract base operand from expression operands
-	std::variant<StringHandle, TempVar> extractBaseOperand(
+	std::variant<StringHandle, TempVar> AstToIr::extractBaseOperand(
 		const std::vector<IrOperand>& expr_operands,
 		TempVar fallback_var,
-		const char* cast_name = "cast") {
+		const char* cast_name) {
 		
 		std::variant<StringHandle, TempVar> base;
 		if (std::holds_alternative<StringHandle>(expr_operands[2])) {
@@ -635,14 +636,13 @@
 		return base;
 	}
 
-	// Helper function to mark reference with appropriate value category metadata
-	void markReferenceMetadata(
+	void AstToIr::markReferenceMetadata(
 		const std::vector<IrOperand>& expr_operands,
 		TempVar result_var,
 		Type target_type,
 		int target_size,
 		bool is_rvalue_ref,
-		const char* cast_name = "cast") {
+		const char* cast_name) {
 		
 		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
@@ -656,14 +656,13 @@
 		}
 	}
 
-	// Helper function to generate AddressOf operation for reference casts
-	void generateAddressOfForReference(
+	void AstToIr::generateAddressOfForReference(
 		const std::variant<StringHandle, TempVar>& base,
 		TempVar result_var,
 		Type target_type,
 		int target_size,
 		const Token& token,
-		const char* cast_name = "cast") {
+		const char* cast_name) {
 		
 		if (std::holds_alternative<StringHandle>(base)) {
 			AddressOfOp addr_op;
@@ -687,13 +686,12 @@
 		}
 	}
 
-	// Helper function to handle rvalue reference casts (produces xvalue)
-	std::vector<IrOperand> handleRValueReferenceCast(
+	std::vector<IrOperand> AstToIr::handleRValueReferenceCast(
 		const std::vector<IrOperand>& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
-		const char* cast_name = "cast") {
+		const char* cast_name) {
 		
 		// Create a new TempVar to hold the xvalue result
 		TempVar result_var = var_counter.next();
@@ -711,13 +709,12 @@
 		return { target_type, 64, result_var, 0ULL };
 	}
 
-	// Helper function to handle lvalue reference casts (produces lvalue)
-	std::vector<IrOperand> handleLValueReferenceCast(
+	std::vector<IrOperand> AstToIr::handleLValueReferenceCast(
 		const std::vector<IrOperand>& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
-		const char* cast_name = "cast") {
+		const char* cast_name) {
 		
 		// Create a new TempVar to hold the lvalue result
 		TempVar result_var = var_counter.next();
@@ -735,7 +732,7 @@
 		return { target_type, 64, result_var, 0ULL };
 	}
 
-	std::vector<IrOperand> generateStaticCastIr(const StaticCastNode& staticCastNode) {
+	std::vector<IrOperand> AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// Get the target type from the type specifier first
 		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
@@ -904,7 +901,7 @@
 		return { target_type, target_size, expr_operands[2], 0ULL };
 	}
 
-	std::vector<IrOperand> generateTypeidIr(const TypeidNode& typeidNode) {
+	std::vector<IrOperand> AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		// typeid returns a reference to const std::type_info
 		// For polymorphic types, we need to get RTTI from the vtable
 		// For non-polymorphic types, we return a compile-time constant
@@ -964,7 +961,7 @@
 		return { Type::Void, 64, result_temp, 0ULL };
 	}
 
-	std::vector<IrOperand> generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
+	std::vector<IrOperand> AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
 		// dynamic_cast<Type>(expr) performs runtime type checking
 		// Returns nullptr (for pointers) or throws bad_cast (for references) on failure
 
@@ -1045,7 +1042,7 @@
 		return { result_type, result_size, result_temp, 0ULL };
 	}
 
-	std::vector<IrOperand> generateConstCastIr(const ConstCastNode& constCastNode) {
+	std::vector<IrOperand> AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 		// const_cast<Type>(expr) adds or removes const/volatile qualifiers
 		// It doesn't change the actual value, just the type metadata
 		
@@ -1073,7 +1070,7 @@
 		return { target_type, target_size, expr_operands[2], 0ULL };
 	}
 
-	std::vector<IrOperand> generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
+	std::vector<IrOperand> AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
 		// reinterpret_cast<Type>(expr) reinterprets the bit pattern as a different type
 		// It doesn't change the actual bits, just the type interpretation
 		
@@ -1103,36 +1100,3 @@
 		return { target_type, result_size, expr_operands[2], static_cast<unsigned long long>(target_pointer_depth) };
 	}
 
-	// Structure to track variables that need destructors called
-	struct ScopeVariableInfo {
-		std::string variable_name;
-		std::string struct_name;
-	};
-
-	// Stack of scopes, each containing variables that need destructors
-	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
-
-	void enterScope() {
-		scope_stack_.push_back({});
-	}
-
-	void exitScope() {
-		if (!scope_stack_.empty()) {
-			// Generate destructor calls for all variables in this scope (in reverse order)
-			const auto& scope_vars = scope_stack_.back();
-			for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
-				// Generate destructor call
-				DestructorCallOp dtor_op;
-				dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
-				dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
-				ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
-			}
-			scope_stack_.pop_back();
-		}
-	}
-
-	void registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name) {
-		if (!scope_stack_.empty()) {
-			scope_stack_.back().push_back({var_name, struct_name});
-		}
-	}
