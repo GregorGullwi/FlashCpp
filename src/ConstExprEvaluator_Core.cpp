@@ -1400,6 +1400,64 @@ private:
 		return EvalResult::error("Unknown builtin function: " + std::string(func_name));
 	}
 
+	// Try to evaluate a FunctionCallNode as a variable template instantiation.
+	// Variable templates like __is_ratio_v<T> get parsed as FunctionCallNodes because
+	// identifier<args> looks like a function call syntactically. This helper extracts
+	// the template arguments, instantiates the variable template, and evaluates it.
+	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context) {
+		if (!context.parser) {
+			return EvalResult::error("No parser available for variable template instantiation");
+		}
+		
+		if (!func_call.has_template_arguments()) {
+			return EvalResult::error("No template arguments for variable template");
+		}
+		
+		std::vector<TemplateTypeArg> template_args;
+		for (const ASTNode& arg_node : func_call.template_arguments()) {
+			if (arg_node.is<TypeSpecifierNode>()) {
+				template_args.emplace_back(arg_node.as<TypeSpecifierNode>());
+			} else if (arg_node.is<ExpressionNode>()) {
+				// Evaluate the expression to get a constant value for a non-type template argument.
+				// This handles literals, binary expressions like 1+2, and other constant expressions.
+				EvalResult arg_val = evaluate(arg_node, context);
+				if (!arg_val.success()) {
+					return EvalResult::error("Failed to evaluate non-type template argument: " + arg_val.error_message);
+				}
+				Type arg_type = Type::Int;
+				if (std::holds_alternative<bool>(arg_val.value)) {
+					arg_type = Type::Bool;
+				} else if (std::holds_alternative<unsigned long long>(arg_val.value)) {
+					arg_type = Type::UnsignedLongLong;
+				}
+				template_args.emplace_back(arg_val.as_int(), arg_type);
+			} else {
+				return EvalResult::error("Unsupported template argument type for variable template");
+			}
+		}
+		
+		if (template_args.empty()) {
+			return EvalResult::error("No template arguments extracted for variable template");
+		}
+		
+		// Try to instantiate the variable template
+		auto var_node = context.parser->try_instantiate_variable_template(func_name, template_args);
+		
+		// Try with qualified name if simple name didn't work
+		if (!var_node.has_value() && func_call.has_qualified_name()) {
+			var_node = context.parser->try_instantiate_variable_template(func_call.qualified_name(), template_args);
+		}
+		
+		if (var_node.has_value() && var_node->is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = var_node->as<VariableDeclarationNode>();
+			if (var_decl.initializer().has_value()) {
+				return evaluate(var_decl.initializer().value(), context);
+			}
+		}
+		
+		return EvalResult::error("Variable template instantiation failed: " + std::string(func_name));
+	}
+
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context) {
 		// Check recursion depth
 		if (context.current_depth >= context.max_recursion_depth) {
@@ -1584,10 +1642,26 @@ private:
 				return builtin_result;
 			}
 			
+			// Try variable template instantiation before giving up
+			// Variable templates like __is_ratio_v<T> might not be in the symbol table
+			// but can be instantiated from the template registry
+			if (func_call.has_template_arguments() && context.parser) {
+				auto var_template_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+				if (var_template_result.success()) return var_template_result;
+			}
+			
 			return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
 		}
 
 		const ASTNode& symbol_node = symbol_opt.value();
+		
+		// Check if it's a TemplateVariableDeclarationNode (variable template like __is_ratio_v<T>)
+		// These get parsed as FunctionCallNodes because identifier<args> looks like a function call
+		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
+			auto result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+			if (result.success()) return result;
+			// If variable template instantiation failed, fall through to try other lookups
+		}
 		
 		// Check if it's a FunctionDeclarationNode (regular function)
 		if (symbol_node.is<FunctionDeclarationNode>()) {
@@ -1681,6 +1755,7 @@ private:
 			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
 			return evaluate_callable_object(var_decl, func_call.arguments(), context);
 		}
+		
 		
 		return EvalResult::error("Identifier is not a function or callable object: " + std::string(func_name));
 	}

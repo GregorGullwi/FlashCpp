@@ -392,27 +392,30 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	FLASH_LOG(Templates, Debug, "try_instantiate_variable_template: template_name='", template_name, 
 		"' simple_name='", simple_template_name, "' args.size()=", template_args.size());
 	
-	// Check if any template argument is dependent (e.g., _Tp placeholder)
-	// If so, we cannot instantiate - this happens when we're inside a template body
-	for (size_t i = 0; i < template_args.size(); ++i) {
-		const auto& arg = template_args[i];
-		if (arg.is_dependent) {
-			FLASH_LOG(Templates, Debug, "Skipping variable template '", template_name, 
-			          "' instantiation - arg[", i, "] is dependent: ", arg.toString());
-			return std::nullopt;
-		}
-	}
-	
 	// Build resolved args list — apply template_param_substitutions_ to all args once
+	// Do this BEFORE the dependency check so that dependent args that have substitutions
+	// available (e.g., _R1 -> ratio<1,2>) get resolved first.
 	std::vector<TemplateTypeArg> resolved_args;
 	resolved_args.reserve(template_args.size());
 	for (const auto& original_arg : template_args) {
 		TemplateTypeArg arg = original_arg;
-		if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
+		if (arg.is_dependent && arg.dependent_name.isValid()) {
+			// Try to resolve dependent arg using template_param_substitutions_
+			std::string_view dep_name = arg.dependent_name.view();
+			for (const auto& subst : template_param_substitutions_) {
+				if (subst.is_type_param && subst.param_name == dep_name && !subst.substituted_type.is_dependent) {
+					FLASH_LOG(Templates, Debug, "Resolving dependent template parameter '", dep_name, 
+					          "' with concrete type ", subst.substituted_type.toString());
+					arg = subst.substituted_type;
+					break;
+				}
+			}
+		}
+		if (!arg.is_dependent && (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
 		    arg.type_index < gTypeInfo.size()) {
 			std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
 			for (const auto& subst : template_param_substitutions_) {
-				if (subst.is_type_param && subst.param_name == type_name) {
+				if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
 					FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
 					          "' with concrete type ", subst.substituted_type.toString());
 					arg = subst.substituted_type;
@@ -421,6 +424,17 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			}
 		}
 		resolved_args.push_back(arg);
+	}
+	
+	// Check if any template argument is still dependent after substitution
+	// If so, we cannot instantiate - this happens when we're inside a template body
+	for (size_t i = 0; i < resolved_args.size(); ++i) {
+		const auto& arg = resolved_args[i];
+		if (arg.is_dependent) {
+			FLASH_LOG(Templates, Debug, "Skipping variable template '", template_name, 
+			          "' instantiation - arg[", i, "] is dependent: ", arg.toString());
+			return std::nullopt;
+		}
 	}
 	
 	// Structural pattern matching: find the best matching partial specialization
@@ -437,7 +451,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		const TemplateVariableDeclarationNode& spec_template = structural_match->node.as<TemplateVariableDeclarationNode>();
 		const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
 		const Token& orig_token = spec_var_decl.declaration().identifier_token();
-		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
+		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, resolved_args);
 		
 		if (gSymbolTable.lookup(persistent_name).has_value()) {
 			return gSymbolTable.lookup(persistent_name);
@@ -518,7 +532,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	// Generate unique name for the instantiation using hash-based naming
 	// This ensures consistent naming with class template instantiations
-	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
+	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, resolved_args);
 	
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {
@@ -527,9 +541,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	// Perform template substitution
 	const std::vector<ASTNode>& template_params = var_template.template_parameters();
-	if (template_args.size() != template_params.size()) {
+	if (resolved_args.size() != template_params.size()) {
 		FLASH_LOG(Templates, Error, "Template argument count mismatch: expected ", template_params.size(), 
-		          ", got ", template_args.size());
+		          ", got ", resolved_args.size());
 		return std::nullopt;
 	}
 	
@@ -556,7 +570,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		if (tparam.kind() == TemplateParameterKind::Type) {
 			// For type template parameters, look up the type_index in gTypeInfo
 			// The template parameter name was registered as a type during parsing
-			const TemplateTypeArg& arg = template_args[i];
+			const TemplateTypeArg& arg = resolved_args[i];
 			
 			// Find the type_index for this template parameter by name
 			// During template parsing, template parameters are added to gTypeInfo
@@ -625,7 +639,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			}
 		} else if (tparam.kind() == TemplateParameterKind::NonType) {
 			// Handle non-type template parameters
-			const TemplateTypeArg& arg = template_args[i];
+			const TemplateTypeArg& arg = resolved_args[i];
 			if (arg.is_value) {
 				// Add to non-type substitution map
 				nontype_substitution_map[tparam.name()] = arg.value;
@@ -695,20 +709,20 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						// Try to instantiate the struct/class referenced in the qualified identifier
 						// Look it up to see if it's a template
 						auto inner_template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
-						if (inner_template_opt.has_value() && template_args.size() > 0) {
+						if (inner_template_opt.has_value() && resolved_args.size() > 0) {
 							// This is a template - try to instantiate it with the concrete arguments
 							// The template arguments from the variable template should be used
 							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup, 
-							          "' with ", template_args.size(), " args from variable template initializer");
+							          "' with ", resolved_args.size(), " args from variable template initializer");
 							
-							auto instantiated = try_instantiate_class_template(template_name_to_lookup, template_args);
+							auto instantiated = try_instantiate_class_template(template_name_to_lookup, resolved_args);
 							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 								// Add to AST so it gets codegen
 								ast_nodes_.push_back(*instantiated);
 								
 								// Now update the qualified identifier to use the correct instantiated name
 								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
-								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, template_args);
+								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, resolved_args);
 								FLASH_LOG(Templates, Debug, "Phase 3: Instantiated class name: '", instantiated_name, "'");
 								
 								// Create a new qualified identifier with the updated namespace

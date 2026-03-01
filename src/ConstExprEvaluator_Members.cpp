@@ -166,11 +166,21 @@
 			
 			auto symbol_opt = context.symbols->lookup(func_name);
 			if (!symbol_opt.has_value()) {
+				// Try variable template instantiation before giving up
+				if (func_call.has_template_arguments() && context.parser) {
+					auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+					if (var_result.success()) return var_result;
+				}
 				return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
 			}
 			
 			const ASTNode& symbol_node = symbol_opt.value();
 			if (!symbol_node.is<FunctionDeclarationNode>()) {
+				// Check if it's a variable template (like __is_ratio_v<T>)
+				if (symbol_node.is<TemplateVariableDeclarationNode>()) {
+					auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+					if (var_result.success()) return var_result;
+				}
 				return EvalResult::error("Identifier is not a function: " + std::string(func_name));
 			}
 			
@@ -265,11 +275,21 @@
 			
 			auto symbol_opt = context.symbols->lookup(func_name);
 			if (!symbol_opt.has_value()) {
+				// Try variable template instantiation before giving up
+				if (func_call.has_template_arguments() && context.parser) {
+					auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+					if (var_result.success()) return var_result;
+				}
 				return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
 			}
 			
 			const ASTNode& symbol_node = symbol_opt.value();
 			if (!symbol_node.is<FunctionDeclarationNode>()) {
+				// Check if it's a variable template (like __is_ratio_v<T>)
+				if (symbol_node.is<TemplateVariableDeclarationNode>()) {
+					auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+					if (var_result.success()) return var_result;
+				}
 				return EvalResult::error("Identifier is not a function: " + std::string(func_name));
 			}
 			
