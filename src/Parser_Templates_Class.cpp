@@ -1706,12 +1706,7 @@ ParseResult Parser::parse_template_declaration() {
 								std::string_view init_name = init_name_token.value();
 								
 								// Handle namespace-qualified base class names: std::optional<_Tp>{...}
-								while (peek() == "::"_tok) {
-									advance(); // consume '::'
-									if (peek().is_identifier() || peek().is_keyword()) {
-										advance(); // consume the qualified name part
-									}
-								}
+								init_name = consume_qualified_name_suffix(init_name);
 								
 								// Check for template arguments: Tuple<Rest...>(...)
 								if (peek() == "<"_tok) {
@@ -3093,12 +3088,7 @@ ParseResult Parser::parse_template_declaration() {
 								std::string_view init_name = init_name_token.value();
 								
 								// Handle namespace-qualified base class names: std::optional<_Tp>{...}
-								while (peek() == "::"_tok) {
-									advance(); // consume '::'
-									if (peek().is_identifier() || peek().is_keyword()) {
-										advance(); // consume the qualified name part
-									}
-								}
+								init_name = consume_qualified_name_suffix(init_name);
 								
 								// Check for template arguments: Tuple<Rest...>(...)
 								if (peek() == "<"_tok) {

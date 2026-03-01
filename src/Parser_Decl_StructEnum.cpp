@@ -1577,12 +1577,7 @@ ParseResult Parser::parse_struct_declaration()
 						advance();
 						
 						// Handle namespace-qualified base class names: ns::Class or std::optional
-						while (peek() == "::"_tok) {
-							advance(); // consume '::'
-							if (peek().is_identifier() || peek().is_keyword()) {
-								advance(); // consume the qualified name part
-							}
-						}
+						skip_qualified_name_parts();
 						
 						// Skip template arguments if present: Base<T>(...)
 						if (peek() == "<"_tok) {
