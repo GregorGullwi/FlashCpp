@@ -260,9 +260,9 @@ private:
 	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
 	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
-	                                            std::string_view op, EvaluationContext& context);
+		std::string_view op, EvaluationContext& context);
 	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
-	                                           EvaluationContext& context);
+		EvaluationContext& context);
 	static size_t get_struct_size_from_typeinfo(const TypeSpecifierNode& type_spec);
 	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec);
 	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context);

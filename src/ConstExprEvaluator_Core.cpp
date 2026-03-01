@@ -169,8 +169,8 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 	return EvalResult::error("Unknown numeric literal type");
 }
 
-EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node, 
-                                            std::string_view op, EvaluationContext& context) {
+EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
+	std::string_view op, EvaluationContext& context) {
 	// Recursively evaluate left and right operands
 	auto lhs_result = evaluate(lhs_node, context);
 	auto rhs_result = evaluate(rhs_node, context);
@@ -186,7 +186,7 @@ EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const AS
 }
 
 EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
-                                           EvaluationContext& context) {
+	EvaluationContext& context) {
 	// Recursively evaluate operand
 	auto operand_result = evaluate(operand_node, context);
 
