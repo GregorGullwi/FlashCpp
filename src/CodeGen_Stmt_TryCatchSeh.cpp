@@ -1,5 +1,6 @@
+#include "CodeGen.h"
 
-	void visitTryStatementNode(const TryStatementNode& node) {
+	void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		// Generate try-catch-finally structure
 		// For now, we'll generate a simplified version that doesn't actually implement exception handling
 		// but allows the code to compile and run
@@ -147,7 +148,7 @@
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_end_label)}, node.try_token()));
 	}
 
-	void visitThrowStatementNode(const ThrowStatementNode& node) {
+	void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 		if (node.is_rethrow()) {
 			// throw; (rethrow current exception)
 			ir_.addInstruction(IrOpcode::Rethrow, {}, node.throw_token());
@@ -199,11 +200,7 @@
 		}
 	}
 
-	// ============================================================================
-	// Windows SEH (Structured Exception Handling) Visitor Methods
-	// ============================================================================
-
-	void visitSehTryExceptStatementNode(const SehTryExceptStatementNode& node) {
+	void AstToIr::visitSehTryExceptStatementNode(const SehTryExceptStatementNode& node) {
 		// Generate __try/__except structure
 		// __try { try_block } __except(filter) { except_block }
 
@@ -377,7 +374,7 @@
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 	}
 
-	void visitSehTryFinallyStatementNode(const SehTryFinallyStatementNode& node) {
+	void AstToIr::visitSehTryFinallyStatementNode(const SehTryFinallyStatementNode& node) {
 		// Generate __try/__finally structure
 		// __try { try_block } __finally { finally_block }
 		//
@@ -446,7 +443,7 @@
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 	}
 
-	void visitSehLeaveStatementNode(const SehLeaveStatementNode& node) {
+	void AstToIr::visitSehLeaveStatementNode(const SehLeaveStatementNode& node) {
 		// Generate __leave statement
 		// __leave jumps to the end of the current __try block
 		// If the __try has a __finally, it calls the __finally funclet first

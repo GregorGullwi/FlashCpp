@@ -1,5 +1,7 @@
-	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 
-	                                            ExpressionContext context = ExpressionContext::Load) {
+#include "CodeGen.h"
+
+	std::vector<IrOperand> AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
+	ExpressionContext context) {
 		return std::visit([this, context](const auto& expr) -> std::vector<IrOperand> {
 			using T = std::decay_t<decltype(expr)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -82,7 +84,7 @@
 		}, exprNode);
 	}
 
-	std::vector<IrOperand> generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
+	std::vector<IrOperand> AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
 		bool is_noexcept = true;
 		if (noexcept_node.expr().is<ExpressionNode>()) {
 			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
@@ -90,7 +92,7 @@
 		return { Type::Bool, 8, is_noexcept ? 1ULL : 0ULL, 0ULL };
 	}
 
-	std::vector<IrOperand> generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
+	std::vector<IrOperand> AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
 		std::string_view type_name = dtor.has_qualified_name() 
 			? dtor.qualified_type_name().view()
 			: dtor.type_name();
@@ -126,7 +128,7 @@
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
 					FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ", 
-					         StringTable::getStringView(struct_info->getName()));
+					StringTable::getStringView(struct_info->getName()));
 					DestructorCallOp dtor_op;
 					dtor_op.struct_name = struct_info->getName();
 					dtor_op.object = StringTable::getOrInternStringHandle(object_name);
@@ -141,7 +143,7 @@
 		return {};
 	}
 
-	std::vector<IrOperand> generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
+	std::vector<IrOperand> AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
 		auto object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
 		if (object_operands.empty()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
@@ -212,9 +214,7 @@
 		return { member_type, member_size, result_var, static_cast<unsigned long long>(member_type_index) };
 	}
 
-	// Helper function to calculate size_bits for local variables with proper fallback handling
-	// Consolidates logic for handling arrays, pointers, and regular variables
-	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
+	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
 		bool is_array_type = is_array || type_node.is_array();
 		int size_bits;
 		
@@ -228,7 +228,7 @@
 			// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
 			if (size_bits == 0) {
 				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
-				         "' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
+				"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
 				size_bits = get_type_size_bits(type_node.type());
 			}
 		}
@@ -236,12 +236,12 @@
 		return size_bits;
 	}
 
-	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode, 
-	                                             ExpressionContext context = ExpressionContext::Load) {
+	std::vector<IrOperand> AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
+	ExpressionContext context) {
 		// Check if this is a captured variable in a lambda
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		if (current_lambda_context_.isActive() &&
-		    current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
+		current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
 			// This is a captured variable - generate member access (this->x)
 			// Look up the closure struct type
 			auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
@@ -254,7 +254,7 @@
 					// Check if this is a by-reference capture
 					auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 					bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
-					                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+					kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 
 					if (is_reference) {
 						// By-reference capture: member is a pointer, need to dereference
@@ -521,7 +521,7 @@
 		// Skip this for [*this] lambdas - they need to access through __copy_this instead
 		// Also check that we're not in a lambda context where this would be an enclosing struct member
 		if (!symbol.has_value() && current_struct_name_.isValid() && 
-		    !isInCopyThisLambda() && !current_lambda_context_.isActive()) {
+		!isInCopyThisLambda() && !current_lambda_context_.isActive()) {
 			// Look up the struct type
 			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
@@ -608,7 +608,7 @@
 								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
 								if (enumerator) {
 									return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-									         static_cast<unsigned long long>(enumerator->value) };
+									static_cast<unsigned long long>(enumerator->value) };
 								}
 							}
 						}
@@ -644,7 +644,7 @@
 						if (enumerator) {
 							// This IS an enumerator constant - return its value using the underlying type
 							return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-							         static_cast<unsigned long long>(enumerator->value) };
+							static_cast<unsigned long long>(enumerator->value) };
 						}
 						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
 					}
@@ -1016,7 +1016,7 @@
 		return {};
 	}
 
-	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+	std::vector<IrOperand> AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
 		// Check if this is a scoped enum value (e.g., Direction::North)
 		NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
 		if (!ns_handle.isGlobal()) {
@@ -1032,7 +1032,7 @@
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
 					return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-					         static_cast<unsigned long long>(enum_value) };
+					static_cast<unsigned long long>(enum_value) };
 				}
 			}
 
@@ -1129,7 +1129,7 @@
 						if (owner_type_it != gTypesByName.end() && owner_type_it->second->is_incomplete_instantiation_) {
 							std::string_view owner_name = StringTable::getStringView(owner_struct->getName());
 							FLASH_LOG(Codegen, Error, "Cannot access static member '", qualifiedIdNode.name(), 
-							          "' from incomplete template instantiation '", owner_name, "'");
+							"' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad
 							// This prevents linker errors from undefined references to incomplete instantiations
 							return { Type::Bool, 8, 0ULL, 0ULL };
@@ -1181,9 +1181,9 @@
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 								std::unordered_set<TypeIndex> visited;
 								while (resolved_type && 
-								       resolved_type->type_index_ < gTypeInfo.size() && 
-								       resolved_type->type_index_ != 0 &&
-								       !visited.contains(resolved_type->type_index_)) {
+								resolved_type->type_index_ < gTypeInfo.size() && 
+								resolved_type->type_index_ != 0 &&
+								!visited.contains(resolved_type->type_index_)) {
 									visited.insert(resolved_type->type_index_);
 									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
 									
@@ -1208,7 +1208,7 @@
 								std::string_view owner_name_str = StringTable::getStringView(qualified_struct_name);
 								bool looks_like_primary_template = 
 									(owner_name_str.find('_') == std::string_view::npos || 
-									 owner_name_str == StringTable::getStringView(owner_struct->getName()));
+									owner_name_str == StringTable::getStringView(owner_struct->getName()));
 								
 								if (looks_like_primary_template) {
 									// Search for an instantiated version that has this static member
@@ -1216,7 +1216,7 @@
 									for (const auto& emitted_handle : emitted_static_members_) {
 										std::string_view emitted = StringTable::getStringView(emitted_handle);
 										if (emitted.find(search_suffix) != std::string::npos &&
-										    emitted.find(std::string(owner_name_str) + "_") == 0) {
+										emitted.find(std::string(owner_name_str) + "_") == 0) {
 											// Found an instantiated version - extract the struct name
 											size_t colon_pos = emitted.find("::");
 											if (colon_pos != std::string::npos) {
@@ -1357,7 +1357,7 @@
 	}
 
 	std::vector<IrOperand>
-		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
+		AstToIr::generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
 		// Generate IR for numeric literal using the actual type from the literal
 		// Check if it's a floating-point type
 		if (is_floating_point_type(numericLiteralNode.type())) {

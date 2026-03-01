@@ -1,4 +1,6 @@
-	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
+#include "CodeGen.h"
+
+	std::vector<IrOperand> AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4);  // ret + name + this + ~4 per arg
 
@@ -146,12 +148,12 @@
 					std::string instantiation_key = std::to_string(lambda.lambda_id());
 					for (const auto& deduced : deduced_param_types) {
 						instantiation_key += "_" + std::to_string(static_cast<int>(deduced.type())) + 
-						                     "_" + std::to_string(deduced.size_in_bits());
+						"_" + std::to_string(deduced.size_in_bits());
 					}
 					
 					// Check if we've already scheduled this instantiation
 					if (generated_generic_lambda_instantiations_.find(instantiation_key) == 
-					    generated_generic_lambda_instantiations_.end()) {
+					generated_generic_lambda_instantiations_.end()) {
 						// Schedule this instantiation
 						GenericLambdaInstantiation inst;
 						inst.lambda_id = lambda.lambda_id();
@@ -380,7 +382,7 @@
 										IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 											using T = std::decay_t<decltype(arg)>;
 											if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-											              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+											std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 												return arg;
 											} else {
 												return 0ULL;
@@ -404,7 +406,7 @@
 							
 							// Not a function pointer member - set object_type for regular member function lookup
 							object_type = TypeSpecifierNode(Type::Struct, resolved_member->type_index,
-							                                 resolved_member->size * 8, Token());  // size in bits
+							resolved_member->size * 8, Token());  // size in bits
 						}
 					}
 				}
@@ -583,7 +585,7 @@
 								IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 									using T = std::decay_t<decltype(arg)>;
 									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-												  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+												std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 										return arg;
 									} else {
 										return 0ULL;
@@ -789,7 +791,7 @@
 				std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
 				std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
 				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(), 
-				          "' of '", struct_info->getName(), "'", context_str);
+				"' of '", struct_info->getName(), "'", context_str);
 				throw CompileError("Access control violation");
 			}
 		}
@@ -808,10 +810,10 @@
 			// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 			// Also handle reference return types as pointers (64 bits)
 			FLASH_LOG(Codegen, Debug, "VirtualCall return_type: ptr_depth=", return_type.pointer_depth(),
-			          " is_ptr=", return_type.is_pointer(),
-			          " is_ref=", return_type.is_reference(),
-			          " is_rref=", return_type.is_rvalue_reference(),
-			          " size_bits=", return_type.size_in_bits());
+			" is_ptr=", return_type.is_pointer(),
+			" is_ref=", return_type.is_reference(),
+			" is_rref=", return_type.is_rvalue_reference(),
+			" size_bits=", return_type.size_in_bits());
 			if (return_type.pointer_depth() > 0 || return_type.is_pointer() || return_type.is_reference() || return_type.is_rvalue_reference()) {
 				vcall_op.result.size_in_bits = 64;
 			} else {
@@ -1247,8 +1249,8 @@
 						
 						// Check if this is a literal value (has unsigned long long or double in operand[2])
 						bool is_literal = (argumentIrOperands.size() >= 3 && 
-						                  (std::holds_alternative<unsigned long long>(argumentIrOperands[2]) ||
-						                   std::holds_alternative<double>(argumentIrOperands[2])));
+						(std::holds_alternative<unsigned long long>(argumentIrOperands[2]) ||
+						std::holds_alternative<double>(argumentIrOperands[2])));
 						
 						if (is_literal) {
 							// Materialize the literal into a temporary variable

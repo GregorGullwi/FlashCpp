@@ -1,4 +1,6 @@
-	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
+#include "CodeGen.h"
+
+	void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		if (!node.get_definition().has_value() && !node.is_implicit()) {
 			return;
 		}
@@ -97,13 +99,13 @@
 					const DeclarationNode& param_decl = param.as<DeclarationNode>();
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					FLASH_LOG(Codegen, Debug, "  param[", i, "]: name='", param_decl.identifier_token().value()
-							  , "' type=", (int)param_type.type() 
-							  , " type_index=", param_type.type_index()
-							  , " size=", (int)param_type.size_in_bits()
-							  , " ptr_depth=", param_type.pointer_depth()
-							  , " base_cv=", (int)param_type.cv_qualifier()
-							  , " is_ref=", param_type.is_reference()
-							  , " is_rvalue_ref=", param_type.is_rvalue_reference());
+							, "' type=", (int)param_type.type() 
+							, " type_index=", param_type.type_index()
+							, " size=", (int)param_type.size_in_bits()
+							, " ptr_depth=", param_type.pointer_depth()
+							, " base_cv=", (int)param_type.cv_qualifier()
+							, " is_ref=", param_type.is_reference()
+							, " is_rvalue_ref=", param_type.is_rvalue_reference());
 					for (size_t j = 0; j < param_type.pointer_levels().size(); ++j) {
 						FLASH_LOG(Codegen, Debug, " ptr[", j, "]_cv=", (int)param_type.pointer_levels()[j].cv_qualifier);
 					}
@@ -866,7 +868,7 @@
 		// This allows nested contexts (like local struct member functions) to work properly
 	}
 
-	void visitStructDeclarationNode(const StructDeclarationNode& node) {
+	void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 		// Struct declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
 
@@ -906,8 +908,8 @@
 			// This is a nested class - construct fully qualified name like "Outer::Inner"
 			StringBuilder qualified_name_builder;
 			qualified_name_builder.append(StringTable::getStringView(current_struct_name_))
-			                     .append("::")
-			                     .append(struct_name);
+			.append("::")
+			.append(struct_name);
 			lookup_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 		} else {
 			// Top-level class - first try simple name, then look for namespace-qualified version
@@ -927,7 +929,7 @@
 				if (qualified_name.size() > struct_name.size() + 2) {
 					size_t expected_pos = qualified_name.size() - struct_name.size();
 					if (qualified_name.substr(expected_pos) == struct_name &&
-					    qualified_name.substr(expected_pos - 2, 2) == "::") {
+					qualified_name.substr(expected_pos - 2, 2) == "::") {
 						current_struct_name_ = name_handle;
 						found_qualified = true;
 						break;
@@ -983,7 +985,7 @@
 									deferred_info.function_node = func_decl;
 									deferred_member_functions_.push_back(std::move(deferred_info));
 									FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - queued lazy member function '",
-									          fn.decl_node().identifier_token().value(), "' for deferred instantiation");
+									fn.decl_node().identifier_token().value(), "' for deferred instantiation");
 								}
 							}
 						} else {
@@ -1041,11 +1043,11 @@
 					}
 				} catch (const std::exception& ex) {
 					FLASH_LOG(Codegen, Error, "Exception while visiting member function in struct ",
-					          struct_name, ": ", ex.what());
+					struct_name, ": ", ex.what());
 					throw;
 				} catch (...) {
 					FLASH_LOG(Codegen, Error, "Unknown exception while visiting member function in struct ",
-					          struct_name);
+					struct_name);
 					throw;
 				}
 			}
@@ -1143,14 +1145,14 @@
 		current_struct_name_ = saved_struct_name;
 	}
 
-	void visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {
+	void AstToIr::visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {
 		// Enum declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
 		// Enumerators are treated as compile-time constants and don't need runtime code generation
 		// For unscoped enums, the enumerators are already added to the symbol table during parsing
 	}
 
-	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
+	void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
 		// If no definition and not explicit, check if implicit
 		if (!node.get_definition().has_value()) {
 			if (node.is_implicit()) {
@@ -1759,7 +1761,7 @@
 								} else {
 									// Default initializer exists but isn't an expression, zero-initialize
 									if (member.type == Type::Int || member.type == Type::Long ||
-									    member.type == Type::Short || member.type == Type::Char) {
+									member.type == Type::Short || member.type == Type::Char) {
 										member_value = 0ULL;  // Zero for integer types
 									} else if (member.type == Type::Float || member.type == Type::Double) {
 										member_value = 0.0;  // Zero for floating-point types
@@ -1794,7 +1796,7 @@
 								} else {
 									// Zero-initialize based on type
 									if (member.type == Type::Int || member.type == Type::Long ||
-									    member.type == Type::Short || member.type == Type::Char) {
+									member.type == Type::Short || member.type == Type::Char) {
 										member_value = 0ULL;  // Zero for integer types
 									} else if (member.type == Type::Float || member.type == Type::Double) {
 										member_value = 0.0;  // Zero for floating-point types
@@ -1905,7 +1907,7 @@
 							} else {
 								// Default initializer exists but isn't an expression, zero-initialize
 								if (member.type == Type::Int || member.type == Type::Long ||
-								    member.type == Type::Short || member.type == Type::Char) {
+								member.type == Type::Short || member.type == Type::Char) {
 									member_value = 0ULL;
 								} else if (member.type == Type::Float || member.type == Type::Double) {
 									member_value = 0.0;
@@ -1940,7 +1942,7 @@
 							} else {
 								// Zero-initialize based on type
 								if (member.type == Type::Int || member.type == Type::Long ||
-								    member.type == Type::Short || member.type == Type::Char) {
+								member.type == Type::Short || member.type == Type::Char) {
 									member_value = 0ULL;  // Zero for integer types
 								} else if (member.type == Type::Float || member.type == Type::Double) {
 									member_value = 0.0;  // Zero for floating-point types
@@ -1984,7 +1986,7 @@
 		// Don't clear current_function_name_ here - let the top-level visitor manage it
 	}
 
-	void visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
+	void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
 		if (!node.get_definition().has_value())
 			return;
 

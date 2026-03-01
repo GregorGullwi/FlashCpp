@@ -1,4 +1,6 @@
-	void visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
+#include "CodeGen.h"
+
+	void AstToIr::visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
 		// Namespace declarations themselves don't generate IR - they just provide scope
 		// Track the current namespace for proper name mangling
 		// For anonymous namespaces, push empty string which will be handled specially by mangling
@@ -13,14 +15,14 @@
 		current_namespace_stack_.pop_back();
 	}
 
-	void visitUsingDirectiveNode(const UsingDirectiveNode& node) {
+	void AstToIr::visitUsingDirectiveNode(const UsingDirectiveNode& node) {
 		// Using directives don't generate IR - they affect name lookup in the symbol table
 		// Add the namespace to the current scope's using directives in the local symbol table
 		// (not gSymbolTable, which is the parser's symbol table and has different scope management)
 		symbol_table.add_using_directive(node.namespace_handle());
 	}
 
-	void visitUsingDeclarationNode(const UsingDeclarationNode& node) {
+	void AstToIr::visitUsingDeclarationNode(const UsingDeclarationNode& node) {
 		// Using declarations don't generate IR - they import a specific name into the current scope
 		// Add the using declaration to the local symbol table (not gSymbolTable)
 		FLASH_LOG(Codegen, Debug, "Adding using declaration: ", node.identifier_name(), " from namespace handle=", node.namespace_handle().index);
@@ -31,7 +33,7 @@
 		);
 	}
 
-	void visitUsingEnumNode(const UsingEnumNode& node) {
+	void AstToIr::visitUsingEnumNode(const UsingEnumNode& node) {
 		// C++20 using enum - brings all enumerators of a scoped enum into the current scope
 		// Look up the enum type and add all enumerators to the local symbol table
 		StringHandle enum_name = node.enum_type_name();
@@ -66,13 +68,13 @@
 		}
 	}
 
-	void visitNamespaceAliasNode(const NamespaceAliasNode& node) {
+	void AstToIr::visitNamespaceAliasNode(const NamespaceAliasNode& node) {
 		// Namespace aliases don't generate IR - they create an alias for a namespace
 		// Add the alias to the local symbol table (not gSymbolTable)
 		symbol_table.add_namespace_alias(node.alias_name(), node.target_namespace());
 	}
 
-	void visitReturnStatementNode(const ReturnStatementNode& node) {
+	void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
 			const auto& expr_opt = node.expression();
 			
@@ -99,7 +101,7 @@
 				// Look up the struct by return type index or name
 				for (size_t i = 0; i < gTypeInfo.size(); ++i) {
 					if (gTypeInfo[i].struct_info_ &&
-					    static_cast<int>(gTypeInfo[i].struct_info_->total_size * 8) == return_size) {
+					static_cast<int>(gTypeInfo[i].struct_info_->total_size * 8) == return_size) {
 						struct_info = gTypeInfo[i].struct_info_.get();
 						break;
 					}
@@ -186,8 +188,8 @@
 							if (ident.name() == "this") {
 								emitSehFinallyCallsBeforeReturn(node.return_token());
 								emitReturn(StringTable::getOrInternStringHandle("this"),
-								           current_function_return_type_, current_function_return_size_,
-								           node.return_token());
+								current_function_return_type_, current_function_return_size_,
+								node.return_token());
 								return;
 							}
 						}
@@ -285,7 +287,7 @@
 								IrValue source_value = std::visit([](auto&& arg) -> IrValue {
 									using T = std::decay_t<decltype(arg)>;
 									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-									              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+									std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 										return arg;
 									} else {
 										return 0ULL;
@@ -411,7 +413,7 @@
 			}
 			// Use the function's return type, not the expression type
 			emitReturn(return_value, current_function_return_type_, current_function_return_size_,
-			           node.return_token());
+			node.return_token());
 		}
 		else {
 			// Call any enclosing __finally funclets before returning
@@ -419,3 +421,4 @@
 			emitVoidReturn(node.return_token());
 		}
 	}
+

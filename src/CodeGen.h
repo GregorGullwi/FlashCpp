@@ -160,16 +160,9 @@ inline bool returnsStructByValue(Type type, int pointer_depth, bool is_reference
 
 inline bool needsHiddenReturnParam(Type type, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {
 	return returnsStructByValue(type, pointer_depth, is_reference) &&
-	       (size_in_bits > getStructReturnThreshold(is_llp64));
+	(size_in_bits > getStructReturnThreshold(is_llp64));
 }
 
 
-// The AstToIr class is split across multiple files for maintainability.
-// All parts are included here to form the complete class definition.
-// This works because FlashCppUnity.h includes everything as one translation unit.
-
-#include "CodeGen_Visitors.cpp"      // Class declaration, setup, declaration/namespace visitors
-#include "CodeGen_Statements.cpp"    // Statement visitors (if/for/while/switch/try), variable declarations
-#include "CodeGen_Expressions.cpp"   // Expression evaluation, identifiers, operators, type conversions
-#include "CodeGen_Functions.cpp"     // Function calls, member access, arrays, sizeof, new/delete, casts
-#include "CodeGen_Lambdas.cpp"       // Lambda IR generation, template instantiation, data members
+// AstToIr class declaration (methods split across cpp files).
+#include "AstToIr.h"

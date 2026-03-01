@@ -1,4 +1,6 @@
-	void visitBlockNode(const BlockNode& node) {
+#include "CodeGen.h"
+
+	void AstToIr::visitBlockNode(const BlockNode& node) {
 		// Check if this block contains only VariableDeclarationNodes
 		// If so, it's likely from comma-separated declarations and shouldn't create a new scope
 		bool only_var_decls = true;
@@ -37,7 +39,7 @@
 		}
 	}
 
-	void visitIfStatementNode(const IfStatementNode& node) {
+	void AstToIr::visitIfStatementNode(const IfStatementNode& node) {
 		// Handle C++17 if constexpr - evaluate condition at compile time
 		if (node.is_constexpr()) {
 			// Evaluate the condition at compile time
@@ -46,7 +48,7 @@
 			
 			if (!result.success()) {
 				FLASH_LOG(Codegen, Error, "if constexpr condition is not a constant expression: ", 
-				          result.error_message);
+				result.error_message);
 				return;
 			}
 
@@ -143,7 +145,7 @@
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, Token()));
 	}
 
-	void visitForStatementNode(const ForStatementNode& node) {
+	void AstToIr::visitForStatementNode(const ForStatementNode& node) {
 		// Enter a new scope for the for loop (C++ standard: for-init-statement creates a scope)
 		symbol_table.enter_scope(ScopeType::Block);
 		enterScope();
@@ -220,7 +222,7 @@
 		symbol_table.exit_scope();
 	}
 
-	void visitWhileStatementNode(const WhileStatementNode& node) {
+	void AstToIr::visitWhileStatementNode(const WhileStatementNode& node) {
 		// Generate unique labels for this while loop
 		static size_t while_counter = 0;
 		size_t current_while = while_counter++;
@@ -275,7 +277,7 @@
 		popLoopSehDepth();
 	}
 
-	void visitDoWhileStatementNode(const DoWhileStatementNode& node) {
+	void AstToIr::visitDoWhileStatementNode(const DoWhileStatementNode& node) {
 		// Generate unique labels for this do-while loop
 		static size_t do_while_counter = 0;
 		size_t current_do_while = do_while_counter++;
@@ -323,7 +325,7 @@
 		popLoopSehDepth();
 	}
 
-	void visitSwitchStatementNode(const SwitchStatementNode& node) {
+	void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 		// Generate unique labels for this switch statement
 		static size_t switch_counter = 0;
 		StringHandle default_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_default_").append(switch_counter));
@@ -473,7 +475,7 @@
 		popLoopSehDepth();
 	}
 
-	void visitRangedForStatementNode(const RangedForStatementNode& node) {
+	void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		// Desugar ranged for loop into traditional for loop
 		// For arrays: for (int x : arr) { body } becomes:
 		//   for (int __i = 0; __i < array_size; ++__i) { int x = arr[__i]; body }
@@ -550,12 +552,12 @@
 		if (range_decl.is_array()) {
 			// Array-based range-for loop
 			visitRangedForArray(node, range_name, range_decl, loop_start_label, loop_body_label, 
-			                    loop_increment_label, loop_end_label, ranged_for_counter - 1);
+			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		// Check if it's a struct with begin()/end() methods
 		else if (range_type.type() == Type::Struct) {
 			visitRangedForBeginEnd(node, range_name, range_type, loop_start_label, loop_body_label,
-			                       loop_increment_label, loop_end_label, ranged_for_counter - 1);
+			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		else {
 			FLASH_LOG(Codegen, Error, "Range expression must be an array or a type with begin()/end() methods");
@@ -563,10 +565,10 @@
 		}
 	}
 
-	void visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
-	                         const DeclarationNode& array_decl, StringHandle loop_start_label,
-	                         StringHandle loop_body_label, StringHandle loop_increment_label,
-	                         StringHandle loop_end_label, size_t counter) {
+	void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
+	const DeclarationNode& array_decl, StringHandle loop_start_label,
+	StringHandle loop_body_label, StringHandle loop_increment_label,
+	StringHandle loop_end_label, size_t counter) {
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Unified pointer-based approach: use begin/end pointers for arrays too
@@ -749,10 +751,10 @@
 		popLoopSehDepth();
 	}
 
-	void visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
-	                            const TypeSpecifierNode& range_type, StringHandle loop_start_label,
-	                            StringHandle loop_body_label, StringHandle loop_increment_label,
-	                            StringHandle loop_end_label, size_t counter) {
+	void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
+	const TypeSpecifierNode& range_type, StringHandle loop_start_label,
+	StringHandle loop_body_label, StringHandle loop_increment_label,
+	StringHandle loop_end_label, size_t counter) {
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Get the struct type info
@@ -821,8 +823,8 @@
 		ChunkedVector<ASTNode> empty_args;
 		auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
 			MemberFunctionCallNode(range_expr_for_begin, 
-			                       begin_func_decl,
-			                       std::move(empty_args), Token())
+			begin_func_decl,
+			std::move(empty_args), Token())
 		);
 		
 		auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_call_expr);
@@ -837,8 +839,8 @@
 		ChunkedVector<ASTNode> empty_args2;
 		auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
 			MemberFunctionCallNode(range_expr_for_end,
-			                       end_func_decl,
-			                       std::move(empty_args2), Token())
+			end_func_decl,
+			std::move(empty_args2), Token())
 		);
 		
 		auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_call_expr);
@@ -937,27 +939,28 @@
 		popLoopSehDepth();
 	}
 
-	void visitBreakStatementNode(const BreakStatementNode& node) {
+	void AstToIr::visitBreakStatementNode(const BreakStatementNode& node) {
 		// If inside __try/__finally within a loop, call __finally before breaking
 		emitSehFinallyCallsBeforeBreakContinue(node.break_token());
 		// Generate Break IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Break, {}, node.break_token());
 	}
 
-	void visitContinueStatementNode(const ContinueStatementNode& node) {
+	void AstToIr::visitContinueStatementNode(const ContinueStatementNode& node) {
 		// If inside __try/__finally within a loop, call __finally before continuing
 		emitSehFinallyCallsBeforeBreakContinue(node.continue_token());
 		// Generate Continue IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Continue, {}, node.continue_token());
 	}
 
-	void visitGotoStatementNode(const GotoStatementNode& node) {
+	void AstToIr::visitGotoStatementNode(const GotoStatementNode& node) {
 		// Generate Branch IR instruction (unconditional jump) with the target label name
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(node.label_name())}, node.goto_token()));
 	}
 
-	void visitLabelStatementNode(const LabelStatementNode& node) {
+	void AstToIr::visitLabelStatementNode(const LabelStatementNode& node) {
 		// Generate Label IR instruction with the label name
 		std::string label_name(node.label_name());
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(label_name)}, node.label_token()));
 	}
+
