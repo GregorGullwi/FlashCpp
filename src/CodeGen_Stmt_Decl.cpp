@@ -864,7 +864,7 @@
 									std::string_view error_msg = StringBuilder().append("Cannot default-initialize struct ")
 										.append(StringTable::getStringView(struct_info.name))
 										.append(" - default constructor is deleted").commit();
-									throw InternalError(std::string(error_msg));
+									throw CompileError(std::string(error_msg));
 								}
 
 								// Build a map of member names to initializer expressions

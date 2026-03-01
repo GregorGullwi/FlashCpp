@@ -675,7 +675,6 @@
 	}
 
 	// Reset per-function state between function declarations
-	// Reset per-function state between function declarations
 	void resetFunctionState() {
 		max_temp_var_index_ = 0;
 		next_temp_var_offset_ = 8;
