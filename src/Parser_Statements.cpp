@@ -685,6 +685,21 @@ ParseResult Parser::parse_variable_declaration()
 		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
 	}
 
+	// Check for use of deleted default constructor: Struct s{} where default ctor is deleted
+	if (type_specifier.type() == Type::Struct && !type_specifier.is_pointer() &&
+	    first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
+		const auto& init_list = first_init_expr->as<InitializerListNode>();
+		if (init_list.initializers().empty()) {
+			TypeIndex type_idx = type_specifier.type_index();
+			if (type_idx < gTypeInfo.size() && gTypeInfo[type_idx].struct_info_) {
+				const StructTypeInfo& struct_info = *gTypeInfo[type_idx].struct_info_;
+				if (struct_info.isDefaultConstructorDeleted()) {
+					return ParseResult::error("Call to deleted constructor of '" + std::string(StringTable::getStringView(gTypeInfo[type_idx].name())) + "'", first_decl.identifier_token());
+				}
+			}
+		}
+	}
+
 	// Check if there are more declarations (comma-separated)
 	if (peek() == ","_tok) {
 		// Create a block to hold multiple declarations
