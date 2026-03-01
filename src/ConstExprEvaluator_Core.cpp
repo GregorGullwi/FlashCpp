@@ -1756,12 +1756,6 @@ private:
 			return evaluate_callable_object(var_decl, func_call.arguments(), context);
 		}
 		
-		// Check if it's a TemplateVariableDeclarationNode (variable template like __is_ratio_v<T>)
-		// These get parsed as FunctionCallNodes because identifier<args> looks like a function call
-		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
-			auto result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
-			if (result.success()) return result;
-		}
 		
 		return EvalResult::error("Identifier is not a function or callable object: " + std::string(func_name));
 	}
