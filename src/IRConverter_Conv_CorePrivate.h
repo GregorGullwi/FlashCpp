@@ -418,11 +418,21 @@
 			.operand_size_in_bits = operand_size
 		};
 
-		// Support integer, boolean, floating-point, and pointer-like operations.
-		// Types like Struct, FunctionPointer, Enum, Void, and Nullptr appear in IR for
+		// Support integer, boolean, floating-point, enum, and pointer-like operations.
+		// Enum types are integer-like and should use their natural size from the IR.
+		// Types like Struct, FunctionPointer, Void, and Nullptr appear in IR for
 		// pointer offset calculations and should be treated as 64-bit integer ops.
+		if (ctx.operand_type == Type::Enum) {
+			// Enum values: coerce to integer type matching their IR size
+			Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
+			if (!is_comparison) {
+				ctx.result_value.type = int_type;
+				ctx.result_value.size_in_bits = ctx.operand_size_in_bits;
+			}
+			ctx.operand_type = int_type;
+		}
 		auto is_pointer_like_type = [](Type t) {
-			return t == Type::Struct || t == Type::FunctionPointer || t == Type::Enum ||
+			return t == Type::Struct || t == Type::FunctionPointer ||
 			       t == Type::Nullptr || t == Type::Void || t == Type::UserDefined ||
 			       t == Type::MemberFunctionPointer || t == Type::MemberObjectPointer;
 		};
