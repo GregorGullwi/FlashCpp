@@ -129,13 +129,13 @@ public:
 			return;
 		}
 		else if (node.is<TemplateFunctionDeclarationNode>()) {
-			// Template declarations don't generate code yet - they're stored for later instantiation
-			// TODO: Implement template instantiation in Phase 2
+			// Template declarations produce no IR of their own; IR is generated when each
+			// instantiation is visited (see try_instantiate_class_template / try_instantiate_function_template).
 			return;
 		}
 		else if (node.is<TemplateClassDeclarationNode>()) {
-			// Template class declarations don't generate code yet - they're stored for later instantiation
-			// TODO: Implement class template instantiation in Phase 6
+			// Class template declarations produce no IR of their own; IR is generated when each
+			// instantiation is visited (see try_instantiate_class_template).
 			return;
 		}
 		else if (node.is<TemplateAliasNode>()) {
