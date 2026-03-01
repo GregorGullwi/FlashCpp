@@ -280,6 +280,18 @@ ASTNode Parser::substituteTemplateParameters(
 			if (func_call.has_mangled_name()) {
 				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_mangled_name(func_call.mangled_name());
 			}
+			// Substitute and copy template arguments (important for variable templates like __is_ratio_v<T>)
+			if (func_call.has_template_arguments()) {
+				std::vector<ASTNode> substituted_template_args;
+				substituted_template_args.reserve(func_call.template_arguments().size());
+				for (const auto& targ : func_call.template_arguments()) {
+					substituted_template_args.push_back(substituteTemplateParameters(targ, template_params, template_args));
+				}
+				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_template_arguments(std::move(substituted_template_args));
+			}
+			if (func_call.has_qualified_name()) {
+				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_qualified_name(func_call.qualified_name());
+			}
 			return new_func_call;
 		} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 			const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
@@ -828,6 +840,18 @@ ASTNode Parser::substituteTemplateParameters(
 		if (func_call.has_mangled_name()) {
 			new_func_call.as<FunctionCallNode>().set_mangled_name(func_call.mangled_name());
 		}
+		// Substitute and copy template arguments (important for variable templates like __is_ratio_v<T>)
+		if (func_call.has_template_arguments()) {
+			std::vector<ASTNode> substituted_template_args;
+			substituted_template_args.reserve(func_call.template_arguments().size());
+			for (const auto& targ : func_call.template_arguments()) {
+				substituted_template_args.push_back(substituteTemplateParameters(targ, template_params, template_args));
+			}
+			new_func_call.as<FunctionCallNode>().set_template_arguments(std::move(substituted_template_args));
+		}
+		if (func_call.has_qualified_name()) {
+			new_func_call.as<FunctionCallNode>().set_qualified_name(func_call.qualified_name());
+		}
 		return new_func_call;
 
 	} else if (node.is<BinaryOperatorNode>()) {
@@ -955,6 +979,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// For if constexpr, evaluate the condition at compile time and eliminate the dead branch
 		if (if_stmt.is_constexpr()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			eval_ctx.parser = this;
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_condition, eval_ctx);
 			if (eval_result.success()) {
 				bool condition_value = eval_result.as_int() != 0;

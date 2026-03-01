@@ -392,23 +392,26 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	FLASH_LOG(Templates, Debug, "try_instantiate_variable_template: template_name='", template_name, 
 		"' simple_name='", simple_template_name, "' args.size()=", template_args.size());
 	
-	// Check if any template argument is dependent (e.g., _Tp placeholder)
-	// If so, we cannot instantiate - this happens when we're inside a template body
-	for (size_t i = 0; i < template_args.size(); ++i) {
-		const auto& arg = template_args[i];
-		if (arg.is_dependent) {
-			FLASH_LOG(Templates, Debug, "Skipping variable template '", template_name, 
-			          "' instantiation - arg[", i, "] is dependent: ", arg.toString());
-			return std::nullopt;
-		}
-	}
-	
 	// Build resolved args list — apply template_param_substitutions_ to all args once
+	// Do this BEFORE the dependency check so that dependent args that have substitutions
+	// available (e.g., _R1 -> ratio<1,2>) get resolved first.
 	std::vector<TemplateTypeArg> resolved_args;
 	resolved_args.reserve(template_args.size());
 	for (const auto& original_arg : template_args) {
 		TemplateTypeArg arg = original_arg;
-		if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
+		if (arg.is_dependent && arg.dependent_name.isValid()) {
+			// Try to resolve dependent arg using template_param_substitutions_
+			std::string_view dep_name = arg.dependent_name.view();
+			for (const auto& subst : template_param_substitutions_) {
+				if (subst.is_type_param && subst.param_name == dep_name && !subst.substituted_type.is_dependent) {
+					FLASH_LOG(Templates, Debug, "Resolving dependent template parameter '", dep_name, 
+					          "' with concrete type ", subst.substituted_type.toString());
+					arg = subst.substituted_type;
+					break;
+				}
+			}
+		}
+		if (!arg.is_dependent && (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
 		    arg.type_index < gTypeInfo.size()) {
 			std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
 			for (const auto& subst : template_param_substitutions_) {
@@ -421,6 +424,17 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			}
 		}
 		resolved_args.push_back(arg);
+	}
+	
+	// Check if any template argument is still dependent after substitution
+	// If so, we cannot instantiate - this happens when we're inside a template body
+	for (size_t i = 0; i < resolved_args.size(); ++i) {
+		const auto& arg = resolved_args[i];
+		if (arg.is_dependent) {
+			FLASH_LOG(Templates, Debug, "Skipping variable template '", template_name, 
+			          "' instantiation - arg[", i, "] is dependent: ", arg.toString());
+			return std::nullopt;
+		}
 	}
 	
 	// Structural pattern matching: find the best matching partial specialization
