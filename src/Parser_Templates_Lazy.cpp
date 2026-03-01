@@ -459,6 +459,24 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				ExpressionSubstitutor substitutor(param_map, *this);
 				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
+				
+				// Try to evaluate the substituted expression to a constant value.
+				// This turns expressions like "1 * __static_sign$hash::value / __static_gcd$hash::value"
+				// into a single NumericLiteralNode, enabling downstream constexpr evaluation.
+				if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					eval_ctx.parser = this;
+					auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
+					if (eval_result.success()) {
+						int64_t val = eval_result.as_int();
+						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
+						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+						substituted_initializer = emplace_node<ExpressionNode>(
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 64)
+						);
+						FLASH_LOG(Templates, Debug, "Evaluated lazy static member initializer to constant: ", val);
+					}
+				}
 			}
 		}
 	}

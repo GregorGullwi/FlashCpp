@@ -1134,6 +1134,8 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			ctx.struct_node = struct_ctx.struct_node;
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
+		// Enable on-demand template instantiation for expressions like _R1::num == _R2::num
+		ctx.parser = this;
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
