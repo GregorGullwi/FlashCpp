@@ -13,7 +13,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~22ms |
 | `<numbers>` | N/A | ✅ Compiled | ~194ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~15ms |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Variable template evaluation (__is_ratio_v) not supported in static_assert context |
+| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~277ms. ratio_equal works; ratio_less needs default parameter evaluation |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~597ms |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~274ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~362ms |
@@ -38,7 +38,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<iostream>` | `test_std_iostream.cpp` | ✅ Compiled | ~3139ms |
 | `<sstream>` | `test_std_sstream.cpp` | ✅ Compiled | ~3267ms |
 | `<fstream>` | `test_std_fstream.cpp` | ✅ Compiled | ~3374ms |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Parse Error | `chrono::duration<long double>{__secs}` brace-init expression not parsed |
+| `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates); previously parse error on brace-init |
 | `<atomic>` | `test_std_atomic.cpp` | ✅ Compiled | ~1081ms |
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~33ms |
 | `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~247ms |
@@ -85,28 +85,42 @@ This directory contains test files for C++ standard library headers to assess Fl
 ### Summary (2026-03-01)
 
 **Total headers tested:** 77
-**Compiling successfully:** 65 (84%) — up from 55 (81%) on 2026-02-26
-**Parse errors:** 10
-**Codegen crashes/fatal errors:** 2 (barrier, memory — both stack overflow during deep template instantiation)
+**Compiling successfully:** 66 (86%) — up from 65 (84%) on 2026-03-01 (ratio fixed)
+**Parse errors:** 8
+**Codegen crashes/fatal errors:** 3 (barrier, memory, chrono — all stack overflow during deep template instantiation)
 **Headers newly compiling this session:** `<deque>`, `<list>`, `<queue>`, `<stack>`, `<sstream>`, `<fstream>`, `<iterator>`, `<stdexcept>`, `<numeric>` (test files), plus many existing headers now produce .o files reliably
 
-> **Note:** All 65 "compiled" headers generate `.o` object files. Some have codegen warnings about fold expressions, pack expansions, or unsupported arithmetic types that weren't fully handled, but these don't prevent compilation — individual function code generation errors are now non-fatal and the failing functions are skipped.
+> **Note:** All 66 "compiled" headers generate `.o` object files. Some have codegen warnings about fold expressions, pack expansions, or unsupported arithmetic types that weren't fully handled, but these don't prevent compilation — individual function code generation errors are now non-fatal and the failing functions are skipped.
 
 ### Known Blockers
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
 
-1. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<chrono>`, `<shared_mutex>`, `<ranges>`.
+1. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
 2. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because FlashCpp treats `{}` as constructor lookup rather than aggregate initialization. Affects: `<array>`.
 
 3. **Dependent base class resolution**: Base classes that depend on template parameters (like `__hash_code_base` in `_Hashtable`) are not found during struct definition parsing. Affects: `<functional>` (via `<hashtable.h>`), `<unordered_set>`, `<unordered_map>`.
 
-4. **Variable template evaluation in constant expressions**: Variable templates like `__is_ratio_v<T>` cannot be evaluated in `static_assert` contexts. Affects: `<ratio>`.
+4. **Variant struct/class definition parsing**: The `<variant>` header has a complex struct definition with pack expansion in base class lists that fails with "Expected ';' after struct/class definition" at variant:1137. Affects: `<variant>`.
 
-5. **Variant struct/class definition parsing**: The `<variant>` header has a complex struct definition with pack expansion in base class lists that fails with "Expected ';' after struct/class definition" at variant:1137. Affects: `<variant>`.
+5. **Stack overflow during deep template instantiation**: Headers like `<memory>`, `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<memory>`, `<barrier>`, `<chrono>`.
 
-6. **Stack overflow during deep template instantiation**: Headers like `<memory>` and `<barrier>` trigger 6000+ template instantiations that exhaust the stack. Affects: `<memory>`, `<barrier>`.
+### Recent Fixes (2026-03-01, session 2)
+
+1. **`<ratio>` header now compiles (~277ms)**: Fixed a chain of 5 issues preventing `std::ratio`, `std::ratio_equal`, and the internal `__static_sign`/`__static_abs`/`__static_gcd` helpers from working:
+
+   a. **Lazy static member instantiation in constexpr evaluator**: When evaluating `ratio$hash::num`, the evaluator now always triggers lazy instantiation before evaluating the initializer, ensuring template parameter substitution runs first.
+
+   b. **Binary operator `ctx.parser` in `try_evaluate_constant_expression`**: The `BinaryOperatorNode` handler was missing `ctx.parser = this`, preventing lazy template instantiation during binary expression evaluation (e.g., `_R1::num == _R2::num`).
+
+   c. **Lazy member constant folding**: After lazy static member substitution, the initializer expression is now evaluated to a constant `NumericLiteralNode` when possible, enabling downstream constexpr chains.
+
+   d. **TernaryOperatorNode support in ExpressionSubstitutor**: Added `substituteTernaryOp()` method to recursively substitute template parameters in ternary expressions like `(_Pn < 0) ? -1 : 1` used in `__static_sign`'s deferred base class. Also added `ctx.parser` and struct context to the ternary handler in `try_evaluate_constant_expression`.
+
+   e. **ExpressionSubstitutor template arg extraction from TypeInfo**: Instead of blindly using the outer template's full `param_map_` (e.g., all params of `ratio<_Num, _Den>`), the substitutor now looks up the placeholder TypeInfo's stored template args. This correctly maps `__static_sign<_Den>` to 1 argument (not 2), using the `dependent_name` field to substitute the right parameter.
+
+2. **`<chrono>` gets further (7500+ templates)**: The fixes above allowed `<chrono>` to parse past its previous brace-init error, but it now hits stack overflow during deep template instantiation (similar to `<memory>` and `<barrier>`).
 
 ### Recent Fixes (2026-03-01)
 

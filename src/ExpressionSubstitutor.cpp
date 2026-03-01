@@ -31,6 +31,8 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 				return substitutor.substituteBinaryOp(node);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				return substitutor.substituteUnaryOp(node);
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				return substitutor.substituteTernaryOp(node);
 			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return substitutor.substituteIdentifier(node);
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
@@ -631,6 +633,27 @@ ASTNode ExpressionSubstitutor::substituteUnaryOp(const UnaryOperatorNode& unop) 
 	return ASTNode(&new_expr);
 }
 
+ASTNode ExpressionSubstitutor::substituteTernaryOp(const TernaryOperatorNode& ternary) {
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing ternary operator");
+	
+	// Recursively substitute in condition, true_expr, and false_expr
+	ASTNode substituted_condition = substitute(ternary.condition());
+	ASTNode substituted_true = substitute(ternary.true_expr());
+	ASTNode substituted_false = substitute(ternary.false_expr());
+	
+	// Create new TernaryOperatorNode with substituted operands
+	TernaryOperatorNode new_ternary(
+		substituted_condition,
+		substituted_true,
+		substituted_false,
+		ternary.get_token()
+	);
+	
+	// Wrap in ExpressionNode so it can be evaluated by try_evaluate_constant_expression
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ternary);
+	return ASTNode(&new_expr);
+}
+
 ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing identifier: ", id.name());
 	
@@ -777,26 +800,80 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name);
 
-	// Extract template arguments from param_map_ and trigger instantiation
-	// Use template_param_order_ to preserve the original template parameter declaration order
+	// Build concrete template arguments by looking up the dependent placeholder's stored args
+	// and substituting template parameters from param_map_.
+	// This is critical: we must use the placeholder's OWN template args (e.g., __static_sign<_Pn>
+	// has 1 arg), not the outer template's full param_map_ (e.g., ratio<_Num, _Den> has 2 params).
 	std::vector<TemplateTypeArg> inst_args;
 	
-	if (!template_param_order_.empty()) {
-		for (std::string_view param_name : template_param_order_) {
-			auto it = param_map_.find(param_name);
-			if (it != param_map_.end()) {
-				inst_args.push_back(it->second);
+	auto ns_name_handle = StringTable::getOrInternStringHandle(ns_name);
+	auto type_it = gTypesByName.find(ns_name_handle);
+	if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
+		const auto& stored_args = type_it->second->templateArgs();
+		for (const auto& arg : stored_args) {
+			TemplateTypeArg ta;
+			ta.base_type = arg.base_type;
+			ta.type_index = arg.type_index;
+			ta.is_value = arg.is_value;
+			ta.cv_qualifier = arg.cv_qualifier;
+			ta.ref_qualifier = arg.ref_qualifier;
+			ta.pointer_depth = arg.pointer_depth;
+			if (arg.is_value) {
+				ta.value = arg.intValue();
 			}
-		}
-	} else {
-		for (const auto& [param_name, param_arg] : param_map_) {
-			inst_args.push_back(param_arg);
+			
+			// Check if this arg has a dependent_name that can be substituted
+			if (arg.dependent_name.isValid()) {
+				std::string_view dep_name = StringTable::getStringView(arg.dependent_name);
+				auto subst_it = param_map_.find(dep_name);
+				if (subst_it != param_map_.end()) {
+					ta = subst_it->second;
+					FLASH_LOG(Templates, Debug, "  Substituted dependent arg '", dep_name, 
+					          "' -> is_value=", ta.is_value, ", value=", ta.value,
+					          ", type_index=", ta.type_index);
+					inst_args.push_back(ta);
+					continue;
+				}
+			}
+			
+			// Check if this arg is a dependent template parameter that needs substitution
+			// (handles cases where dependent_name isn't set but the type itself is a template param)
+			if (!arg.is_value && (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) 
+			    && arg.type_index < gTypeInfo.size()) {
+				std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+				auto subst_it = param_map_.find(arg_type_name);
+				if (subst_it != param_map_.end()) {
+					ta = subst_it->second;
+					FLASH_LOG(Templates, Debug, "  Substituted template arg '", arg_type_name, 
+					          "' with concrete type_index=", ta.type_index);
+				}
+			}
+			
+			inst_args.push_back(ta);
 		}
 	}
 	
-	// Also check pack_map_ for variadic template arguments
-	for (const auto& [pack_name, pack_args] : pack_map_) {
-		inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
+	// Fallback: if TypeInfo lookup found no stored args (e.g., the placeholder wasn't registered
+	// in gTypesByName, or it's a non-template namespace), fall back to using the full param_map_.
+	// This handles cases like pack expansion bases where no TypeInfo exists.
+	if (inst_args.empty()) {
+		if (!template_param_order_.empty()) {
+			for (std::string_view param_name : template_param_order_) {
+				auto it = param_map_.find(param_name);
+				if (it != param_map_.end()) {
+					inst_args.push_back(it->second);
+				}
+			}
+		} else {
+			for (const auto& [param_name, param_arg] : param_map_) {
+				inst_args.push_back(param_arg);
+			}
+		}
+		
+		// Also check pack_map_ for variadic template arguments
+		for (const auto& [pack_name, pack_args] : pack_map_) {
+			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
+		}
 	}
 	
 	if (!inst_args.empty()) {

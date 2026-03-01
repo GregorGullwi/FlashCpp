@@ -87,6 +87,7 @@ private:
 	ASTNode substituteFunctionCall(const FunctionCallNode& call);
 	ASTNode substituteBinaryOp(const BinaryOperatorNode& binop);
 	ASTNode substituteUnaryOp(const UnaryOperatorNode& unop);
+	ASTNode substituteTernaryOp(const TernaryOperatorNode& ternary);
 	ASTNode substituteIdentifier(const IdentifierNode& id);
 	ASTNode substituteQualifiedIdentifier(const QualifiedIdentifierNode& qual_id);
 	ASTNode substituteMemberAccess(const MemberAccessNode& member_access);
