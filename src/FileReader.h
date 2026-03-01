@@ -5,6 +5,7 @@
 #include <vector>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <stack>
 #include <iostream>
 #include <algorithm>
@@ -479,6 +480,71 @@ static std::tm localtime_safely(const std::time_t* time) {
 }
 
 
-// The FileReader class is split across multiple files for maintainability.
-#include "FileReader_Core.cpp"     // Class declaration, readFile, preprocessFileContent, conditional macros
-#include "FileReader_Macros.cpp"   // expandMacros, addBuiltinDefines, helper methods
+class FileReader {
+public:
+	static constexpr size_t default_result_size = 1024 * 1024;
+	FileReader(CompileContext& settings, FileTree& tree);
+
+	const std::vector<SourceLineMapping>& get_line_map() const { return line_map_; }
+	const std::vector<std::string>& get_file_paths() const { return file_paths_; }
+
+	size_t find_first_non_whitespace_after_hash(const std::string& str);
+	bool readFile(std::string_view file, long included_at_line = 0);
+	bool preprocessFileContent(const std::string& file_content);
+	void push_file_to_stack(const CurrentFile& current_file) { filestack_.emplace(current_file); }
+	const std::string& get_result() const { return result_; }
+	void append_line_with_tracking(const std::string& line);
+	size_t get_file_path_index(std::string_view file_path) const;
+	size_t get_or_add_file_path(std::string_view file_path);
+
+private:
+	// Separator bitset - 32 bytes (4 × uint64_t), one bit per character
+	// Generated at compile-time by looping over separator_chars array
+	static constexpr std::array<uint64_t, 4> separator_bitset = {
+		build_separator_bitset_chunk(0),  // Chars 0-63
+		build_separator_bitset_chunk(1),  // Chars 64-127
+		build_separator_bitset_chunk(2),  // Chars 128-191
+		build_separator_bitset_chunk(3)   // Chars 192-255
+	};
+
+	static constexpr bool is_seperator_character(char c) {
+		unsigned char uc = static_cast<unsigned char>(c);
+		return (separator_bitset[uc >> 6] >> (uc & 0x3F)) & 1;
+	}
+
+	static bool is_inside_string_literal(const std::string& str, size_t pos);
+	std::string expandMacrosForConditional(const std::string& input);
+	std::string expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros = {});
+	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops);
+	bool parseIntegerLiteral(std::istringstream& iss, long& value, std::string* out_literal = nullptr);
+	long evaluate_expression(std::istringstream& iss);
+	bool processIncludeDirective(const std::string& line, const std::string_view& current_file, long include_line_number);
+	bool processIncludeNextDirective(const std::string& line, const std::string_view& current_file, long include_line_number);
+	void processPragmaPack(std::string_view line);
+	void processLineDirective(const std::string& line);
+	void handleDefine(std::istringstream& iss);
+	void addBuiltinDefines();
+
+	struct ScopedFileStack {
+		ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file, long included_at_line = 0);
+		~ScopedFileStack() { filestack_.pop(); }
+		std::stack<CurrentFile>& filestack_;
+	};
+
+	CompileContext& settings_;
+	FileTree& tree_;
+	std::unordered_map<std::string, Directive> defines_;
+	std::unordered_set<std::string> proccessedHeaders_;
+	std::stack<CurrentFile> filestack_;
+	std::string result_;
+	std::vector<std::string> file_paths_;  // Unique list of source file paths
+	std::vector<SourceLineMapping> line_map_;  // Maps preprocessed lines to source locations
+	size_t current_output_line_ = 1;  // Track current line number in preprocessed output
+	size_t current_file_index_ = 0;  // Track current file index (updated when switching files)
+	size_t current_parent_line_ = 0;  // Track the preprocessed line where current file was #included (0 for main)
+	unsigned long long counter_value_ = 0;
+
+	// State for tracking multiline raw string literals
+	bool inside_multiline_raw_string_ = false;
+	std::string multiline_raw_delimiter_;
+};

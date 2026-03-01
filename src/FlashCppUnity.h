@@ -25,6 +25,8 @@
 #include "StringTable.h"
 #include "FileTree.h"
 #include "FileReader.h"
+#include "FileReader_Core.cpp"
+#include "FileReader_Macros.cpp"
 #include "CompileContext.h"
 #include "CommandLineParser.h"
 #include "Lexer.h"
