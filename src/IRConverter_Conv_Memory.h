@@ -1612,7 +1612,7 @@
 		patchBranches();
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
-		if (current_function_name_.isValid()) {
+		if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
 			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 			auto seh_try_blocks = convertSehInfoToWriterFormat();
 

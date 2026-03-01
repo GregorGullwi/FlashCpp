@@ -1366,10 +1366,12 @@
 				emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 			}
 		} else {
-			assert(std::holds_alternative<StringHandle>(op.from.value) && "Expected StringHandle or TempVar type");
+			if (!std::holds_alternative<StringHandle>(op.from.value))
+				throw std::runtime_error("handleFloatToInt: Expected StringHandle or TempVar type");
 			StringHandle var_name = std::get<StringHandle>(op.from.value);
 			auto var_it = variable_scopes.back().variables.find(var_name);
-			assert(var_it != variable_scopes.back().variables.end() && "Variable not found in variables");
+			if (var_it == variable_scopes.back().variables.end())
+				throw std::runtime_error("handleFloatToInt: Variable not found in variables");
 			// Check if the value is already in an XMM register
 			if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->second.offset); existing_reg.has_value()) {
 				source_xmm = existing_reg.value();

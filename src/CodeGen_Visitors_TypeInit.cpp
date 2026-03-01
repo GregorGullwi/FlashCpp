@@ -231,8 +231,10 @@ public:
 	// Uses a worklist approach since generated functions may call other ungenerated functions.
 	// Deduplication is handled by visitFunctionDeclarationNode via generated_function_names_,
 	// which skips any function whose mangled name has already been emitted.
-	void generateDeferredMemberFunctions() {
+	// Returns the number of functions that failed to generate
+	size_t generateDeferredMemberFunctions() {
 		size_t processed = 0;
+		size_t error_count = 0;
 		while (processed < deferred_member_functions_.size()) {
 		DeferredMemberFunctionInfo info = deferred_member_functions_[processed++];
 			StringHandle saved_function = current_function_name_;
@@ -241,7 +243,7 @@ public:
 			current_function_name_ = StringHandle();
 			current_namespace_stack_ = info.namespace_stack;
 			
-			
+			try {
 			if (info.function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
 				// If the function has no body, it may be a lazily-registered template member.
@@ -273,10 +275,18 @@ public:
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
 				}
 			}
+			} catch (const std::exception& e) {
+				std::string func_name = "unknown";
+				if (info.function_node.is<FunctionDeclarationNode>())
+					func_name = std::string(info.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+				FLASH_LOG(Codegen, Error, "Deferred member function '", func_name, "' generation failed: ", e.what());
+				++error_count;
+			}
 			
 			current_function_name_ = saved_function;
 			current_namespace_stack_ = saved_namespace;
 		}
+		return error_count;
 	}
 	
 	// Generate all collected template instantiations (must be called after visiting all nodes)

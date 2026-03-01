@@ -194,7 +194,8 @@ struct RegisterAllocator
 	}
 
 	void flushSingleDirtyRegister(X64Register reg) {
-		assert(reg != X64Register::Count);
+		if (reg == X64Register::Count)
+			throw std::runtime_error("flushSingleDirtyRegister: invalid register");
 		registers[static_cast<int>(reg)].isDirty = false;
 	}
 
@@ -289,8 +290,9 @@ struct RegisterAllocator
 	}
 
 	void allocateSpecific(X64Register reg, int32_t stackVariableOffset) {
-		assert(reg != X64Register::Count);
-		assert(!registers[static_cast<int>(reg)].isAllocated);
+		if (reg == X64Register::Count || registers[static_cast<int>(reg)].isAllocated) {
+			throw std::runtime_error("allocateSpecific: invalid register or already allocated");
+		}
 		registers[static_cast<int>(reg)].isAllocated = true;
 		registers[static_cast<int>(reg)].stackVariableOffset = stackVariableOffset;
 	}
@@ -305,8 +307,9 @@ struct RegisterAllocator
 	}
 
 	void mark_reg_dirty(X64Register reg) {
-		assert(reg != X64Register::Count);
-		assert(registers[static_cast<int>(reg)].isAllocated);
+		if (reg == X64Register::Count || !registers[static_cast<int>(reg)].isAllocated) {
+			throw std::runtime_error("mark_reg_dirty: register not allocated");
+		}
 		registers[static_cast<int>(reg)].isDirty = true;
 	}
 
@@ -324,8 +327,9 @@ struct RegisterAllocator
 	}
 
 	void set_stack_variable_offset(X64Register reg, int32_t stackVariableOffset, int size_in_bits = 64) {
-		assert(reg != X64Register::Count);
-		assert(registers[static_cast<int>(reg)].isAllocated);
+		if (reg == X64Register::Count || !registers[static_cast<int>(reg)].isAllocated) {
+			throw std::runtime_error("set_stack_variable_offset: register not allocated");
+		}
 		// Clear any other registers that think they hold this stack variable
 		for (auto& r : registers) {
 			if (r.stackVariableOffset == stackVariableOffset && r.reg != reg) {

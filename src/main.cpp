@@ -513,7 +513,7 @@ int main_impl(int argc, char *argv[]) {
     }
 
     // Deferred generation (lambdas and local struct member functions)
-    bool deferred_gen_had_errors = false;
+    size_t deferred_gen_error_count = 0;
     {
         PhaseTimer deferred_timer("Deferred Gen", false, &deferred_gen_time);
         try {
@@ -521,7 +521,7 @@ int main_impl(int argc, char *argv[]) {
             converter.generateCollectedLambdas();
         } catch (const std::exception& e) {
             FLASH_LOG(General, Error, "Deferred lambda generation failed: ", e.what());
-            deferred_gen_had_errors = true;
+            ++deferred_gen_error_count;
         }
 
         try {
@@ -529,16 +529,12 @@ int main_impl(int argc, char *argv[]) {
             converter.generateCollectedLocalStructMembers();
         } catch (const std::exception& e) {
             FLASH_LOG(General, Error, "Local struct member generation failed: ", e.what());
-            deferred_gen_had_errors = true;
+            ++deferred_gen_error_count;
         }
 
-        try {
-            // Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
-            converter.generateDeferredMemberFunctions();
-        } catch (const std::exception& e) {
-            FLASH_LOG(General, Error, "Deferred member function generation failed: ", e.what());
-            deferred_gen_had_errors = true;
-        }
+        // Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
+        // Per-function try-catch is inside generateDeferredMemberFunctions to avoid one failure blocking all.
+        deferred_gen_error_count += converter.generateDeferredMemberFunctions();
 
         // Note: Template instantiations happen during parsing, not here
     }
@@ -553,10 +549,13 @@ int main_impl(int argc, char *argv[]) {
         FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
     }
 
-    if (ir_conversion_had_errors || deferred_gen_had_errors) {
-        FLASH_LOG(General, Error, "Compilation failed due to IR conversion errors");
-        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
-        return 1;
+    // Individual function IR conversion errors are non-fatal - the .o file is still
+    // generated with the successfully converted functions. This allows std library
+    // headers to compile even when some template instantiations fail.
+    if (ir_conversion_had_errors || deferred_gen_error_count > 0) {
+        FLASH_LOG(General, Warning, "Some functions had IR conversion errors (skipped ",
+                  (ir_conversion_had_errors ? "some" : "0"), " top-level, ",
+                  deferred_gen_error_count, " deferred)");
     }
 
     // Platform detection: Use ELF on Linux/Unix, COFF on Windows

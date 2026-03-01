@@ -997,13 +997,13 @@
 			if (const IdentifierNode* ident = get_identifier()) {
 				if (!setupBaseFromIdentifier(ident->name(), memberAccessNode.member_token(),
 				                             base_object, base_type, base_type_index, is_pointer_dereference)) {
-					return {};
+					throw std::runtime_error(std::string("Failed to setup base from identifier '") + std::string(ident->name()) + "' for member access");
 				}
 			}
 			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 				auto call_result = generateMemberFunctionCallIr(*call);
 				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
-					return {};
+					throw std::runtime_error("Failed to extract base from member function call result");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
@@ -1012,11 +1012,10 @@
 			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
 				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
 				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
-					return {};
+					throw std::runtime_error("Failed to evaluate nested member access for member access");
 				}
 				if (base_type != Type::Struct) {
-					FLASH_LOG(Codegen, Error, "nested member access on non-struct type");
-					return {};
+					throw std::runtime_error("nested member access on non-struct type");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
@@ -1026,14 +1025,12 @@
 				const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(*expr);
 
 				if (unary_op.op() != "*") {
-					FLASH_LOG(Codegen, Error, "member access on non-dereference unary operator");
-					return {};
+					throw std::runtime_error("member access on non-dereference unary operator");
 				}
 
 				const ASTNode& operand_node = unary_op.get_operand();
 				if (!operand_node.is<ExpressionNode>()) {
-					FLASH_LOG(Codegen, Error, "dereference operand is not an expression");
-					return {};
+					throw std::runtime_error("dereference operand is not an expression");
 				}
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 				
@@ -1107,7 +1104,7 @@
 				if (!is_lambda_this) {
 					auto pointer_operands = visitExpressionNode(operand_expr);
 					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
-						return {};
+						throw std::runtime_error("Failed to extract base from pointer expression");
 					}
 					is_pointer_dereference = true;
 				}
@@ -1115,21 +1112,20 @@
 			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
 				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
 				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
-					return {};
+					throw std::runtime_error("Failed to extract base from array subscript");
 				}
 			}
 			else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
 				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
 				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
-					return {};
+					throw std::runtime_error("Failed to extract base from function call result");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
 				}
 			}
 			else {
-				FLASH_LOG(Codegen, Error, "member access on unsupported object type");
-				return {};
+				throw std::runtime_error("member access on unsupported object type");
 			}
 		}
 
@@ -1174,7 +1170,7 @@
 				}
 			}
 			std::cerr << "error: struct type info not found\n";
-			return {};
+			throw std::runtime_error("struct type info not found for type_index=" + std::to_string(base_type_index));
 		}
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();

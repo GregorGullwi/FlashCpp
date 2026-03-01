@@ -418,9 +418,11 @@
 			.operand_size_in_bits = operand_size
 		};
 
-		// Support integer, boolean, and floating-point operations
+		// Support integer, boolean, floating-point, and pointer-like operations.
+		// Types like Struct, FunctionPointer, Enum, and Nullptr appear in IR for
+		// pointer offset calculations and should be treated as 64-bit integer ops.
 		if (!is_integer_type(ctx.result_value.type) && !is_bool_type(ctx.result_value.type) && !is_floating_point_type(ctx.result_value.type)) {
-			throw std::runtime_error(std::string("Only integer/boolean/floating-point ") + operation_name + " is supported");
+			throw std::runtime_error(std::string("Only integer/boolean/floating-point ") + operation_name + " is supported, got type " + std::to_string(static_cast<int>(ctx.result_value.type)));
 		}
 
 		ctx.result_physical_reg = X64Register::Count;
