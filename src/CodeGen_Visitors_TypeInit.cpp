@@ -277,8 +277,18 @@ public:
 			}
 			} catch (const std::exception& e) {
 				std::string func_name = "unknown";
-				if (info.function_node.is<FunctionDeclarationNode>())
+				if (info.function_node.is<FunctionDeclarationNode>()) {
 					func_name = std::string(info.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+				} else if (info.function_node.is<ConstructorDeclarationNode>()) {
+					func_name = std::string(StringTable::getStringView(info.function_node.as<ConstructorDeclarationNode>().struct_name())) + " constructor";
+				} else if (info.function_node.is<DestructorDeclarationNode>()) {
+					func_name = std::string(StringTable::getStringView(info.function_node.as<DestructorDeclarationNode>().struct_name())) + " destructor";
+				} else if (info.function_node.is<TemplateFunctionDeclarationNode>()) {
+					const auto& tmpl = info.function_node.as<TemplateFunctionDeclarationNode>();
+					if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+						func_name = std::string(tmpl.function_declaration().as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+					}
+				}
 				FLASH_LOG(Codegen, Error, "Deferred member function '", func_name, "' generation failed: ", e.what());
 				++error_count;
 			}

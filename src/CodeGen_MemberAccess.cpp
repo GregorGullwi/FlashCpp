@@ -1003,7 +1003,7 @@
 			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 				auto call_result = generateMemberFunctionCallIr(*call);
 				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
-					throw std::runtime_error("Failed to extract base from member function call result");
+					throw std::runtime_error(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
 					is_pointer_dereference = true;
@@ -1012,7 +1012,7 @@
 			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
 				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
 				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
-					throw std::runtime_error("Failed to evaluate nested member access for member access");
+					throw std::runtime_error(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (base_type != Type::Struct) {
 					throw std::runtime_error("nested member access on non-struct type");
@@ -1025,7 +1025,7 @@
 				const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(*expr);
 
 				if (unary_op.op() != "*") {
-					throw std::runtime_error("member access on non-dereference unary operator");
+					throw std::runtime_error(std::string("member access on non-dereference unary operator '") + std::string(unary_op.op()) + "' for member '" + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 
 				const ASTNode& operand_node = unary_op.get_operand();

@@ -1604,12 +1604,26 @@
 		}
 
 		// Now add pending global variable relocations (after symbols are created)
+		// First, remove stale relocations from any error-skipped last function
+		if (skip_previous_function_finalization_) {
+			std::erase_if(pending_global_relocations_, [this](const PendingGlobalRelocation& r) {
+				return r.offset >= current_function_offset_;
+			});
+			// Truncate textSectionData back to the start of the failed function
+			textSectionData.resize(current_function_offset_);
+		}
 		for (const auto& reloc : pending_global_relocations_) {
 			writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type, reloc.addend);
 		}
 
 		// Patch all pending branches before finalizing
-		patchBranches();
+		// Skip patching if the last function was error-skipped (branches may reference unresolved labels)
+		if (!skip_previous_function_finalization_) {
+			patchBranches();
+		} else {
+			pending_branches_.clear();
+			label_positions_.clear();
+		}
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (current_function_name_.isValid() && !skip_previous_function_finalization_) {

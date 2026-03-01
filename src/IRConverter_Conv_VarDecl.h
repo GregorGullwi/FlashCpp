@@ -871,6 +871,12 @@
 			if (!variable_scopes.empty()) {
 				variable_scopes.pop_back();
 			}
+			// Truncate textSectionData back to the start of the failed function
+			textSectionData.resize(current_function_offset_);
+			// Remove stale relocations from the failed function
+			std::erase_if(pending_global_relocations_, [this](const PendingGlobalRelocation& r) {
+				return r.offset >= current_function_offset_;
+			});
 			resetFunctionState();
 			// Clear pending branches/labels from the skipped function
 			pending_branches_.clear();

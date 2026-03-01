@@ -195,7 +195,7 @@ struct RegisterAllocator
 
 	void flushSingleDirtyRegister(X64Register reg) {
 		if (reg == X64Register::Count)
-			throw std::runtime_error("flushSingleDirtyRegister: invalid register");
+			throw std::runtime_error(std::string("flushSingleDirtyRegister: invalid register (Count), caller must not pass sentinel value"));
 		registers[static_cast<int>(reg)].isDirty = false;
 	}
 
