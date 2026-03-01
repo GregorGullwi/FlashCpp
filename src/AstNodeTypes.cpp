@@ -890,7 +890,7 @@ bool StructTypeInfo::buildVTable() {
     bool success = true;
     
     // Step 1: Copy base class vtable entries (if any)
-    bool any_base_potentially_incomplete = false;
+    bool any_base_potentially_incomplete = has_deferred_base_classes;
     for (const auto& base : base_classes) {
         if (base.type_index >= gTypeInfo.size()) {
             continue;

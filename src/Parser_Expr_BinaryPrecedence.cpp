@@ -849,7 +849,12 @@ std::optional<ASTNode> Parser::parse_trailing_requires_clause()
 	if (peek() == "requires"_tok) {
 		Token requires_token = peek_info();
 		advance(); // consume 'requires'
-		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+// Use precedence 4 to exclude assignment operators (=, +=, etc.)
+// so that 'requires constraint = default;' doesn't consume '= default'.
+// Assignment has precedence 3. The binary operator parsing loop in `parse_expression`
+// continues for operators with precedence `>=` the given value. To stop before
+// assignment, we need a precedence of 4, so that `3 < 4` is true, causing the loop to terminate.
+		auto constraint_result = parse_expression(4, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			FLASH_LOG(Parser, Warning, "Failed to parse trailing requires clause: ", constraint_result.error_message());
 			return std::nullopt;

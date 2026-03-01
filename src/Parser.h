@@ -1108,6 +1108,8 @@ public:  // Public methods for template instantiation
         void skip_balanced_parens();  // Skip over a balanced parentheses block
         void skip_balanced_delimiters(TokenKind open, TokenKind close);  // Generic balanced delimiter skip
         void skip_template_arguments();  // Skip over template arguments <...>
+        void skip_qualified_name_parts();  // Skip namespace-qualified name parts (e.g., ::Class after 'ns')
+        std::string_view consume_qualified_name_suffix(std::string_view base_name);  // Same but builds and returns full qualified name
         void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
 
         // Finalize an out-of-line static member variable definition.

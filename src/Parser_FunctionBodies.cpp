@@ -227,6 +227,9 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 
 				std::string_view init_name = init_name_token.value();
 
+				// Handle namespace-qualified base class names: std::optional<_Tp>{...}
+				init_name = consume_qualified_name_suffix(init_name);
+
 				// Check for template arguments: Base<T>(...) in base class initializer
 				if (peek() == "<"_tok) {
 					skip_template_arguments();

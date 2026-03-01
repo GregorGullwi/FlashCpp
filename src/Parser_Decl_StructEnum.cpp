@@ -1544,8 +1544,8 @@ ParseResult Parser::parse_struct_declaration()
 						
 						// At top level, check for end of constraint
 						if (paren_depth == 0 && angle_depth == 0) {
-							// Initializer list, body, or declaration end
-							if (tok_val == ":" || tok_val == "{" || tok_val == ";") {
+							// Initializer list, body, declaration end, or = default/delete
+							if (tok_val == ":" || tok_val == "{" || tok_val == ";" || tok_val == "=") {
 								break;
 							}
 						}
@@ -1573,8 +1573,11 @@ ParseResult Parser::parse_struct_declaration()
 					while (!peek().is_eof() &&
 					       peek() != "{"_tok &&
 					       peek() != ";"_tok) {
-						// Skip initializer name
+						// Skip initializer name (may be namespace-qualified: std::optional<_Tp>{...})
 						advance();
+						
+						// Handle namespace-qualified base class names: ns::Class or std::optional
+						skip_qualified_name_parts();
 						
 						// Skip template arguments if present: Base<T>(...)
 						if (peek() == "<"_tok) {
@@ -3260,6 +3263,7 @@ ParseResult Parser::parse_struct_declaration()
 	// Finalize struct layout (add padding)
 	// Use finalizeWithBases() if there are base classes, otherwise use finalize()
 	bool finalize_success;
+	struct_info->has_deferred_base_classes = !struct_ref.deferred_template_base_classes().empty();
 	if (!struct_info->base_classes.empty()) {
 		finalize_success = struct_info->finalizeWithBases();
 	} else {
@@ -3951,17 +3955,7 @@ ParseResult Parser::parse_friend_declaration()
 
 		// Handle qualified names: friend class locale::_Impl;
 		// Build full qualified name for proper friend resolution
-		std::string qualified_friend_name(class_name_token.value());
-		while (peek() == "::"_tok) {
-			advance(); // consume '::'
-			if (peek().is_identifier()) {
-				qualified_friend_name += "::";
-				class_name_token = advance();
-				qualified_friend_name += class_name_token.value();
-			} else {
-				break;
-			}
-		}
+		std::string_view qualified_friend_name = consume_qualified_name_suffix(class_name_token.value());
 
 		// Skip template arguments if present: friend class SomeTemplate<T>;
 		if (peek() == "<"_tok) {
@@ -4211,20 +4205,8 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	}
 
 	// Build the full qualified name: ns1::ns2::ClassName
-	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(advance().value());
-
 	// Handle namespace-qualified names: std::_Rb_tree_merge_helper
-	while (peek() == "::"_tok) {
-		advance(); // consume '::'
-		if (peek().is_identifier()) {
-			qualified_name_builder.append("::");
-			qualified_name_builder.append(advance().value());
-		} else {
-			break;
-		}
-	}
-	std::string_view qualified_name = qualified_name_builder.commit();
+	std::string_view qualified_name = consume_qualified_name_suffix(advance().value());
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {

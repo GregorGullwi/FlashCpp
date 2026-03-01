@@ -673,6 +673,37 @@ void Parser::skip_template_arguments() {
 	}
 }
 
+void Parser::skip_qualified_name_parts() {
+	// Consume namespace-qualified name parts (::identifier pairs).
+	// For callers that need the full qualified name, use consume_qualified_name_suffix() instead.
+	// Lookahead before consuming '::' to avoid leaving the parser in an inconsistent state
+	// if '::' is not followed by a valid identifier (e.g., "std::{").
+	while (peek() == "::"_tok && (peek(1).is_identifier() || peek(1).is_keyword())) {
+		advance(); // consume '::'
+		advance(); // consume the qualified name part
+	}
+}
+
+std::string_view Parser::consume_qualified_name_suffix(std::string_view base_name) {
+	// Consume ::identifier pairs and build the full qualified name.
+	// Given "std" already consumed, if peek() is "::", consumes "::optional"
+	// and returns "std::optional" (interned via StringBuilder).
+	// If no "::" follows, returns base_name unchanged (no allocation).
+	// Lookahead before consuming '::' to avoid producing invalid names like "std::"
+	// when '::' is not followed by a valid identifier (e.g., "std::{").
+	if (peek() != "::"_tok || !(peek(1).is_identifier() || peek(1).is_keyword())) return base_name;
+
+	StringBuilder builder;
+	builder.append(base_name);
+	while (peek() == "::"_tok && (peek(1).is_identifier() || peek(1).is_keyword())) {
+		advance(); // consume '::'
+		builder.append("::");
+		builder.append(peek_info().value());
+		advance(); // consume the qualified name part
+	}
+	return builder.commit();
+}
+
 void Parser::skip_member_declaration_to_semicolon() {
 	// Skip tokens until we reach ';' at top level, or an unmatched '}'
 	// Handles nested parentheses, angle brackets, and braces
