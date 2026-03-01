@@ -875,6 +875,7 @@
 			// Clear pending branches/labels from the skipped function
 			pending_branches_.clear();
 			label_positions_.clear();
+			elf_catch_filter_patches_.clear();
 			skip_previous_function_finalization_ = false;
 		}
 
