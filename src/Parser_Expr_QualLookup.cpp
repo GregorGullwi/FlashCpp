@@ -656,11 +656,15 @@ BaseClassPostTemplateInfo Parser::consume_base_class_qualifiers_after_template_a
 
 	// Standard path: '::' is in peek position after '>' was consumed
 	if (!info.member_type_name.has_value() && peek() == "::"_tok) {
+		SaveHandle saved = save_token_position();
 		advance(); // consume ::
 		if (peek().is_identifier()) {
 			info.member_type_name = peek_info().handle();
 			info.member_name_token = peek_info();
 			advance(); // consume member name
+			discard_saved_token(saved);
+		} else {
+			restore_token_position(saved);
 		}
 	}
 
