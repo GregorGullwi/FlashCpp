@@ -1383,7 +1383,11 @@ ParseResult Parser::parse_template_declaration() {
 							}
 						
 							// Consume optional ::member type access and ... pack expansion
-						auto post_info = consume_base_class_qualifiers_after_template_args();
+						auto post_info_opt = consume_base_class_qualifiers_after_template_args();
+						if (!post_info_opt.has_value()) {
+							return ParseResult::error("Expected member name after ::", current_token_);
+						}
+						auto post_info = *post_info_opt;
 						member_type_name = post_info.member_type_name;
 						member_name_token = post_info.member_name_token;
 
@@ -2694,7 +2698,11 @@ ParseResult Parser::parse_template_declaration() {
 						std::vector<TemplateTypeArg> template_args = *template_args_opt;
 						
 						// Consume optional ::member type access and ... pack expansion
-						auto post_info = consume_base_class_qualifiers_after_template_args();
+						auto post_info_opt = consume_base_class_qualifiers_after_template_args();
+						if (!post_info_opt.has_value()) {
+							return ParseResult::error("Expected member name after ::", current_token_);
+						}
+						auto post_info = *post_info_opt;
 						
 						// Check if any template arguments are dependent or pack expansions
 						bool has_dependent_args = post_info.is_pack_expansion;

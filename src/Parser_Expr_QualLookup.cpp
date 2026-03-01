@@ -642,25 +642,32 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 
 // Helper: After parsing template arguments for a base class specifier, consume
 // optional ::member type access and ... pack expansion in the correct order.
-BaseClassPostTemplateInfo Parser::consume_base_class_qualifiers_after_template_args() {
+// Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
+std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_after_template_args() {
 	BaseClassPostTemplateInfo info;
 
-	// Some parsing paths leave current_token_ pointing at '::' after template args
+	// Some parsing paths leave current_token_ pointing at '::' after template args.
+	// In this parser, peek() returns current_token_.kind(), so we must advance()
+	// past '::' first, then check the new current_token_ for the member name.
 	if (current_token_.value() == "::" && !info.member_type_name.has_value()) {
-		if (peek().is_identifier()) {
-			info.member_type_name = peek_info().handle();
-			info.member_name_token = peek_info();
+		advance(); // consume ::, now current_token_ is the token after ::
+		if (current_token_.kind().is_identifier()) {
+			info.member_type_name = current_token_.handle();
+			info.member_name_token = current_token_;
 			advance(); // consume member name
+		} else {
+			// '::' not followed by identifier is a parse error
+			return std::nullopt;
 		}
 	}
 
-	// Standard path: '::' is in peek position after '>' was consumed
+	// Standard path: '::' is in peek (i.e. current_token_) position
 	if (!info.member_type_name.has_value() && peek() == "::"_tok) {
 		SaveHandle saved = save_token_position();
-		advance(); // consume ::
-		if (peek().is_identifier()) {
-			info.member_type_name = peek_info().handle();
-			info.member_name_token = peek_info();
+		advance(); // consume ::, now current_token_ is the token after ::
+		if (current_token_.kind().is_identifier()) {
+			info.member_type_name = current_token_.handle();
+			info.member_name_token = current_token_;
 			advance(); // consume member name
 			discard_saved_token(saved);
 		} else {

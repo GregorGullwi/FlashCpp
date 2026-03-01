@@ -338,36 +338,23 @@ ParseResult Parser::parse_struct_declaration()
 					// We have template arguments - instantiate the template
 					std::vector<TemplateTypeArg> template_args = *qualified_result->template_args;
 					
+					// Consume optional ::member type access and ... pack expansion
+					auto post_info_opt = consume_base_class_qualifiers_after_template_args();
+					if (!post_info_opt.has_value()) {
+						return ParseResult::error("Expected member name after ::", current_token_);
+					}
+					auto post_info = *post_info_opt;
+					if (post_info.member_type_name.has_value()) {
+						FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}::{}", full_name, StringTable::getStringView(*post_info.member_type_name));
+					}
+					
 					// Check if any template arguments are dependent
-					bool has_dependent_args = false;
+					bool has_dependent_args = post_info.is_pack_expansion;
 					for (const auto& arg : template_args) {
 						if (arg.is_dependent || arg.is_pack) {
 							has_dependent_args = true;
 							break;
 						}
-					}
-					
-					// Check for member type access (e.g., ::type) BEFORE deciding to defer
-					// We need to consume this even if deferring
-					std::optional<StringHandle> member_type_name;
-					if (current_token_.value() == "::") {
-						advance(); // consume ::
-						if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
-							return ParseResult::error("Expected member name after ::", current_token_);
-						}
-						StringHandle member_name = current_token_.handle();
-						advance(); // consume member name
-						
-						member_type_name = member_name;
-						
-						// Build the fully qualified member type name for logging
-						StringBuilder qualified_builder;
-						qualified_builder += full_name;
-						qualified_builder += "::";
-						qualified_builder.append(member_name);
-						std::string_view full_member_name = qualified_builder.commit();
-						
-						FLASH_LOG_FORMAT(Templates, Debug, "Found member type access: {}", full_member_name);
 					}
 					
 					// If template arguments are dependent, defer resolution
@@ -418,7 +405,7 @@ ParseResult Parser::parse_struct_declaration()
 						}
 						
 						StringHandle template_name_handle = StringTable::getOrInternStringHandle(full_name);
-						struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base);
+						struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
 						
 						continue;  // Skip to next base class or exit loop
 					}
@@ -460,7 +447,11 @@ ParseResult Parser::parse_struct_declaration()
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
 			
 			// Consume optional ::member type access and ... pack expansion
-			auto post_info = consume_base_class_qualifiers_after_template_args();
+			auto post_info_opt = consume_base_class_qualifiers_after_template_args();
+			if (!post_info_opt.has_value()) {
+				return ParseResult::error("Expected member name after ::", current_token_);
+			}
+			auto post_info = *post_info_opt;
 			if (post_info.member_type_name.has_value()) {
 				FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}::{}", base_class_name, StringTable::getStringView(*post_info.member_type_name));
 			}

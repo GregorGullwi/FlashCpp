@@ -1044,7 +1044,8 @@ public:  // Public methods for template instantiation
         // Helper: After parsing template arguments for a base class specifier, consume
         // optional ::member type access and ... pack expansion in the correct order.
         // Centralizes the parsing so all call sites get consistent behavior.
-        BaseClassPostTemplateInfo consume_base_class_qualifiers_after_template_args();
+        // Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
+        std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
 
         // Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
         // Shared across all base class deferral sites.
