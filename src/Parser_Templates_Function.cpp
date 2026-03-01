@@ -1110,19 +1110,22 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		return ConstantValue{eval_result.value ? 1 : 0, Type::Bool};
 	}
 	
-	// Handle ternary operator expressions (e.g., (5 < 0) ? -1 : 1)
-	// Use the ConstExprEvaluator for complex expression evaluation
-	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
-		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
+	// Helper: create a constexpr evaluation context with struct context and parser
+	auto makeConstExprContext = [&]() {
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
-		// Set struct context for static member lookup
 		if (!struct_parsing_context_stack_.empty()) {
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
 			ctx.struct_node = struct_ctx.struct_node;
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
-		// Enable on-demand template instantiation for expressions like (_Pn < 0) ? -1 : 1
 		ctx.parser = this;
+		return ctx;
+	};
+
+	// Handle ternary operator expressions (e.g., (5 < 0) ? -1 : 1)
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
+		auto ctx = makeConstExprContext();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
@@ -1135,15 +1138,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	// Handle binary operator expressions (e.g., 5 < 0, 1 + 2)
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		FLASH_LOG(Templates, Debug, "Evaluating binary operator expression");
-		ConstExpr::EvaluationContext ctx(gSymbolTable);
-		// Set struct context for static member lookup (fixes __d2 = 10 / __g where __g is a static member)
-		if (!struct_parsing_context_stack_.empty()) {
-			const auto& struct_ctx = struct_parsing_context_stack_.back();
-			ctx.struct_node = struct_ctx.struct_node;
-			ctx.struct_info = struct_ctx.local_struct_info;
-		}
-		// Enable on-demand template instantiation for expressions like _R1::num == _R2::num
-		ctx.parser = this;
+		auto ctx = makeConstExprContext();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
@@ -1156,15 +1151,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	// Handle unary operator expressions (e.g., -5, ~0, !true)
 	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 		FLASH_LOG(Templates, Debug, "Evaluating unary operator expression");
-		ConstExpr::EvaluationContext ctx(gSymbolTable);
-		// Set struct context for static member lookup
-		if (!struct_parsing_context_stack_.empty()) {
-			const auto& struct_ctx = struct_parsing_context_stack_.back();
-			ctx.struct_node = struct_ctx.struct_node;
-			ctx.struct_info = struct_ctx.local_struct_info;
-		}
-		// Enable on-demand template instantiation for expressions like -Num<T>::num
-		ctx.parser = this;
+		auto ctx = makeConstExprContext();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Unary op evaluated to: {}", eval_result.as_int());

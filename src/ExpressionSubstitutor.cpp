@@ -853,7 +853,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		}
 	}
 	
-	// Fallback: if no stored args found, use full param_map_ (legacy behavior)
+	// Fallback: if TypeInfo lookup found no stored args (e.g., the placeholder wasn't registered
+	// in gTypesByName, or it's a non-template namespace), fall back to using the full param_map_.
+	// This handles cases like pack expansion bases where no TypeInfo exists.
 	if (inst_args.empty()) {
 		if (!template_param_order_.empty()) {
 			for (std::string_view param_name : template_param_order_) {
