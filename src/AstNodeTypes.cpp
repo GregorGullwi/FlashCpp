@@ -680,9 +680,9 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
     const TypeInfo& param_info = gTypeInfo[param_type_index];
     // Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
     if (own_info.baseTemplateName() == param_info.name()) return true;
-    // Param is a different instantiation of the same template
-    if (param_info.isTemplateInstantiation() &&
-        own_info.baseTemplateName() == param_info.baseTemplateName()) return true;
+    // Note: We intentionally do NOT match different instantiations of the same template
+    // (e.g., Wrapper<double> should not match for Wrapper<int>'s own type check).
+    // The base pattern check above handles the unsubstituted case.
     return false;
 }
 
