@@ -222,17 +222,20 @@ struct DeferredTemplateBaseClassSpecifier {
 	std::optional<StringHandle> member_type; // e.g., ::type
 	AccessSpecifier access;
 	bool is_virtual;
+	bool is_pack_expansion = false; // e.g., Base<Args>...
 
 	DeferredTemplateBaseClassSpecifier(StringHandle name,
 	                                   std::vector<TemplateArgumentNodeInfo> args,
 	                                   std::optional<StringHandle> member,
 	                                   AccessSpecifier acc,
-	                                   bool virt)
+	                                   bool virt,
+	                                   bool pack_expansion = false)
 		: base_template_name(name),
 		  template_arguments(std::move(args)),
 		  member_type(member),
 		  access(acc),
-		  is_virtual(virt) {}
+		  is_virtual(virt),
+		  is_pack_expansion(pack_expansion) {}
 };
 
 // Function signature for function pointers

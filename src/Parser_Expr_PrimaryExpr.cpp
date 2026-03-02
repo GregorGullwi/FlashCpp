@@ -5460,8 +5460,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Parse as parenthesized expression
 			// Note: C-style casts are now handled in parse_unary_expression()
 			// Allow comma operator in parenthesized expressions
-			// Pass the context so the expression parser knows how to handle special tokens
-			ParseResult paren_result = parse_expression(MIN_PRECEDENCE, context);
+			// Inside parentheses, '>' is always greater-than, not template closer.
+			// Use Normal context so '>' is not treated as a template argument delimiter.
+			ExpressionContext inner_context = (context == ExpressionContext::TemplateArgument)
+				? ExpressionContext::Normal : context;
+			ParseResult paren_result = parse_expression(MIN_PRECEDENCE, inner_context);
 			if (paren_result.is_error()) {
 				return paren_result;
 			}

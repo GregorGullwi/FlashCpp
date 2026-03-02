@@ -1382,41 +1382,19 @@ ParseResult Parser::parse_template_declaration() {
 								return ParseResult::error("Failed to parse template arguments for base class", peek_info());
 							}
 						
-							// Handle member access when current_token_ already points to '::'
-							if (current_token_.value() == "::" && !member_type_name.has_value()) {
-								if (!peek().is_identifier()) {
-									return ParseResult::error("Expected member name after ::", peek_info());
-								}
-								member_type_name = peek_info().handle();
-								member_name_token = peek_info();
-								advance(); // consume member name
-							}
-
-							// Check for member type access after template arguments (e.g., Base<T>::type)
-							if (peek() == "::"_tok) {
-								advance(); // consume ::
-								if (!peek().is_identifier()) {
-									return ParseResult::error("Expected member name after ::", peek_info());
-							}
-							member_type_name = peek_info().handle();
-							member_name_token = peek_info();
-							advance(); // consume member name
+							// Consume optional ::member type access and ... pack expansion
+						auto post_info_opt = consume_base_class_qualifiers_after_template_args();
+						if (!post_info_opt.has_value()) {
+							return ParseResult::error("Expected member name after ::", current_token_);
 						}
-						// Fallback: consume member access if still present (ensures ::type is handled for dependent bases)
-						if (!member_type_name.has_value() && peek() == "::"_tok) {
-							advance();
-							if (!peek().is_identifier()) {
-								return ParseResult::error("Expected member name after ::", peek_info());
-							}
-							member_type_name = peek_info().handle();
-							member_name_token = peek_info();
-							advance();
-						}
+						auto post_info = *post_info_opt;
+						member_type_name = post_info.member_type_name;
+						member_name_token = post_info.member_name_token;
 
 						std::vector<TemplateTypeArg> base_template_args = *base_template_args_opt;
 						
 						// Check if any template arguments are dependent
-						bool has_dependent_args = false;
+						bool has_dependent_args = post_info.is_pack_expansion;
 						for (const auto& arg : base_template_args) {
 							if (arg.is_dependent) {
 								has_dependent_args = true;
@@ -1428,20 +1406,10 @@ ParseResult Parser::parse_template_declaration() {
 						if (has_dependent_args) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
 
-							std::vector<TemplateArgumentNodeInfo> arg_infos;
-							arg_infos.reserve(base_template_args.size());
-							for (size_t i = 0; i < base_template_args.size(); ++i) {
-								TemplateArgumentNodeInfo info;
-								info.is_pack = base_template_args[i].is_pack;
-								info.is_dependent = base_template_args[i].is_dependent;
-								if (i < template_arg_nodes.size()) {
-									info.node = template_arg_nodes[i];
-								}
-								arg_infos.push_back(std::move(info));
-							}
+							auto arg_infos = build_template_arg_infos(base_template_args, template_arg_nodes);
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
 							continue;  // Skip to next base class or exit loop
 						}
 						
@@ -2729,8 +2697,15 @@ ParseResult Parser::parse_template_declaration() {
 						
 						std::vector<TemplateTypeArg> template_args = *template_args_opt;
 						
+						// Consume optional ::member type access and ... pack expansion
+						auto post_info_opt = consume_base_class_qualifiers_after_template_args();
+						if (!post_info_opt.has_value()) {
+							return ParseResult::error("Expected member name after ::", current_token_);
+						}
+						auto post_info = *post_info_opt;
+						
 						// Check if any template arguments are dependent or pack expansions
-						bool has_dependent_args = false;
+						bool has_dependent_args = post_info.is_pack_expansion;
 						for (const auto& arg : template_args) {
 							if (arg.is_dependent || arg.is_pack) {
 								has_dependent_args = true;
@@ -2743,21 +2718,10 @@ ParseResult Parser::parse_template_declaration() {
 						if (has_dependent_args) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
 							
-							// Build TemplateArgumentNodeInfo structures for deferred resolution
-							std::vector<TemplateArgumentNodeInfo> arg_infos;
-							arg_infos.reserve(template_args.size());
-							for (size_t i = 0; i < template_args.size(); ++i) {
-								TemplateArgumentNodeInfo info;
-								info.is_pack = template_args[i].is_pack;
-								info.is_dependent = template_args[i].is_dependent;
-								if (i < template_arg_nodes.size()) {
-									info.node = template_arg_nodes[i];
-								}
-								arg_infos.push_back(std::move(info));
-							}
+							auto arg_infos = build_template_arg_infos(template_args, template_arg_nodes);
 							
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::nullopt, base_access, is_virtual_base);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
 							continue;  // Skip to next base class or exit loop
 						}
 						

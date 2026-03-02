@@ -640,6 +640,57 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	return nullptr;
 }
 
+// Helper: After parsing template arguments for a base class specifier, consume
+// optional ::member type access and ... pack expansion in the correct order.
+// Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
+std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_after_template_args() {
+	BaseClassPostTemplateInfo info;
+
+	// Check if current_token_ is '::' (member type access like Base<Args>::type).
+	// In this parser, peek() returns current_token_.kind(), so peek() == "::"_tok
+	// is equivalent to this check. We advance() past '::' first, then check
+	// the new current_token_ for the member name.
+	if (peek() == "::"_tok) {
+		advance(); // consume ::, now current_token_ is the token after ::
+		if (current_token_.kind().is_identifier()) {
+			info.member_type_name = current_token_.handle();
+			info.member_name_token = current_token_;
+			advance(); // consume member name
+		} else {
+			// '::' not followed by identifier is a parse error
+			return std::nullopt;
+		}
+	}
+
+	// Pack expansion '...' must be consumed AFTER ::member (handles both
+	// Base<Args>... and Base<Args>::type... patterns)
+	if (peek() == "..."_tok) {
+		advance(); // consume '...'
+		info.is_pack_expansion = true;
+	}
+
+	return info;
+}
+
+// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
+std::vector<TemplateArgumentNodeInfo> Parser::build_template_arg_infos(
+	const std::vector<TemplateTypeArg>& template_args,
+	const std::vector<ASTNode>& template_arg_nodes)
+{
+	std::vector<TemplateArgumentNodeInfo> arg_infos;
+	arg_infos.reserve(template_args.size());
+	for (size_t i = 0; i < template_args.size(); ++i) {
+		TemplateArgumentNodeInfo info;
+		info.is_pack = template_args[i].is_pack;
+		info.is_dependent = template_args[i].is_dependent;
+		if (i < template_arg_nodes.size()) {
+			info.node = template_arg_nodes[i];
+		}
+		arg_infos.push_back(std::move(info));
+	}
+	return arg_infos;
+}
+
 // Helper: Validate and add a base class (consolidates lookup, validation, and registration)
 ParseResult Parser::validate_and_add_base_class(
 	std::string_view base_class_name,
@@ -688,6 +739,16 @@ ParseResult Parser::validate_and_add_base_class(
 	}
 	
 	if (base_type_it == gTypesByName.end()) {
+		// In template bodies, unresolved base class names might be member type aliases
+		// that depend on template parameters (e.g., using __hash_code_base = typename __hashtable_base::__hash_code_base;)
+		// Defer resolution until template instantiation.
+		if (parsing_template_body_) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Deferring unresolved base class '{}' in template body", base_class_name);
+			bool is_deferred = true;
+			struct_ref.add_base_class(base_class_name, 0, base_access, is_virtual_base, is_deferred);
+			struct_info->addBaseClass(base_class_name, 0, base_access, is_virtual_base, is_deferred);
+			return ParseResult::success();
+		}
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", error_token);
 	}
 

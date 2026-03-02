@@ -391,6 +391,20 @@ private:
 			++column_;
 		}
 
+		// Handle user-defined literal suffixes (C++11): 128ms, 64us, 3.14s, 100ns, 24h, etc.
+		// Per C++ pp-number grammar, any sequence of digits followed by identifier characters
+		// forms a single preprocessing token. This handles both:
+		// - Standard library reserved suffixes: ms, us, ns, s, h, min (from <chrono>)
+		// - User-defined suffixes starting with _: _km, _deg, _ms (user-defined)
+		// The parser/semantic analysis determines if the suffix is valid; the lexer is
+		// intentionally permissive to match C++ maximal munch tokenization rules.
+		if (cursor_ < source_size_ && (source_[cursor_] == '_' || std::isalpha(static_cast<unsigned char>(source_[cursor_])))) {
+			while (cursor_ < source_size_ && (std::isalnum(static_cast<unsigned char>(source_[cursor_])) || source_[cursor_] == '_')) {
+				++cursor_;
+				++column_;
+			}
+		}
+
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::Literal, value, line_, column_, current_file_index_);
 	}

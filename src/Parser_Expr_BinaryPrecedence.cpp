@@ -893,6 +893,31 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		}
 		type_spec.add_pointer_level(ptr_cv);
 	}
+	// Handle trailing CV-qualifiers before reference (e.g., Type volatile&, Type const&)
+	// Only consume const/volatile when followed by & or && (possibly with more cv-qualifiers)
+	// This avoids consuming const/volatile in non-reference contexts like member function qualifiers
+	{
+		SaveHandle cv_check = save_token_position();
+		bool found_ref = false;
+		CVQualifier trailing_cv = CVQualifier::None;
+		while (peek() == "const"_tok || peek() == "volatile"_tok) {
+			if (peek() == "const"_tok) {
+				trailing_cv |= CVQualifier::Const;
+			} else {
+				trailing_cv |= CVQualifier::Volatile;
+			}
+			advance();
+		}
+		if (trailing_cv != CVQualifier::None && (peek() == "&"_tok || peek() == "&&"_tok)) {
+			found_ref = true;
+		}
+		if (found_ref) {
+			type_spec.add_cv_qualifier(trailing_cv);
+			discard_saved_token(cv_check);
+		} else {
+			restore_token_position(cv_check);
+		}
+	}
 	if (peek() == "&&"_tok) {
 		advance();
 		type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);

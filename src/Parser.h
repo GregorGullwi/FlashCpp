@@ -253,6 +253,14 @@ struct QualifiedIdParseResult {
         : namespaces(ns), final_identifier(id), template_args(args), has_template_arguments(true) {}
 };
 
+// Result of consuming ::member type access and ... pack expansion after template arguments
+// in a base class specifier. Shared across all base class parsing sites.
+struct BaseClassPostTemplateInfo {
+    std::optional<StringHandle> member_type_name;
+    std::optional<Token> member_name_token;
+    bool is_pack_expansion = false;
+};
+
 class Parser {
 	// Friend classes that need access to private members
 	friend class ExpressionSubstitutor;
@@ -1032,6 +1040,18 @@ public:  // Public methods for template instantiation
             AccessSpecifier base_access,
             bool is_virtual_base,
             const Token& error_token);
+
+        // Helper: After parsing template arguments for a base class specifier, consume
+        // optional ::member type access and ... pack expansion in the correct order.
+        // Centralizes the parsing so all call sites get consistent behavior.
+        // Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
+        std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
+
+        // Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
+        // Shared across all base class deferral sites.
+        static std::vector<TemplateArgumentNodeInfo> build_template_arg_infos(
+            const std::vector<TemplateTypeArg>& template_args,
+            const std::vector<ASTNode>& template_arg_nodes);
 
         // Helper: Look up a type alias including inherited ones from base classes
         // Returns the TypeInfo pointer if found, nullptr otherwise
