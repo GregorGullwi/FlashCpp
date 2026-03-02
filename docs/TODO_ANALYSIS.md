@@ -1,7 +1,7 @@
 # TODO / FIXME Analysis
 
 **Date**: 2026-03-01  
-**Total items found**: 47 (43 TODO + 4 FIXME/minor)  
+**Total items found**: 49 (44 TODO + 4 FIXME/minor + 1 discovered)  
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
 Each item is assessed as one of:
@@ -395,6 +395,25 @@ int main() {
 
 ---
 
+## 25. Global Function Pointer Initialization
+
+| File | Line | Status |
+|------|------|--------|
+| `src/CodeGen_Stmt_Decl.cpp` | 100 | ✅ Valid |
+
+Global variables initialized with a function address (e.g., `int (*func_ptr)(int, int) = add;`) require a relocation in the ELF `.data` section. The current `evalToValue` lambda only handles constexpr-evaluable initializers; function addresses are not constant expressions, so the initializer is silently zeroed out and a warning is emitted:
+
+```
+Non-constant initializer in global variable 'func_ptr' at line N
+```
+
+The resulting object file contains `func_ptr = 0`, which causes a segfault at runtime when the pointer is dereferenced. The fix requires:
+1. Detecting that the initializer is an identifier referencing a function symbol.
+2. Emitting a relocation (R_X86_64_64) in the `.data` section that the linker can fill in with the function's address.
+3. The same approach would also fix global pointer-to-global-variable initializers.
+
+---
+
 ## Summary Table
 
 | Category | Count | Status |
@@ -423,9 +442,10 @@ int main() {
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
 | Substitutor string-based arg parsing | 1 | ✅ Valid |
-| **Total** | **48** | |
+| Global function pointer initialization | 1 | ✅ Valid |
+| **Total** | **49** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
 **Fixed**: 16 file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 22 items
+**Genuinely unimplemented**: 23 items
