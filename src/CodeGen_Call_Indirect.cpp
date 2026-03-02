@@ -601,7 +601,7 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 							
 							// Use the function pointer's stored return type
-							Type ret_type = member.function_signature ? member.function_signature->return_type : Type::Int;
+							Type ret_type = member.function_signature ? member.function_signature->return_type : Type::Void;
 							int ret_size = get_type_size_bits(ret_type);
 							return { ret_type, ret_size, ret_var, 0ULL };
 						}
