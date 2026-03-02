@@ -181,10 +181,12 @@ struct StructTypeInfo {
 		func.is_pure_virtual = is_pure_virtual;
 		func.is_override = is_override;
 		func.is_final = is_final_func;
+		propagateAstProperties(func);
 	}
 
 	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		member_functions.emplace_back(getName(), constructor_decl, access, true, false);
+		auto& ctor = member_functions.emplace_back(getName(), constructor_decl, access, true, false);
+		propagateAstProperties(ctor);
 	}
 
 	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public, bool is_virtual = false) {
@@ -193,6 +195,7 @@ struct StructTypeInfo {
 		StringHandle dtor_name_handle = StringTable::getOrInternStringHandle(sb.commit());
 		auto& dtor = member_functions.emplace_back(dtor_name_handle, destructor_decl, access, false, true, false, "");
 		dtor.is_virtual = is_virtual;
+		propagateAstProperties(dtor);
 	}
 
 	void addOperatorOverload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
@@ -205,6 +208,7 @@ struct StructTypeInfo {
 		func.is_pure_virtual = is_pure_virtual;
 		func.is_override = is_override;
 		func.is_final = is_final_func;
+		propagateAstProperties(func);
 	}
 
 	// Mark a constructor as deleted
@@ -486,6 +490,12 @@ struct StructTypeInfo {
 
 	// Check if a parameter's type_index matches this struct's own type_index
 	bool isOwnTypeIndex(TypeIndex param_type_index) const;
+
+	// Auto-extract is_noexcept, is_const, is_volatile from the stored AST node
+	// (FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode).
+	// Called by addMemberFunction/addConstructor/addDestructor/addOperatorOverload so
+	// callers never need to propagate these properties manually.
+	static void propagateAstProperties(StructMemberFunction& mf);
 
 	// Find copy constructor (takes const Type& or Type& parameter)
 	const StructMemberFunction* findCopyConstructor() const;

@@ -25,10 +25,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	    (peek() == "struct"_tok || peek() == "class"_tok)) {
 		// Delegate to struct parsing which will handle the full definition
 		// and any trailing variable declarations
-		// TODO: Pass specs (is_constexpr, is_inline, etc.) to parse_struct_declaration()
+		// TODO is now resolved: specs are passed to parse_struct_declaration_with_specs()
 		// so they can be applied to trailing variable declarations after the struct body.
-		// Currently, these specifiers are parsed but not propagated.
-		auto result = parse_struct_declaration();
+		auto result = parse_struct_declaration_with_specs(is_constexpr, is_inline);
 		if (!result.is_error()) {
 			// Successfully parsed struct, propagate the result
 			return saved_position.propagate(std::move(result));
@@ -409,8 +408,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		size_t def_param_count = func_ref.parameter_nodes().size();
 		for (auto& member : struct_info->member_functions) {
 			if (member.getName() == function_name_token.handle() &&
-				member.is_const == member_quals.is_const() &&
-				member.is_volatile == member_quals.is_volatile()) {
+				member.is_const() == member_quals.is_const() &&
+				member.is_volatile() == member_quals.is_volatile()) {
 				// Also check parameter count for overload resolution
 				if (member.function_decl.is<FunctionDeclarationNode>()) {
 					const auto& decl_func = member.function_decl.as<FunctionDeclarationNode>();
@@ -434,8 +433,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			for (const auto& member : struct_info->member_functions) {
 				if (member.getName() == function_name_token.handle()) {
 					has_name_match = true;
-					if (member.is_const == member_quals.is_const() &&
-						member.is_volatile == member_quals.is_volatile()) {
+					if (member.is_const() == member_quals.is_const() &&
+						member.is_volatile() == member_quals.is_volatile()) {
 						has_qualifier_match = true;
 					}
 				}
@@ -470,8 +469,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				/*is_final_func=*/false);
 			// Propagate const/volatile qualifiers to the newly added member
 			if (!struct_info->member_functions.empty()) {
-				struct_info->member_functions.back().is_const = member_quals.is_const();
-				struct_info->member_functions.back().is_volatile = member_quals.is_volatile();
+				struct_info->member_functions.back().cv_qualifier = member_quals.cv_qualifier;
 			}
 
 			// Check for declaration only (;) or function definition ({)

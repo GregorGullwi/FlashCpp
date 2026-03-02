@@ -94,9 +94,9 @@ This means the compiler silently ignores base classes of member struct templates
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Decl_FunctionOrVar.cpp` | 28 | ✅ Valid |
+| `src/Parser_Decl_FunctionOrVar.cpp` | 28 | ✅ Fixed |
 
-When a declaration like `inline constexpr struct Foo { ... } var = {};` is parsed, the `is_constexpr` / `is_inline` flags are already consumed before `parse_struct_declaration()` is called, but they are never passed to it. The trailing variable declaration `var` therefore loses its `constexpr` qualification. This affects constant-expression initializer validation.
+~~When a declaration like `inline constexpr struct Foo { ... } var = {};` is parsed, the `is_constexpr` / `is_inline` flags are already consumed before `parse_struct_declaration()` is called, but they are never passed to it. The trailing variable declaration `var` therefore loses its `constexpr` qualification. This affects constant-expression initializer validation.~~ **Fixed**: Added `parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline)` that receives the pre-parsed specifiers. The existing `parse_struct_declaration()` delegates to it with `false, false`. The call site in `parse_declaration_or_function_definition()` now passes the parsed `is_constexpr` and `is_inline` flags. These are combined with any post-struct-body specifiers and applied to trailing `VariableDeclarationNode` via `set_is_constexpr()`.
 
 ---
 
@@ -120,13 +120,13 @@ When a declaration like `inline constexpr struct Foo { ... } var = {};` is parse
 
 | File | Line | Status |
 |------|------|--------|
-| `src/OverloadResolution.h` | 684 | ✅ Valid |
+| `src/OverloadResolution.h` | 684 | ✅ Fixed |
 | `src/OverloadResolution.h` | 700 | ✅ Valid |
-| `src/SymbolTable.h` | 484 | ✅ Valid |
+| `src/SymbolTable.h` | 484 | ✅ Fixed |
 
-- **OverloadResolution.h:684** – `findBinaryOperatorOverload()` returns the *first* member `operator` with a matching symbol, without verifying the parameter types. When a class defines both `operator+(const Foo&)` and `operator+(int)`, the wrong overload may be selected.
+- ~~**OverloadResolution.h:684** – `findBinaryOperatorOverload()` returns the *first* member `operator` with a matching symbol, without verifying the parameter types.~~ **Fixed**: Now performs two-phase matching: (1) exact type_index match on the parameter against the right-hand operand type, (2) fallback to first matching operator symbol. This correctly selects `operator+(int)` over `operator+(const Foo&)` when the right-hand operand is an `int`.
 - **OverloadResolution.h:700** – Free-function operator overloads (e.g., `operator+(A, B)` defined at namespace scope) are never searched. C++20 §12.4 [over.match.oper] requires that both member and non-member candidates be gathered before overload resolution.
-- **SymbolTable.h:484** – `get_overload()` always returns `overloads[0]` when multiple overloads exist, skipping exact-match and implicit-conversion ranking entirely. This affects every multi-overload function call.
+- ~~**SymbolTable.h:484** – `get_overload()` always returns `overloads[0]` when multiple overloads exist, skipping exact-match and implicit-conversion ranking entirely.~~ **Fixed**: `lookup_function()` now performs two-phase matching: (1) exact parameter count + type match, (2) parameter count match only (for implicit conversions), with fallback to first overload. This correctly selects `add(int,int)` over `add(double,double)` when called with int arguments.
 
 ---
 
@@ -266,8 +266,8 @@ The actual array length is not stored in `StructMemberInfo`. Without it the boun
 | `src/CodeGen_MemberAccess.cpp` | 2360 | ✅ Valid |
 | `src/CodeGen_MemberAccess.cpp` | 2372 | ✅ Valid |
 | `src/CodeGen_MemberAccess.cpp` | 2380 | ✅ Valid |
-| `src/CodeGen_MemberAccess.cpp` | 2557 | ✅ Valid |
-| `src/CodeGen_MemberAccess.cpp` | 2635 | ✅ Valid |
+| `src/CodeGen_MemberAccess.cpp` | 2557 | ✅ Fixed |
+| `src/CodeGen_MemberAccess.cpp` | 2635 | ✅ Fixed |
 
 Five type-trait intrinsics use heuristics instead of the correct C++ standard definitions:
 
@@ -275,10 +275,10 @@ Five type-trait intrinsics use heuristics instead of the correct C++ standard de
 |-------|------------------|----------------|
 | `__is_trivially_copyable` | `!has_vtable && !hasCopy/Move/Assign/Dtor` | ⚠️ Partially fixed — checks special members now; still needs per-member triviality check for bases |
 | `__is_trivial` | `!has_vtable && !hasUserCtor && !hasCopy/Move/Assign/Dtor` | ⚠️ Partially fixed — same as above |
-| `__is_nothrow_constructible` | `!has_vtable && !hasUserCtor && !hasUserDtor` | Needs `noexcept` tracking on `StructMemberFunction` to check user-defined ctors |
-| `__is_nothrow_assignable` | `!has_vtable && !hasCopy/MoveAssign` | Needs `noexcept` tracking on `StructMemberFunction` to check user-defined assignment ops |
+| `__is_nothrow_constructible` | checks user-defined ctor noexcept status | ✅ Fixed — `is_noexcept` field added to `StructMemberFunction`/`StructMemberFunctionDecl`; propagated from `FunctionDeclarationNode`/`ConstructorDeclarationNode` during parsing; type trait now checks noexcept on user-defined ctors (skipping implicit ones) |
+| `__is_nothrow_assignable` | checks user-defined assignment op noexcept status | ✅ Fixed — same `is_noexcept` tracking; also fixed `!is_reference` condition that rejected standard `Foo&` argument form |
 
-**Remaining work**: `StructMemberFunction` does not yet store whether the function is `noexcept`. Adding an `is_noexcept` field and populating it during parsing would allow the nothrow traits to give correct answers for user-defined special members.
+~~**Remaining work**: `StructMemberFunction` does not yet store whether the function is `noexcept`. Adding an `is_noexcept` field and populating it during parsing would allow the nothrow traits to give correct answers for user-defined special members.~~ **Partially addressed**: `is_noexcept` field added and nothrow traits now use it. Remaining: `__is_trivially_copyable` and `__is_trivial` still need per-member triviality checks for base classes.
 
 These traits are queried extensively by `<type_traits>` and determine which standard-library optimizations are enabled. Incorrect results can silently produce wrong codegen for containers that rely on these traits to select between memcpy and element-wise copy.
 
@@ -425,21 +425,21 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | IR converter error messages / SSE moves | 3 | ✅ Fixed |
 | Member struct template base classes | 2 | ✅ Valid |
 | Declarator parsing gaps | 2 | 1 ✅ Valid, 1 ✅ Fixed |
-| Specifier propagation to struct decl | 1 | ✅ Valid |
+| Specifier propagation to struct decl | 1 | ✅ Fixed |
 | Constexpr evaluation gaps | 4 | ✅ Valid |
-| Overload resolution | 3 | ✅ Valid |
+| Overload resolution | 3 | 1 ✅ Valid, 2 ✅ Fixed |
 | Missing return diagnostic | 1 | ✅ Fixed |
 | Template deduction non-type params | 1 | ✅ Valid |
 | Phase labels (stale) | 2 | ✅ Already fixed |
 | Complex pack expansion | 1 | ✅ Valid |
 | Placement new multiple args | 1 | ✅ Valid |
 | Lambda-to-function-pointer type | 1 | ✅ Valid |
-| Copy constructor type_index check | 1 | ✅ Fixed |
+| Copy constructor type_index check | 1 | ✅ Fixed (also fixed `isOwnTypeIndex()` for template instantiations) |
 | `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
 | Template template parameter defaults | 1 | ✅ Fixed |
 | Concept template arguments | 1 | ✅ Fixed |
 | Array member length | 1 | ✅ Valid |
-| Type traits incomplete checks | 5 | ⚠️ Partially fixed (heuristics improved; `noexcept` tracking on user-defined special members still needed) |
+| Type traits incomplete checks | 5 | ⚠️ Partially fixed (nothrow traits now use `is_noexcept` tracking with AST node fallback; noexcept propagates through all template parse paths and template instantiation; trivially copyable/trivial still need per-member checks) |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
 | Substitutor string-based arg parsing | 1 | ✅ Valid |
@@ -447,6 +447,6 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | **Total** | **49** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
-**Fixed**: 16 file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2)  
+**Fixed**: 21+ file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2, nothrow type traits ×2, specifier propagation ×1, overload resolution ×2, plus: noexcept propagation in 3 template parse paths, noexcept propagation in 3 template instantiation sites, `isOwnTypeIndex()` template instantiation fix)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 23 items
+**Genuinely unimplemented**: 18 items

@@ -642,10 +642,48 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     return nullptr;
 }
 
+// Auto-extract is_noexcept, is_const, is_volatile from the AST node stored in a
+// StructMemberFunction. This centralises property propagation so that every
+// addMemberFunction / addConstructor / addDestructor / addOperatorOverload call
+// automatically picks up the flags — callers never need to do it manually.
+void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
+    if (const auto* fn = get_function_decl_node(mf.function_decl)) {
+        mf.is_noexcept = fn->is_noexcept();
+    } else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
+        const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+        mf.is_noexcept = ctor.is_noexcept();
+    } else if (mf.function_decl.is<DestructorDeclarationNode>()) {
+        const auto& dtor = mf.function_decl.as<DestructorDeclarationNode>();
+        mf.is_noexcept = dtor.is_noexcept();
+    }
+    // Note: is_const / is_volatile are NOT extracted here.
+    // FunctionDeclarationNode has no CV-qualifier field — those qualifiers
+    // live in MemberQualifiers (parser) or StructMemberFunctionDecl (pattern).
+    // Callers that have that context set them manually after calling add*().
+}
+
 // Helper to check if a parameter's type_index matches this struct's own type_index.
 // Uses own_type_index_ cached by TypeInfo::setStructInfo() — no map lookup needed.
+// For template instantiations (e.g., Wrapper<int>), also checks if the param_type_index
+// refers to the base template pattern (e.g., Wrapper) that this struct was instantiated from,
+// since self-referential parameters like operator=(const Wrapper&) may not have the
+// instantiated type_index substituted.
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
-    return own_type_index_.has_value() && param_type_index == *own_type_index_;
+    if (!own_type_index_.has_value()) return false;
+    // Direct match (works for non-template types and properly substituted template params)
+    if (param_type_index == *own_type_index_) return true;
+    // Template instantiation fallback: check if param refers to our base template pattern
+    if (*own_type_index_ >= gTypeInfo.size() || param_type_index >= gTypeInfo.size())
+        return false;
+    const TypeInfo& own_info = gTypeInfo[*own_type_index_];
+    if (!own_info.isTemplateInstantiation()) return false;
+    const TypeInfo& param_info = gTypeInfo[param_type_index];
+    // Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
+    if (own_info.baseTemplateName() == param_info.name()) return true;
+    // Note: We intentionally do NOT match different instantiations of the same template
+    // (e.g., Wrapper<double> should not match for Wrapper<int>'s own type check).
+    // The base pattern check above handles the unsubstituted case.
+    return false;
 }
 
 const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {

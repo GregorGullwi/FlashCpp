@@ -1,5 +1,10 @@
 ParseResult Parser::parse_struct_declaration()
 {
+	return parse_struct_declaration_with_specs(false, false);
+}
+
+ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline)
+{
 	ScopedTokenPosition saved_position(*this);
 
 	// Check for alignas specifier before struct/class keyword
@@ -1983,13 +1988,18 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Extract parsed specifiers for use in member function registration
-			bool is_const_member = member_quals.is_const();
-			bool is_volatile_member = member_quals.is_volatile();
 			bool is_override = func_specs.is_override;
 			bool is_final = func_specs.is_final;
 			bool is_pure_virtual = func_specs.is_pure_virtual();
 			bool is_defaulted = func_specs.is_defaulted();
 			bool is_deleted = func_specs.is_deleted();
+
+			// Propagate noexcept specifier to the function declaration node
+			if (func_specs.is_noexcept) {
+				member_func_ref.set_noexcept(true);
+				if (func_specs.noexcept_expr)
+					member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
+			}
 
 			// Handle defaulted functions: set implicit flag and create empty body
 			if (is_defaulted) {
@@ -2116,12 +2126,12 @@ ParseResult Parser::parse_struct_declaration()
 				std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
 				struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access,
 				                                 is_virtual, is_pure_virtual, is_override, is_final,
-				                                 is_const_member, is_volatile_member);
+				                                 member_quals.cv_qualifier);
 			} else {
 				// Add regular member function to struct
 				struct_ref.add_member_function(member_func_node, current_access,
 				                               is_virtual, is_pure_virtual, is_override, is_final,
-				                               is_const_member, is_volatile_member);
+				                               member_quals.cv_qualifier);
 			}
 		} else {
 			// This is a data member
@@ -2360,8 +2370,9 @@ ParseResult Parser::parse_struct_declaration()
 	
 	// First, skip any storage class specifiers before the variable name
 	// Valid specifiers: inline, constexpr, static, extern, thread_local
-	bool has_inline = false;
-	bool has_constexpr = false;
+	// Combine with pre-struct specifiers passed from the caller
+	bool has_inline = pre_is_inline;
+	bool has_constexpr = pre_is_constexpr;
 	[[maybe_unused]] bool has_static = false;
 	while (peek().is_keyword()) {
 		std::string_view kw = peek_info().value();
@@ -2382,7 +2393,6 @@ ParseResult Parser::parse_struct_declaration()
 	}
 	
 	(void)has_inline;  // Mark as used
-	(void)has_constexpr;  // Mark as used
 	
 	if (!peek().is_eof() && 
 	    (peek().is_identifier() || 
@@ -2433,6 +2443,11 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Wrap in VariableDeclarationNode so it gets processed properly by code generator
 			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, init_expr);
+
+			// Apply constexpr specifier from pre-struct or post-struct keywords
+			if (has_constexpr) {
+				var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
+			}
 
 			struct_variables.push_back(var_decl_node);
 
@@ -2708,8 +2723,7 @@ ParseResult Parser::parse_struct_declaration()
 			);
 			// Propagate const/volatile qualifiers from the AST node to StructTypeInfo
 			auto& registered_func = struct_info->member_functions.back();
-			registered_func.is_const = func_decl.is_const;
-			registered_func.is_volatile = func_decl.is_volatile;
+			registered_func.cv_qualifier = func_decl.cv_qualifier;
 	}
 }
 

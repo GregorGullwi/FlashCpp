@@ -2526,7 +2526,7 @@
 					result = true;
 				}
 				// Class types: implicitly-generated default ctors are noexcept;
-				// user-defined ctors may throw unless marked noexcept (not yet tracked)
+				// user-defined ctors are noexcept only if marked noexcept
 				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
@@ -2535,8 +2535,60 @@
 						// Per C++20 §20.15.4.4 [meta.unary.prop], is_nothrow_constructible
 						// only depends on whether the selected constructor is noexcept.
 						// The destructor is irrelevant to constructibility.
-						result = !struct_info->has_vtable
-							&& !struct_info->hasUserDefinedConstructor();
+						const auto& arg_types = traitNode.additional_type_nodes();
+					if (!struct_info->hasUserDefinedConstructor()) {
+							// Implicitly-generated default ctor is noexcept
+							result = !struct_info->has_vtable;
+						} else {
+							// Find the constructor selected by Args... and check only its noexcept
+							const StructMemberFunction* selected_ctor = nullptr;
+							if (arg_types.empty()) {
+								// Default construction: find default ctor (0 params or all-defaulted)
+								selected_ctor = struct_info->findDefaultConstructor();
+							} else {
+								// Find constructor matching Args... by parameter count and types
+								for (const auto& mf : struct_info->member_functions) {
+									if (!mf.is_constructor) continue;
+									if (!mf.function_decl.is<ConstructorDeclarationNode>()) continue;
+									const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+									if (ctor.is_implicit()) continue;
+									const auto& params = ctor.parameter_nodes();
+									if (params.size() != arg_types.size()) continue;
+									// Check parameter types match
+									bool match = true;
+									for (size_t i = 0; i < params.size(); ++i) {
+										if (!params[i].is<DeclarationNode>() || !arg_types[i].is<TypeSpecifierNode>()) {
+											match = false; break;
+										}
+										const auto& param_type = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+										const auto& arg_type = arg_types[i].as<TypeSpecifierNode>();
+										if (param_type.type() != arg_type.type()) { match = false; break; }
+										if (param_type.type() == Type::Struct &&
+											param_type.type_index() != arg_type.type_index()) { match = false; break; }
+										if (param_type.reference_qualifier() != arg_type.reference_qualifier()) { match = false; break; }
+									}
+									if (match) { selected_ctor = &mf; break; }
+								}
+								// Fallback: if no exact match, try parameter count only
+								if (!selected_ctor) {
+									for (const auto& mf : struct_info->member_functions) {
+										if (!mf.is_constructor) continue;
+										if (!mf.function_decl.is<ConstructorDeclarationNode>()) continue;
+										const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+										if (ctor.is_implicit()) continue;
+										if (ctor.parameter_nodes().size() == arg_types.size()) {
+											selected_ctor = &mf; break;
+										}
+									}
+								}
+							}
+							if (selected_ctor) {
+								result = selected_ctor->is_noexcept;
+							} else {
+								// No matching ctor found — not constructible, so not nothrow constructible
+								result = false;
+							}
+						}
 					}
 				}
 				break;
@@ -2608,15 +2660,50 @@
 							result = true;
 						}
 						// Class types: implicitly-generated assignment ops are noexcept;
-						// user-defined ops may throw unless marked noexcept (not yet tracked)
+						// user-defined ops are noexcept only if marked noexcept
+						// Note: For assignability, the first type is typically T& (lvalue reference),
+						// so we check the underlying struct type regardless of reference qualifier
 						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
-						!is_reference && pointer_depth == 0) {
+						pointer_depth == 0) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && !struct_info->is_union) {
-								result = !struct_info->has_vtable
-									&& !struct_info->hasCopyAssignmentOperator()
-									&& !struct_info->hasMoveAssignmentOperator();
+								bool has_user_assign = struct_info->hasCopyAssignmentOperator() ||
+									struct_info->hasMoveAssignmentOperator();
+								if (!has_user_assign) {
+									// Implicitly-generated assignment ops are noexcept
+									result = !struct_info->has_vtable;
+								} else {
+									// Find the assignment operator selected by From type and check its noexcept
+									const StructMemberFunction* selected_op = nullptr;
+									for (const auto& mf : struct_info->member_functions) {
+										if (!mf.is_operator_overload || mf.operator_symbol != "=") continue;
+										const auto* func_node = get_function_decl_node(mf.function_decl);
+										if (!func_node) continue;
+										if (func_node->is_implicit()) continue;
+										const auto& params = func_node->parameter_nodes();
+										if (params.size() != 1 || !params[0].is<DeclarationNode>()) continue;
+										const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+									// Match: same base type, (for structs) same type_index, and same reference qualifier
+										if (param_type.type() != from_spec.type()) continue;
+										if (param_type.type() == Type::Struct &&
+											param_type.type_index() != from_spec.type_index()) continue;
+										if (param_type.reference_qualifier() != from_spec.reference_qualifier()) continue;
+										selected_op = &mf;
+										break;
+									}
+									// Fallback: if no exact match, use first non-implicit operator=
+									if (!selected_op) {
+										for (const auto& mf : struct_info->member_functions) {
+											if (!mf.is_operator_overload || mf.operator_symbol != "=") continue;
+											const auto* func_node = get_function_decl_node(mf.function_decl);
+											if (func_node && func_node->is_implicit()) continue;
+											selected_op = &mf;
+											break;
+										}
+									}
+									result = selected_op ? selected_op->is_noexcept : false;
+								}
 							}
 						}
 					}

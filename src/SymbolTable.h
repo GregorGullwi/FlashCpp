@@ -461,27 +461,68 @@ public:
 		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
 	}
 
-	// Resolve function overload based on argument types
+	// Resolve function overload based on argument types (full type info)
 	// Returns the best matching function declaration, or nullopt if no match or ambiguous
-	std::optional<ASTNode> lookup_function(std::string_view identifier, const std::vector<Type>& arg_types) const {
+	std::optional<ASTNode> lookup_function(std::string_view identifier, const std::vector<TypeSpecifierNode>& arg_types) const {
 		return lookup_function(identifier, arg_types, get_current_scope_handle());
 	}
 
-	std::optional<ASTNode> lookup_function(std::string_view identifier, [[maybe_unused]] const std::vector<Type>& arg_types, ScopeHandle scope_limit_handle) const {
+	// Helper: Check if a parameter's full type matches an expected TypeSpecifierNode
+	// Compares base type, type_index (for struct types), pointer depth, and reference qualifier
+	static bool parameterMatchesType(const ASTNode& param, const TypeSpecifierNode& expected) {
+		if (!param.is<DeclarationNode>()) return false;
+		const auto& type_node = param.as<DeclarationNode>().type_node();
+		if (!type_node.is<TypeSpecifierNode>()) return false;
+		const auto& actual = type_node.as<TypeSpecifierNode>();
+		// Base type must match
+		if (actual.type() != expected.type()) return false;
+		// For struct types, type_index must also match
+		if (actual.type() == Type::Struct && actual.type_index() != expected.type_index()) return false;
+		// Pointer depth must match (e.g. int vs int* vs int**)
+		if (actual.pointer_depth() != expected.pointer_depth()) return false;
+		// Reference qualifier must match (e.g. int& vs int&& vs int)
+		if (actual.reference_qualifier() != expected.reference_qualifier()) return false;
+		return true;
+	}
+
+	std::optional<ASTNode> lookup_function(std::string_view identifier, const std::vector<TypeSpecifierNode>& arg_types, ScopeHandle scope_limit_handle) const {
 		// Get all overloads
 		auto overloads = lookup_all(identifier, scope_limit_handle);
 		if (overloads.empty()) {
 			return std::nullopt;
 		}
 
-		// If only one overload, return it (for now, we'll add signature checking later)
+		// If only one overload, return it
 		if (overloads.size() == 1) {
 			return overloads[0];
 		}
 
-		// Multiple overloads - need to find the best match
-		// For now, return the first one (we'll implement proper overload resolution later)
-		// TODO: Implement proper overload resolution with exact match, implicit conversions, etc.
+		// Multiple overloads - find the best match based on argument types
+		// Phase 1: Try exact parameter count and full type match
+		for (const auto& overload : overloads) {
+			if (!overload.is<FunctionDeclarationNode>()) continue;
+			const auto& params = overload.as<FunctionDeclarationNode>().parameter_nodes();
+			if (params.size() != arg_types.size()) continue;
+
+			bool exact_match = true;
+			for (size_t i = 0; i < params.size(); ++i) {
+				if (!parameterMatchesType(params[i], arg_types[i])) {
+					exact_match = false;
+					break;
+				}
+			}
+			if (exact_match) return overload;
+		}
+
+		// Phase 2: Try parameter count match only (allows implicit conversions)
+		for (const auto& overload : overloads) {
+			if (!overload.is<FunctionDeclarationNode>()) continue;
+			if (overload.as<FunctionDeclarationNode>().parameter_nodes().size() == arg_types.size()) {
+				return overload;
+			}
+		}
+
+		// Fallback: return the first overload
 		return overloads[0];
 	}
 

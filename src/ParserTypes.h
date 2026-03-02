@@ -81,11 +81,11 @@ enum class FunctionKind {
 
 // CV and ref qualifiers for member functions
 struct MemberQualifiers {
-	CVQualifier cv = CVQualifier::None;
+	CVQualifier cv_qualifier = CVQualifier::None;
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 
-	bool is_const() const { return hasCVQualifier(cv, CVQualifier::Const); }
-	bool is_volatile() const { return hasCVQualifier(cv, CVQualifier::Volatile); }
+	bool is_const() const { return hasCVQualifier(cv_qualifier, CVQualifier::Const); }
+	bool is_volatile() const { return hasCVQualifier(cv_qualifier, CVQualifier::Volatile); }
 	bool is_lvalue_ref() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 	bool is_rvalue_ref() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 };
