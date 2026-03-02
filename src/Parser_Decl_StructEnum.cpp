@@ -852,6 +852,9 @@ ParseResult Parser::parse_struct_declaration()
 								0,      // pointer_depth
 								std::nullopt // bitfield_width
 							});
+							if (member_type_spec.has_function_signature()) {
+								anon_struct_info->members.back().function_signature = member_type_spec.function_signature();
+							}
 							
 							// Expect semicolon
 							if (!consume(";"_tok)) {
@@ -3895,6 +3898,9 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			0,      // pointer_depth
 			std::nullopt // bitfield_width
 		});
+		if (member_type_spec.has_function_signature()) {
+			out_struct_info->members.back().function_signature = member_type_spec.function_signature();
+		}
 		
 		// Expect semicolon
 		if (!consume(";"_tok)) {

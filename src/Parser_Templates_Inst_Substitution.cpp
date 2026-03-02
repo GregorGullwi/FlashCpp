@@ -876,7 +876,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			false,
 			{},
 			static_cast<int>(type_spec.pointer_depth()),
-			member_decl.bitfield_width
+			member_decl.bitfield_width,
+			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
 		);
 	}
 	
