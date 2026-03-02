@@ -1077,7 +1077,7 @@ private:
 		auto stripHash = [](std::string_view name) -> std::string_view {
 			std::string_view base = extractBaseTemplateName(name);
 			if (!base.empty()) {
-				auto pos = name.find(base);
+				auto pos = name.rfind(base);
 				if (pos != std::string_view::npos) {
 					return name.substr(0, pos + base.size());
 				}
