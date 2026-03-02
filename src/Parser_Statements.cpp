@@ -1388,16 +1388,16 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		
 		// Check if there's a constructor that matches the argument count and types
 		bool found_matching_ctor = false;
-		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor) continue;
-			if (!member_func.function_decl.has_value()) continue;
+		auto ctor_candidates = struct_info.getConstructorsByArity(elements.size(), false);
+		for (const auto* member_func : ctor_candidates) {
+			if (!member_func || !member_func->function_decl.has_value()) continue;
 			
 			// Get parameters from constructor
 			const std::vector<ASTNode>* params = nullptr;
-			if (member_func.function_decl.is<ConstructorDeclarationNode>()) {
-				params = &member_func.function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
-			} else if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-				params = &member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+			if (member_func->function_decl.is<ConstructorDeclarationNode>()) {
+				params = &member_func->function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
+			} else if (member_func->function_decl.is<FunctionDeclarationNode>()) {
+				params = &member_func->function_decl.as<FunctionDeclarationNode>().parameter_nodes();
 			}
 			
 			if (!params || params->size() != elements.size()) {
@@ -1977,4 +1977,3 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 	type_specifier = resolved;
 	return true;
 }
-

@@ -642,6 +642,28 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     return nullptr;
 }
 
+InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByArity(
+	size_t arg_count,
+	bool skip_implicit) const {
+	InlineVector<const StructMemberFunction*, 4> matches;
+	for (const auto& func : member_functions) {
+		if (!func.is_constructor) {
+			continue;
+		}
+		if (!func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+		if (skip_implicit && ctor_node.is_implicit()) {
+			continue;
+		}
+		if (ctor_node.parameter_nodes().size() == arg_count) {
+			matches.push_back(&func);
+		}
+	}
+	return matches;
+}
+
 bool StructTypeInfo::hasUserDefinedConstructor() const {
 	for (const auto& func : member_functions) {
 		if (!func.is_constructor) continue;

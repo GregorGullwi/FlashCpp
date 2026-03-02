@@ -2,124 +2,6 @@
 #include <limits>
 
 namespace ConstExpr {
-namespace {
-	bool isSignedIntegralType(Type type) {
-		switch (type) {
-			case Type::Char:
-			case Type::Short:
-			case Type::Int:
-			case Type::Long:
-			case Type::LongLong:
-			case Type::WChar:
-				return true;
-			default:
-				return false;
-		}
-	}
-
-	bool isUnsignedIntegralType(Type type) {
-		switch (type) {
-			case Type::UnsignedChar:
-			case Type::Char8:
-			case Type::Char16:
-			case Type::Char32:
-			case Type::UnsignedShort:
-			case Type::UnsignedInt:
-			case Type::UnsignedLong:
-			case Type::UnsignedLongLong:
-				return true;
-			default:
-				return false;
-		}
-	}
-
-	bool isFloatingType(Type type) {
-		return type == Type::Float || type == Type::Double || type == Type::LongDouble;
-	}
-
-	int getParameterMatchScore(Type param_type, const EvalResult& arg_value) {
-		if (std::holds_alternative<double>(arg_value.value)) {
-			if (isFloatingType(param_type)) return 4;
-			if (isSignedIntegralType(param_type) || isUnsignedIntegralType(param_type)) return 2;
-			if (param_type == Type::Bool) return 1;
-			return -1;
-		}
-		if (std::holds_alternative<long long>(arg_value.value)) {
-			if (isSignedIntegralType(param_type)) return 4;
-			if (isUnsignedIntegralType(param_type)) return 2;
-			if (isFloatingType(param_type)) return 1;
-			if (param_type == Type::Bool) return 1;
-			return -1;
-		}
-		if (std::holds_alternative<unsigned long long>(arg_value.value)) {
-			if (isUnsignedIntegralType(param_type)) return 4;
-			if (isSignedIntegralType(param_type)) return 2;
-			if (isFloatingType(param_type)) return 1;
-			if (param_type == Type::Bool) return 1;
-			return -1;
-		}
-		// bool
-		if (param_type == Type::Bool) return 4;
-		if (isSignedIntegralType(param_type) || isUnsignedIntegralType(param_type)) return 2;
-		if (isFloatingType(param_type)) return 1;
-		return -1;
-	}
-
-	const ConstructorDeclarationNode* findMatchingConstructorForConstexpr(
-		const StructTypeInfo* struct_info,
-		const std::vector<EvalResult>& evaluated_args,
-		bool& ambiguous_match) {
-		const ConstructorDeclarationNode* best_ctor = nullptr;
-		int best_score = -1;
-		ambiguous_match = false;
-
-		for (const auto& member_func : struct_info->member_functions) {
-			if (!member_func.is_constructor) continue;
-			if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-			const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-			const auto& params = ctor.parameter_nodes();
-			if (params.size() != evaluated_args.size()) continue;
-
-			int score = 0;
-			bool compatible = true;
-			for (size_t i = 0; i < params.size(); ++i) {
-				if (!params[i].is<DeclarationNode>()) {
-					compatible = false;
-					break;
-				}
-				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-				const ASTNode& type_node = param_decl.type_node();
-				if (!type_node.is<TypeSpecifierNode>()) {
-					compatible = false;
-					break;
-				}
-
-				const TypeSpecifierNode& param_type = type_node.as<TypeSpecifierNode>();
-				int param_score = getParameterMatchScore(param_type.type(), evaluated_args[i]);
-				if (param_score < 0) {
-					compatible = false;
-					break;
-				}
-				score += param_score;
-			}
-
-			if (!compatible) {
-				continue;
-			}
-
-			if (score > best_score) {
-				best_score = score;
-				best_ctor = &ctor;
-				ambiguous_match = false;
-			} else if (score == best_score && best_ctor) {
-				ambiguous_match = true;
-			}
-		}
-
-		return best_ctor;
-	}
-}
-
 std::string_view Evaluator::get_identifier_name(const ASTNode& node) {
 	if (node.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = node.as<ExpressionNode>();
@@ -132,6 +14,24 @@ std::string_view Evaluator::get_identifier_name(const ASTNode& node) {
 		return node.as<IdentifierNode>().name();
 	}
 	return {};
+}
+
+const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_arity(
+	const StructTypeInfo* struct_info,
+	size_t arg_count) {
+	if (!struct_info) {
+		return nullptr;
+	}
+
+	auto ctor_candidates = struct_info->getConstructorsByArity(arg_count, true);
+	if (ctor_candidates.empty()) {
+		return nullptr;
+	}
+	const StructMemberFunction* first_match = ctor_candidates[0];
+	if (!first_match->function_decl.is<ConstructorDeclarationNode>()) {
+		return nullptr;
+	}
+	return &first_match->function_decl.as<ConstructorDeclarationNode>();
 }
 
 EvalResult Evaluator::evaluate_expression_with_bindings(
@@ -1273,23 +1173,7 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	
 	// Find the matching constructor in the struct
 	// We need to find a constructor with the same number of parameters as arguments
-	const ConstructorDeclarationNode* matching_ctor = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (!member_func.is_constructor) {
-			continue;
-		}
-		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) {
-			continue;
-		}
-		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == ctor_args.size()) {
-			// Found a constructor with matching parameter count
-			// For full correctness, we should check parameter types too, but for constexpr
-			// evaluation in simple cases, parameter count matching is sufficient
-			matching_ctor = &ctor;
-			break;
-		}
-	}
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_arity(struct_info, ctor_args.size());
 	
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr evaluation");
@@ -1348,16 +1232,7 @@ std::optional<ASTNode> Evaluator::get_member_initializer(
 	const auto& ctor_args = ctor_call.arguments();
 	
 	// Find the matching constructor
-	const ConstructorDeclarationNode* matching_ctor = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (!member_func.is_constructor) continue;
-		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == ctor_args.size()) {
-			matching_ctor = &ctor;
-			break;
-		}
-	}
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_arity(struct_info, ctor_args.size());
 	
 	if (!matching_ctor) {
 		return std::nullopt;
@@ -1678,12 +1553,12 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		return EvalResult::error("Array element is not a struct in member access");
 	}
 
-	auto member_init_opt = get_member_initializer(ctor_call, struct_info, member_name, context);
-	if (!member_init_opt.has_value()) {
-		return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
+	const auto& ctor_args = ctor_call.arguments();
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_arity(struct_info, ctor_args.size());
+	if (!matching_ctor) {
+		return EvalResult::error("No matching constructor found for constexpr array element");
 	}
 
-	const auto& ctor_args = ctor_call.arguments();
 	std::vector<EvalResult> evaluated_ctor_args;
 	evaluated_ctor_args.reserve(ctor_args.size());
 	for (const auto& ctor_arg : ctor_args) {
@@ -1692,16 +1567,6 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			return arg_result;
 		}
 		evaluated_ctor_args.push_back(arg_result);
-	}
-
-	bool ambiguous_ctor_match = false;
-	const ConstructorDeclarationNode* matching_ctor =
-		findMatchingConstructorForConstexpr(struct_info, evaluated_ctor_args, ambiguous_ctor_match);
-	if (ambiguous_ctor_match) {
-		return EvalResult::error("Ambiguous constructor match in constexpr array subscript member access");
-	}
-	if (!matching_ctor) {
-		return EvalResult::error("No matching constructor found for constexpr array element");
 	}
 
 	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
@@ -1714,7 +1579,20 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		}
 	}
 
-	return evaluate_expression_with_bindings(member_init_opt.value(), ctor_param_bindings, context);
+	for (const auto& mem_init : matching_ctor->member_initializers()) {
+		if (mem_init.member_name == member_name) {
+			return evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
+		}
+	}
+
+	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+	for (const auto& member : struct_info->members) {
+		if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
+			return evaluate(member.default_initializer.value(), context);
+		}
+	}
+
+	return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
 }
 
 // Helper function to look up and evaluate static member from struct info
@@ -2099,16 +1977,7 @@ EvalResult Evaluator::extract_object_members(
 	const auto& ctor_args = ctor_call.arguments();
 	
 	// Find the matching constructor
-	const ConstructorDeclarationNode* matching_ctor = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (!member_func.is_constructor) continue;
-		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == ctor_args.size()) {
-			matching_ctor = &ctor;
-			break;
-		}
-	}
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_arity(struct_info, ctor_args.size());
 	
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr object");
@@ -2269,16 +2138,7 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 		std::unordered_map<std::string_view, EvalResult> param_bindings;
 		
 		// Find matching constructor
-		const ConstructorDeclarationNode* matching_ctor = nullptr;
-		for (const auto& member_func : struct_info->member_functions) {
-			if (!member_func.is_constructor) continue;
-			if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-			const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-			if (ctor.parameter_nodes().size() == ctor_args.size()) {
-				matching_ctor = &ctor;
-				break;
-			}
-		}
+		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_arity(struct_info, ctor_args.size());
 		
 		if (matching_ctor) {
 			const auto& params = matching_ctor->parameter_nodes();
