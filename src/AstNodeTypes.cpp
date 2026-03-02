@@ -644,8 +644,11 @@ const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
 
                 // Check if it's a reference to the same struct type
                 if (param_type.is_reference() && param_type.type() == Type::Struct) {
-                    // TODO: Also check that the type_index matches this struct
-                    return &func;
+                    // Verify that the parameter's type_index matches this struct's type_index
+                    auto it = gTypesByName.find(this->name);
+                    if (it != gTypesByName.end() && param_type.type_index() == it->second->type_index_) {
+                        return &func;
+                    }
                 }
             }
         }
@@ -666,7 +669,11 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
 
                 // Check if it's an rvalue reference to the same struct type
                 if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-                    return &func;
+                    // Verify that the parameter's type_index matches this struct's type_index
+                    auto it = gTypesByName.find(this->name);
+                    if (it != gTypesByName.end() && param_type.type_index() == it->second->type_index_) {
+                        return &func;
+                    }
                 }
             }
         }
