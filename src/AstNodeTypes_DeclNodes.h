@@ -60,7 +60,7 @@ struct StructTypeInfo {
 
 	// Cached type_index from the owning TypeInfo, set by TypeInfo::setStructInfo().
 	// Avoids fragile gTypesByName lookups in isOwnTypeIndex().
-	TypeIndex own_type_index_ = 0;
+	std::optional<TypeIndex> own_type_index_;
 
 	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
 		: name(n), default_access(default_acc), is_union(union_type) {}
