@@ -176,10 +176,6 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 		}
 
-		// Strip // single-line comments (C++ standard §5.2: comments are replaced
-		// by a single space in translation phase 3, before macro expansion).
-		stripLineComment(line);
-
 		if (skipping_stack.size() == 0) {
 			FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number,
 			          " - preprocessor directive stack underflow (too many #endif directives or preprocessor state corruption). Line content: '", line, "'");
@@ -211,6 +207,10 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				++line_number;
 			}
 		}
+
+		// Strip // single-line comments (C++ standard §5.2: comments are replaced
+		// by a single space in translation phase 3, after line splicing in phase 2).
+		stripLineComment(line);
 
 		if (skipping) {
 			if (line.find("#endif", 0) == 0) {
