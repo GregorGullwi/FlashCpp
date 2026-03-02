@@ -122,11 +122,11 @@ This means the compiler silently ignores base classes of member struct templates
 |------|------|--------|
 | `src/OverloadResolution.h` | 684 | ✅ Valid |
 | `src/OverloadResolution.h` | 700 | ✅ Valid |
-| `src/SymbolTable.h` | 484 | ✅ Valid |
+| `src/SymbolTable.h` | 484 | ✅ Fixed |
 
 - **OverloadResolution.h:684** – `findBinaryOperatorOverload()` returns the *first* member `operator` with a matching symbol, without verifying the parameter types. When a class defines both `operator+(const Foo&)` and `operator+(int)`, the wrong overload may be selected.
 - **OverloadResolution.h:700** – Free-function operator overloads (e.g., `operator+(A, B)` defined at namespace scope) are never searched. C++20 §12.4 [over.match.oper] requires that both member and non-member candidates be gathered before overload resolution.
-- **SymbolTable.h:484** – `get_overload()` always returns `overloads[0]` when multiple overloads exist, skipping exact-match and implicit-conversion ranking entirely. This affects every multi-overload function call.
+- ~~**SymbolTable.h:484** – `get_overload()` always returns `overloads[0]` when multiple overloads exist, skipping exact-match and implicit-conversion ranking entirely.~~ **Fixed**: `lookup_function()` now performs two-phase matching: (1) exact parameter count + type match, (2) parameter count match only (for implicit conversions), with fallback to first overload. This correctly selects `add(int,int)` over `add(double,double)` when called with int arguments.
 
 ---
 
@@ -427,7 +427,7 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | Declarator parsing gaps | 2 | 1 ✅ Valid, 1 ✅ Fixed |
 | Specifier propagation to struct decl | 1 | ✅ Fixed |
 | Constexpr evaluation gaps | 4 | ✅ Valid |
-| Overload resolution | 3 | ✅ Valid |
+| Overload resolution | 3 | 2 ✅ Valid, 1 ✅ Fixed |
 | Missing return diagnostic | 1 | ✅ Fixed |
 | Template deduction non-type params | 1 | ✅ Valid |
 | Phase labels (stale) | 2 | ✅ Already fixed |
@@ -447,6 +447,6 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | **Total** | **49** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
-**Fixed**: 19 file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2, nothrow type traits ×2, specifier propagation ×1)  
+**Fixed**: 20 file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2, nothrow type traits ×2, specifier propagation ×1, overload resolution ×1)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 20 items
+**Genuinely unimplemented**: 19 items

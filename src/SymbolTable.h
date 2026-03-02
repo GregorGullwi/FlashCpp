@@ -474,14 +474,41 @@ public:
 			return std::nullopt;
 		}
 
-		// If only one overload, return it (for now, we'll add signature checking later)
+		// If only one overload, return it
 		if (overloads.size() == 1) {
 			return overloads[0];
 		}
 
-		// Multiple overloads - need to find the best match
-		// For now, return the first one (we'll implement proper overload resolution later)
-		// TODO: Implement proper overload resolution with exact match, implicit conversions, etc.
+		// Multiple overloads - find the best match based on argument types
+		// Phase 1: Try exact parameter count and type match
+		for (const auto& overload : overloads) {
+			if (!overload.is<FunctionDeclarationNode>()) continue;
+			const auto& func_decl = overload.as<FunctionDeclarationNode>();
+			const auto& params = func_decl.parameter_nodes();
+			if (params.size() != arg_types.size()) continue;
+
+			bool exact_match = true;
+			for (size_t i = 0; i < params.size(); ++i) {
+				if (!params[i].is<DeclarationNode>()) { exact_match = false; break; }
+				const auto& param_decl = params[i].as<DeclarationNode>();
+				const auto& type_node = param_decl.type_node();
+				if (!type_node.is<TypeSpecifierNode>()) { exact_match = false; break; }
+				const auto& type_spec = type_node.as<TypeSpecifierNode>();
+				if (type_spec.type() != arg_types[i]) { exact_match = false; break; }
+			}
+			if (exact_match) return overload;
+		}
+
+		// Phase 2: Try parameter count match only (allows implicit conversions)
+		for (const auto& overload : overloads) {
+			if (!overload.is<FunctionDeclarationNode>()) continue;
+			const auto& func_decl = overload.as<FunctionDeclarationNode>();
+			if (func_decl.parameter_nodes().size() == arg_types.size()) {
+				return overload;
+			}
+		}
+
+		// Fallback: return the first overload
 		return overloads[0];
 	}
 
