@@ -123,7 +123,7 @@ private:
 
 
 struct CurrentFile {
-	std::string_view file_name;
+	std::string file_name;
 	long line_number = 0;
 	std::string timestamp;  // File modification timestamp for __TIMESTAMP__
 	long included_at_line = 0;  // Line number in parent file where this was #included (0 for main)
