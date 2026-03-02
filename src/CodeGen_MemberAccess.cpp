@@ -2678,12 +2678,10 @@
 									const StructMemberFunction* selected_op = nullptr;
 									for (const auto& mf : struct_info->member_functions) {
 										if (!mf.is_operator_overload || mf.operator_symbol != "=") continue;
-										// Skip implicit assignment operators
-										if (mf.function_decl.is<FunctionDeclarationNode>() &&
-											mf.function_decl.as<FunctionDeclarationNode>().is_implicit())
-											continue;
-										if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
-										const auto& params = mf.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+										const auto* func_node = get_function_decl_node(mf.function_decl);
+										if (!func_node) continue;
+										if (func_node->is_implicit()) continue;
+										const auto& params = func_node->parameter_nodes();
 										if (params.size() != 1 || !params[0].is<DeclarationNode>()) continue;
 										const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 									// Match: same base type, (for structs) same type_index, and same reference qualifier
@@ -2698,9 +2696,8 @@
 									if (!selected_op) {
 										for (const auto& mf : struct_info->member_functions) {
 											if (!mf.is_operator_overload || mf.operator_symbol != "=") continue;
-											if (mf.function_decl.is<FunctionDeclarationNode>() &&
-												mf.function_decl.as<FunctionDeclarationNode>().is_implicit())
-												continue;
+											const auto* func_node = get_function_decl_node(mf.function_decl);
+											if (func_node && func_node->is_implicit()) continue;
 											selected_op = &mf;
 											break;
 										}
