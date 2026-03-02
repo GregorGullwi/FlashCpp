@@ -2596,6 +2596,11 @@ ParseResult Parser::parse_struct_declaration()
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width
 		);
+
+		// Propagate function signature for function pointer members (needed for indirect call return types)
+		if (type_spec.type() == Type::FunctionPointer && type_spec.has_function_signature() && !struct_info->members.empty()) {
+			struct_info->members.back().function_signature = type_spec.function_signature();
+		}
 		
 		member_index++;
 	}
