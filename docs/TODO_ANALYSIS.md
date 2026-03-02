@@ -434,12 +434,12 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | Complex pack expansion | 1 | ✅ Valid |
 | Placement new multiple args | 1 | ✅ Valid |
 | Lambda-to-function-pointer type | 1 | ✅ Valid |
-| Copy constructor type_index check | 1 | ✅ Fixed |
+| Copy constructor type_index check | 1 | ✅ Fixed (also fixed `isOwnTypeIndex()` for template instantiations) |
 | `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
 | Template template parameter defaults | 1 | ✅ Fixed |
 | Concept template arguments | 1 | ✅ Fixed |
 | Array member length | 1 | ✅ Valid |
-| Type traits incomplete checks | 5 | ⚠️ Partially fixed (nothrow traits now use `is_noexcept` tracking; trivially copyable/trivial still need per-member checks) |
+| Type traits incomplete checks | 5 | ⚠️ Partially fixed (nothrow traits now use `is_noexcept` tracking with AST node fallback; noexcept propagates through all template parse paths and template instantiation; trivially copyable/trivial still need per-member checks) |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
 | Substitutor string-based arg parsing | 1 | ✅ Valid |
@@ -447,6 +447,6 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | **Total** | **49** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
-**Fixed**: 21 file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2, nothrow type traits ×2, specifier propagation ×1, overload resolution ×2)  
+**Fixed**: 21+ file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2, nothrow type traits ×2, specifier propagation ×1, overload resolution ×2, plus: noexcept propagation in 3 template parse paths, noexcept propagation in 3 template instantiation sites, `isOwnTypeIndex()` template instantiation fix)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
 **Genuinely unimplemented**: 18 items

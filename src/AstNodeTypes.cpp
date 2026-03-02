@@ -653,17 +653,16 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
     // Direct match (works for non-template types and properly substituted template params)
     if (param_type_index == *own_type_index_) return true;
     // Template instantiation fallback: check if param refers to our base template pattern
-    if (*own_type_index_ < gTypeInfo.size()) {
-        const TypeInfo& own_info = gTypeInfo[*own_type_index_];
-        if (own_info.isTemplateInstantiation() && param_type_index < gTypeInfo.size()) {
-            const TypeInfo& param_info = gTypeInfo[param_type_index];
-            // Both refer to the same base template name
-            if (own_info.baseTemplateName() == param_info.name()) return true;
-            // Or the param is also an instantiation of the same template
-            if (param_info.isTemplateInstantiation() &&
-                own_info.baseTemplateName() == param_info.baseTemplateName()) return true;
-        }
-    }
+    if (*own_type_index_ >= gTypeInfo.size() || param_type_index >= gTypeInfo.size())
+        return false;
+    const TypeInfo& own_info = gTypeInfo[*own_type_index_];
+    if (!own_info.isTemplateInstantiation()) return false;
+    const TypeInfo& param_info = gTypeInfo[param_type_index];
+    // Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
+    if (own_info.baseTemplateName() == param_info.name()) return true;
+    // Param is a different instantiation of the same template
+    if (param_info.isTemplateInstantiation() &&
+        own_info.baseTemplateName() == param_info.baseTemplateName()) return true;
     return false;
 }
 

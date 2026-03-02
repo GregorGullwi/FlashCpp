@@ -2005,7 +2005,7 @@
 		// (e.g., during template instantiation where the FunctionDeclarationNode has
 		// is_noexcept set but struct_info_ptr->member_functions.back().is_noexcept hasn't
 		// been updated yet).
-		auto isMemberNoexcept = [](const StructMemberFunction& mf) -> bool {
+		auto is_member_noexcept = [](const StructMemberFunction& mf) -> bool {
 			if (mf.is_noexcept) return true;
 			if (mf.function_decl.is<FunctionDeclarationNode>())
 				return mf.function_decl.as<FunctionDeclarationNode>().is_noexcept();
@@ -2565,7 +2565,7 @@
 									mf.function_decl.as<ConstructorDeclarationNode>().is_implicit())
 									continue;
 								found_user_ctor = true;
-								if (!isMemberNoexcept(mf)) {
+								if (!is_member_noexcept(mf)) {
 									all_noexcept = false;
 									break;
 								}
@@ -2665,7 +2665,7 @@
 											if (mf.function_decl.is<FunctionDeclarationNode>() &&
 												mf.function_decl.as<FunctionDeclarationNode>().is_implicit())
 												continue;
-											if (!isMemberNoexcept(mf)) {
+											if (!is_member_noexcept(mf)) {
 												all_noexcept = false;
 												break;
 											}
