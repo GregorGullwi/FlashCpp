@@ -1449,11 +1449,24 @@
 			func_ptr_reg = X64Register::RAX;
 			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 		} else {
-			// Function pointer is a variable name
+			// Function pointer is a variable name — check if it's a global variable
 			StringHandle var_name_handle = std::get<StringHandle>(op.function_pointer);
-			int func_ptr_offset = variable_scopes.back().variables[var_name_handle].offset;
 			func_ptr_reg = X64Register::RAX;
-			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
+			bool is_global = false;
+			for (const auto& global : global_variables_) {
+				if (global.name == var_name_handle) {
+					is_global = true;
+					break;
+				}
+			}
+			if (is_global) {
+				// Global function pointer: load via RIP-relative MOV + relocation
+				uint32_t reloc_offset = emitMovRipRelative(X64Register::RAX, 64);
+				pending_global_relocations_.push_back({reloc_offset, var_name_handle, IMAGE_REL_AMD64_REL32});
+			} else {
+				int func_ptr_offset = variable_scopes.back().variables[var_name_handle].offset;
+				emitMovFromFrame(func_ptr_reg, func_ptr_offset);
+			}
 		}
 		// Process arguments (if any)
 		for (size_t i = 0; i < op.arguments.size() && i < 4; ++i) {

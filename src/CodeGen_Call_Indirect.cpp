@@ -254,12 +254,8 @@
 			const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
 			object_name = object_ident.name();
 
-			// Look up the object in the symbol table
-			std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-			// Also check global symbol table if not found locally
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(object_name);
-			}
+			// Look up the object in both local and global symbol tables
+			std::optional<ASTNode> symbol = lookupSymbol(object_name);
 			if (symbol.has_value()) {
 				// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
 				object_decl = get_decl_from_symbol(*symbol);

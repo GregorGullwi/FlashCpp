@@ -309,6 +309,21 @@
 						op.reloc_target = StringTable::getOrInternStringHandle(target_id.name());
 						handled_as_reloc = true;
 					}
+					// Handle function pointer initializer: int (*fp)(int, int) = add;
+					if (!handled_as_reloc && type_node.is_function_pointer() && std::holds_alternative<IdentifierNode>(init_expr)) {
+						const auto& target_id = std::get<IdentifierNode>(init_expr);
+						const std::optional<ASTNode> func_symbol = lookupSymbol(target_id.name());
+						if (func_symbol.has_value() && func_symbol->is<FunctionDeclarationNode>()) {
+							const auto& func_decl = func_symbol->as<FunctionDeclarationNode>();
+							std::string_view mangled = generateMangledNameForCall(func_decl);
+							FLASH_LOG(Codegen, Debug, "Global function pointer '", decl.identifier_token().value(),
+							"' initialized with function '", target_id.name(), "' -> '", mangled, "'");
+							op.is_initialized = true;
+							op.init_data.resize(element_size, 0);
+							op.reloc_target = StringTable::getOrInternStringHandle(mangled);
+							handled_as_reloc = true;
+						}
+					}
 					if (!handled_as_reloc) {
 						unsigned long long value = evalToValue(init_node, type_node.type());
 						op.is_initialized = true;

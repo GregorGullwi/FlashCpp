@@ -978,16 +978,9 @@
 			// Generate FunctionAddress IR instruction
 			const auto& func_decl = symbol->as<FunctionDeclarationNode>();
 			
-			// Compute mangled name from the function declaration
-			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-			std::vector<TypeSpecifierNode> param_types;
-			for (const auto& param : func_decl.parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
-				}
-			}
-			std::string_view mangled = generateMangledNameForCall(
-				identifierNode.name(), return_type, param_types, func_decl.is_variadic(), "");
+			// Compute mangled name from the function declaration, respecting linkage
+			// (extern "C" functions must not be mangled)
+			std::string_view mangled = generateMangledNameForCall(func_decl);
 			
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
