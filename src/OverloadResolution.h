@@ -663,7 +663,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 // For binary operators like operator+, operator-, etc.
 // Returns the member function that overloads the given operator, or nullptr if not found
 // This handles the member function form: a.operator+(b)
-inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, std::string_view operator_symbol) {
+inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, std::string_view operator_symbol, Type right_type = Type::Void) {
 	// Only struct types can have operator overloads
 	if (left_type_index == 0 || left_type_index >= gTypeInfo.size()) {
 		return OperatorOverloadResult::no_overload();
@@ -684,14 +684,28 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 		if (!member_func.is_operator_overload || member_func.operator_symbol != operator_symbol)
 			continue;
 		if (!first_match) first_match = &member_func;
-		// Check if the single parameter type_index matches the right operand
+		// Check if the single parameter type matches the right operand
 		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
 			if (params.size() == 1 && params[0].is<DeclarationNode>()) {
 				const auto& param_type = params[0].as<DeclarationNode>().type_node();
-				if (param_type.is<TypeSpecifierNode>() &&
-					param_type.as<TypeSpecifierNode>().type_index() == right_type_index) {
-					return OperatorOverloadResult(&member_func);
+				if (param_type.is<TypeSpecifierNode>()) {
+					const auto& param_spec = param_type.as<TypeSpecifierNode>();
+					// For struct/enum types, match by type_index (which is meaningful)
+					// For primitive types, match by base Type enum (type_index is always 0)
+					bool type_matches = false;
+					if (param_spec.type() == Type::Struct || param_spec.type() == Type::Enum) {
+						type_matches = (param_spec.type_index() == right_type_index);
+					} else if (right_type != Type::Void) {
+						// Caller provided the actual Type — compare base types
+						type_matches = (param_spec.type() == right_type);
+					} else {
+						// No right_type info available — fall back to type_index comparison
+						type_matches = (param_spec.type_index() == right_type_index);
+					}
+					if (type_matches) {
+						return OperatorOverloadResult(&member_func);
+					}
 				}
 			}
 		}
@@ -704,7 +718,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	// Search base classes recursively
 	for (const auto& base_spec : left_struct_info->base_classes) {
 		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
-			auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_symbol);
+			auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_symbol, right_type);
 			if (result.has_overload) {
 				return result;
 			}
