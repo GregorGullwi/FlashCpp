@@ -2126,12 +2126,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
 				struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access,
 				                                 is_virtual, is_pure_virtual, is_override, is_final,
-				                                 member_quals.cv);
+				                                 member_quals.cv_qualifier);
 			} else {
 				// Add regular member function to struct
 				struct_ref.add_member_function(member_func_node, current_access,
 				                               is_virtual, is_pure_virtual, is_override, is_final,
-				                               member_quals.cv);
+				                               member_quals.cv_qualifier);
 			}
 		} else {
 			// This is a data member
@@ -2724,7 +2724,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Propagate const/volatile qualifiers from the AST node to StructTypeInfo
 			auto& registered_func = struct_info->member_functions.back();
 			registered_func.cv_qualifier = func_decl.cv_qualifier;
-			registered_func.is_noexcept = func_decl.is_noexcept;
 	}
 }
 

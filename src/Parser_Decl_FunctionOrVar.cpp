@@ -469,7 +469,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				/*is_final_func=*/false);
 			// Propagate const/volatile qualifiers to the newly added member
 			if (!struct_info->member_functions.empty()) {
-				struct_info->member_functions.back().cv_qualifier = member_quals.cv;
+				struct_info->member_functions.back().cv_qualifier = member_quals.cv_qualifier;
 			}
 
 			// Check for declaration only (;) or function definition ({)

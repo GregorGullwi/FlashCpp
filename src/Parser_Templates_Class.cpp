@@ -2116,7 +2116,7 @@ ParseResult Parser::parse_template_declaration() {
 						func_specs.is_pure_virtual(),
 						func_specs.is_override,
 						func_specs.is_final,
-						member_quals.cv
+						member_quals.cv_qualifier
 					);
 					
 					// Also add to StructTypeInfo so out-of-line definitions can find the declaration
@@ -2128,7 +2128,7 @@ ParseResult Parser::parse_template_declaration() {
 							func_specs.is_pure_virtual(), func_specs.is_override, func_specs.is_final);
 						// Set const/volatile on the last added member
 						if (!struct_info->member_functions.empty()) {
-							struct_info->member_functions.back().cv_qualifier = member_quals.cv;
+							struct_info->member_functions.back().cv_qualifier = member_quals.cv_qualifier;
 						}
 					}
 					

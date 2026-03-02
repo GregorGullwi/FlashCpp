@@ -647,9 +647,8 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
 // addMemberFunction / addConstructor / addDestructor / addOperatorOverload call
 // automatically picks up the flags — callers never need to do it manually.
 void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
-    if (mf.function_decl.is<FunctionDeclarationNode>()) {
-        const auto& fn = mf.function_decl.as<FunctionDeclarationNode>();
-        mf.is_noexcept = fn.is_noexcept();
+    if (const auto* fn = get_function_decl_node(mf.function_decl)) {
+        mf.is_noexcept = fn->is_noexcept();
     } else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
         const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
         mf.is_noexcept = ctor.is_noexcept();

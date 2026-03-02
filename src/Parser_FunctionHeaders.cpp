@@ -501,12 +501,12 @@ ParseResult Parser::parse_function_trailing_specifiers(
 
 		// Parse CV qualifiers (const, volatile)
 		if (token.kind() == "const"_tok) {
-			out_quals.cv |= CVQualifier::Const;
+			out_quals.cv_qualifier |= CVQualifier::Const;
 			advance();
 			continue;
 		}
 		if (token.kind() == "volatile"_tok) {
-			out_quals.cv |= CVQualifier::Volatile;
+			out_quals.cv_qualifier |= CVQualifier::Volatile;
 			advance();
 			continue;
 		}

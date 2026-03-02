@@ -682,8 +682,8 @@ public:
 		func_decl.is_final = is_final;
 		func_decl.cv_qualifier = cv_qualifier;
 		// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
-		if (function_decl.is<FunctionDeclarationNode>())
-			func_decl.is_noexcept = function_decl.as<FunctionDeclarationNode>().is_noexcept();
+		if (const auto* fn = get_function_decl_node(function_decl))
+			func_decl.is_noexcept = fn->is_noexcept();
 	}
 
 	void add_constructor(ASTNode constructor_decl, AccessSpecifier access) {
@@ -709,9 +709,9 @@ public:
 		func_decl.is_override = is_override;
 		func_decl.is_final = is_final;
 		func_decl.cv_qualifier = cv_qualifier;
-		// Extract noexcept from the underlying function declaration node
-		if (function_decl.is<FunctionDeclarationNode>())
-			func_decl.is_noexcept = function_decl.as<FunctionDeclarationNode>().is_noexcept();
+		// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
+		if (const auto* fn = get_function_decl_node(function_decl))
+			func_decl.is_noexcept = fn->is_noexcept();
 	}
 
 	// Friend declaration support

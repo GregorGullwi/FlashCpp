@@ -763,8 +763,8 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 		// Handle cv-qualifiers
 		if (token.type() == Token::Type::Keyword && 
 			(token.value() == "const" || token.value() == "volatile")) {
-			if (token.value() == "const") out_quals.cv |= CVQualifier::Const;
-			else out_quals.cv |= CVQualifier::Volatile;
+			if (token.value() == "const") out_quals.cv_qualifier |= CVQualifier::Const;
+			else out_quals.cv_qualifier |= CVQualifier::Volatile;
 			advance();
 			continue;
 		}
@@ -1131,7 +1131,7 @@ bool Parser::parse_static_member_function(
 	FLASH_LOG(Templates, Debug, "Adding static member function '", decl_node.identifier_token().value(), "' to struct '", StringTable::getStringView(struct_name_handle), "'");
 	struct_ref.add_member_function(member_func_node, current_access,
 	                               false, false, false, false,
-	                               member_quals.cv);
+	                               member_quals.cv_qualifier);
 	FLASH_LOG(Templates, Debug, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
 	
 	// Also register in StructTypeInfo
@@ -1143,7 +1143,7 @@ bool Parser::parse_static_member_function(
 		false,  // is_pure_virtual
 		false   // is_override
 	);
-	registered.cv_qualifier = member_quals.cv;
+	registered.cv_qualifier = member_quals.cv_qualifier;
 	// Extract noexcept from the underlying function declaration node
 	registered.is_noexcept = member_func_node.as<FunctionDeclarationNode>().is_noexcept();
 
