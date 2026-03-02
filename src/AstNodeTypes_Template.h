@@ -542,8 +542,7 @@ struct StructMemberFunctionDecl {
 	AccessSpecifier access;
 	bool is_constructor;
 	bool is_destructor;
-	bool is_operator_overload;
-	std::string_view operator_symbol;  // The operator symbol (e.g., "=", "+") if is_operator_overload is true
+	OverloadableOperator operator_kind;  // None for non-operators; non-None implies operator overload
 
 	// Virtual function support (Phase 2)
 	bool is_virtual = false;        // True if declared with 'virtual' keyword
@@ -557,14 +556,18 @@ struct StructMemberFunctionDecl {
 	// noexcept tracking for type traits
 	bool is_noexcept = false;       // True if declared noexcept (e.g., void foo() noexcept)
 
-	// Convenience accessors for CV qualifiers
+	// Convenience accessors
+	bool is_operator_overload() const { return operator_kind != OverloadableOperator::None; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
+	// Convenience accessor for operator symbol string (for logging/mangling)
+	std::string_view operator_symbol() const { return overloadableOperatorToString(operator_kind); }
+
 	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false,
-	                         bool is_op_overload = false, std::string_view op_symbol = "")
+	                         OverloadableOperator op_kind = OverloadableOperator::None)
 		: function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
-		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
+		  operator_kind(op_kind) {}
 };
 
 // Friend declaration node
@@ -693,17 +696,17 @@ public:
 	}
 
 	void add_destructor(ASTNode destructor_decl, AccessSpecifier access, bool is_virtual = false) {
-		auto& dtor_decl = member_functions_.emplace_back(destructor_decl, access, false, true, false, "");
+		auto& dtor_decl = member_functions_.emplace_back(destructor_decl, access, false, true);
 		dtor_decl.is_virtual = is_virtual;
 		// Extract noexcept from the destructor declaration node
 		dtor_decl.is_noexcept = destructor_decl.as<DestructorDeclarationNode>().is_noexcept();
 	}
 
-	void add_operator_overload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access,
+	void add_operator_overload(OverloadableOperator operator_kind, ASTNode function_decl, AccessSpecifier access,
 	                           bool is_virtual = false, bool is_pure_virtual = false,
 	                           bool is_override = false, bool is_final = false,
 	                           CVQualifier cv_qualifier = CVQualifier::None) {
-		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false, true, operator_symbol);
+		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false, operator_kind);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
 		func_decl.is_override = is_override;

@@ -193,17 +193,17 @@ struct StructTypeInfo {
 		StringBuilder sb;
 		sb.append('~').append(StringTable::getStringView(getName()));
 		StringHandle dtor_name_handle = StringTable::getOrInternStringHandle(sb.commit());
-		auto& dtor = member_functions.emplace_back(dtor_name_handle, destructor_decl, access, false, true, false, "");
+		auto& dtor = member_functions.emplace_back(dtor_name_handle, destructor_decl, access, false, true);
 		dtor.is_virtual = is_virtual;
 		propagateAstProperties(dtor);
 	}
 
-	void addOperatorOverload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
+	void addOperatorOverload(OverloadableOperator operator_kind, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
 	                         bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final_func = false) {
 		StringBuilder sb;
-		sb.append("operator").append(operator_symbol);
+		sb.append("operator").append(overloadableOperatorToString(operator_kind));
 		StringHandle op_name_handle = StringTable::getOrInternStringHandle(sb.commit());
-		auto& func = member_functions.emplace_back(op_name_handle, function_decl, access, false, false, true, operator_symbol);
+		auto& func = member_functions.emplace_back(op_name_handle, function_decl, access, false, false, operator_kind);
 		func.is_virtual = is_virtual;
 		func.is_pure_virtual = is_pure_virtual;
 		func.is_override = is_override;

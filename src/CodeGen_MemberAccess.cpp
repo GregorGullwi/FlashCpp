@@ -901,7 +901,7 @@
 			
 			// Check if it's a struct with operator-> overload
 			if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
-				auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "->");
+				auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::Arrow);
 				
 				if (overload_result.has_overload) {
 					// Found an overload! Call operator->() to get pointer, then access member
@@ -2718,7 +2718,7 @@
 									// Find the assignment operator selected by From type and check its noexcept
 									const StructMemberFunction* selected_op = nullptr;
 									for (const auto& mf : struct_info->member_functions) {
-										if (!mf.is_operator_overload || mf.operator_symbol != "=") continue;
+										if (!isAssignOperator(mf.operator_kind)) continue;
 										const auto* func_node = get_function_decl_node(mf.function_decl);
 										if (!func_node) continue;
 										if (func_node->is_implicit()) continue;
@@ -2736,7 +2736,7 @@
 									// Fallback: if no exact match, use first non-implicit operator=
 									if (!selected_op) {
 										for (const auto& mf : struct_info->member_functions) {
-											if (!mf.is_operator_overload || mf.operator_symbol != "=") continue;
+											if (!isAssignOperator(mf.operator_kind)) continue;
 											const auto* func_node = get_function_decl_node(mf.function_decl);
 											if (func_node && func_node->is_implicit()) continue;
 											selected_op = &mf;

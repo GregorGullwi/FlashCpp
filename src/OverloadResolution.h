@@ -626,7 +626,7 @@ struct OperatorOverloadResult {
 
 // Find operator overload in a struct type
 // Returns the member function that overloads the given operator, or nullptr if not found
-inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_index, std::string_view operator_symbol) {
+inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_index, OverloadableOperator operator_kind) {
 	// Only struct types can have operator overloads
 	if (operand_type_index == 0 || operand_type_index >= gTypeInfo.size()) {
 		return OperatorOverloadResult::no_overload();
@@ -641,7 +641,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 	
 	// Search for the operator overload in member functions
 	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.is_operator_overload && member_func.operator_symbol == operator_symbol) {
+		if (member_func.operator_kind == operator_kind) {
 			return OperatorOverloadResult(&member_func);
 		}
 	}
@@ -649,7 +649,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 	// Search base classes recursively
 	for (const auto& base_spec : struct_info->base_classes) {
 		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
-			auto result = findUnaryOperatorOverload(base_spec.type_index, operator_symbol);
+			auto result = findUnaryOperatorOverload(base_spec.type_index, operator_kind);
 			if (result.has_overload) {
 				return result;
 			}
@@ -663,7 +663,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 // For binary operators like operator+, operator-, etc.
 // Returns the member function that overloads the given operator, or nullptr if not found
 // This handles the member function form: a.operator+(b)
-inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, std::string_view operator_symbol, Type right_type = Type::Void) {
+inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type = Type::Void) {
 	// Only struct types can have operator overloads
 	if (left_type_index == 0 || left_type_index >= gTypeInfo.size()) {
 		return OperatorOverloadResult::no_overload();
@@ -681,8 +681,11 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	// Phase 1: Exact type match on the parameter's type_index
 	const StructMemberFunction* first_match = nullptr;
 	for (const auto& member_func : left_struct_info->member_functions) {
-		if (!member_func.is_operator_overload || member_func.operator_symbol != operator_symbol)
-			continue;
+		if (operator_kind == OverloadableOperator::Assign) {
+			if (!isAssignOperator(member_func.operator_kind)) continue;
+		} else {
+			if (member_func.operator_kind != operator_kind) continue;
+		}
 		if (!first_match) first_match = &member_func;
 		// Check if the single parameter type matches the right operand
 		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
@@ -718,7 +721,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	// Search base classes recursively
 	for (const auto& base_spec : left_struct_info->base_classes) {
 		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
-			auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_symbol, right_type);
+			auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_kind, right_type);
 			if (result.has_overload) {
 				return result;
 			}

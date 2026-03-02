@@ -1357,8 +1357,7 @@ ParseResult Parser::parse_lambda_expression() {
         AccessSpecifier::Public,
         false,  // not constructor
         false,  // not destructor
-        true,   // is operator overload
-        "()"    // operator symbol
+        OverloadableOperator::Call  // operator kind
     );
 
     closure_struct_info->member_functions.push_back(operator_call_member);

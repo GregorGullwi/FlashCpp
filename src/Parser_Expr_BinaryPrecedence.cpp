@@ -359,7 +359,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 						// Check member operator overload on the left operand
 						if (left_type_idx > 0) {
-							auto member_result = findBinaryOperatorOverload(left_type_idx, right_type_idx, op_symbol);
+							auto member_result = findBinaryOperatorOverload(left_type_idx, right_type_idx, stringToOverloadableOperator(op_symbol));
 							if (member_result.has_overload) {
 								operator_found = true;
 							}
@@ -1139,9 +1139,8 @@ bool Parser::parse_static_member_function(
 		decl_node.identifier_token().handle(),
 		member_func_node,
 		current_access,
-		false,  // is_virtual
-		false,  // is_pure_virtual
-		false   // is_override
+		false,  // is_constructor
+		false   // is_destructor
 	);
 	registered.cv_qualifier = member_quals.cv_qualifier;
 	// Extract noexcept from the underlying function declaration node

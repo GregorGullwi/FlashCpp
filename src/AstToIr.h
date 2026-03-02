@@ -283,7 +283,7 @@ private:
 	// Returns the IR operands {result_type, result_size, ret_var, result_type_index} on success,
 	// or std::nullopt if no overload was found.
 	std::optional<std::vector<IrOperand>> generateUnaryIncDecOverloadCall(
-		std::string_view op_name,  // "++" or "--"
+		OverloadableOperator op_kind,  // Increment or Decrement
 		Type operandType,
 		const std::vector<IrOperand>& operandIrOperands,
 		bool is_prefix
@@ -308,7 +308,7 @@ private:
 			const StructTypeInfo* struct_info = gTypeInfo[operand_type_index].getStructInfo();
 			if (struct_info) {
 				for (const auto& mf : struct_info->member_functions) {
-					if (mf.is_operator_overload && mf.operator_symbol == op_name) {
+					if (mf.operator_kind == op_kind) {
 						const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
 						if (fd.parameter_nodes().size() == expected_param_count) {
 							matched_func = &mf;
@@ -342,7 +342,7 @@ private:
 			param_types.push_back(int_type);
 		}
 		std::vector<std::string_view> empty_namespace;
-		auto op_func_name = StringBuilder().append("operator").append(op_name).commit();
+		auto op_func_name = StringBuilder().append("operator").append(overloadableOperatorToString(op_kind)).commit();
 		auto mangled_name = NameMangling::generateMangledName(
 			op_func_name, return_type, param_types, false,
 			struct_name, empty_namespace, Linkage::CPlusPlus

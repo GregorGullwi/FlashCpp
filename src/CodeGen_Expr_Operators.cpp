@@ -398,7 +398,7 @@
 			
 			if (lhs_type_index > 0 && lhs_type_index < gTypeInfo.size()) {
 				// Check for user-defined operator= that takes the RHS type
-				auto overload_result = findBinaryOperatorOverload(lhs_type_index, 0, "=");
+				auto overload_result = findBinaryOperatorOverload(lhs_type_index, 0, OverloadableOperator::Assign);
 				
 				if (overload_result.has_overload) {
 					const StructMemberFunction& member_func = *overload_result.member_overload;
@@ -520,7 +520,7 @@
 			
 			if (overloadable_binary_ops.count(op) > 0 && lhs_type_index > 0) {
 				// Check for operator overload
-				auto overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, op);
+				auto overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, stringToOverloadableOperator(op));
 				
 				if (overload_result.has_overload) {
 					// Found an overload! Generate a member function call instead of built-in operation
@@ -768,7 +768,7 @@
 						// Find operator<=> in member functions
 						const StructMemberFunction* spaceship_op = nullptr;
 						for (const auto& func : struct_info.member_functions) {
-							if (func.is_operator_overload && func.operator_symbol == "<=>") {
+							if (func.operator_kind == OverloadableOperator::Spaceship) {
 								spaceship_op = &func;
 								break;
 							}
