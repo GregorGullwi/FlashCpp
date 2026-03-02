@@ -768,7 +768,7 @@
 						// Find operator<=> in member functions
 						const StructMemberFunction* spaceship_op = nullptr;
 						for (const auto& func : struct_info.member_functions) {
-							if (func.is_operator_overload && func.operator_kind == OverloadableOperator::Spaceship) {
+							if (func.operator_kind == OverloadableOperator::Spaceship) {
 								spaceship_op = &func;
 								break;
 							}

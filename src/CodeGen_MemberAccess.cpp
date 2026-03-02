@@ -2718,7 +2718,7 @@
 									// Find the assignment operator selected by From type and check its noexcept
 									const StructMemberFunction* selected_op = nullptr;
 									for (const auto& mf : struct_info->member_functions) {
-										if (!mf.is_operator_overload || mf.operator_kind != OverloadableOperator::Assign) continue;
+										if (!isAssignOperator(mf.operator_kind)) continue;
 										const auto* func_node = get_function_decl_node(mf.function_decl);
 										if (!func_node) continue;
 										if (func_node->is_implicit()) continue;
@@ -2736,7 +2736,7 @@
 									// Fallback: if no exact match, use first non-implicit operator=
 									if (!selected_op) {
 										for (const auto& mf : struct_info->member_functions) {
-											if (!mf.is_operator_overload || mf.operator_kind != OverloadableOperator::Assign) continue;
+											if (!isAssignOperator(mf.operator_kind)) continue;
 											const auto* func_node = get_function_decl_node(mf.function_decl);
 											if (func_node && func_node->is_implicit()) continue;
 											selected_op = &mf;

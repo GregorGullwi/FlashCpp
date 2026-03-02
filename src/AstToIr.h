@@ -308,7 +308,7 @@ private:
 			const StructTypeInfo* struct_info = gTypeInfo[operand_type_index].getStructInfo();
 			if (struct_info) {
 				for (const auto& mf : struct_info->member_functions) {
-					if (mf.is_operator_overload && mf.operator_kind == op_kind) {
+					if (mf.operator_kind == op_kind) {
 						const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
 						if (fd.parameter_nodes().size() == expected_param_count) {
 							matched_func = &mf;

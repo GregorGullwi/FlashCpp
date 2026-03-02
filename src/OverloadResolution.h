@@ -641,7 +641,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 	
 	// Search for the operator overload in member functions
 	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.is_operator_overload && member_func.operator_kind == operator_kind) {
+		if (member_func.operator_kind == operator_kind) {
 			return OperatorOverloadResult(&member_func);
 		}
 	}
@@ -681,7 +681,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	// Phase 1: Exact type match on the parameter's type_index
 	const StructMemberFunction* first_match = nullptr;
 	for (const auto& member_func : left_struct_info->member_functions) {
-		if (!member_func.is_operator_overload || member_func.operator_kind != operator_kind)
+		if (member_func.operator_kind != operator_kind)
 			continue;
 		if (!first_match) first_match = &member_func;
 		// Check if the single parameter type matches the right operand

@@ -744,25 +744,24 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
 
 const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
     for (const auto& func : member_functions) {
-        if (func.is_operator_overload && func.operator_kind == OverloadableOperator::Assign) {
-            // Check if this is a copy assignment operator
-            // Copy assignment operator has signature: Type& operator=(const Type& other)
-            // or Type& operator=(Type& other)
+        if (!isAssignOperator(func.operator_kind)) continue;
+        // Fast path: already refined to CopyAssign
+        if (func.operator_kind == OverloadableOperator::CopyAssign) {
             const auto* func_node = get_function_decl_node(func.function_decl);
-            if (!func_node) continue;  // Skip if not a function (e.g., template that can't be resolved)
-            if (func_node->is_implicit()) continue;
-            const auto& params = func_node->parameter_nodes();
-
-            // Copy assignment operator has exactly one parameter (by reference)
-            if (params.size() == 1) {
-                const auto& param_decl = params[0].as<DeclarationNode>();
-                const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-                // Check if it's a reference to the same struct type (not rvalue reference)
-                if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct
-                    && isOwnTypeIndex(param_type.type_index())) {
-                    return &func;
-                }
+            if (func_node && !func_node->is_implicit()) return &func;
+            continue;
+        }
+        // Slow path: generic Assign — inspect parameter signature
+        const auto* func_node = get_function_decl_node(func.function_decl);
+        if (!func_node) continue;
+        if (func_node->is_implicit()) continue;
+        const auto& params = func_node->parameter_nodes();
+        if (params.size() == 1) {
+            const auto& param_decl = params[0].as<DeclarationNode>();
+            const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+            if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+                && isOwnTypeIndex(param_type.type_index())) {
+                return &func;
             }
         }
     }
@@ -771,24 +770,24 @@ const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
 
 const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
     for (const auto& func : member_functions) {
-        if (func.is_operator_overload && func.operator_kind == OverloadableOperator::Assign) {
-            // Check if this is a move assignment operator
-            // Move assignment operator has signature: Type& operator=(Type&& other)
+        if (!isAssignOperator(func.operator_kind)) continue;
+        // Fast path: already refined to MoveAssign
+        if (func.operator_kind == OverloadableOperator::MoveAssign) {
             const auto* func_node = get_function_decl_node(func.function_decl);
-            if (!func_node) continue;  // Skip if not a function (e.g., template that can't be resolved)
-            if (func_node->is_implicit()) continue;
-            const auto& params = func_node->parameter_nodes();
-
-            // Move assignment operator has exactly one parameter (by rvalue reference)
-            if (params.size() == 1) {
-                const auto& param_decl = params[0].as<DeclarationNode>();
-                const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-                // Check if it's an rvalue reference to the same struct type
-                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
-                    && isOwnTypeIndex(param_type.type_index())) {
-                    return &func;
-                }
+            if (func_node && !func_node->is_implicit()) return &func;
+            continue;
+        }
+        // Slow path: generic Assign — inspect parameter signature
+        const auto* func_node = get_function_decl_node(func.function_decl);
+        if (!func_node) continue;
+        if (func_node->is_implicit()) continue;
+        const auto& params = func_node->parameter_nodes();
+        if (params.size() == 1) {
+            const auto& param_decl = params[0].as<DeclarationNode>();
+            const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+            if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+                && isOwnTypeIndex(param_type.type_index())) {
+                return &func;
             }
         }
     }

@@ -4469,14 +4469,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_implicit(func_decl.is_implicit());
 
 				// Add the signature-only function to the instantiated struct
-				if (mem_func.is_operator_overload) {
+				if (mem_func.is_operator_overload()) {
 					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
 				} else {
 					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
 				}
 				
 				// Also add to struct_info so it can be found during codegen
-				if (mem_func.is_operator_overload) {
+				if (mem_func.is_operator_overload()) {
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 						mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
@@ -4720,7 +4720,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_implicit(func_decl.is_implicit());
 
 				// Add the substituted function to the instantiated struct
-				if (mem_func.is_operator_overload) {
+				if (mem_func.is_operator_overload()) {
 					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
 				} else {
 					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
@@ -4728,7 +4728,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Also add to struct_info so it can be found during codegen
 				// Phase 7B: Intern function name and use StringHandle overload
-				if (mem_func.is_operator_overload) {
+				if (mem_func.is_operator_overload()) {
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 						mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
@@ -4868,7 +4868,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_implicit(func_decl.is_implicit());
 
 				// Add the substituted function to the instantiated struct
-				if (mem_func.is_operator_overload) {
+				if (mem_func.is_operator_overload()) {
 					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
 				} else {
 					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
@@ -4876,7 +4876,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Also add to struct_info so it can be found during codegen
 				// Phase 7B: Intern function name and use StringHandle overload
-				if (mem_func.is_operator_overload) {
+				if (mem_func.is_operator_overload()) {
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 						mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {

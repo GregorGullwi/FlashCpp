@@ -1357,7 +1357,6 @@ ParseResult Parser::parse_lambda_expression() {
         AccessSpecifier::Public,
         false,  // not constructor
         false,  // not destructor
-        true,   // is operator overload
         OverloadableOperator::Call  // operator kind
     );
 

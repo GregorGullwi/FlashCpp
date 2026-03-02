@@ -1139,9 +1139,8 @@ bool Parser::parse_static_member_function(
 		decl_node.identifier_token().handle(),
 		member_func_node,
 		current_access,
-		false,  // is_virtual
-		false,  // is_pure_virtual
-		false   // is_override
+		false,  // is_constructor
+		false   // is_destructor
 	);
 	registered.cv_qualifier = member_quals.cv_qualifier;
 	// Extract noexcept from the underlying function declaration node

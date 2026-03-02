@@ -1,5 +1,6 @@
 #pragma once
 #include "AstNodeTypes_Core.h"
+#include <cassert>
 
 
 enum class TypeQualifier {
@@ -38,7 +39,9 @@ enum class ReferenceQualifier : uint8_t {
 enum class OverloadableOperator : uint8_t {
 	None = 0,          // Not an operator overload
 	// Assignment
-	Assign,            // =
+	Assign,            // = (generic, when copy/move not yet determined)
+	CopyAssign,        // = (copy assignment: operator=(const T&))
+	MoveAssign,        // = (move assignment: operator=(T&&))
 	// Arithmetic
 	Plus,              // +
 	Minus,             // -
@@ -96,6 +99,13 @@ enum class OverloadableOperator : uint8_t {
 	// Conversion operators use a type index, not this enum
 };
 
+// Returns true for Assign, CopyAssign, or MoveAssign
+inline bool isAssignOperator(OverloadableOperator op) {
+	return op == OverloadableOperator::Assign
+	    || op == OverloadableOperator::CopyAssign
+	    || op == OverloadableOperator::MoveAssign;
+}
+
 inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol) {
 	if (symbol.empty()) return OverloadableOperator::None;
 	// Single-character operators (most common first)
@@ -118,30 +128,38 @@ inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol
 		default: return OverloadableOperator::None;
 		}
 	}
-	// Two-character operators
+	// Two-character operators — switch on first char, then check second
 	if (symbol.size() == 2) {
-		if (symbol == "==") return OverloadableOperator::Equal;
-		if (symbol == "!=") return OverloadableOperator::NotEqual;
-		if (symbol == "<=") return OverloadableOperator::LessEqual;
-		if (symbol == ">=") return OverloadableOperator::GreaterEqual;
-		if (symbol == "<<") return OverloadableOperator::LeftShift;
-		if (symbol == ">>") return OverloadableOperator::RightShift;
-		if (symbol == "+=") return OverloadableOperator::PlusAssign;
-		if (symbol == "-=") return OverloadableOperator::MinusAssign;
-		if (symbol == "*=") return OverloadableOperator::MultiplyAssign;
-		if (symbol == "/=") return OverloadableOperator::DivideAssign;
-		if (symbol == "%=") return OverloadableOperator::ModuloAssign;
-		if (symbol == "&=") return OverloadableOperator::AndAssign;
-		if (symbol == "|=") return OverloadableOperator::OrAssign;
-		if (symbol == "^=") return OverloadableOperator::XorAssign;
-		if (symbol == "++") return OverloadableOperator::Increment;
-		if (symbol == "--") return OverloadableOperator::Decrement;
-		if (symbol == "->") return OverloadableOperator::Arrow;
-		if (symbol == "&&") return OverloadableOperator::LogicalAnd;
-		if (symbol == "||") return OverloadableOperator::LogicalOr;
-		if (symbol == "()") return OverloadableOperator::Call;
-		if (symbol == "[]") return OverloadableOperator::Subscript;
-		return OverloadableOperator::None;
+		switch (symbol[0]) {
+		case '=': return (symbol[1] == '=') ? OverloadableOperator::Equal : OverloadableOperator::None;
+		case '!': return (symbol[1] == '=') ? OverloadableOperator::NotEqual : OverloadableOperator::None;
+		case '<': return (symbol[1] == '=') ? OverloadableOperator::LessEqual
+		              : (symbol[1] == '<') ? OverloadableOperator::LeftShift
+		              : OverloadableOperator::None;
+		case '>': return (symbol[1] == '=') ? OverloadableOperator::GreaterEqual
+		              : (symbol[1] == '>') ? OverloadableOperator::RightShift
+		              : OverloadableOperator::None;
+		case '+': return (symbol[1] == '=') ? OverloadableOperator::PlusAssign
+		              : (symbol[1] == '+') ? OverloadableOperator::Increment
+		              : OverloadableOperator::None;
+		case '-': return (symbol[1] == '=') ? OverloadableOperator::MinusAssign
+		              : (symbol[1] == '-') ? OverloadableOperator::Decrement
+		              : (symbol[1] == '>') ? OverloadableOperator::Arrow
+		              : OverloadableOperator::None;
+		case '*': return (symbol[1] == '=') ? OverloadableOperator::MultiplyAssign : OverloadableOperator::None;
+		case '/': return (symbol[1] == '=') ? OverloadableOperator::DivideAssign : OverloadableOperator::None;
+		case '%': return (symbol[1] == '=') ? OverloadableOperator::ModuloAssign : OverloadableOperator::None;
+		case '&': return (symbol[1] == '=') ? OverloadableOperator::AndAssign
+		              : (symbol[1] == '&') ? OverloadableOperator::LogicalAnd
+		              : OverloadableOperator::None;
+		case '|': return (symbol[1] == '=') ? OverloadableOperator::OrAssign
+		              : (symbol[1] == '|') ? OverloadableOperator::LogicalOr
+		              : OverloadableOperator::None;
+		case '^': return (symbol[1] == '=') ? OverloadableOperator::XorAssign : OverloadableOperator::None;
+		case '(': return (symbol[1] == ')') ? OverloadableOperator::Call : OverloadableOperator::None;
+		case '[': return (symbol[1] == ']') ? OverloadableOperator::Subscript : OverloadableOperator::None;
+		default: return OverloadableOperator::None;
+		}
 	}
 	// Three-character operators
 	if (symbol == "<=>") return OverloadableOperator::Spaceship;
@@ -160,6 +178,8 @@ inline std::string_view overloadableOperatorToString(OverloadableOperator op) {
 	switch (op) {
 	case OverloadableOperator::None: return "";
 	case OverloadableOperator::Assign: return "=";
+	case OverloadableOperator::CopyAssign: return "=";
+	case OverloadableOperator::MoveAssign: return "=";
 	case OverloadableOperator::Plus: return "+";
 	case OverloadableOperator::Minus: return "-";
 	case OverloadableOperator::Multiply: return "*";
@@ -203,6 +223,7 @@ inline std::string_view overloadableOperatorToString(OverloadableOperator op) {
 	case OverloadableOperator::NewArray: return "new[]";
 	case OverloadableOperator::DeleteArray: return "delete[]";
 	}
+	assert(false && "Unhandled OverloadableOperator value");
 	return "";
 }
 
@@ -483,8 +504,7 @@ struct StructMemberFunction {
 	AccessSpecifier access; // Access level (public/protected/private)
 	bool is_constructor;    // True if this is a constructor
 	bool is_destructor;     // True if this is a destructor
-	bool is_operator_overload; // True if this is an operator overload (operator=, operator+, etc.)
-	OverloadableOperator operator_kind; // The operator kind if is_operator_overload is true
+	OverloadableOperator operator_kind; // None for non-operators; non-None implies operator overload
 
 	// Virtual function support (Phase 2)
 	bool is_virtual = false;        // True if declared with 'virtual' keyword
@@ -499,7 +519,8 @@ struct StructMemberFunction {
 	// noexcept tracking for type traits
 	bool is_noexcept = false;       // True if declared noexcept (e.g., void foo() noexcept)
 
-	// Convenience accessors for CV qualifiers
+	// Convenience accessors
+	bool is_operator_overload() const { return operator_kind != OverloadableOperator::None; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
@@ -507,10 +528,10 @@ struct StructMemberFunction {
 	std::string_view operator_symbol() const { return overloadableOperatorToString(operator_kind); }
 
 	StructMemberFunction(StringHandle n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
-	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false,
+	                     bool is_ctor = false, bool is_dtor = false,
 	                     OverloadableOperator op_kind = OverloadableOperator::None)
 		: name(n), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
-		  is_operator_overload(is_op_overload), operator_kind(op_kind) {}
+		  operator_kind(op_kind) {}
 	
 	StringHandle getName() const {
 		return name;

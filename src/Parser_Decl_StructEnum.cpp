@@ -2112,9 +2112,17 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Extract the operator symbol (e.g., "operator=" -> "=") and convert to enum
 				std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
 				OverloadableOperator op_kind = stringToOverloadableOperator(operator_symbol);
-				struct_ref.add_operator_overload(op_kind, member_func_node, current_access,
-				                                 is_virtual, is_pure_virtual, is_override, is_final,
-				                                 member_quals.cv_qualifier);
+				if (op_kind != OverloadableOperator::None) {
+					// Built-in operator overload (=, +, ==, etc.)
+					struct_ref.add_operator_overload(op_kind, member_func_node, current_access,
+					                                 is_virtual, is_pure_virtual, is_override, is_final,
+					                                 member_quals.cv_qualifier);
+				} else {
+					// Conversion operator (e.g., "operator int", "operator bool") — add as regular member function
+					struct_ref.add_member_function(member_func_node, current_access,
+					                               is_virtual, is_pure_virtual, is_override, is_final,
+					                               member_quals.cv_qualifier);
+				}
 			} else {
 				// Add regular member function to struct
 				struct_ref.add_member_function(member_func_node, current_access,
@@ -2646,10 +2654,27 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				func_decl.is_virtual
 			);
 			has_user_defined_destructor = true;
-		} else if (func_decl.is_operator_overload) {
+		} else if (func_decl.is_operator_overload()) {
+			// Refine generic Assign into CopyAssign or MoveAssign based on parameter type
+			OverloadableOperator refined_kind = func_decl.operator_kind;
+			if (refined_kind == OverloadableOperator::Assign) {
+				if (func_decl.function_declaration.is<FunctionDeclarationNode>()) {
+					const auto& func_node = func_decl.function_declaration.as<FunctionDeclarationNode>();
+					const auto& params = func_node.parameter_nodes();
+					if (params.size() == 1 && params[0].is<DeclarationNode>()) {
+						const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+							refined_kind = OverloadableOperator::CopyAssign;
+						} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+							refined_kind = OverloadableOperator::MoveAssign;
+						}
+					}
+				}
+			}
+
 			// Operator overload
 			struct_info->addOperatorOverload(
-				func_decl.operator_kind,
+				refined_kind,
 				func_decl.function_declaration,
 				func_decl.access,
 				func_decl.is_virtual,
@@ -2659,24 +2684,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			);
 
 			// Check if this is a spaceship operator
-			if (func_decl.operator_kind == OverloadableOperator::Spaceship) {
+			if (refined_kind == OverloadableOperator::Spaceship) {
 				has_user_defined_spaceship = true;
 			}
 
 			// Check if this is a copy or move assignment operator
-			if (func_decl.operator_kind == OverloadableOperator::Assign) {
-				const auto& func_node = func_decl.function_declaration.as<FunctionDeclarationNode>();
-				const auto& params = func_node.parameter_nodes();
-				if (params.size() == 1) {
-					const auto& param_decl = params[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-					if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-						has_user_defined_copy_assignment = true;
-					} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-						has_user_defined_move_assignment = true;
-					}
-				}
+			if (refined_kind == OverloadableOperator::CopyAssign) {
+				has_user_defined_copy_assignment = true;
+			} else if (refined_kind == OverloadableOperator::MoveAssign) {
+				has_user_defined_move_assignment = true;
 			}
 		} else {
 			// Regular member function or template member function
@@ -2964,13 +2980,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Add the operator= to the struct type info
 		struct_info->addOperatorOverload(
-			OverloadableOperator::Assign,
+			OverloadableOperator::CopyAssign,
 			func_node,
 			AccessSpecifier::Public
 		);
 
 		// Add the operator= to the struct node
-		struct_ref.add_operator_overload(OverloadableOperator::Assign, func_node, AccessSpecifier::Public);
+		struct_ref.add_operator_overload(OverloadableOperator::CopyAssign, func_node, AccessSpecifier::Public);
 	}
 
 	// Generate move constructor if no user-defined special member functions exist
@@ -3079,13 +3095,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Add the move assignment operator to the struct type info
 		struct_info->addOperatorOverload(
-			OverloadableOperator::Assign,
+			OverloadableOperator::MoveAssign,
 			move_func_node,
 			AccessSpecifier::Public
 		);
 
 		// Add the move assignment operator to the struct node
-		struct_ref.add_operator_overload(OverloadableOperator::Assign, move_func_node, AccessSpecifier::Public);
+		struct_ref.add_operator_overload(OverloadableOperator::MoveAssign, move_func_node, AccessSpecifier::Public);
 	}
 
 	// Generate comparison operators from operator<=> if defined
@@ -3152,7 +3168,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// First, find the spaceship operator function in the struct
 			const FunctionDeclarationNode* spaceship_func = nullptr;
 			for (const auto& member_func : struct_ref.member_functions()) {
-				if (member_func.is_operator_overload && member_func.operator_kind == OverloadableOperator::Spaceship) {
+				if (member_func.operator_kind == OverloadableOperator::Spaceship) {
 					spaceship_func = &(member_func.function_declaration.as<FunctionDeclarationNode>());
 					break;
 				}
