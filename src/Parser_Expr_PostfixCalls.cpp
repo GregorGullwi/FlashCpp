@@ -1,20 +1,16 @@
 
 // Helper: resolve object type from expression and try to instantiate member function template.
+// Uses get_expression_type() to handle any expression (identifiers, function calls, member access, etc.).
 // Returns the instantiated function node if successful, nullopt otherwise.
 std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	const std::optional<ASTNode>& object_expr, std::string_view member_name,
 	const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args,
 	const std::vector<TypeSpecifierNode>& arg_types)
 {
-	if (!object_expr.has_value() || !object_expr->is<ExpressionNode>()) return std::nullopt;
-	const ExpressionNode& expr = object_expr->as<ExpressionNode>();
-	if (!std::holds_alternative<IdentifierNode>(expr)) return std::nullopt;
-	const auto& ident = std::get<IdentifierNode>(expr);
-	auto symbol = lookup_symbol(ident.nameHandle());
-	if (!symbol.has_value()) return std::nullopt;
-	const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-	if (!decl) return std::nullopt;
-	const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+	if (!object_expr.has_value()) return std::nullopt;
+	auto type_opt = get_expression_type(*object_expr);
+	if (!type_opt.has_value()) return std::nullopt;
+	const auto& type_spec = *type_opt;
 	if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return std::nullopt;
 	TypeIndex type_idx = type_spec.type_index();
 	if (type_idx >= gTypeInfo.size()) return std::nullopt;
