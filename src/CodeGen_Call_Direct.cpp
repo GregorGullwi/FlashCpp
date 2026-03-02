@@ -88,8 +88,8 @@
 		}
 
 		// Check if this is a function pointer call
-		// Look up the identifier in the symbol table to see if it's a function pointer variable
-		const std::optional<ASTNode> func_symbol = symbol_table.lookup(func_name_view);
+		// Look up the identifier in both local and global symbol tables
+		const std::optional<ASTNode> func_symbol = lookupSymbol(func_name_view);
 		const DeclarationNode* func_ptr_decl = nullptr;
 		
 		// Check for DeclarationNode directly

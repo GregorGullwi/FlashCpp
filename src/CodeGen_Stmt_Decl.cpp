@@ -309,6 +309,37 @@
 						op.reloc_target = StringTable::getOrInternStringHandle(target_id.name());
 						handled_as_reloc = true;
 					}
+					// Handle function pointer initializer:
+					//   int (*fp)(int, int) = add;          — from function name
+					//   int (*fp2)(int, int) = fp;          — from another global function pointer
+					if (!handled_as_reloc && type_node.is_function_pointer() && std::holds_alternative<IdentifierNode>(init_expr)) {
+						const auto& target_id = std::get<IdentifierNode>(init_expr);
+						const std::optional<ASTNode> func_symbol = lookupSymbol(target_id.name());
+						StringHandle reloc;
+						if (func_symbol.has_value() && func_symbol->is<FunctionDeclarationNode>()) {
+							// Direct function name: int (*fp)(int,int) = add;
+							const auto& func_decl = func_symbol->as<FunctionDeclarationNode>();
+							reloc = StringTable::getOrInternStringHandle(generateMangledNameForCall(func_decl));
+							FLASH_LOG(Codegen, Debug, "Global function pointer '", decl.identifier_token().value(),
+							"' initialized with function '", target_id.name(), "' -> '", StringTable::getStringView(reloc), "'");
+						} else {
+							// Possibly another global function pointer variable: int (*fp2)(int,int) = fp1;
+							auto it = global_func_ptr_reloc_map_.find(
+								StringTable::getOrInternStringHandle(target_id.name()));
+							if (it != global_func_ptr_reloc_map_.end()) {
+								reloc = it->second;
+								FLASH_LOG(Codegen, Debug, "Global function pointer '", decl.identifier_token().value(),
+								"' copy-initialized from '", target_id.name(), "' -> '", StringTable::getStringView(reloc), "'");
+							}
+						}
+						if (reloc.isValid()) {
+							op.is_initialized = true;
+							op.init_data.resize(element_size, 0);
+							op.reloc_target = reloc;
+							global_func_ptr_reloc_map_[var_name] = reloc;
+							handled_as_reloc = true;
+						}
+					}
 					if (!handled_as_reloc) {
 						unsigned long long value = evalToValue(init_node, type_node.type());
 						op.is_initialized = true;
