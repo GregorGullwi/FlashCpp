@@ -307,6 +307,7 @@ private:
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	static std::string_view get_identifier_name(const ASTNode& node);
 
 	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);

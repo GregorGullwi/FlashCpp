@@ -2,6 +2,137 @@
 #include <limits>
 
 namespace ConstExpr {
+namespace {
+	bool isSignedIntegralType(Type type) {
+		switch (type) {
+			case Type::Char:
+			case Type::Short:
+			case Type::Int:
+			case Type::Long:
+			case Type::LongLong:
+			case Type::WChar:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	bool isUnsignedIntegralType(Type type) {
+		switch (type) {
+			case Type::UnsignedChar:
+			case Type::Char8:
+			case Type::Char16:
+			case Type::Char32:
+			case Type::UnsignedShort:
+			case Type::UnsignedInt:
+			case Type::UnsignedLong:
+			case Type::UnsignedLongLong:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	bool isFloatingType(Type type) {
+		return type == Type::Float || type == Type::Double || type == Type::LongDouble;
+	}
+
+	int getParameterMatchScore(Type param_type, const EvalResult& arg_value) {
+		if (std::holds_alternative<double>(arg_value.value)) {
+			if (isFloatingType(param_type)) return 4;
+			if (isSignedIntegralType(param_type) || isUnsignedIntegralType(param_type)) return 2;
+			if (param_type == Type::Bool) return 1;
+			return -1;
+		}
+		if (std::holds_alternative<long long>(arg_value.value)) {
+			if (isSignedIntegralType(param_type)) return 4;
+			if (isUnsignedIntegralType(param_type)) return 2;
+			if (isFloatingType(param_type)) return 1;
+			if (param_type == Type::Bool) return 1;
+			return -1;
+		}
+		if (std::holds_alternative<unsigned long long>(arg_value.value)) {
+			if (isUnsignedIntegralType(param_type)) return 4;
+			if (isSignedIntegralType(param_type)) return 2;
+			if (isFloatingType(param_type)) return 1;
+			if (param_type == Type::Bool) return 1;
+			return -1;
+		}
+		// bool
+		if (param_type == Type::Bool) return 4;
+		if (isSignedIntegralType(param_type) || isUnsignedIntegralType(param_type)) return 2;
+		if (isFloatingType(param_type)) return 1;
+		return -1;
+	}
+
+	const ConstructorDeclarationNode* findMatchingConstructorForConstexpr(
+		const StructTypeInfo* struct_info,
+		const std::vector<EvalResult>& evaluated_args,
+		bool& ambiguous_match) {
+		const ConstructorDeclarationNode* best_ctor = nullptr;
+		int best_score = -1;
+		ambiguous_match = false;
+
+		for (const auto& member_func : struct_info->member_functions) {
+			if (!member_func.is_constructor) continue;
+			if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
+			const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+			const auto& params = ctor.parameter_nodes();
+			if (params.size() != evaluated_args.size()) continue;
+
+			int score = 0;
+			bool compatible = true;
+			for (size_t i = 0; i < params.size(); ++i) {
+				if (!params[i].is<DeclarationNode>()) {
+					compatible = false;
+					break;
+				}
+				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+				const ASTNode& type_node = param_decl.type_node();
+				if (!type_node.is<TypeSpecifierNode>()) {
+					compatible = false;
+					break;
+				}
+
+				const TypeSpecifierNode& param_type = type_node.as<TypeSpecifierNode>();
+				int param_score = getParameterMatchScore(param_type.type(), evaluated_args[i]);
+				if (param_score < 0) {
+					compatible = false;
+					break;
+				}
+				score += param_score;
+			}
+
+			if (!compatible) {
+				continue;
+			}
+
+			if (score > best_score) {
+				best_score = score;
+				best_ctor = &ctor;
+				ambiguous_match = false;
+			} else if (score == best_score && best_ctor) {
+				ambiguous_match = true;
+			}
+		}
+
+		return best_ctor;
+	}
+}
+
+std::string_view Evaluator::get_identifier_name(const ASTNode& node) {
+	if (node.is<ExpressionNode>()) {
+		const ExpressionNode& expr_node = node.as<ExpressionNode>();
+		if (std::holds_alternative<IdentifierNode>(expr_node)) {
+			return std::get<IdentifierNode>(expr_node).name();
+		}
+		return {};
+	}
+	if (node.is<IdentifierNode>()) {
+		return node.as<IdentifierNode>().name();
+	}
+	return {};
+}
 
 EvalResult Evaluator::evaluate_expression_with_bindings(
 	const ASTNode& expr_node,
@@ -1020,13 +1151,10 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	// - Extract the member value from the initializer expression
 	
 	// The object might be wrapped in an ExpressionNode, so unwrap it
-	// Extract the identifier name
-	std::string_view var_name;
-	
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		// The ExpressionNode uses std::variant, check if it contains an IdentifierNode
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
+	std::string_view var_name = get_identifier_name(object_expr);
+	if (var_name.empty()) {
+		if (object_expr.is<ExpressionNode>()) {
+			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
 			// Check for ArraySubscriptNode
 			if (std::holds_alternative<ArraySubscriptNode>(expr_node)) {
 				// Array subscript on struct - evaluate array element then access member
@@ -1037,14 +1165,7 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr_node);
 				return evaluate_function_call_member_access(func_call, member_name, context);
 			}
-			return EvalResult::error("Complex member access expressions not yet supported in constant expressions");
 		}
-		const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
-		var_name = id_node.name();
-	} else if (object_expr.is<IdentifierNode>()) {
-		const IdentifierNode& id_node = object_expr.as<IdentifierNode>();
-		var_name = id_node.name();
-	} else {
 		return EvalResult::error("Complex member access expressions not yet supported in constant expressions");
 	}
 	
@@ -1494,16 +1615,8 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 	}
 
 	const ASTNode& array_expr = subscript.array_expr();
-	std::string_view array_name;
-	if (array_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = array_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return EvalResult::error("Array subscript followed by member access requires identifier base");
-		}
-		array_name = std::get<IdentifierNode>(expr_node).name();
-	} else if (array_expr.is<IdentifierNode>()) {
-		array_name = array_expr.as<IdentifierNode>().name();
-	} else {
+	std::string_view array_name = get_identifier_name(array_expr);
+	if (array_name.empty()) {
 		return EvalResult::error("Array subscript followed by member access requires identifier base");
 	}
 
@@ -1570,35 +1683,38 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
 	}
 
-	std::unordered_map<std::string_view, EvalResult> param_bindings;
 	const auto& ctor_args = ctor_call.arguments();
-	const ConstructorDeclarationNode* matching_ctor = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (!member_func.is_constructor) continue;
-		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == ctor_args.size()) {
-			matching_ctor = &ctor;
-			break;
+	std::vector<EvalResult> evaluated_ctor_args;
+	evaluated_ctor_args.reserve(ctor_args.size());
+	for (const auto& ctor_arg : ctor_args) {
+		auto arg_result = evaluate(ctor_arg, context);
+		if (!arg_result.success()) {
+			return arg_result;
+		}
+		evaluated_ctor_args.push_back(arg_result);
+	}
+
+	bool ambiguous_ctor_match = false;
+	const ConstructorDeclarationNode* matching_ctor =
+		findMatchingConstructorForConstexpr(struct_info, evaluated_ctor_args, ambiguous_ctor_match);
+	if (ambiguous_ctor_match) {
+		return EvalResult::error("Ambiguous constructor match in constexpr array subscript member access");
+	}
+	if (!matching_ctor) {
+		return EvalResult::error("No matching constructor found for constexpr array element");
+	}
+
+	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+	const auto& params = matching_ctor->parameter_nodes();
+	for (size_t i = 0; i < params.size() && i < evaluated_ctor_args.size(); ++i) {
+		if (params[i].is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+			std::string_view param_name = param_decl.identifier_token().value();
+			ctor_param_bindings[param_name] = evaluated_ctor_args[i];
 		}
 	}
 
-	if (matching_ctor) {
-		const auto& params = matching_ctor->parameter_nodes();
-		for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
-			if (params[i].is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-				std::string_view param_name = param_decl.identifier_token().value();
-				auto arg_result = evaluate(ctor_args[i], context);
-				if (!arg_result.success()) {
-					return arg_result;
-				}
-				param_bindings[param_name] = arg_result;
-			}
-		}
-	}
-
-	return evaluate_expression_with_bindings(member_init_opt.value(), param_bindings, context);
+	return evaluate_expression_with_bindings(member_init_opt.value(), ctor_param_bindings, context);
 }
 
 // Helper function to look up and evaluate static member from struct info
