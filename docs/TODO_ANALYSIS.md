@@ -328,77 +328,13 @@ The comment asks whether this special case is still necessary. The original reas
 
 | File | Line | Status |
 |------|------|--------|
-| `src/ExpressionSubstitutor.cpp` | 1033–1145 | ✅ Valid |
+| `src/ExpressionSubstitutor.cpp` | 1033–1102 | ✅ Fixed |
 
-`substituteInType()` recovers template arguments by parsing the type's string name out of `gTypeInfo`:
+**Fixed (2026-03-02)**: Replaced string-based template argument parsing in `substituteInType()` with structured metadata from `TypeInfo::isTemplateInstantiation()`, `baseTemplateName()`, and `templateArgs()`.
 
-```cpp
-size_t template_start = type_name.find('<');
-// ...
-std::string_view args_str = type_name.substr(template_start + 1, ...);
-// split on commas, look up each substring in gTypesByName
-```
+The new path converts stored `TemplateArgInfo` records into `TemplateTypeArg`, substitutes dependent arguments from `param_map_`, and instantiates using that argument vector. This removes fragile splitting/parsing of template type names and handles built-in argument types (e.g., `bool`) without relying on `gTypesByName`.
 
-This has two problems:
-
-1. **Built-in types are invisible.** `gTypesByName` only contains user-defined types (structs, enums, typedefs). Built-in types like `bool`, `int`, `double` are in `gNativeTypes` (keyed by `Type` enum, not by name). So `integral_constant<bool, N>` fails because `"bool"` is not found in `gTypesByName`, causing the entire substitution to be silently skipped.
-
-2. **String parsing is fragile.** Splitting on `<`, `>`, and `,` breaks for nested templates, non-type arguments containing operators, and types with spaces in their names (`unsigned long long`). The same file already has the correct pattern in `substituteQualifiedIdentifier()` (lines 807–854), which uses `TypeInfo::isTemplateInstantiation()` and `TypeInfo::templateArgs()` to access structured `TemplateTypeArg` objects. Each stored arg has a `dependent_name` field that can be matched against `param_map_` without any string parsing.
-
-### Recommended fix
-
-Rewrite the `Type::Struct` branch of `substituteInType()` to follow the `substituteQualifiedIdentifier()` pattern:
-
-```cpp
-if (type_info.isTemplateInstantiation()) {
-    std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
-    const auto& stored_args = type_info.templateArgs();
-    std::vector<TemplateTypeArg> substituted_args;
-    for (const auto& arg : stored_args) {
-        // Check dependent_name against param_map_, same as substituteQualifiedIdentifier
-        if (arg.dependent_name.isValid()) {
-            auto it = param_map_.find(StringTable::getStringView(arg.dependent_name));
-            if (it != param_map_.end()) { substituted_args.push_back(it->second); continue; }
-        }
-        // Check type_index name against param_map_
-        // ...
-        substituted_args.push_back(arg);  // concrete arg, keep as-is
-    }
-    // instantiate with substituted_args
-}
-```
-
-This eliminates string parsing entirely, handles multi-word built-in types, non-type template arguments, and nested templates correctly.
-
-### Test case
-
-The following program should compile and return 42, but currently fails because the substitutor cannot resolve `bool` as a template argument when substituting the base class `integral_constant<bool, true>`:
-
-```cpp
-// tests/test_template_builtin_arg_ret42.cpp
-template<typename T, T V>
-struct integral_constant {
-    static constexpr T value = V;
-};
-
-using true_type = integral_constant<bool, true>;
-
-template<typename T>
-struct is_integer {
-    static constexpr bool value = false;
-};
-
-template<>
-struct is_integer<int> {
-    static constexpr bool value = true;
-};
-
-int main() {
-    if (is_integer<int>::value)
-        return 42;
-    return 0;
-}
-```
+Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 
 ---
 
@@ -439,14 +375,14 @@ int main() {
 | Type traits incomplete checks | 5 | ✅ Fixed (trivially copyable/trivial now recurse into base classes; nothrow traits use is_noexcept) |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
-| Substitutor string-based arg parsing | 1 | ✅ Valid |
+| Substitutor string-based arg parsing | 1 | ✅ Fixed |
 | Global function pointer initialization | 1 | ✅ Already works |
 | **Total** | **49** | |
 
 **Stale**: 0 items  
-**Fixed**: 34+ entries (all previous fixes plus: constexpr this->member assignment, constexpr `arr[0].member` evaluation, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits)  
+**Fixed**: 35+ entries (all previous fixes plus: constexpr this->member assignment, constexpr `arr[0].member` evaluation, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits, and structured substitutor template-arg handling)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 10 items (complex constexpr patterns, pack expansion, lambda-to-funcptr type, array member length, Type::Pointer enum, substitutor string parsing, template deduction non-type params)
+**Genuinely unimplemented**: 9 items (complex constexpr patterns, pack expansion, lambda-to-funcptr type, array member length, Type::Pointer enum, template deduction non-type params)
 
 ## Existing issues encountered while implementing
 
@@ -454,3 +390,4 @@ int main() {
 - Global `constexpr` arrays of struct objects (e.g., `constexpr Item items[2] = {Item(10), Item(42)};`) still trigger the Codegen warning `Non-constant initializer in global variable` from `src/CodeGen_Stmt_Decl.cpp:100`, even though dependent constant expressions like `constexpr int extracted = items[1].value;` now evaluate correctly.
 - With overloaded constructors sharing parameter count (e.g., `constexpr Item(double)`, `constexpr Item(char)`, and non-constexpr `Item(int)`), `constexpr` extraction through `arr[index].member` can still be reported as non-constant for globals in current codegen/evaluator integration (observed in `tests/test_constexpr_array_subscript_member_ret42.cpp` as warning on global `extracted`).
 - Constructor matching in constexpr array-member extraction currently uses parameter-count filtering with ambiguity rejection. When multiple same-count overloads remain viable, evaluation falls back to a generic "No matching constructor found for constexpr array element" error instead of emitting a dedicated ambiguity diagnostic.
+- `tests/test_integral_constant_pattern_ret42.cpp` still emits pre-existing codegen diagnostics (`Parser returned size_bits=0` and repeated `handleLValueCompoundAssignment: FAIL`) despite producing the correct runtime result.
