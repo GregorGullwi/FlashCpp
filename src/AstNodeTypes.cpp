@@ -631,6 +631,12 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     return nullptr;
 }
 
+// Helper to check if a parameter's type_index matches this struct's own type_index
+bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
+    auto it = gTypesByName.find(this->name);
+    return it != gTypesByName.end() && param_type_index == it->second->type_index_;
+}
+
 const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
     for (const auto& func : member_functions) {
         if (func.is_constructor) {
@@ -643,12 +649,9 @@ const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
                 const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
                 // Check if it's a reference to the same struct type
-                if (param_type.is_reference() && param_type.type() == Type::Struct) {
-                    // Verify that the parameter's type_index matches this struct's type_index
-                    auto it = gTypesByName.find(this->name);
-                    if (it != gTypesByName.end() && param_type.type_index() == it->second->type_index_) {
-                        return &func;
-                    }
+                if (param_type.is_reference() && param_type.type() == Type::Struct
+                    && isOwnTypeIndex(param_type.type_index())) {
+                    return &func;
                 }
             }
         }
@@ -668,12 +671,9 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
                 const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
                 // Check if it's an rvalue reference to the same struct type
-                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-                    // Verify that the parameter's type_index matches this struct's type_index
-                    auto it = gTypesByName.find(this->name);
-                    if (it != gTypesByName.end() && param_type.type_index() == it->second->type_index_) {
-                        return &func;
-                    }
+                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+                    && isOwnTypeIndex(param_type.type_index())) {
+                    return &func;
                 }
             }
         }
