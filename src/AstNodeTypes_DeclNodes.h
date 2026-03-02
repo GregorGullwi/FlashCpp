@@ -58,6 +58,10 @@ struct StructTypeInfo {
 	// Error tracking for semantic errors detected during finalization
 	std::string finalization_error_;  // Non-empty if semantic error occurred during finalization
 
+	// Cached type_index from the owning TypeInfo, set by TypeInfo::setStructInfo().
+	// Avoids fragile gTypesByName lookups in isOwnTypeIndex().
+	TypeIndex own_type_index_ = 0;
+
 	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
 		: name(n), default_access(default_acc), is_union(union_type) {}
 	
@@ -758,6 +762,9 @@ struct TypeInfo
 	StructTypeInfo* getStructInfo() { return struct_info_.get(); }
 
 	void setStructInfo(std::unique_ptr<StructTypeInfo> info) {
+		if (info) {
+			info->own_type_index_ = type_index_;
+		}
 		struct_info_ = std::move(info);
 	}
 

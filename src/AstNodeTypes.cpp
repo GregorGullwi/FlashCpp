@@ -631,10 +631,10 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     return nullptr;
 }
 
-// Helper to check if a parameter's type_index matches this struct's own type_index
+// Helper to check if a parameter's type_index matches this struct's own type_index.
+// Uses own_type_index_ cached by TypeInfo::setStructInfo() — no map lookup needed.
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
-    auto it = gTypesByName.find(this->name);
-    return it != gTypesByName.end() && param_type_index == it->second->type_index_;
+    return own_type_index_ != 0 && param_type_index == own_type_index_;
 }
 
 const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
