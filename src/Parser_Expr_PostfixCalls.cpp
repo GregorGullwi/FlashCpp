@@ -155,18 +155,54 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 				
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after member function call arguments", current_token_);
 				}
 				
-				// Create a member function call node
-				auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
-				auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
-				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+				// Try to resolve object type and instantiate member function template
+				std::optional<ASTNode> instantiated_func;
+				if (result->is<ExpressionNode>()) {
+					const ExpressionNode& expr = result->as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& ident = std::get<IdentifierNode>(expr);
+						auto symbol = lookup_symbol(ident.nameHandle());
+						if (symbol.has_value()) {
+							if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+								const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+								if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
+									TypeIndex type_idx = type_spec.type_index();
+									if (type_idx < gTypeInfo.size()) {
+										auto struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
+										instantiateLazyClassToPhase(gTypeInfo[type_idx].name(), ClassInstantiationPhase::Full);
+										if (explicit_template_args.has_value()) {
+											instantiated_func = try_instantiate_member_function_template_explicit(
+												struct_name, member_name_token.value(), *explicit_template_args);
+										} else if (!arg_types.empty()) {
+											instantiated_func = try_instantiate_member_function_template(
+												struct_name, member_name_token.value(), arg_types);
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				
+				// Use instantiated function or create placeholder
+				FunctionDeclarationNode* func_ref_ptr = nullptr;
+				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+				} else {
+					auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
+					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
+					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+					func_ref_ptr = &func_decl_node;
+				}
 				
 				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_name_token));
+					MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
 			} else {
 				// Simple member access
 				result = emplace_node<ExpressionNode>(
@@ -221,17 +257,54 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 				
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after arrow member function call arguments", current_token_);
 				}
 				
-				auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
-				auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
-				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+				// Try to resolve object type and instantiate member function template
+				std::optional<ASTNode> instantiated_func;
+				if (result->is<ExpressionNode>()) {
+					const ExpressionNode& expr = result->as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& ident = std::get<IdentifierNode>(expr);
+						auto symbol = lookup_symbol(ident.nameHandle());
+						if (symbol.has_value()) {
+							if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+								const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+								if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
+									TypeIndex type_idx = type_spec.type_index();
+									if (type_idx < gTypeInfo.size()) {
+										auto struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
+										instantiateLazyClassToPhase(gTypeInfo[type_idx].name(), ClassInstantiationPhase::Full);
+										if (explicit_template_args.has_value()) {
+											instantiated_func = try_instantiate_member_function_template_explicit(
+												struct_name, member_name_token.value(), *explicit_template_args);
+										} else if (!arg_types.empty()) {
+											instantiated_func = try_instantiate_member_function_template(
+												struct_name, member_name_token.value(), arg_types);
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				
+				// Use instantiated function or create placeholder
+				FunctionDeclarationNode* func_ref_ptr = nullptr;
+				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+				} else {
+					auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
+					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
+					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+					func_ref_ptr = &func_decl_node;
+				}
 				
 				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_name_token));
+					MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
 			} else {
 				// Create arrow access node
 				result = emplace_node<ExpressionNode>(

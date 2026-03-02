@@ -17,7 +17,7 @@ static void stripLineComment(std::string& line) {
 		} else if (c == '\'' && !in_string) {
 			in_char = !in_char;
 		} else if (c == '/' && !in_string && !in_char && i + 1 < line.size() && line[i + 1] == '/') {
-			line.erase(i);
+			line.resize(i);
 			return;
 		}
 	}
