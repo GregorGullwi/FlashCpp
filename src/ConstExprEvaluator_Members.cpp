@@ -28,7 +28,8 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_parame
 			constexpr_match = &ctor_decl;
 		} else {
 			if (non_constexpr_match) {
-				return nullptr;
+				non_constexpr_match = nullptr; // ambiguous non-constexpr
+				continue;
 			}
 			non_constexpr_match = &ctor_decl;
 		}
