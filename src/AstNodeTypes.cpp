@@ -642,6 +642,30 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     return nullptr;
 }
 
+// Auto-extract is_noexcept, is_const, is_volatile from the AST node stored in a
+// StructMemberFunction. This centralises property propagation so that every
+// addMemberFunction / addConstructor / addDestructor / addOperatorOverload call
+// automatically picks up the flags — callers never need to do it manually.
+void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
+    if (mf.function_decl.is<FunctionDeclarationNode>()) {
+        const auto& fn = mf.function_decl.as<FunctionDeclarationNode>();
+        mf.is_noexcept = fn.is_noexcept();
+    } else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
+        const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+        mf.is_noexcept = ctor.is_noexcept();
+    } else if (mf.function_decl.is<DestructorDeclarationNode>()) {
+        const auto& dtor = mf.function_decl.as<DestructorDeclarationNode>();
+        mf.is_noexcept = dtor.is_noexcept();
+    }
+    // is_const / is_volatile are only meaningful for regular member functions.
+    // They cannot be read from a bare FunctionDeclarationNode (no CV-qualifier
+    // field there) — the caller must still set them when known from
+    // MemberQualifiers.  The add*() path via StructDeclarationNode already
+    // handles that; the StructTypeInfo path is for contexts that don't have
+    // MemberQualifiers (e.g. template instantiation copies from the pattern's
+    // StructMemberFunctionDecl, which stores them).
+}
+
 // Helper to check if a parameter's type_index matches this struct's own type_index.
 // Uses own_type_index_ cached by TypeInfo::setStructInfo() — no map lookup needed.
 // For template instantiations (e.g., Wrapper<int>), also checks if the param_type_index

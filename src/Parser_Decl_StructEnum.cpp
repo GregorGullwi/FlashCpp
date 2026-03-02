@@ -2637,9 +2637,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				func_decl.function_declaration,
 				func_decl.access
 			);
-			// Propagate noexcept from the AST node
-			if (!struct_info->member_functions.empty())
-				struct_info->member_functions.back().is_noexcept = func_decl.is_noexcept;
 			has_user_defined_constructor = true;
 
 			// Check if this is a copy or move constructor
@@ -2662,9 +2659,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				func_decl.access,
 				func_decl.is_virtual
 			);
-			// Propagate noexcept from the AST node
-			if (!struct_info->member_functions.empty())
-				struct_info->member_functions.back().is_noexcept = func_decl.is_noexcept;
 			has_user_defined_destructor = true;
 		} else if (func_decl.is_operator_overload) {
 			// Operator overload
@@ -2677,9 +2671,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				func_decl.is_override,
 				func_decl.is_final
 			);
-			// Propagate noexcept from the AST node
-			if (!struct_info->member_functions.empty())
-				struct_info->member_functions.back().is_noexcept = func_decl.is_noexcept;
 
 			// Check if this is a spaceship operator
 			if (func_decl.operator_symbol == "<=>") {

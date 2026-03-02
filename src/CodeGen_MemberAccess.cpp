@@ -2000,22 +2000,6 @@
 		[[maybe_unused]] const TypeInfo* outer_type_info = (type_spec.type_index() < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index()] : nullptr;
 		[[maybe_unused]] const StructTypeInfo* outer_struct_info = outer_type_info ? outer_type_info->getStructInfo() : nullptr;
 
-		// Helper: Check noexcept on a StructMemberFunction, falling back to AST node.
-		// This handles cases where StructTypeInfo.is_noexcept isn't propagated yet
-		// (e.g., during template instantiation where the FunctionDeclarationNode has
-		// is_noexcept set but struct_info_ptr->member_functions.back().is_noexcept hasn't
-		// been updated yet).
-		auto is_member_noexcept = [](const StructMemberFunction& mf) -> bool {
-			if (mf.is_noexcept) return true;
-			if (mf.function_decl.is<FunctionDeclarationNode>())
-				return mf.function_decl.as<FunctionDeclarationNode>().is_noexcept();
-			if (mf.function_decl.is<ConstructorDeclarationNode>())
-				return mf.function_decl.as<ConstructorDeclarationNode>().is_noexcept();
-			if (mf.function_decl.is<DestructorDeclarationNode>())
-				return mf.function_decl.as<DestructorDeclarationNode>().is_noexcept();
-			return false;
-		};
-
 		// Handle binary traits that require a second type argument
 		switch (traitNode.kind()) {
 			case TypeTraitKind::IsBaseOf:
@@ -2565,7 +2549,7 @@
 									mf.function_decl.as<ConstructorDeclarationNode>().is_implicit())
 									continue;
 								found_user_ctor = true;
-								if (!is_member_noexcept(mf)) {
+								if (!mf.is_noexcept) {
 									all_noexcept = false;
 									break;
 								}
@@ -2665,7 +2649,7 @@
 											if (mf.function_decl.is<FunctionDeclarationNode>() &&
 												mf.function_decl.as<FunctionDeclarationNode>().is_implicit())
 												continue;
-											if (!is_member_noexcept(mf)) {
+											if (!mf.is_noexcept) {
 												all_noexcept = false;
 												break;
 											}

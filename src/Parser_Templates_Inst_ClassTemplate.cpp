@@ -1021,6 +1021,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					mem_func.is_override,
 					mem_func.is_final
 				);
+				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
+				if (!struct_info->member_functions.empty()) {
+					struct_info->member_functions.back().is_const = mem_func.is_const;
+					struct_info->member_functions.back().is_volatile = mem_func.is_volatile;
+				}
 			}
 		}
 
@@ -4324,9 +4329,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_final
 					);
 				}
-				// Propagate noexcept/const/volatile to StructTypeInfo member
+				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
 				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().is_noexcept = func_decl.is_noexcept();
 					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
 					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
 				}
@@ -4580,9 +4584,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_final
 					);
 				}
-				// Propagate noexcept/const/volatile to StructTypeInfo member
+				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
 				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().is_noexcept = func_decl.is_noexcept();
 					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
 					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
 				}
@@ -4728,9 +4731,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_final
 					);
 				}
-				// Propagate noexcept/const/volatile to StructTypeInfo member
+				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
 				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().is_noexcept = func_decl.is_noexcept();
 					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
 					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
 				}
@@ -4838,6 +4840,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
 					}
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
+					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 					new_ctor_ref.set_definition(substituted_body);
 					
 					// Add the substituted constructor to the instantiated struct AST node
