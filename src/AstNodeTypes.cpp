@@ -745,16 +745,17 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
 const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
     for (const auto& func : member_functions) {
         if (!isAssignOperator(func.operator_kind)) continue;
+        const auto* func_node = get_function_decl_node(func.function_decl);
+
         // Fast path: already refined to CopyAssign
         if (func.operator_kind == OverloadableOperator::CopyAssign) {
-            const auto* func_node = get_function_decl_node(func.function_decl);
             if (func_node && !func_node->is_implicit()) return &func;
             continue;
         }
+
         // Slow path: generic Assign — inspect parameter signature
-        const auto* func_node = get_function_decl_node(func.function_decl);
-        if (!func_node) continue;
-        if (func_node->is_implicit()) continue;
+        if (!func_node || func_node->is_implicit()) continue;
+
         const auto& params = func_node->parameter_nodes();
         if (params.size() == 1) {
             const auto& param_decl = params[0].as<DeclarationNode>();
@@ -771,16 +772,17 @@ const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
 const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
     for (const auto& func : member_functions) {
         if (!isAssignOperator(func.operator_kind)) continue;
+        const auto* func_node = get_function_decl_node(func.function_decl);
+
         // Fast path: already refined to MoveAssign
         if (func.operator_kind == OverloadableOperator::MoveAssign) {
-            const auto* func_node = get_function_decl_node(func.function_decl);
             if (func_node && !func_node->is_implicit()) return &func;
             continue;
         }
+
         // Slow path: generic Assign — inspect parameter signature
-        const auto* func_node = get_function_decl_node(func.function_decl);
-        if (!func_node) continue;
-        if (func_node->is_implicit()) continue;
+        if (!func_node || func_node->is_implicit()) continue;
+
         const auto& params = func_node->parameter_nodes();
         if (params.size() == 1) {
             const auto& param_decl = params[0].as<DeclarationNode>();

@@ -555,7 +555,8 @@
 					func_decl_ast,
 					AccessSpecifier::Public,
 					false,  // is_constructor
-					false   // is_destructor
+					false,  // is_destructor
+					OverloadableOperator::Call
 				);
 				member_func.cv_qualifier = CVQualifier::None;  // Mutable lambdas have non-const operator()
 				member_func.is_virtual = false;

@@ -222,9 +222,10 @@ inline std::string_view overloadableOperatorToString(OverloadableOperator op) {
 	case OverloadableOperator::Delete: return "delete";
 	case OverloadableOperator::NewArray: return "new[]";
 	case OverloadableOperator::DeleteArray: return "delete[]";
+	default:
+		assert(false && "Unhandled OverloadableOperator value");
+		return "";
 	}
-	assert(false && "Unhandled OverloadableOperator value");
-	return "";
 }
 
 // Target data model - controls the size of 'long' and 'wchar_t' types
