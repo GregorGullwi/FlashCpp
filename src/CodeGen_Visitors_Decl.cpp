@@ -394,7 +394,7 @@
 							StringHandle member_spaceship_mangled;
 							if (member_struct_info) {
 								for (const auto& mf : member_struct_info->member_functions) {
-									if (mf.is_operator_overload && mf.operator_symbol == "<=>") {
+									if (mf.is_operator_overload && mf.operator_kind == OverloadableOperator::Spaceship) {
 										if (mf.function_decl.is<FunctionDeclarationNode>()) {
 											const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
 											// Use generateMangledNameForCall for consistent mangling across platforms
@@ -620,7 +620,7 @@
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					for (const auto& mf : struct_info->member_functions) {
-						if (mf.is_operator_overload && mf.operator_symbol == "<=>") {
+						if (mf.is_operator_overload && mf.operator_kind == OverloadableOperator::Spaceship) {
 							if (mf.function_decl.is<FunctionDeclarationNode>()) {
 								const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
 								// Use generateMangledNameForCall for consistent mangling across platforms

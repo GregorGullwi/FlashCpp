@@ -382,7 +382,7 @@
 					
 					if (type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
 						// Check for operator& overload
-						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "&");
+						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::BitwiseAnd);
 						
 						if (overload_result.has_overload) {
 							// Found an overload! Generate a member function call instead of built-in address-of
@@ -1139,7 +1139,7 @@
 			// Increment operator (prefix or postfix)
 
 			// Check for user-defined operator++ overload on struct types
-			auto inc_result = generateUnaryIncDecOverloadCall("++", operandType, operandIrOperands, unaryOperatorNode.is_prefix());
+			auto inc_result = generateUnaryIncDecOverloadCall(OverloadableOperator::Increment, operandType, operandIrOperands, unaryOperatorNode.is_prefix());
 			if (inc_result.has_value()) {
 				return *inc_result;
 			}
@@ -1150,7 +1150,7 @@
 			// Decrement operator (prefix or postfix)
 
 			// Check for user-defined operator-- overload on struct types
-			auto dec_result = generateUnaryIncDecOverloadCall("--", operandType, operandIrOperands, unaryOperatorNode.is_prefix());
+			auto dec_result = generateUnaryIncDecOverloadCall(OverloadableOperator::Decrement, operandType, operandIrOperands, unaryOperatorNode.is_prefix());
 			if (dec_result.has_value()) {
 				return *dec_result;
 			}

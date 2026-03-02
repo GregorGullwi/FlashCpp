@@ -4609,8 +4609,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Check if struct has operator()
 								for (const auto& member_func : type_info.struct_info_->member_functions) {
 									FLASH_LOG_FORMAT(Parser, Debug, "Member function: is_operator={}, symbol='{}'", 
-										member_func.is_operator_overload, member_func.operator_symbol);
-									if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
+										member_func.is_operator_overload, member_func.operator_symbol());
+									if (member_func.is_operator_overload && member_func.operator_kind == OverloadableOperator::Call) {
 										has_operator_call = true;
 										break;
 									}
@@ -4672,7 +4672,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Find operator() in member functions
 					const FunctionDeclarationNode* operator_call_func = nullptr;
 					for (const auto& member_func : type_info.struct_info_->member_functions) {
-						if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
+						if (member_func.is_operator_overload && member_func.operator_kind == OverloadableOperator::Call) {
 							operator_call_func = &member_func.function_decl.as<FunctionDeclarationNode>();
 							break;
 						}

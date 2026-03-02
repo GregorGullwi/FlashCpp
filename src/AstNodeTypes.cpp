@@ -744,7 +744,7 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
 
 const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
     for (const auto& func : member_functions) {
-        if (func.is_operator_overload && func.operator_symbol == "=") {
+        if (func.is_operator_overload && func.operator_kind == OverloadableOperator::Assign) {
             // Check if this is a copy assignment operator
             // Copy assignment operator has signature: Type& operator=(const Type& other)
             // or Type& operator=(Type& other)
@@ -771,7 +771,7 @@ const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
 
 const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
     for (const auto& func : member_functions) {
-        if (func.is_operator_overload && func.operator_symbol == "=") {
+        if (func.is_operator_overload && func.operator_kind == OverloadableOperator::Assign) {
             // Check if this is a move assignment operator
             // Move assignment operator has signature: Type& operator=(Type&& other)
             const auto* func_node = get_function_decl_node(func.function_decl);

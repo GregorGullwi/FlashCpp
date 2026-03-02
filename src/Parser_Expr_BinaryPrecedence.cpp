@@ -359,7 +359,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 						// Check member operator overload on the left operand
 						if (left_type_idx > 0) {
-							auto member_result = findBinaryOperatorOverload(left_type_idx, right_type_idx, op_symbol);
+							auto member_result = findBinaryOperatorOverload(left_type_idx, right_type_idx, stringToOverloadableOperator(op_symbol));
 							if (member_result.has_overload) {
 								operator_found = true;
 							}

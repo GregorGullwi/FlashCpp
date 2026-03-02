@@ -2109,9 +2109,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Check if this is an operator overload
 			std::string_view func_name = decl_node.identifier_token().value();
 			if (func_name.starts_with("operator")) {
-				// Extract the operator symbol (e.g., "operator=" -> "=")
+				// Extract the operator symbol (e.g., "operator=" -> "=") and convert to enum
 				std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
-				struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access,
+				OverloadableOperator op_kind = stringToOverloadableOperator(operator_symbol);
+				struct_ref.add_operator_overload(op_kind, member_func_node, current_access,
 				                                 is_virtual, is_pure_virtual, is_override, is_final,
 				                                 member_quals.cv_qualifier);
 			} else {
@@ -2648,7 +2649,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		} else if (func_decl.is_operator_overload) {
 			// Operator overload
 			struct_info->addOperatorOverload(
-				func_decl.operator_symbol,
+				func_decl.operator_kind,
 				func_decl.function_declaration,
 				func_decl.access,
 				func_decl.is_virtual,
@@ -2658,12 +2659,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			);
 
 			// Check if this is a spaceship operator
-			if (func_decl.operator_symbol == "<=>") {
+			if (func_decl.operator_kind == OverloadableOperator::Spaceship) {
 				has_user_defined_spaceship = true;
 			}
 
 			// Check if this is a copy or move assignment operator
-			if (func_decl.operator_symbol == "=") {
+			if (func_decl.operator_kind == OverloadableOperator::Assign) {
 				const auto& func_node = func_decl.function_declaration.as<FunctionDeclarationNode>();
 				const auto& params = func_node.parameter_nodes();
 				if (params.size() == 1) {
@@ -2963,14 +2964,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Add the operator= to the struct type info
 		struct_info->addOperatorOverload(
-			"=",
+			OverloadableOperator::Assign,
 			func_node,
 			AccessSpecifier::Public
 		);
 
 		// Add the operator= to the struct node
-		static const std::string_view operator_symbol_eq = "=";
-		struct_ref.add_operator_overload(operator_symbol_eq, func_node, AccessSpecifier::Public);
+		struct_ref.add_operator_overload(OverloadableOperator::Assign, func_node, AccessSpecifier::Public);
 	}
 
 	// Generate move constructor if no user-defined special member functions exist
@@ -3079,14 +3079,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Add the move assignment operator to the struct type info
 		struct_info->addOperatorOverload(
-			"=",
+			OverloadableOperator::Assign,
 			move_func_node,
 			AccessSpecifier::Public
 		);
 
 		// Add the move assignment operator to the struct node
-		static const std::string_view move_operator_symbol_eq = "=";
-		struct_ref.add_operator_overload(move_operator_symbol_eq, move_func_node, AccessSpecifier::Public);
+		struct_ref.add_operator_overload(OverloadableOperator::Assign, move_func_node, AccessSpecifier::Public);
 	}
 
 	// Generate comparison operators from operator<=> if defined
@@ -3097,16 +3096,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		
 		// Array of comparison operators to synthesize
-		static const std::array<std::pair<std::string_view, std::string_view>, 6> comparison_ops = {{
-			{"==", "operator=="},
-			{"!=", "operator!="},
-			{"<", "operator<"},
-			{">", "operator>"},
-			{"<=", "operator<="},
-			{">=", "operator>="}
+		static const std::array<std::pair<OverloadableOperator, std::string_view>, 6> comparison_ops = {{
+			{OverloadableOperator::Equal, "operator=="},
+			{OverloadableOperator::NotEqual, "operator!="},
+			{OverloadableOperator::Less, "operator<"},
+			{OverloadableOperator::Greater, "operator>"},
+			{OverloadableOperator::LessEqual, "operator<="},
+			{OverloadableOperator::GreaterEqual, "operator>="}
 		}};
 		
-		for (const auto& [op_symbol, op_name] : comparison_ops) {
+		for (const auto& [op_kind, op_name] : comparison_ops) {
 			// Create return type: bool
 			auto return_type_node = emplace_node<TypeSpecifierNode>(
 				Type::Bool,
@@ -3153,7 +3152,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// First, find the spaceship operator function in the struct
 			const FunctionDeclarationNode* spaceship_func = nullptr;
 			for (const auto& member_func : struct_ref.member_functions()) {
-				if (member_func.is_operator_overload && member_func.operator_symbol == "<=>") {
+				if (member_func.is_operator_overload && member_func.operator_kind == OverloadableOperator::Spaceship) {
 					spaceship_func = &(member_func.function_declaration.as<FunctionDeclarationNode>());
 					break;
 				}
@@ -3195,7 +3194,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
 			
 			// Create comparison operator token for comparing result with 0
-			Token comparison_token(Token::Type::Operator, op_symbol,
+			Token comparison_token(Token::Type::Operator, overloadableOperatorToString(op_kind),
 			                      name_token.line(), name_token.column(),
 			                      name_token.file_index());
 			
@@ -3218,13 +3217,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			// Add the operator to the struct type info
 			struct_info->addOperatorOverload(
-				op_symbol,
+				op_kind,
 				func_node,
 				AccessSpecifier::Public
 			);
 			
 			// Add the operator to the struct node
-			struct_ref.add_operator_overload(op_symbol, func_node, AccessSpecifier::Public);
+			struct_ref.add_operator_overload(op_kind, func_node, AccessSpecifier::Public);
 		}
 	}
 
