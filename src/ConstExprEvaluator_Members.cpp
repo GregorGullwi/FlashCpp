@@ -1273,15 +1273,21 @@ static const ConstructorDeclarationNode* find_matching_constructor(
 	const StructTypeInfo* struct_info,
 	size_t arg_count) {
 	if (!struct_info) return nullptr;
+	const ConstructorDeclarationNode* fallback_ctor = nullptr;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (!member_func.is_constructor) continue;
 		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
 		const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == arg_count) {
+		if (ctor.parameter_nodes().size() != arg_count) continue;
+		if (ctor.is_constexpr()) {
 			return &ctor;
 		}
+		// Remember the first non-constexpr match as a fallback
+		if (!fallback_ctor) {
+			fallback_ctor = &ctor;
+		}
 	}
-	return nullptr;
+	return fallback_ctor;
 }
 
 // Evaluate nested member access (e.g., obj.inner.value)

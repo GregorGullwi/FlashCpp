@@ -1,4 +1,5 @@
 struct Inner {
+	Inner(double d) : x(static_cast<int>(d) + 1) {}
 	constexpr Inner(int v) : x(v) {}
 	int x;
 };
