@@ -1950,6 +1950,7 @@
 
 	// Recursively check whether a struct is trivially copyable:
 	// no virtual functions, no user-defined copy/move ctors or assignment, no user-defined dtor,
+	// all non-static data members of class type are trivially copyable,
 	// and all base classes are also trivially copyable.
 	static bool isTriviallyCopyableStruct(const StructTypeInfo* struct_info) {
 		if (!struct_info) return false;
@@ -1959,6 +1960,14 @@
 		if (struct_info->hasCopyAssignmentOperator()) return false;
 		if (struct_info->hasMoveAssignmentOperator()) return false;
 		if (struct_info->hasUserDefinedDestructor()) return false;
+		// Recursively check all non-static data members of class type
+		for (const auto& member : struct_info->members) {
+			if (member.type == Type::Struct || member.type == Type::UserDefined) {
+				if (member.type_index >= gTypeInfo.size()) return false;
+				const StructTypeInfo* member_info = gTypeInfo[member.type_index].getStructInfo();
+				if (!isTriviallyCopyableStruct(member_info)) return false;
+			}
+		}
 		// Recursively check all base classes
 		for (const auto& base : struct_info->base_classes) {
 			if (base.is_deferred) continue;  // Deferred (template param) base – assume ok
@@ -1970,11 +1979,20 @@
 	}
 
 	// Recursively check whether a struct is trivial:
-	// trivially copyable AND trivial default constructor, and all base classes trivial.
+	// trivially copyable AND trivial default constructor, all non-static data members trivial,
+	// and all base classes trivial.
 	static bool isTrivialStruct(const StructTypeInfo* struct_info) {
 		if (!struct_info) return false;
 		if (!isTriviallyCopyableStruct(struct_info)) return false;
 		if (struct_info->hasUserDefinedConstructor()) return false;
+		// Recursively check all non-static data members of class type
+		for (const auto& member : struct_info->members) {
+			if (member.type == Type::Struct || member.type == Type::UserDefined) {
+				if (member.type_index >= gTypeInfo.size()) return false;
+				const StructTypeInfo* member_info = gTypeInfo[member.type_index].getStructInfo();
+				if (!isTrivialStruct(member_info)) return false;
+			}
+		}
 		// Recursively check all base classes
 		for (const auto& base : struct_info->base_classes) {
 			if (base.is_deferred) continue;

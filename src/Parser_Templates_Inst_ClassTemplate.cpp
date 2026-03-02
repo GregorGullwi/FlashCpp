@@ -909,6 +909,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								resolved_args.push_back(it->second);
 								resolved = true;
 							}
+						} else if (std::holds_alternative<IdentifierNode>(expr)) {
+							// Identifier that may refer to a type in the substitution map or in gTypesByName
+							std::string_view iname = std::get<IdentifierNode>(expr).name();
+							auto sit = spec_name_subst_map.find(iname);
+							if (sit != spec_name_subst_map.end()) {
+								resolved_args.push_back(sit->second);
+								resolved = true;
+							} else {
+								StringHandle h = StringTable::getOrInternStringHandle(iname);
+								auto type_it = gTypesByName.find(h);
+								if (type_it != gTypesByName.end()) {
+									TemplateTypeArg a;
+									a.base_type = type_it->second->type_;
+									a.type_index = type_it->second->type_index_;
+									resolved_args.push_back(a);
+									resolved = true;
+								}
+							}
 						}
 						if (!resolved) {
 							// Non-type value argument - try to convert to TemplateTypeArg
@@ -925,6 +943,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								va.is_value = true;
 								va.value = std::get<BoolLiteralNode>(expr).value() ? 1 : 0;
 								resolved_args.push_back(va);
+							} else {
+								// Unresolvable expression argument - cannot safely instantiate
+								FLASH_LOG(Templates, Warning, "Could not resolve expression arg for deferred base '", base_tpl_name, "' - skipping");
+								resolution_failed = true;
 							}
 						}
 					}

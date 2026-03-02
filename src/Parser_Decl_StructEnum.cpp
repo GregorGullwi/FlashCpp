@@ -231,20 +231,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Parse access specifier (optional, defaults to public for struct, private for class)
 			AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
-
-			if (peek().is_keyword()) {
-				std::string_view keyword = peek_info().value();
-				if (keyword == "public") {
-					base_access = AccessSpecifier::Public;
-					advance();
-				} else if (keyword == "protected") {
-					base_access = AccessSpecifier::Protected;
-					advance();
-				} else if (keyword == "private") {
-					base_access = AccessSpecifier::Private;
-					advance();
-				}
-			}
+			parse_base_access_specifier(base_access);
 
 			// Check for virtual keyword after access specifier (e.g., "public virtual Base")
 			if (!is_virtual_base && peek() == "virtual"_tok) {

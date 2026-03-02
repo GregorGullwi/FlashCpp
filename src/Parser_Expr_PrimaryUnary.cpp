@@ -299,7 +299,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 		// Check for placement new: new (args...) Type
 		// Placement new can have multiple arguments: new (arg1, arg2, ...) Type
-		std::vector<ASTNode> all_placement_args;
+		InlineVector<ASTNode, 2> all_placement_args;
 		if (peek() == "("_tok) {
 			// This could be placement new or constructor call
 			// We need to look ahead to distinguish:
@@ -436,7 +436,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 			// Pass array initializers to code generator
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, true, size_result.node(), std::move(array_initializers), std::move(all_placement_args)));
+				NewExpressionNode(*type_node, /*is_array=*/true, size_result.node(), std::move(array_initializers), std::move(all_placement_args)));
 			return ParseResult::success(new_expr);
 		}
 		// Check for constructor call: new Type(args)
@@ -482,13 +482,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, false, std::nullopt, std::move(args), all_placement_args));
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(args), all_placement_args));
 			return ParseResult::success(new_expr);
 		}
 		// Simple new: new Type
 		else {
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, false, std::nullopt, {}, std::move(all_placement_args)));
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, {}, std::move(all_placement_args)));
 			return ParseResult::success(new_expr);
 		}
 	}

@@ -533,7 +533,7 @@ public:
 	explicit NewExpressionNode(ASTNode type_node, bool is_array,
 	                          std::optional<ASTNode> size_expr,
 	                          ChunkedVector<ASTNode, 128, 256> constructor_args,
-	                          std::vector<ASTNode> placement_args)
+	                          InlineVector<ASTNode, 2> placement_args)
 		: type_node_(type_node), is_array_(is_array),
 		  size_expr_(size_expr), constructor_args_(std::move(constructor_args)),
 		  placement_args_(std::move(placement_args)) {}
@@ -547,14 +547,14 @@ public:
 		if (placement_args_.empty()) return std::nullopt;
 		return placement_args_[0];
 	}
-	const std::vector<ASTNode>& placement_args() const { return placement_args_; }
+	const InlineVector<ASTNode, 2>& placement_args() const { return placement_args_; }
 
 private:
 	ASTNode type_node_;  // TypeSpecifierNode
 	bool is_array_;      // true for new[], false for new
 	std::optional<ASTNode> size_expr_;  // For new Type[size], the size expression
 	ChunkedVector<ASTNode, 128, 256> constructor_args_;  // For new Type(args)
-	std::vector<ASTNode> placement_args_;  // For new (addr [,extra...]) Type, all placement arguments
+	InlineVector<ASTNode, 2> placement_args_;  // For new (addr [,extra...]) Type, all placement arguments
 };
 
 // Delete expression node: delete ptr, delete[] ptr

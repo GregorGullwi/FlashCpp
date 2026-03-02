@@ -1060,6 +1060,18 @@ public:  // Public methods for template instantiation
             StructDeclarationNode& struct_ref,
             bool is_class);
 
+        // Helper: Parse an optional access specifier keyword (public/protected/private) at the
+        // current position. If one is present it is consumed and the out parameter is updated.
+        // Returns true if an access specifier was consumed, false otherwise.
+        bool parse_base_access_specifier(AccessSpecifier& out_access) {
+            if (!peek().is_keyword()) return false;
+            std::string_view kw = peek_info().value();
+            if (kw == "public")    { out_access = AccessSpecifier::Public;    advance(); return true; }
+            if (kw == "protected") { out_access = AccessSpecifier::Protected; advance(); return true; }
+            if (kw == "private")   { out_access = AccessSpecifier::Private;   advance(); return true; }
+            return false;
+        }
+
         // Helper: Look up a type alias including inherited ones from base classes
         // Returns the TypeInfo pointer if found, nullptr otherwise
         // Uses depth limit to prevent infinite recursion in malformed input

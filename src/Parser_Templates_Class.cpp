@@ -1322,20 +1322,7 @@ ParseResult Parser::parse_template_declaration() {
 
 					// Parse access specifier (optional, defaults to public for struct, private for class)
 					AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
-
-					if (peek().is_keyword()) {
-						std::string_view keyword = peek_info().value();
-						if (keyword == "public") {
-							base_access = AccessSpecifier::Public;
-							advance();
-						} else if (keyword == "protected") {
-							base_access = AccessSpecifier::Protected;
-							advance();
-						} else if (keyword == "private") {
-							base_access = AccessSpecifier::Private;
-							advance();
-						}
-					}
+					parse_base_access_specifier(base_access);
 
 					// Check for virtual keyword after access specifier
 					if (!is_virtual_base && peek() == "virtual"_tok) {
@@ -2645,20 +2632,7 @@ ParseResult Parser::parse_template_declaration() {
 
 					// Parse access specifier (optional, defaults to public for struct, private for class)
 					AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
-
-					if (peek().is_keyword()) {
-						std::string_view keyword = peek_info().value();
-						if (keyword == "public") {
-							base_access = AccessSpecifier::Public;
-							advance();
-						} else if (keyword == "protected") {
-							base_access = AccessSpecifier::Protected;
-							advance();
-						} else if (keyword == "private") {
-							base_access = AccessSpecifier::Private;
-							advance();
-						}
-					}
+					parse_base_access_specifier(base_access);
 
 					// Check for virtual keyword after access specifier
 					if (!is_virtual_base && peek() == "virtual"_tok) {
@@ -4405,12 +4379,7 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 
 		// Optional access specifier
 		AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
-		if (peek().is_keyword()) {
-			std::string_view kw = peek_info().value();
-			if (kw == "public") { base_access = AccessSpecifier::Public; advance(); }
-			else if (kw == "protected") { base_access = AccessSpecifier::Protected; advance(); }
-			else if (kw == "private") { base_access = AccessSpecifier::Private; advance(); }
-		}
+		parse_base_access_specifier(base_access);
 		// Allow virtual after access specifier too
 		if (!is_virtual_base && peek() == "virtual"_tok) {
 			is_virtual_base = true;

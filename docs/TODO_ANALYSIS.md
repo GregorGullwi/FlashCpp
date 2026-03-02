@@ -114,7 +114,7 @@ while (peek() != "{"_tok) { advance(); }   // base class info lost
 - **FunctionOrVar.cpp:1005** – `constexpr` variables whose initializers are `InitializerListNode`s, casts, or other complex expressions bypass evaluation entirely. A full implementation would recursively evaluate those forms.
 - ~~**Members.cpp:202** – Inside a constexpr member function, accesses of the form `this->x` (stored as `MemberAccessNode`) fall through to the non-mutable evaluator, which cannot modify the `bindings` map.~~ **Fixed**: The assignment branch in `evaluate_expression_with_bindings` now handles `MemberAccessNode` LHS (`this->x = value`) by extracting the member name and updating `bindings[member_name]`. Read access already worked via the const evaluator. Test: `tests/test_constexpr_this_member_ret42.cpp`.
 - **Members.cpp:1473** – Array subscript followed by member access (`arr[0].member`) in a constexpr context returns an error. This pattern is common in standard-library constexpr implementations.
-- ~~**Core.cpp:1050** – Calling `operator()` on a user-defined functor in a constexpr context is not implemented.~~ **Verified working**: Direct functor `operator()` calls (e.g. `less(a, b)` where `less` is a `constexpr Less less`) already work via the existing member function call path. The TODO is only hit for functors passed as template arguments, which is a separate pre-existing issue.
+- **Core.cpp:1050** – Calling `operator()` on a user-defined functor **passed as a template argument** in a constexpr context reaches the `evaluate_callable_object` code path, which immediately returns an error for `ConstructorCallNode` initializers. This blocks constexpr comparators like `std::less` / `std::greater` when passed as non-type template parameters. (Direct `constexpr Functor f; f(a,b)` calls already work via the member function call path.)
 
 ---
 
@@ -277,10 +277,12 @@ Five type-trait intrinsics use heuristics instead of the correct C++ standard de
 
 | Trait | Current heuristic | What's missing |
 |-------|------------------|----------------|
-| `__is_trivially_copyable` | recursive base-class check via `isTriviallyCopyableStruct()` | ✅ Fixed — `isTriviallyCopyableStruct()` recursively checks all base classes; accepts both `Type::Struct` and `Type::UserDefined`; note: `findCopyConstructor()` may return implicit ctors which could cause false negatives for simple structs (pre-existing issue) |
-| `__is_trivial` | recursive base-class check via `isTrivialStruct()` | ✅ Fixed — same as above; `isTrivialStruct()` calls `isTriviallyCopyableStruct()` and also checks `hasUserDefinedConstructor()` |
+| `__is_trivially_copyable` | recursive base-class + member check via `isTriviallyCopyableStruct()` | ✅ Fixed — `isTriviallyCopyableStruct()` now recursively checks base classes AND all non-static data members of class type |
+| `__is_trivial` | recursive base-class + member check via `isTrivialStruct()` | ✅ Fixed — same as above; `isTrivialStruct()` also checks `hasUserDefinedConstructor()`. Note: `findCopyConstructor()` currently returns implicit constructors for structs with no user-defined ctors; this pre-existing issue may cause false negatives on simple structs (see TODO below) |
 | `__is_nothrow_constructible` | checks user-defined ctor noexcept status | ✅ Fixed |
 | `__is_nothrow_assignable` | checks user-defined assignment op noexcept status | ✅ Fixed |
+
+**TODO (pre-existing)**: `StructTypeInfo::findCopyConstructor()` / `findMoveConstructor()` do not skip implicitly-generated (compiler-synthesized) constructors. A struct `struct Foo { int x; }` has no user-defined copy constructor, but if the compiler implicitly generates and registers one via `set_is_implicit(true)`, `hasCopyConstructor()` returns `true`, making `isTriviallyCopyableStruct()` incorrectly return `false`. Fix: add a check for `!ctor_node.is_implicit()` in `findCopyConstructor()` and `findMoveConstructor()`.
 
 ~~**Remaining work**: `StructMemberFunction` does not yet store whether the function is `noexcept`. Adding an `is_noexcept` field and populating it during parsing would allow the nothrow traits to give correct answers for user-defined special members.~~ **Partially addressed**: `is_noexcept` field added and nothrow traits now use it. Remaining: `__is_trivially_copyable` and `__is_trivial` still need per-member triviality checks for base classes.
 
