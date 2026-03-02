@@ -1,4 +1,5 @@
 #include "ConstExprEvaluator.h"
+#include <limits>
 
 namespace ConstExpr {
 
@@ -1484,9 +1485,12 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		return index_result;
 	}
 
-	long long index = index_result.as_int();
-	if (index < 0) {
+	long long evaluated_index = index_result.as_int();
+	if (evaluated_index < 0) {
 		return EvalResult::error("Negative array index in constant expression");
+	}
+	if (static_cast<unsigned long long>(evaluated_index) > std::numeric_limits<size_t>::max()) {
+		return EvalResult::error("Array index too large in constant expression");
 	}
 
 	const ASTNode& array_expr = subscript.array_expr();
@@ -1529,7 +1533,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 
 	const InitializerListNode& init_list = initializer->as<InitializerListNode>();
 	const auto& elements = init_list.initializers();
-	size_t element_index = static_cast<size_t>(index);
+	size_t element_index = static_cast<size_t>(evaluated_index);
 	if (element_index >= elements.size()) {
 		return EvalResult::error("Array index " + std::to_string(element_index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
 	}
