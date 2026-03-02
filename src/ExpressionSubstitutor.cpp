@@ -3,6 +3,25 @@
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
 
+// Convert stored template instantiation metadata to TemplateTypeArg for substitution.
+static TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
+	TemplateTypeArg ta;
+	ta.base_type = arg.base_type;
+	ta.type_index = arg.type_index;
+	ta.is_value = arg.is_value;
+	ta.cv_qualifier = arg.cv_qualifier;
+	ta.ref_qualifier = arg.ref_qualifier;
+	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
+	ta.is_array = arg.is_array;
+	ta.array_size = arg.array_size;
+	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+	ta.dependent_name = arg.dependent_name;
+	if (arg.is_value) {
+		ta.value = arg.intValue();
+	}
+	return ta;
+}
+
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
 		return expr;
@@ -811,20 +830,11 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
 		const auto& stored_args = type_it->second->templateArgs();
 		for (const auto& arg : stored_args) {
-			TemplateTypeArg ta;
-			ta.base_type = arg.base_type;
-			ta.type_index = arg.type_index;
-			ta.is_value = arg.is_value;
-			ta.cv_qualifier = arg.cv_qualifier;
-			ta.ref_qualifier = arg.ref_qualifier;
-			ta.pointer_depth = arg.pointer_depth;
-			if (arg.is_value) {
-				ta.value = arg.intValue();
-			}
+			TemplateTypeArg ta = toTemplateTypeArg(arg);
 			
 			// Check if this arg has a dependent_name that can be substituted
-			if (arg.dependent_name.isValid()) {
-				std::string_view dep_name = StringTable::getStringView(arg.dependent_name);
+			if (ta.dependent_name.isValid()) {
+				std::string_view dep_name = StringTable::getStringView(ta.dependent_name);
 				auto subst_it = param_map_.find(dep_name);
 				if (subst_it != param_map_.end()) {
 					ta = subst_it->second;
@@ -1034,111 +1044,58 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	if (type.type() == Type::Struct && type.type_index() < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[type.type_index()];
 		std::string_view type_name = StringTable::getStringView(type_info.name());
-		
 		FLASH_LOG(Templates, Debug, "  Type is struct: ", type_name, " type_index=", type.type_index());
-		
-		// Parse the type name to see if it contains template arguments
-		// Format: "name<arg1, arg2, ...>"
-		size_t template_start = type_name.find('<');
-		if (template_start != std::string_view::npos) {
-			std::string_view base_name = type_name.substr(0, template_start);
+
+		if (type_info.isTemplateInstantiation()) {
+			std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
 			FLASH_LOG(Templates, Debug, "  Found template type: ", base_name);
-			
-			// Extract the template arguments part (between < and >)
-			size_t template_end = type_name.rfind('>');
-			if (template_end != std::string_view::npos && template_end > template_start) {
-				std::string_view args_str = type_name.substr(template_start + 1, template_end - template_start - 1);
-				FLASH_LOG(Templates, Debug, "  Template arguments string: ", args_str);
-				
-				// Parse the arguments and check if any need substitution
-				// For now, we'll do a simple check: if any argument matches a template parameter name
-				bool needs_substitution = false;
-				for (const auto& [param_name, param_arg] : param_map_) {
-					if (args_str.find(param_name) != std::string_view::npos) {
+
+			const auto& stored_args = type_info.templateArgs();
+			std::vector<TemplateTypeArg> substituted_args;
+			substituted_args.reserve(stored_args.size());
+
+			bool needs_substitution = false;
+			for (const auto& arg : stored_args) {
+				TemplateTypeArg ta = toTemplateTypeArg(arg);
+				bool substituted = false;
+
+				if (ta.dependent_name.isValid()) {
+					std::string_view dep_name = StringTable::getStringView(ta.dependent_name);
+					auto dep_subst_it = param_map_.find(dep_name);
+					if (dep_subst_it != param_map_.end()) {
+						ta = dep_subst_it->second;
 						needs_substitution = true;
-						FLASH_LOG(Templates, Debug, "  Found template parameter ", param_name, " in arguments");
-						break;
+						substituted = true;
 					}
 				}
-				
-				if (needs_substitution) {
-					// We need to parse and substitute the template arguments
-					// Split args_str on commas and substitute each argument independently
-					std::vector<TemplateTypeArg> substituted_args;
-					
-					// Split arguments on commas (respecting angle-bracket depth)
-					std::vector<std::string_view> arg_parts;
-					{
-						size_t start = 0;
-						int depth = 0;
-						for (size_t i = 0; i < args_str.size(); ++i) {
-							if (args_str[i] == '<') ++depth;
-							else if (args_str[i] == '>') --depth;
-							else if (args_str[i] == ',' && depth == 0) {
-								arg_parts.push_back(args_str.substr(start, i - start));
-								start = i + 1;
-							}
-						}
-						arg_parts.push_back(args_str.substr(start));
+
+				if (!substituted && !ta.is_value && arg.type_index < gTypeInfo.size()) {
+					std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+					auto type_subst_it = param_map_.find(arg_type_name);
+					if (type_subst_it != param_map_.end()) {
+						ta = type_subst_it->second;
+						needs_substitution = true;
 					}
-					
-					bool all_substituted = true;
-					for (auto arg_part : arg_parts) {
-						// Trim whitespace
-						while (!arg_part.empty() && (arg_part.front() == ' ' || arg_part.front() == '\t')) {
-							arg_part.remove_prefix(1);
-						}
-						while (!arg_part.empty() && (arg_part.back() == ' ' || arg_part.back() == '\t')) {
-							arg_part.remove_suffix(1);
-						}
-						
-						auto it = param_map_.find(arg_part);
-						if (it != param_map_.end()) {
-							FLASH_LOG(Templates, Debug, "  Substituting template argument: ", arg_part, " -> type_index=", it->second.type_index);
-							substituted_args.push_back(it->second);
-						} else {
-							// Non-parameter argument (e.g., a concrete type) - look up as type
-							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(arg_part));
-							if (type_it != gTypesByName.end()) {
-								TemplateTypeArg concrete_arg;
-								concrete_arg.base_type = type_it->second->type_;
-								concrete_arg.type_index = type_it->second->type_index_;
-								substituted_args.push_back(concrete_arg);
-							} else {
-								// Unrecognized argument: could be a non-type value (integer literal),
-								// an unexpanded pack, or a type not yet registered.
-								// Template instantiation for this base will be skipped.
-								FLASH_LOG(Templates, Debug, "  Unrecognized template argument '", arg_part,
-									"': not found in param_map or type registry, skipping instantiation");
-								all_substituted = false;
-								break;
-							}
-						}
+				}
+
+				substituted_args.push_back(ta);
+			}
+
+			if (needs_substitution && !substituted_args.empty()) {
+				auto instantiated_node = parser_.try_instantiate_class_template(base_name, substituted_args, true);
+				if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
+					const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
+					StringHandle instantiated_name = class_decl.name();
+
+					auto type_it = gTypesByName.find(instantiated_name);
+					if (type_it != gTypesByName.end()) {
+						TypeIndex new_type_index = type_it->second->type_index_;
+						FLASH_LOG(Templates, Debug, "  Successfully instantiated template: ", base_name, " with type_index=", new_type_index);
+						return TypeSpecifierNode(Type::Struct, new_type_index, 64, Token{}, type.cv_qualifier());
 					}
-					
-					if (all_substituted && !substituted_args.empty()) {
-						// Now instantiate the template with the substituted arguments
-						auto instantiated_node = parser_.try_instantiate_class_template(base_name, substituted_args, true);
-						if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
-							const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
-							StringHandle instantiated_name = class_decl.name();
-							
-							// Look up the type index for the instantiated template
-							auto type_it = gTypesByName.find(instantiated_name);
-							if (type_it != gTypesByName.end()) {
-								TypeIndex new_type_index = type_it->second->type_index_;
-							
-								FLASH_LOG(Templates, Debug, "  Successfully instantiated template: ", base_name, " with type_index=", new_type_index);
-								
-								// Create a new TypeSpecifierNode with the instantiated type
-								return TypeSpecifierNode(Type::Struct, new_type_index, 64, Token{}, type.cv_qualifier());
-							} else {
-								FLASH_LOG(Templates, Warning, "  Instantiated template not found in gTypesByName: ", instantiated_name.view());
-							}
-						} else {
-							FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", base_name);
-						}
-					}
+					FLASH_LOG(Templates, Warning, "  Instantiated template not found in gTypesByName: ", instantiated_name.view());
+				} else {
+					FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", base_name);
 				}
 			}
 		}
