@@ -862,7 +862,7 @@
 			// A full implementation would require control flow analysis to check all paths,
 			// but warning on functions that don't end with a return catches common cases.
 			else {
-				FLASH_LOG_FORMAT(Codegen, Warning, "Non-void function '{}' may not return a value on all code paths",
+				FLASH_LOG_FORMAT(Codegen, Warning, "Non-void function '{}' does not end with a return statement",
 					func_decl.identifier_token().value());
 			}
 		}

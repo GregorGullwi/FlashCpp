@@ -3669,9 +3669,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(Type retur
 		std::nullopt // bitfield_width
 	};
 	// Store the function signature so codegen can use the real return type
-	FunctionSignature sig;
-	sig.return_type = return_type;
-	member.function_signature = std::move(sig);
+	member.function_signature = FunctionSignature{return_type, {}, Linkage::None, std::nullopt, false, false};
 	return member;
 }
 
