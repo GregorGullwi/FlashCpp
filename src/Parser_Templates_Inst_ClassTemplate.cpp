@@ -810,7 +810,170 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Error, "Base class ", base_class_name, " not found in gTypesByName");
 			}
 		}
-		
+
+		// Handle deferred template base classes from the pattern (added by parse_member_struct_template_base_class_list)
+		if (!pattern_struct.deferred_template_base_classes().empty()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Pattern '{}' has {} deferred template base classes",
+			                 StringTable::getStringView(pattern_struct.name()),
+			                 pattern_struct.deferred_template_base_classes().size());
+
+			// Build simple name->arg substitution map from pattern template params/args
+			std::unordered_map<std::string_view, TemplateTypeArg> spec_name_subst_map;
+			std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> spec_pack_subst_map;
+			size_t non_variadic_count = 0;
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) continue;
+				const auto& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.is_variadic()) {
+					// Collect all remaining template_args into pack
+					std::vector<TemplateTypeArg> pack_args;
+					for (size_t j = non_variadic_count; j < template_args.size(); ++j)
+						pack_args.push_back(template_args[j]);
+					StringHandle ph = StringTable::getOrInternStringHandle(tparam.name());
+					spec_pack_subst_map[ph] = std::move(pack_args);
+				} else {
+					if (non_variadic_count < template_args.size())
+						spec_name_subst_map[tparam.name()] = template_args[non_variadic_count];
+					++non_variadic_count;
+				}
+			}
+
+			for (const auto& deferred_base : pattern_struct.deferred_template_base_classes()) {
+				std::string_view base_tpl_name = StringTable::getStringView(deferred_base.base_template_name);
+				FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' ({} args)",
+				                 base_tpl_name, deferred_base.template_arguments.size());
+
+				std::vector<TemplateTypeArg> resolved_args;
+				bool resolution_failed = false;
+				for (const auto& arg_info : deferred_base.template_arguments) {
+					if (arg_info.is_pack) {
+						// Expand pack argument – empty packs are valid (base<>)
+						auto try_expand = [&](StringHandle pack_name) -> bool {
+							auto it = spec_pack_subst_map.find(pack_name);
+							if (it != spec_pack_subst_map.end()) {
+								resolved_args.insert(resolved_args.end(), it->second.begin(), it->second.end());
+								return true;
+							}
+							return false;
+						};
+
+						bool expanded = false;
+						if (arg_info.node.is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+								expanded = try_expand(std::get<TemplateParameterReferenceNode>(expr).param_name());
+							} else if (std::holds_alternative<IdentifierNode>(expr)) {
+								StringHandle h = StringTable::getOrInternStringHandle(std::get<IdentifierNode>(expr).name());
+								expanded = try_expand(h);
+							}
+						} else if (arg_info.node.is<TypeSpecifierNode>()) {
+							TypeIndex idx = arg_info.node.as<TypeSpecifierNode>().type_index();
+							if (idx < gTypeInfo.size()) {
+								expanded = try_expand(gTypeInfo[idx].name_);
+							}
+						}
+						if (!expanded) {
+							// Pack name not found in substitution map – skip this base class
+							FLASH_LOG(Templates, Warning, "Could not resolve pack for deferred base '", base_tpl_name, "'");
+							resolution_failed = true;
+							break;
+						}
+						continue;
+					}
+
+					// Non-pack argument: try name substitution
+					bool resolved = false;
+					if (arg_info.node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& ts = arg_info.node.as<TypeSpecifierNode>();
+						if ((ts.type() == Type::UserDefined || ts.type() == Type::Struct) && ts.type_index() < gTypeInfo.size()) {
+							std::string_view tname = StringTable::getStringView(gTypeInfo[ts.type_index()].name());
+							auto it = spec_name_subst_map.find(tname);
+							if (it != spec_name_subst_map.end()) {
+								TemplateTypeArg a = it->second;
+								a.pointer_depth = ts.pointer_depth();
+								a.ref_qualifier = ts.reference_qualifier();
+								a.cv_qualifier = ts.cv_qualifier();
+								resolved_args.push_back(a);
+								resolved = true;
+							}
+						}
+						if (!resolved) {
+							resolved_args.emplace_back(ts);
+						}
+					} else if (arg_info.node.is<ExpressionNode>()) {
+						const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							std::string_view pname = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
+							auto it = spec_name_subst_map.find(pname);
+							if (it != spec_name_subst_map.end()) {
+								resolved_args.push_back(it->second);
+								resolved = true;
+							}
+						} else if (std::holds_alternative<IdentifierNode>(expr)) {
+							// Identifier that may refer to a type in the substitution map or in gTypesByName
+							std::string_view iname = std::get<IdentifierNode>(expr).name();
+							auto sit = spec_name_subst_map.find(iname);
+							if (sit != spec_name_subst_map.end()) {
+								resolved_args.push_back(sit->second);
+								resolved = true;
+							} else {
+								StringHandle h = StringTable::getOrInternStringHandle(iname);
+								auto type_it = gTypesByName.find(h);
+								if (type_it != gTypesByName.end()) {
+									TemplateTypeArg a;
+									a.base_type = type_it->second->type_;
+									a.type_index = type_it->second->type_index_;
+									resolved_args.push_back(a);
+									resolved = true;
+								}
+							}
+						}
+						if (!resolved) {
+							// Non-type value argument - try to convert to TemplateTypeArg
+							if (std::holds_alternative<NumericLiteralNode>(expr)) {
+								TemplateTypeArg va;
+								va.is_value = true;
+								NumericLiteralValue nv = std::get<NumericLiteralNode>(expr).value();
+								va.value = std::holds_alternative<unsigned long long>(nv)
+									? static_cast<int64_t>(std::get<unsigned long long>(nv))
+									: static_cast<int64_t>(std::get<double>(nv));
+								resolved_args.push_back(va);
+							} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
+								TemplateTypeArg va;
+								va.is_value = true;
+								va.value = std::get<BoolLiteralNode>(expr).value() ? 1 : 0;
+								resolved_args.push_back(va);
+							} else {
+								// Unresolvable expression argument - cannot safely instantiate
+								FLASH_LOG(Templates, Warning, "Could not resolve expression arg for deferred base '", base_tpl_name, "' - skipping");
+								resolution_failed = true;
+							}
+						}
+					}
+				}
+
+				if (resolution_failed) {
+					FLASH_LOG(Templates, Warning, "Could not resolve args for deferred base '", base_tpl_name, "' - skipping");
+					continue;
+				}
+
+				// Instantiate the base template with resolved args
+				auto base_node = try_instantiate_class_template(base_tpl_name, resolved_args, true);
+				if (base_node.has_value() && base_node->is<StructDeclarationNode>()) {
+					ast_nodes_.push_back(*base_node);
+				}
+				std::string_view base_inst_name = get_instantiated_class_name(base_tpl_name, resolved_args);
+				StringHandle base_inst_handle = StringTable::getOrInternStringHandle(base_inst_name);
+				auto base_it = gTypesByName.find(base_inst_handle);
+				if (base_it != gTypesByName.end()) {
+					struct_info->addBaseClass(base_inst_name, base_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+					FLASH_LOG_FORMAT(Templates, Debug, "Added deferred template base '{}' -> '{}'", base_tpl_name, base_inst_name);
+				} else {
+					FLASH_LOG(Templates, Warning, "Deferred template base '", base_inst_name, "' not found after instantiation");
+				}
+			}
+		}
+
 		// Copy members from pattern
 		FLASH_LOG(Templates, Debug, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
 		for (const auto& member_decl : pattern_struct.members()) {

@@ -1948,6 +1948,61 @@
 		type == Type::MemberFunctionPointer);
 	}
 
+	// Recursively check whether a struct is trivially copyable:
+	// no virtual functions, no user-defined copy/move ctors or assignment, no user-defined dtor,
+	// all non-static data members of class type are trivially copyable,
+	// and all base classes are also trivially copyable.
+	static bool isTriviallyCopyableStruct(const StructTypeInfo* struct_info) {
+		if (!struct_info) return false;
+		if (struct_info->has_vtable) return false;
+		if (struct_info->hasCopyConstructor()) return false;
+		if (struct_info->hasMoveConstructor()) return false;
+		if (struct_info->hasCopyAssignmentOperator()) return false;
+		if (struct_info->hasMoveAssignmentOperator()) return false;
+		if (struct_info->hasUserDefinedDestructor()) return false;
+		// Recursively check all non-static data members of class type
+		for (const auto& member : struct_info->members) {
+			if (member.type == Type::Struct || member.type == Type::UserDefined) {
+				if (member.type_index >= gTypeInfo.size()) return false;
+				const StructTypeInfo* member_info = gTypeInfo[member.type_index].getStructInfo();
+				if (!isTriviallyCopyableStruct(member_info)) return false;
+			}
+		}
+		// Recursively check all base classes
+		for (const auto& base : struct_info->base_classes) {
+			if (base.is_deferred) continue;  // Deferred (template param) base – assume ok
+			if (base.type_index >= gTypeInfo.size()) return false;
+			const StructTypeInfo* base_info = gTypeInfo[base.type_index].getStructInfo();
+			if (!isTriviallyCopyableStruct(base_info)) return false;
+		}
+		return true;
+	}
+
+	// Recursively check whether a struct is trivial:
+	// trivially copyable AND trivial default constructor, all non-static data members trivial,
+	// and all base classes trivial.
+	static bool isTrivialStruct(const StructTypeInfo* struct_info) {
+		if (!struct_info) return false;
+		if (!isTriviallyCopyableStruct(struct_info)) return false;
+		if (struct_info->hasUserDefinedConstructor()) return false;
+		// Recursively check all non-static data members of class type
+		for (const auto& member : struct_info->members) {
+			if (member.type == Type::Struct || member.type == Type::UserDefined) {
+				if (member.type_index >= gTypeInfo.size()) return false;
+				const StructTypeInfo* member_info = gTypeInfo[member.type_index].getStructInfo();
+				if (!isTrivialStruct(member_info)) return false;
+			}
+		}
+		// Recursively check all base classes
+		for (const auto& base : struct_info->base_classes) {
+			if (base.is_deferred) continue;
+			if (base.type_index >= gTypeInfo.size()) return false;
+			const StructTypeInfo* base_info = gTypeInfo[base.type_index].getStructInfo();
+			if (!isTrivialStruct(base_info)) return false;
+		}
+		return true;
+	}
+
 	bool AstToIr::isArithmeticType(Type type) const {
 		// Branchless: arithmetic types are Bool(1) through LongDouble(14)
 		// Using range check instead of multiple comparisons
@@ -2329,44 +2384,30 @@
 				// A trivially copyable type can be copied with memcpy
 				// - Scalar types (arithmetic, pointers, enums)
 				// - Classes with no virtual, no user-defined copy/move ctors,
-				//   no user-defined copy/move assignment ops, no user-defined dtor
+				//   no user-defined copy/move assignment ops, no user-defined dtor,
+				//   and all base classes also trivially copyable
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if ((type == Type::Struct || type == Type::UserDefined) &&
+				type_spec.type_index() < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					if (struct_info) {
-						result = !struct_info->has_vtable
-							&& !struct_info->hasCopyConstructor()
-							&& !struct_info->hasMoveConstructor()
-							&& !struct_info->hasCopyAssignmentOperator()
-							&& !struct_info->hasMoveAssignmentOperator()
-							&& !struct_info->hasUserDefinedDestructor();
-					}
+					result = isTriviallyCopyableStruct(type_info.getStructInfo());
 				}
 				break;
 
 			case TypeTraitKind::IsTrivial:
-				// A trivial type is trivially copyable and has a trivial default constructor
+				// A trivial type is trivially copyable and has a trivial default constructor,
+				// and all base classes are also trivial.
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if ((type == Type::Struct || type == Type::UserDefined) &&
+				type_spec.type_index() < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					if (struct_info) {
-						// Trivial = trivially copyable + trivial default ctor
-						result = !struct_info->has_vtable
-							&& !struct_info->hasUserDefinedConstructor()
-							&& !struct_info->hasCopyConstructor()
-							&& !struct_info->hasMoveConstructor()
-							&& !struct_info->hasCopyAssignmentOperator()
-							&& !struct_info->hasMoveAssignmentOperator()
-							&& !struct_info->hasUserDefinedDestructor();
-					}
+					result = isTrivialStruct(type_info.getStructInfo());
 				}
 				break;
 
