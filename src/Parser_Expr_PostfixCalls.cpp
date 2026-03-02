@@ -1,4 +1,33 @@
 
+// Helper: resolve object type from expression and try to instantiate member function template.
+// Returns the instantiated function node if successful, nullopt otherwise.
+std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
+	const std::optional<ASTNode>& object_expr, std::string_view member_name,
+	const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args,
+	const std::vector<TypeSpecifierNode>& arg_types)
+{
+	if (!object_expr.has_value() || !object_expr->is<ExpressionNode>()) return std::nullopt;
+	const ExpressionNode& expr = object_expr->as<ExpressionNode>();
+	if (!std::holds_alternative<IdentifierNode>(expr)) return std::nullopt;
+	const auto& ident = std::get<IdentifierNode>(expr);
+	auto symbol = lookup_symbol(ident.nameHandle());
+	if (!symbol.has_value()) return std::nullopt;
+	const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+	if (!decl) return std::nullopt;
+	const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+	if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return std::nullopt;
+	TypeIndex type_idx = type_spec.type_index();
+	if (type_idx >= gTypeInfo.size()) return std::nullopt;
+	auto struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
+	instantiateLazyClassToPhase(gTypeInfo[type_idx].name(), ClassInstantiationPhase::Full);
+	if (explicit_template_args.has_value()) {
+		return try_instantiate_member_function_template_explicit(struct_name, member_name, *explicit_template_args);
+	} else if (!arg_types.empty()) {
+		return try_instantiate_member_function_template(struct_name, member_name, arg_types);
+	}
+	return std::nullopt;
+}
+
 // Apply postfix operators (., ->, [], (), ++, --) to an existing expression result
 // This allows cast expressions (static_cast, dynamic_cast, etc.) to be followed by member access
 // e.g., static_cast<T&&>(t).operator<=>(u)
@@ -162,33 +191,8 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				}
 				
 				// Try to resolve object type and instantiate member function template
-				std::optional<ASTNode> instantiated_func;
-				if (result->is<ExpressionNode>()) {
-					const ExpressionNode& expr = result->as<ExpressionNode>();
-					if (std::holds_alternative<IdentifierNode>(expr)) {
-						const auto& ident = std::get<IdentifierNode>(expr);
-						auto symbol = lookup_symbol(ident.nameHandle());
-						if (symbol.has_value()) {
-							if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-								const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-								if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
-									TypeIndex type_idx = type_spec.type_index();
-									if (type_idx < gTypeInfo.size()) {
-										auto struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
-										instantiateLazyClassToPhase(gTypeInfo[type_idx].name(), ClassInstantiationPhase::Full);
-										if (explicit_template_args.has_value()) {
-											instantiated_func = try_instantiate_member_function_template_explicit(
-												struct_name, member_name_token.value(), *explicit_template_args);
-										} else if (!arg_types.empty()) {
-											instantiated_func = try_instantiate_member_function_template(
-												struct_name, member_name_token.value(), arg_types);
-										}
-									}
-								}
-							}
-						}
-					}
-				}
+				auto instantiated_func = tryResolveMemberFunctionTemplate(
+					result, member_name_token.value(), explicit_template_args, arg_types);
 				
 				// Use instantiated function or create placeholder
 				FunctionDeclarationNode* func_ref_ptr = nullptr;
@@ -264,33 +268,8 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				}
 				
 				// Try to resolve object type and instantiate member function template
-				std::optional<ASTNode> instantiated_func;
-				if (result->is<ExpressionNode>()) {
-					const ExpressionNode& expr = result->as<ExpressionNode>();
-					if (std::holds_alternative<IdentifierNode>(expr)) {
-						const auto& ident = std::get<IdentifierNode>(expr);
-						auto symbol = lookup_symbol(ident.nameHandle());
-						if (symbol.has_value()) {
-							if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-								const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-								if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
-									TypeIndex type_idx = type_spec.type_index();
-									if (type_idx < gTypeInfo.size()) {
-										auto struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
-										instantiateLazyClassToPhase(gTypeInfo[type_idx].name(), ClassInstantiationPhase::Full);
-										if (explicit_template_args.has_value()) {
-											instantiated_func = try_instantiate_member_function_template_explicit(
-												struct_name, member_name_token.value(), *explicit_template_args);
-										} else if (!arg_types.empty()) {
-											instantiated_func = try_instantiate_member_function_template(
-												struct_name, member_name_token.value(), arg_types);
-										}
-									}
-								}
-							}
-						}
-					}
-				}
+				auto instantiated_func = tryResolveMemberFunctionTemplate(
+					result, member_name_token.value(), explicit_template_args, arg_types);
 				
 				// Use instantiated function or create placeholder
 				FunctionDeclarationNode* func_ref_ptr = nullptr;
