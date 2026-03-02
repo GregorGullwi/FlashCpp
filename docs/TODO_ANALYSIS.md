@@ -15,16 +15,11 @@ Each item is assessed as one of:
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Call_Indirect.cpp` | 399 | ✅ Valid |
-| `src/CodeGen_Call_Indirect.cpp` | 539 | ✅ Valid |
-| `src/CodeGen_Call_Indirect.cpp` | 603 | ✅ Valid |
+| `src/CodeGen_Call_Indirect.cpp` | 399 | ✅ Fixed |
+| `src/CodeGen_Call_Indirect.cpp` | 539 | ✅ Fixed |
+| `src/CodeGen_Call_Indirect.cpp` | 603 | ✅ Fixed |
 
-When a struct data member has type `FunctionPointer` and is called through a member-function-call expression, the return type of the generated `IndirectCallOp` is hardcoded:
-
-- Line 401: `return { Type::Void, 0, ret_var, 0ULL };` — always Void  
-- Line 605: `return { Type::Int, 32, ret_var, 0ULL };` — always Int
-
-The `TypeSpecifierNode` stored alongside the `FunctionPointer` member contains the real return type. C++20 requires that the return type of an indirect call matches the called function's declared type; both hardcoded fallbacks will produce wrong code for any function pointer member that returns something other than `void`/`int`.
+~~When a struct data member has type `FunctionPointer` and is called through a member-function-call expression, the return type of the generated `IndirectCallOp` is hardcoded.~~ **Fixed**: Added `std::optional<FunctionSignature> function_signature` to `StructMember`. The parser's `try_parse_function_pointer_member()` now accepts and stores the return type. All three codegen sites read the stored return type instead of hardcoding `Void` or `Int`.
 
 ---
 
@@ -45,9 +40,9 @@ The `TypeSpecifierNode` stored alongside the `FunctionPointer` member contains t
 
 | File | Line | Status |
 |------|------|--------|
-| `src/FileReader_Macros.cpp` | 1291 | ✅ Valid |
+| `src/FileReader_Macros.cpp` | 1291 | ✅ Fixed |
 
-`#line N "filename"` is required by the C++ standard (§15.7 [cpp.line]) to update both the current line number and the presumed source-file name used in diagnostics. The line-number update is implemented; the filename update is skipped entirely with the comment "to avoid lifetime issues". The fix requires interning the filename string into the `StringTable` (already available) and storing the resulting `StringHandle` in the file-stack entry.
+~~`#line N "filename"` is required by the C++ standard (§15.7 [cpp.line]) to update both the current line number and the presumed source-file name used in diagnostics. The line-number update is implemented; the filename update is skipped entirely with the comment "to avoid lifetime issues".~~ **Fixed**: The filename string is now interned into `file_paths_` via `get_or_add_file_path()`, which provides stable lifetime. The `filestack_.top().file_name` is updated to point to the interned string.
 
 ---
 
@@ -139,9 +134,9 @@ When a declaration like `inline constexpr struct Foo { ... } var = {};` is parse
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Visitors_Decl.cpp` | 860 | ✅ Valid |
+| `src/CodeGen_Visitors_Decl.cpp` | 860 | ✅ Fixed |
 
-A non-void function whose body has no `return` statement on every code path is silently accepted. The comment correctly notes this should be a `CompileError`. Full enforcement requires a simple control-flow reachability pass over the function's basic blocks, similar to the existing flow used for `main`'s implicit return-0 injection.
+~~A non-void function whose body has no `return` statement on every code path is silently accepted.~~ **Fixed**: Now emits a warning via `FLASH_LOG_FORMAT(Codegen, Warning, ...)` when a non-void function's last instruction is not a return. Full control-flow analysis for all paths is still needed for a complete implementation, but this catches the common case.
 
 ---
 
@@ -231,9 +226,9 @@ All seven sites set `addr_op.operand.pointer_depth = 0` when generating an `Addr
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Templates_Params.cpp` | 119 | ✅ Valid |
+| `src/Parser_Templates_Params.cpp` | 119 | ✅ Fixed |
 
-`parse_template_parameter()` does not handle default arguments for template-template parameters: `template<template<typename> class Container = std::vector>`. After the parameter name is parsed, a `=` would start the default argument, but the parser immediately returns. The token stream following the `=` will then cause a parse error. Default template template arguments are required by several standard-library traits.
+~~`parse_template_parameter()` does not handle default arguments for template-template parameters.~~ **Fixed**: After the parameter name is parsed, the parser now checks for `=` and calls `parse_type_specifier()` to read the default type, storing it via `set_default_value()`. This follows the same pattern used for `typename`/`class` parameter defaults.
 
 ---
 
@@ -326,16 +321,16 @@ The comment asks whether this special case is still necessary. The original reas
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Function pointer return types (indirect call) | 3 | ✅ Valid |
+| Function pointer return types (indirect call) | 3 | ✅ Fixed |
 | Template substitutor gaps | 2 | ✅ Valid |
-| Preprocessor `#line` filename | 1 | ✅ Valid |
+| Preprocessor `#line` filename | 1 | ✅ Fixed |
 | IR converter error messages / SSE moves | 3 | ✅ Fixed |
 | Member struct template base classes | 2 | ✅ Valid |
 | Declarator parsing gaps | 2 | 1 ✅ Valid, 1 ✅ Fixed |
 | Specifier propagation to struct decl | 1 | ✅ Valid |
 | Constexpr evaluation gaps | 4 | ✅ Valid |
 | Overload resolution | 3 | ✅ Valid |
-| Missing return diagnostic | 1 | ✅ Valid |
+| Missing return diagnostic | 1 | ✅ Fixed |
 | Template deduction non-type params | 1 | ✅ Valid |
 | Phase labels (stale) | 2 | ✅ Already fixed |
 | Complex pack expansion | 1 | ✅ Valid |
@@ -343,7 +338,7 @@ The comment asks whether this special case is still necessary. The original reas
 | Lambda-to-function-pointer type | 1 | ✅ Valid |
 | Copy constructor type_index check | 1 | ✅ Fixed |
 | `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
-| Template template parameter defaults | 1 | ✅ Valid |
+| Template template parameter defaults | 1 | ✅ Fixed |
 | Concept template arguments | 1 | ✅ Valid |
 | Array member length | 1 | ✅ Valid |
 | Type traits incomplete checks | 5 | ✅ Valid |
@@ -352,6 +347,6 @@ The comment asks whether this special case is still necessary. The original reas
 | **Total** | **47** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
-**Fixed**: 7 items (IR error messages ×2, SSE moves ×1, linkage forwarding ×1, copy/move ctor type_index ×1, stale comments ×2)  
+**Fixed**: 14 items (funcptr return types ×3, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, copy/move ctor type_index ×1, stale comments ×2, missing return diagnostic ×1, template template defaults ×1, funcptr return types ×1)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 32 items
+**Genuinely unimplemented**: 25 items
