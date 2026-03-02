@@ -1476,12 +1476,125 @@ EvalResult Evaluator::evaluate_nested_member_access(
 
 // Evaluate array subscript followed by member access (e.g., arr[0].member)
 EvalResult Evaluator::evaluate_array_subscript_member_access(
-	[[maybe_unused]] const ArraySubscriptNode& subscript,
-	[[maybe_unused]] std::string_view member_name,
-	[[maybe_unused]] EvaluationContext& context) {
-	// TODO: Implement array subscript followed by member access evaluation
-	// For now, return an error - this is more complex
-	return EvalResult::error("Array subscript followed by member access not yet supported");
+	const ArraySubscriptNode& subscript,
+	std::string_view member_name,
+	EvaluationContext& context) {
+	auto index_result = evaluate(subscript.index_expr(), context);
+	if (!index_result.success()) {
+		return index_result;
+	}
+
+	long long index = index_result.as_int();
+	if (index < 0) {
+		return EvalResult::error("Negative array index in constant expression");
+	}
+
+	const ASTNode& array_expr = subscript.array_expr();
+	std::string_view array_name;
+	if (array_expr.is<ExpressionNode>()) {
+		const ExpressionNode& expr_node = array_expr.as<ExpressionNode>();
+		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
+			return EvalResult::error("Array subscript followed by member access requires identifier base");
+		}
+		array_name = std::get<IdentifierNode>(expr_node).name();
+	} else if (array_expr.is<IdentifierNode>()) {
+		array_name = array_expr.as<IdentifierNode>().name();
+	} else {
+		return EvalResult::error("Array subscript followed by member access requires identifier base");
+	}
+
+	if (!context.symbols) {
+		return EvalResult::error("Cannot evaluate array subscript member access: no symbol table provided");
+	}
+
+	auto symbol_opt = context.symbols->lookup(array_name);
+	if (!symbol_opt.has_value()) {
+		return EvalResult::error("Undefined variable in array subscript member access: " + std::string(array_name));
+	}
+
+	const ASTNode& symbol_node = symbol_opt.value();
+	if (!symbol_node.is<VariableDeclarationNode>()) {
+		return EvalResult::error("Identifier in array subscript member access is not a variable");
+	}
+
+	const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+	if (!var_decl.is_constexpr()) {
+		return EvalResult::error("Variable in array subscript member access must be constexpr");
+	}
+
+	const auto& initializer = var_decl.initializer();
+	if (!initializer.has_value() || !initializer->is<InitializerListNode>()) {
+		return EvalResult::error("Array subscript member access requires constexpr array initializer list");
+	}
+
+	const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+	const auto& elements = init_list.initializers();
+	size_t element_index = static_cast<size_t>(index);
+	if (element_index >= elements.size()) {
+		return EvalResult::error("Array index " + std::to_string(element_index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
+	}
+
+	const ASTNode& array_element = elements[element_index];
+	const ConstructorCallNode* ctor_call_ptr = nullptr;
+	if (array_element.is<ConstructorCallNode>()) {
+		ctor_call_ptr = &array_element.as<ConstructorCallNode>();
+	} else if (array_element.is<ExpressionNode>()) {
+		const ExpressionNode& element_expr = array_element.as<ExpressionNode>();
+		if (std::holds_alternative<ConstructorCallNode>(element_expr)) {
+			ctor_call_ptr = &std::get<ConstructorCallNode>(element_expr);
+		}
+	}
+
+	if (!ctor_call_ptr) {
+		return EvalResult::error("Array element in member access is not a constructor call");
+	}
+
+	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
+	const ASTNode& type_node = ctor_call.type_node();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("Invalid struct element type in array subscript member access");
+	}
+
+	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
+	if (!struct_info) {
+		return EvalResult::error("Array element is not a struct in member access");
+	}
+
+	auto member_init_opt = get_member_initializer(ctor_call, struct_info, member_name, context);
+	if (!member_init_opt.has_value()) {
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
+	}
+
+	std::unordered_map<std::string_view, EvalResult> param_bindings;
+	const auto& ctor_args = ctor_call.arguments();
+	const ConstructorDeclarationNode* matching_ctor = nullptr;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (!member_func.is_constructor) continue;
+		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
+		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+		if (ctor.parameter_nodes().size() == ctor_args.size()) {
+			matching_ctor = &ctor;
+			break;
+		}
+	}
+
+	if (matching_ctor) {
+		const auto& params = matching_ctor->parameter_nodes();
+		for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
+			if (params[i].is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+				std::string_view param_name = param_decl.identifier_token().value();
+				auto arg_result = evaluate(ctor_args[i], context);
+				if (!arg_result.success()) {
+					return arg_result;
+				}
+				param_bindings[param_name] = arg_result;
+			}
+		}
+	}
+
+	return evaluate_expression_with_bindings(member_init_opt.value(), param_bindings, context);
 }
 
 // Helper function to look up and evaluate static member from struct info

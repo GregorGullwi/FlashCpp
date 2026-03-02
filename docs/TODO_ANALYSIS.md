@@ -108,12 +108,12 @@ while (peek() != "{"_tok) { advance(); }   // base class info lost
 |------|------|--------|
 | `src/Parser_Decl_FunctionOrVar.cpp` | 1005 | ✅ Valid |
 | `src/ConstExprEvaluator_Members.cpp` | 202 | ✅ Fixed |
-| `src/ConstExprEvaluator_Members.cpp` | 1473 | ✅ Valid |
+| `src/ConstExprEvaluator_Members.cpp` | 1473 | ✅ Fixed |
 | `src/ConstExprEvaluator_Core.cpp` | 1050 | ✅ Already works (direct call) |
 
 - **FunctionOrVar.cpp:1005** – `constexpr` variables whose initializers are `InitializerListNode`s, casts, or other complex expressions bypass evaluation entirely. A full implementation would recursively evaluate those forms.
 - ~~**Members.cpp:202** – Inside a constexpr member function, accesses of the form `this->x` (stored as `MemberAccessNode`) fall through to the non-mutable evaluator, which cannot modify the `bindings` map.~~ **Fixed**: The assignment branch in `evaluate_expression_with_bindings` now handles `MemberAccessNode` LHS (`this->x = value`) by extracting the member name and updating `bindings[member_name]`. Read access already worked via the const evaluator. Test: `tests/test_constexpr_this_member_ret42.cpp`.
-- **Members.cpp:1473** – Array subscript followed by member access (`arr[0].member`) in a constexpr context returns an error. This pattern is common in standard-library constexpr implementations.
+- ~~**Members.cpp:1473** – Array subscript followed by member access (`arr[0].member`) in a constexpr context returns an error.~~ **Fixed**: Implemented `evaluate_array_subscript_member_access()` for constexpr identifier-based arrays initialized with initializer lists of struct constructor calls. The evaluator now resolves the indexed element, extracts the requested member via constructor/member-initializer bindings, and returns the constant value. Test: `tests/test_constexpr_array_subscript_member_ret42.cpp`.
 - **Core.cpp:1050** – Calling `operator()` on a user-defined functor **passed as a template argument** in a constexpr context reaches the `evaluate_callable_object` code path, which immediately returns an error for `ConstructorCallNode` initializers. This blocks constexpr comparators like `std::less` / `std::greater` when passed as non-type template parameters. (Direct `constexpr Functor f; f(a,b)` calls already work via the member function call path.)
 
 ---
@@ -423,7 +423,7 @@ int main() {
 | Member struct template base classes | 2 | ✅ Fixed |
 | Declarator parsing gaps | 2 | ✅ Fixed (both verified working) |
 | Specifier propagation to struct decl | 1 | ✅ Fixed |
-| Constexpr evaluation gaps | 4 | ⚠️ 1 ✅ Fixed (this->member), 3 ✅ Valid |
+| Constexpr evaluation gaps | 4 | ⚠️ 2 ✅ Fixed (`this->member`, `arr[0].member`), 2 ✅ Valid |
 | Overload resolution | 3 | ✅ Fixed (all working) |
 | Missing return diagnostic | 1 | ✅ Fixed |
 | Template deduction non-type params | 1 | ✅ Valid |
@@ -444,10 +444,11 @@ int main() {
 | **Total** | **49** | |
 
 **Stale**: 0 items  
-**Fixed**: 33+ entries (all previous fixes plus: constexpr this->member assignment, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits)  
+**Fixed**: 34+ entries (all previous fixes plus: constexpr this->member assignment, constexpr `arr[0].member` evaluation, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 11 items (complex constexpr patterns, pack expansion, lambda-to-funcptr type, array member length, Type::Pointer enum, substitutor string parsing, template deduction non-type params)
+**Genuinely unimplemented**: 10 items (complex constexpr patterns, pack expansion, lambda-to-funcptr type, array member length, Type::Pointer enum, substitutor string parsing, template deduction non-type params)
 
 ## Existing issues encountered while implementing
 
 - `tests/test_type_traits_intrinsics_ret147.cpp` has a stale trailing comment in `main()` (`Expected: 146`) that does not match the filename expectation (`ret147`).
+- Global `constexpr` arrays of struct objects (e.g., `constexpr Item items[2] = {Item(10), Item(42)};`) are still flagged by codegen as non-constant initializers even though dependent constant expressions like `constexpr int extracted = items[1].value;` now evaluate correctly.
