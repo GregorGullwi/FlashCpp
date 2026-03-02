@@ -317,6 +317,84 @@ The comment asks whether this special case is still necessary. The original reas
 
 ---
 
+## 24. Template Substitutor – String-Based Argument Parsing in `substituteInType()`
+
+| File | Line | Status |
+|------|------|--------|
+| `src/ExpressionSubstitutor.cpp` | 1033–1145 | ✅ Valid |
+
+`substituteInType()` recovers template arguments by parsing the type's string name out of `gTypeInfo`:
+
+```cpp
+size_t template_start = type_name.find('<');
+// ...
+std::string_view args_str = type_name.substr(template_start + 1, ...);
+// split on commas, look up each substring in gTypesByName
+```
+
+This has two problems:
+
+1. **Built-in types are invisible.** `gTypesByName` only contains user-defined types (structs, enums, typedefs). Built-in types like `bool`, `int`, `double` are in `gNativeTypes` (keyed by `Type` enum, not by name). So `integral_constant<bool, N>` fails because `"bool"` is not found in `gTypesByName`, causing the entire substitution to be silently skipped.
+
+2. **String parsing is fragile.** Splitting on `<`, `>`, and `,` breaks for nested templates, non-type arguments containing operators, and types with spaces in their names (`unsigned long long`). The same file already has the correct pattern in `substituteQualifiedIdentifier()` (lines 807–854), which uses `TypeInfo::isTemplateInstantiation()` and `TypeInfo::templateArgs()` to access structured `TemplateTypeArg` objects. Each stored arg has a `dependent_name` field that can be matched against `param_map_` without any string parsing.
+
+### Recommended fix
+
+Rewrite the `Type::Struct` branch of `substituteInType()` to follow the `substituteQualifiedIdentifier()` pattern:
+
+```cpp
+if (type_info.isTemplateInstantiation()) {
+    std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
+    const auto& stored_args = type_info.templateArgs();
+    std::vector<TemplateTypeArg> substituted_args;
+    for (const auto& arg : stored_args) {
+        // Check dependent_name against param_map_, same as substituteQualifiedIdentifier
+        if (arg.dependent_name.isValid()) {
+            auto it = param_map_.find(StringTable::getStringView(arg.dependent_name));
+            if (it != param_map_.end()) { substituted_args.push_back(it->second); continue; }
+        }
+        // Check type_index name against param_map_
+        // ...
+        substituted_args.push_back(arg);  // concrete arg, keep as-is
+    }
+    // instantiate with substituted_args
+}
+```
+
+This eliminates string parsing entirely, handles multi-word built-in types, non-type template arguments, and nested templates correctly.
+
+### Test case
+
+The following program should compile and return 42, but currently fails because the substitutor cannot resolve `bool` as a template argument when substituting the base class `integral_constant<bool, true>`:
+
+```cpp
+// tests/test_template_builtin_arg_ret42.cpp
+template<typename T, T V>
+struct integral_constant {
+    static constexpr T value = V;
+};
+
+using true_type = integral_constant<bool, true>;
+
+template<typename T>
+struct is_integer {
+    static constexpr bool value = false;
+};
+
+template<>
+struct is_integer<int> {
+    static constexpr bool value = true;
+};
+
+int main() {
+    if (is_integer<int>::value)
+        return 42;
+    return 0;
+}
+```
+
+---
+
 ## Summary Table
 
 | Category | Count | Status |
@@ -344,9 +422,10 @@ The comment asks whether this special case is still necessary. The original reas
 | Type traits incomplete checks | 5 | ✅ Valid |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
-| **Total** | **47** | |
+| Substitutor string-based arg parsing | 1 | ✅ Valid |
+| **Total** | **48** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
 **Fixed**: 16 file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 21 items
+**Genuinely unimplemented**: 22 items
