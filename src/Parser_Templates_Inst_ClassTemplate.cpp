@@ -4324,6 +4324,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_final
 					);
 				}
+				// Propagate noexcept/const/volatile to StructTypeInfo member
+				if (!struct_info_ptr->member_functions.empty()) {
+					struct_info_ptr->member_functions.back().is_noexcept = func_decl.is_noexcept();
+					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
+					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
+				}
 				
 				// Skip to next function - body will be instantiated on-demand
 				continue;
@@ -4574,6 +4580,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_final
 					);
 				}
+				// Propagate noexcept/const/volatile to StructTypeInfo member
+				if (!struct_info_ptr->member_functions.empty()) {
+					struct_info_ptr->member_functions.back().is_noexcept = func_decl.is_noexcept();
+					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
+					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
+				}
 			} else {
 				// No definition, but still need to substitute parameter types and return type
 				
@@ -4715,6 +4727,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_override,
 						mem_func.is_final
 					);
+				}
+				// Propagate noexcept/const/volatile to StructTypeInfo member
+				if (!struct_info_ptr->member_functions.empty()) {
+					struct_info_ptr->member_functions.back().is_noexcept = func_decl.is_noexcept();
+					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
+					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
 				}
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {

@@ -644,8 +644,27 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
 
 // Helper to check if a parameter's type_index matches this struct's own type_index.
 // Uses own_type_index_ cached by TypeInfo::setStructInfo() — no map lookup needed.
+// For template instantiations (e.g., Wrapper<int>), also checks if the param_type_index
+// refers to the base template pattern (e.g., Wrapper) that this struct was instantiated from,
+// since self-referential parameters like operator=(const Wrapper&) may not have the
+// instantiated type_index substituted.
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
-    return own_type_index_.has_value() && param_type_index == *own_type_index_;
+    if (!own_type_index_.has_value()) return false;
+    // Direct match (works for non-template types and properly substituted template params)
+    if (param_type_index == *own_type_index_) return true;
+    // Template instantiation fallback: check if param refers to our base template pattern
+    if (*own_type_index_ < gTypeInfo.size()) {
+        const TypeInfo& own_info = gTypeInfo[*own_type_index_];
+        if (own_info.isTemplateInstantiation() && param_type_index < gTypeInfo.size()) {
+            const TypeInfo& param_info = gTypeInfo[param_type_index];
+            // Both refer to the same base template name
+            if (own_info.baseTemplateName() == param_info.name()) return true;
+            // Or the param is also an instantiation of the same template
+            if (param_info.isTemplateInstantiation() &&
+                own_info.baseTemplateName() == param_info.baseTemplateName()) return true;
+        }
+    }
+    return false;
 }
 
 const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {

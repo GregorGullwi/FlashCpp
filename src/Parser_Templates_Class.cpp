@@ -2071,6 +2071,13 @@ ParseResult Parser::parse_template_declaration() {
 						return specs_result;
 					}
 
+					// Propagate noexcept specifier to the function declaration node
+					if (func_specs.is_noexcept) {
+						member_func_ref.set_noexcept(true);
+						if (func_specs.noexcept_expr)
+							member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
+					}
+
 					// Check for function body and use delayed parsing
 					if (peek() == "{"_tok) {
 						// Save position at start of body
@@ -3454,6 +3461,13 @@ ParseResult Parser::parse_template_declaration() {
 					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
 					if (specs_result.is_error()) {
 						return specs_result;
+					}
+
+					// Propagate noexcept specifier to the function declaration node
+					if (func_specs.is_noexcept) {
+						member_func_ref.set_noexcept(true);
+						if (func_specs.noexcept_expr)
+							member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
 					}
 					
 					// Extract parsed specifiers
@@ -5191,6 +5205,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
 			if (specs_result.is_error()) {
 				return specs_result;
+			}
+
+			// Propagate noexcept specifier to the function declaration node
+			if (func_specs.is_noexcept) {
+				member_func_ref.set_noexcept(true);
+				if (func_specs.noexcept_expr)
+					member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
 			}
 			
 			// Handle function body or semicolon
