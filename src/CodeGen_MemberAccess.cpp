@@ -2532,9 +2532,11 @@
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
+						// Per C++20 §20.15.4.4 [meta.unary.prop], is_nothrow_constructible
+						// only depends on whether the selected constructor is noexcept.
+						// The destructor is irrelevant to constructibility.
 						result = !struct_info->has_vtable
-							&& !struct_info->hasUserDefinedConstructor()
-							&& !struct_info->hasUserDefinedDestructor();
+							&& !struct_info->hasUserDefinedConstructor();
 					}
 				}
 				break;
