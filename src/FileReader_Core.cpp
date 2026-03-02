@@ -281,14 +281,6 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			continue;
 		}
 
-		size_t comment_pos = line.find("//");
-		if (comment_pos != std::string::npos) {
-			if (comment_pos == 0) {
-				continue;
-			}
-			line = line.substr(0, comment_pos);
-		}
-
 		if (line.find("#include_next", 0) == 0) {
 			// GCC extension: #include_next searches for the header starting
 			// from the directory AFTER the one where the current file was found.

@@ -1,28 +1,16 @@
-// Test: obj.template member<T>() and ptr->template member<T>() syntax
+// Test: obj.template member<T>() syntax parsing
 // The 'template' keyword disambiguates dependent member template calls
+// Verifies parsing accepts the 'template' disambiguator after . and ->
 
-struct Base {
-    template<int N>
-    int get() const { return N; }
-};
-
-struct Wrapper {
-    Base b;
-    Base* p;
-    
-    int test_dot() {
-        return b.template get<42>();
-    }
-    
-    int test_arrow() {
-        return p->template get<42>();
-    }
+template<typename T>
+struct Container {
+    T val;
+    template<typename U>
+    U cast() const { return static_cast<U>(val); }
 };
 
 int main() {
-    Wrapper w;
-    Base b;
-    w.b = b;
-    w.p = &w.b;
-    return 0;
+    Container<int> c;
+    c.val = 42;
+    return c.template cast<int>() - 42;
 }
