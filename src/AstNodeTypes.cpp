@@ -672,9 +672,6 @@ InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByPa
 		// match the same parameter count.
 		InlineVector<const StructMemberFunction*, 4> filtered_matches;
 		for (const StructMemberFunction* match : matches) {
-			if (!match || !match->function_decl.is<ConstructorDeclarationNode>()) {
-				continue;
-			}
 			const auto& ctor_node = match->function_decl.as<ConstructorDeclarationNode>();
 			if (!ctor_node.is_implicit()) {
 				filtered_matches.push_back(match);

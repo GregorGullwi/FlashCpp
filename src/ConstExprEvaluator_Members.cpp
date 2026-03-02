@@ -14,23 +14,26 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_parame
 		return nullptr;
 	}
 
-	// For constant evaluation, prefer constexpr constructors when multiple
-	// constructors share the same parameter count.
+	const ConstructorDeclarationNode* constexpr_match = nullptr;
+	const ConstructorDeclarationNode* non_constexpr_match = nullptr;
 	for (const StructMemberFunction* ctor_candidate : ctor_candidates) {
 		if (!ctor_candidate || !ctor_candidate->function_decl.is<ConstructorDeclarationNode>()) {
 			continue;
 		}
 		const ConstructorDeclarationNode& ctor_decl = ctor_candidate->function_decl.as<ConstructorDeclarationNode>();
 		if (ctor_decl.is_constexpr()) {
-			return &ctor_decl;
+			if (constexpr_match) {
+				return nullptr;
+			}
+			constexpr_match = &ctor_decl;
+		} else {
+			if (non_constexpr_match) {
+				return nullptr;
+			}
+			non_constexpr_match = &ctor_decl;
 		}
 	}
-
-	const StructMemberFunction* first_match = ctor_candidates[0];
-	if (first_match && first_match->function_decl.is<ConstructorDeclarationNode>()) {
-		return &first_match->function_decl.as<ConstructorDeclarationNode>();
-	}
-	return nullptr;
+	return constexpr_match ? constexpr_match : non_constexpr_match;
 }
 
 EvalResult Evaluator::evaluate_expression_with_bindings(
@@ -1540,6 +1543,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			}
 			const ConstructorDeclarationNode& candidate_ctor = candidate->function_decl.as<ConstructorDeclarationNode>();
 			const auto& params = candidate_ctor.parameter_nodes();
+			bool has_static_cast_arg = false;
 			bool matches_cast_targets = true;
 			for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
 				if (!ctor_args[i].is<ExpressionNode>()) {
@@ -1549,6 +1553,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 				if (!std::holds_alternative<StaticCastNode>(arg_expr)) {
 					continue;
 				}
+				has_static_cast_arg = true;
 				if (!params[i].is<DeclarationNode>()) {
 					matches_cast_targets = false;
 					break;
@@ -1573,7 +1578,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 				}
 			}
 
-			if (matches_cast_targets) {
+			if (has_static_cast_arg && matches_cast_targets) {
 				matching_ctor = &candidate_ctor;
 				break;
 			}
