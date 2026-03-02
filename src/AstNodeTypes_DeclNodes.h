@@ -476,6 +476,9 @@ struct StructTypeInfo {
 	// Find default constructor (no parameters)
 	const StructMemberFunction* findDefaultConstructor() const;
 
+	// Check if a parameter's type_index matches this struct's own type_index
+	bool isOwnTypeIndex(TypeIndex param_type_index) const;
+
 	// Find copy constructor (takes const Type& or Type& parameter)
 	const StructMemberFunction* findCopyConstructor() const;
 

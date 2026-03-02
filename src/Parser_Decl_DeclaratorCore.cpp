@@ -893,7 +893,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 // NEW: Parse direct declarator (identifier, function, array)
 ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
                                              Token& out_identifier,
-                                             [[maybe_unused]] Linkage linkage) {
+                                             Linkage linkage) {
     // For now, we'll handle the simple case: identifier followed by optional function params
     // TODO: Handle parenthesized declarators like (*fp)(params) for function pointers
 
@@ -907,12 +907,13 @@ ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
     advance();
 
     // Parse postfix operators (function, array)
-    return parse_postfix_declarator(base_type, out_identifier);
+    return parse_postfix_declarator(base_type, out_identifier, linkage);
 }
 
 // NEW: Parse postfix declarators (function, array)
 ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
-                                              const Token& identifier) {
+                                              const Token& identifier,
+                                              Linkage linkage) {
     // Check for function declarator: '(' params ')'
     if (peek() == "("_tok) {
         advance(); // consume '('
@@ -990,7 +991,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
         FunctionSignature sig;
         sig.return_type = return_type;
         sig.parameter_types = param_types;
-        sig.linkage = Linkage::None;  // TODO: Use the linkage parameter
+        sig.linkage = linkage;
         fp_type.set_function_signature(sig);
 
         // Replace base_type with the function pointer type
