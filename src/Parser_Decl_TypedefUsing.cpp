@@ -839,6 +839,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			
 			// Register the alias globally
 			register_type_alias(alias_name, type_spec);
+			return ParseResult::success();
 		}
 	}
 	
