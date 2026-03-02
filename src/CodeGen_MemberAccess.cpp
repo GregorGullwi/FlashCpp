@@ -2685,10 +2685,11 @@
 										const auto& params = mf.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
 										if (params.size() != 1 || !params[0].is<DeclarationNode>()) continue;
 										const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-										// Match: same base type and (for structs) same type_index
+									// Match: same base type, (for structs) same type_index, and same reference qualifier
 										if (param_type.type() != from_spec.type()) continue;
 										if (param_type.type() == Type::Struct &&
 											param_type.type_index() != from_spec.type_index()) continue;
+										if (param_type.reference_qualifier() != from_spec.reference_qualifier()) continue;
 										selected_op = &mf;
 										break;
 									}
