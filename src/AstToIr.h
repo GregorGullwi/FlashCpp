@@ -2504,6 +2504,12 @@ private:
 	// Phase 4: Using StringHandle
 	std::unordered_map<StringHandle, StringHandle> global_variable_names_;
 
+	// Map from global function pointer variable name to the mangled function name it was
+	// initialized with.  This enables copy-initialization of one global function pointer
+	// from another: int (*fp2)(int,int) = fp1;
+	// Key: variable name StringHandle,  Value: reloc target (mangled function name)
+	std::unordered_map<StringHandle, StringHandle> global_func_ptr_reloc_map_;
+
 	// Map from function name to deduced auto return type
 	// Key: function name (mangled), Value: deduced TypeSpecifierNode
 	std::unordered_map<std::string, TypeSpecifierNode> deduced_auto_return_types_;
