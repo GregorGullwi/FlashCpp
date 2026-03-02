@@ -63,6 +63,8 @@
 #include "AstNodeTypes.cpp"
 #include "CodeViewDebug.cpp"
 #include "ExpressionSubstitutor.cpp"
+#include "ConstExprEvaluator_Core.cpp"
+#include "ConstExprEvaluator_Members.cpp"
 
 // Parser implementation (split by C++20 grammar area)
 #include "Parser_Core.cpp"          // Includes, statics, token handling, infrastructure

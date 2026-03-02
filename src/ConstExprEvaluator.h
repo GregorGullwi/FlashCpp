@@ -194,10 +194,127 @@ struct EvaluationContext {
 };
 
 // Main constant expression evaluator class
+class Evaluator {
+public:
+	static EvalResult evaluate(const ASTNode& expr_node, EvaluationContext& context);
 
-// The Evaluator class is split across multiple files for maintainability.
-#include "ConstExprEvaluator_Core.cpp"      // Class declaration, evaluate(), numeric/binary/unary operators, sizeof/alignof, casts, identifier, builtin functions, function calls
-#include "ConstExprEvaluator_Members.cpp"   // Expression bindings, qualified identifiers, member access, array subscripts, type traits
+	// Operator evaluation helpers (also used by TemplateInstantiationHelper)
+	static EvalResult apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op);
+	static EvalResult apply_unary_op(const EvalResult& operand, std::string_view op);
+
+	// Qualified/member access evaluation
+	static EvalResult evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context);
+	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context);
+	static EvalResult evaluate_member_function_call(const MemberFunctionCallNode& member_func_call, EvaluationContext& context);
+	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
+	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);
+
+	// Helper for member initializer extraction (used by nested member access)
+	static std::optional<ASTNode> get_member_initializer(
+		const ConstructorCallNode& ctor_call,
+		const StructTypeInfo* struct_info,
+		std::string_view member_name_param,
+		[[maybe_unused]] EvaluationContext& context);
+	static const StructTypeInfo* get_struct_info_from_type(const TypeSpecifierNode& type_spec);
+	static EvalResult evaluate_nested_member_access(
+		const MemberAccessNode& inner_access,
+		std::string_view final_member_name,
+		EvaluationContext& context);
+	static EvalResult evaluate_array_subscript_member_access(
+		[[maybe_unused]] const ArraySubscriptNode& subscript,
+		[[maybe_unused]] std::string_view member_name,
+		[[maybe_unused]] EvaluationContext& context);
+	static EvalResult evaluate_static_member_from_struct(
+		const StructTypeInfo* struct_info,
+		const TypeInfo& type_info,
+		StringHandle member_name_handle,
+		std::string_view member_name,
+		EvaluationContext& context);
+	static EvalResult evaluate_function_call_member_access(
+		const FunctionCallNode& func_call,
+		std::string_view member_name,
+		EvaluationContext& context);
+	static EvalResult extract_object_members(
+		const ASTNode& object_expr,
+		std::unordered_map<std::string_view, EvalResult>& member_bindings,
+		EvaluationContext& context);
+	static EvalResult evaluate_member_array_subscript(
+		const MemberAccessNode& member_access,
+		size_t index,
+		EvaluationContext& context);
+	static EvalResult evaluate_variable_array_subscript(
+		std::string_view var_name,
+		size_t index,
+		EvaluationContext& context);
+	static bool isArithmeticType(Type type);
+	static bool isFundamentalType(Type type);
+
+	// Helper struct to hold a ConstructorCallNode reference and its type info
+	struct StructObjectInfo {
+		const ConstructorCallNode* ctor_call;
+		const StructTypeInfo* struct_info;
+		const ConstructorDeclarationNode* matching_ctor;
+	};
+
+private:
+	// Internal evaluation methods for different node types
+	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
+	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
+		std::string_view op, EvaluationContext& context);
+	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
+		EvaluationContext& context);
+	static size_t get_struct_size_from_typeinfo(const TypeSpecifierNode& type_spec);
+	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec);
+	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context);
+	static EvalResult evaluate_alignof(const AlignofExprNode& alignof_expr, EvaluationContext& context);
+	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
+	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
+	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
+	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
+	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
+	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
+	static EvalResult evaluate_lambda_captures(
+		const std::vector<LambdaCaptureNode>& captures,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
+	static EvalResult evaluate_callable_object(
+		const VariableDeclarationNode& var_decl,
+		const ChunkedVector<ASTNode>& arguments,
+		EvaluationContext& context);
+	static EvalResult evaluate_lambda_call(
+		const LambdaExpressionNode& lambda,
+		const ChunkedVector<ASTNode>& arguments,
+		EvaluationContext& context);
+	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
+	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
+	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
+	static EvalResult evaluate_function_call_with_bindings(
+		const FunctionDeclarationNode& func_decl,
+		const ChunkedVector<ASTNode>& arguments,
+		const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
+		EvaluationContext& context);
+	static EvalResult evaluate_statement_with_bindings(
+		const ASTNode& stmt_node,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
+
+	// Expression evaluation with variable bindings (for constexpr function bodies)
+	static EvalResult evaluate_expression_with_bindings(
+		const ASTNode& expr_node,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
+	static EvalResult evaluate_expression_with_bindings_const(
+		const ASTNode& expr_node,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
+
+	// Safe arithmetic with overflow detection
+	static std::optional<long long> safe_add(long long a, long long b);
+	static std::optional<long long> safe_sub(long long a, long long b);
+	static std::optional<long long> safe_mul(long long a, long long b);
+	static std::optional<long long> safe_shl(long long a, long long b);
+	static std::optional<long long> safe_shr(long long a, long long b);
+};
 
 // Evaluate a fold expression with concrete pack values
 // This is used during template instantiation for patterns like:
