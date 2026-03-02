@@ -1246,6 +1246,90 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			return std::nullopt;
 		}
 
+		// Unary plus on a captureless lambda decays to function pointer type
+		if (op == "+") {
+			const ASTNode& operand_node = unary.get_operand();
+			auto build_fp_type = [](const LambdaExpressionNode& lambda) {
+				FunctionSignature sig;
+				TypeSpecifierNode ret_type(Type::Int, TypeQualifier::None, 32, lambda.lambda_token());
+				if (lambda.return_type().has_value() && lambda.return_type()->is<TypeSpecifierNode>()) {
+					ret_type = lambda.return_type()->as<TypeSpecifierNode>();
+				}
+				sig.return_type = ret_type.type();
+				for (const auto& param : lambda.parameters()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& param_decl = param.as<DeclarationNode>();
+						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+						sig.parameter_types.push_back(param_type.type());
+					}
+				}
+				TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token());
+				fp_type.set_function_signature(sig);
+				return fp_type;
+			};
+
+			if (operand_node.is<LambdaExpressionNode>()) {
+				const auto& lambda = operand_node.as<LambdaExpressionNode>();
+				if (lambda.captures().empty()) {
+					FLASH_LOG(Parser, Debug, "Unary + lambda decay (direct node) to function pointer");
+					return build_fp_type(lambda);
+				}
+			} else if (operand_node.is<ExpressionNode>() && std::holds_alternative<LambdaExpressionNode>(operand_node.as<ExpressionNode>())) {
+				const auto& lambda = std::get<LambdaExpressionNode>(operand_node.as<ExpressionNode>());
+				if (lambda.captures().empty()) {
+					FLASH_LOG(Parser, Debug, "Unary + lambda decay (expr variant) to function pointer");
+					return build_fp_type(lambda);
+				}
+			} else if (operand_node.is<IdentifierNode>() || (operand_node.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(operand_node.as<ExpressionNode>()))) {
+				const IdentifierNode& ident = operand_node.is<IdentifierNode>()
+					? operand_node.as<IdentifierNode>()
+					: std::get<IdentifierNode>(operand_node.as<ExpressionNode>());
+				auto symbol = lookup_symbol(ident.nameHandle());
+				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+					const auto& decl = symbol->as<DeclarationNode>();
+					const LambdaExpressionNode* lambda_ptr = nullptr;
+					if (decl.has_default_value()) {
+						const ASTNode& init = decl.default_value();
+						if (init.is<LambdaExpressionNode>()) {
+							lambda_ptr = &init.as<LambdaExpressionNode>();
+						} else if (init.is<ExpressionNode>() && std::holds_alternative<LambdaExpressionNode>(init.as<ExpressionNode>())) {
+							lambda_ptr = &std::get<LambdaExpressionNode>(init.as<ExpressionNode>());
+						}
+					}
+					if (!lambda_ptr) {
+						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+						if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info && struct_info->members.empty()) {
+								for (const auto& member_func : struct_info->member_functions) {
+									if (member_func.getName() == StringTable::getOrInternStringHandle("operator()") &&
+									    member_func.function_decl.is<FunctionDeclarationNode>()) {
+										const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+										const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+										FunctionSignature sig;
+										sig.return_type = return_type.type();
+										for (const auto& param_node : func_decl.parameter_nodes()) {
+											if (param_node.is<DeclarationNode>()) {
+												const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+												sig.parameter_types.push_back(param_type.type());
+											}
+										}
+										TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, decl.identifier_token());
+										fp_type.set_function_signature(sig);
+										return fp_type;
+									}
+								}
+							}
+						}
+					}
+					if (lambda_ptr && lambda_ptr->captures().empty()) {
+						return build_fp_type(*lambda_ptr);
+					}
+				}
+			}
+		}
+
 		TypeSpecifierNode operand_type = *operand_type_opt;
 
 		// Handle dereference operator: *ptr -> removes one level of pointer/reference
@@ -1267,6 +1351,32 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			TypeSpecifierNode result = operand_type;
 			result.add_pointer_level();
 			return result;
+		}
+
+		// Fallback: treat unary + on captureless lambda objects as decay to function pointer using struct info
+		if (op == "+" && operand_type.type() == Type::Struct && operand_type.type_index() < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[operand_type.type_index()];
+			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (struct_info && struct_info->members.empty()) {
+				for (const auto& member_func : struct_info->member_functions) {
+					if (member_func.getName() == StringTable::getOrInternStringHandle("operator()") &&
+						member_func.function_decl.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+						FunctionSignature sig;
+						sig.return_type = return_type.type();
+						for (const auto& param_node : func_decl.parameter_nodes()) {
+							if (param_node.is<DeclarationNode>()) {
+								const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								sig.parameter_types.push_back(param_type.type());
+							}
+						}
+						TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, operand_type.token());
+						fp_type.set_function_signature(sig);
+						return fp_type;
+					}
+				}
+			}
 		}
 
 		// For other unary operators (+, -, !, ~, ++, --), return the operand type
