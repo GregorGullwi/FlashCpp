@@ -131,7 +131,7 @@ public:
         }
         
         // Format error message with file:line:column information and include stack
-        std::string format_error(const std::vector<std::string>& file_paths, 
+        std::string format_error(const std::deque<std::string>& file_paths, 
                                 const std::vector<SourceLineMapping>& line_map = {},
                                 const Lexer* lexer = nullptr) const {
                 if (!is_error()) return "";

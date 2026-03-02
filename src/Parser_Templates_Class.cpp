@@ -2292,7 +2292,8 @@ ParseResult Parser::parse_template_declaration() {
 					false,
 					{},
 					static_cast<int>(type_spec.pointer_depth()),
-					member_decl.bitfield_width
+					member_decl.bitfield_width,
+					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
 				);
 			}
 
@@ -3646,7 +3647,8 @@ ParseResult Parser::parse_template_declaration() {
 					false,
 					{},
 					static_cast<int>(type_spec.pointer_depth()),
-					member_decl.bitfield_width
+					member_decl.bitfield_width,
+					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
 				);
 			}
 			

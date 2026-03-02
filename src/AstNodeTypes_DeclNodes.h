@@ -77,7 +77,8 @@ struct StructTypeInfo {
 	               bool is_array = false,
 	               std::vector<size_t> array_dimensions = {},
 	               int pointer_depth = 0,
-	               std::optional<size_t> bitfield_width = std::nullopt) {
+	               std::optional<size_t> bitfield_width = std::nullopt,
+	               std::optional<FunctionSignature> function_sig = std::nullopt) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members.
 		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
@@ -155,6 +156,9 @@ struct StructTypeInfo {
 			              access, std::move(default_initializer), reference_qualifier,
 			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
+		if (function_sig.has_value()) {
+			members.back().function_signature = std::move(function_sig);
+		}
 
 		// Update struct size and alignment
 		if (is_union) {
@@ -1070,6 +1074,12 @@ public:
 	std::string_view concept_constraint() const { return concept_constraint_; }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
+
+// Unified helper: creates a TypeInfo for a type alias, copies pointer_depth,
+// reference_qualifier, and function_signature from the TypeSpecifierNode, then
+// registers it in gTypesByName.  Returns a reference for callers that need to
+// do additional work (e.g. namespace-qualified registration).
+TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec);
 
 class DeclarationNode {
 public:
