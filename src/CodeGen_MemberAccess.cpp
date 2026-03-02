@@ -2526,7 +2526,7 @@
 					result = true;
 				}
 				// Class types: implicitly-generated default ctors are noexcept;
-				// user-defined ctors may throw unless marked noexcept (not yet tracked)
+				// user-defined ctors are noexcept only if marked noexcept
 				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
@@ -2535,8 +2535,27 @@
 						// Per C++20 §20.15.4.4 [meta.unary.prop], is_nothrow_constructible
 						// only depends on whether the selected constructor is noexcept.
 						// The destructor is irrelevant to constructibility.
-						result = !struct_info->has_vtable
-							&& !struct_info->hasUserDefinedConstructor();
+						if (!struct_info->hasUserDefinedConstructor()) {
+							// Implicitly-generated default ctor is noexcept
+							result = !struct_info->has_vtable;
+						} else {
+							// Check user-defined (non-implicit) constructors for noexcept
+							bool all_noexcept = true;
+							bool found_user_ctor = false;
+							for (const auto& mf : struct_info->member_functions) {
+								if (!mf.is_constructor) continue;
+								// Skip implicit constructors - their nothrow status follows from member types
+								if (mf.function_decl.is<ConstructorDeclarationNode>() &&
+									mf.function_decl.as<ConstructorDeclarationNode>().is_implicit())
+									continue;
+								found_user_ctor = true;
+								if (!mf.is_noexcept) {
+									all_noexcept = false;
+									break;
+								}
+							}
+							result = found_user_ctor ? all_noexcept : !struct_info->has_vtable;
+						}
 					}
 				}
 				break;
@@ -2608,15 +2627,36 @@
 							result = true;
 						}
 						// Class types: implicitly-generated assignment ops are noexcept;
-						// user-defined ops may throw unless marked noexcept (not yet tracked)
+						// user-defined ops are noexcept only if marked noexcept
+						// Note: For assignability, the first type is typically T& (lvalue reference),
+						// so we check the underlying struct type regardless of reference qualifier
 						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
-						!is_reference && pointer_depth == 0) {
+						pointer_depth == 0) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && !struct_info->is_union) {
-								result = !struct_info->has_vtable
-									&& !struct_info->hasCopyAssignmentOperator()
-									&& !struct_info->hasMoveAssignmentOperator();
+								bool has_user_assign = struct_info->hasCopyAssignmentOperator() ||
+									struct_info->hasMoveAssignmentOperator();
+								if (!has_user_assign) {
+									// Implicitly-generated assignment ops are noexcept
+									result = !struct_info->has_vtable;
+								} else {
+									// Check if user-defined assignment operators are noexcept
+									bool all_noexcept = true;
+									for (const auto& mf : struct_info->member_functions) {
+										if (mf.is_operator_overload && mf.operator_symbol == "=") {
+											// Skip implicit assignment operators
+											if (mf.function_decl.is<FunctionDeclarationNode>() &&
+												mf.function_decl.as<FunctionDeclarationNode>().is_implicit())
+												continue;
+											if (!mf.is_noexcept) {
+												all_noexcept = false;
+												break;
+											}
+										}
+									}
+									result = all_noexcept;
+								}
 							}
 						}
 					}

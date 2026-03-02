@@ -1145,6 +1145,9 @@ bool Parser::parse_static_member_function(
 	);
 	registered.is_const = member_quals.is_const();
 	registered.is_volatile = member_quals.is_volatile();
+	// Extract noexcept from the underlying function declaration node
+	if (member_func_node.is<FunctionDeclarationNode>())
+		registered.is_noexcept = member_func_node.as<FunctionDeclarationNode>().is_noexcept();
 
 	return true;  // Successfully handled as a function
 }

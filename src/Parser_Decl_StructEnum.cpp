@@ -1991,6 +1991,13 @@ ParseResult Parser::parse_struct_declaration()
 			bool is_defaulted = func_specs.is_defaulted();
 			bool is_deleted = func_specs.is_deleted();
 
+			// Propagate noexcept specifier to the function declaration node
+			if (func_specs.is_noexcept) {
+				member_func_ref.set_noexcept(true);
+				if (func_specs.noexcept_expr)
+					member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
+			}
+
 			// Handle defaulted functions: set implicit flag and create empty body
 			if (is_defaulted) {
 				// Expect ';'
@@ -2620,6 +2627,9 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.function_declaration,
 				func_decl.access
 			);
+			// Propagate noexcept from the AST node
+			if (!struct_info->member_functions.empty())
+				struct_info->member_functions.back().is_noexcept = func_decl.is_noexcept;
 			has_user_defined_constructor = true;
 
 			// Check if this is a copy or move constructor
@@ -2642,6 +2652,9 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.access,
 				func_decl.is_virtual
 			);
+			// Propagate noexcept from the AST node
+			if (!struct_info->member_functions.empty())
+				struct_info->member_functions.back().is_noexcept = func_decl.is_noexcept;
 			has_user_defined_destructor = true;
 		} else if (func_decl.is_operator_overload) {
 			// Operator overload
@@ -2654,6 +2667,9 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.is_override,
 				func_decl.is_final
 			);
+			// Propagate noexcept from the AST node
+			if (!struct_info->member_functions.empty())
+				struct_info->member_functions.back().is_noexcept = func_decl.is_noexcept;
 
 			// Check if this is a spaceship operator
 			if (func_decl.operator_symbol == "<=>") {
@@ -2710,6 +2726,7 @@ ParseResult Parser::parse_struct_declaration()
 			auto& registered_func = struct_info->member_functions.back();
 			registered_func.is_const = func_decl.is_const;
 			registered_func.is_volatile = func_decl.is_volatile;
+			registered_func.is_noexcept = func_decl.is_noexcept;
 	}
 }
 

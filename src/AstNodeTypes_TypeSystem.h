@@ -324,6 +324,9 @@ struct StructMemberFunction {
 	bool is_const = false;          // True if const member function (e.g., void foo() const)
 	bool is_volatile = false;       // True if volatile member function (e.g., void foo() volatile)
 
+	// noexcept tracking for type traits
+	bool is_noexcept = false;       // True if declared noexcept (e.g., void foo() noexcept)
+
 	StructMemberFunction(StringHandle n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
 	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
 		: name(n), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
