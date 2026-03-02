@@ -678,13 +678,31 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	
 	// Search for the operator overload in member functions
 	// For member function form: Number::operator+(const Number& other)
+	// Phase 1: Exact type match on the parameter
+	const StructMemberFunction* first_match = nullptr;
 	for (const auto& member_func : left_struct_info->member_functions) {
 		if (member_func.is_operator_overload && member_func.operator_symbol == operator_symbol) {
-			// Found an operator overload
-			// TODO: In the future, we could check parameter type compatibility here
-			// For now, we assume the first matching operator is correct
-			return OperatorOverloadResult(&member_func);
+			if (!first_match) first_match = &member_func;
+			// Check if the parameter type matches the right-hand operand
+			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+				const auto& func_node = member_func.function_decl.as<FunctionDeclarationNode>();
+				const auto& params = func_node.parameter_nodes();
+				if (params.size() == 1 && params[0].is<DeclarationNode>()) {
+					const auto& param_decl = params[0].as<DeclarationNode>();
+					const auto& param_type = param_decl.type_node();
+					if (param_type.is<TypeSpecifierNode>()) {
+						const auto& param_spec = param_type.as<TypeSpecifierNode>();
+						if (param_spec.type_index() == right_type_index) {
+							return OperatorOverloadResult(&member_func);
+						}
+					}
+				}
+			}
 		}
+	}
+	// Phase 2: No exact match found, return first matching operator (fallback)
+	if (first_match) {
+		return OperatorOverloadResult(first_match);
 	}
 	
 	// Search base classes recursively
