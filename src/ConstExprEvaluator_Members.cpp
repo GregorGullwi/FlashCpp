@@ -39,10 +39,27 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			const ASTNode& lhs = bin_op.get_lhs();
 			if (lhs.is<ExpressionNode>()) {
 				const ExpressionNode& lhs_expr = lhs.as<ExpressionNode>();
+
+				// Determine the name of the variable being assigned to.
+				// Two forms are accepted:
+				//   1. Plain identifier:     x = ...
+				//   2. this->member access:  this->x = ...
+				std::string_view var_name;
 				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
-					const IdentifierNode& id = std::get<IdentifierNode>(lhs_expr);
-					std::string_view var_name = id.name();
-					
+					var_name = std::get<IdentifierNode>(lhs_expr).name();
+				} else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+					const auto& ma = std::get<MemberAccessNode>(lhs_expr);
+					const ASTNode& obj = ma.object();
+					if (obj.is<ExpressionNode>()) {
+						const ExpressionNode& obj_expr = obj.as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(obj_expr) &&
+						    std::get<IdentifierNode>(obj_expr).name() == "this") {
+							var_name = ma.member_name();
+						}
+					}
+				}
+
+				if (!var_name.empty()) {
 					// Evaluate the right-hand side
 					auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 					if (!rhs_result.success()) return rhs_result;
@@ -200,13 +217,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	}
 	
 	// For member access on 'this' (e.g., this->x in a member function)
-	// This handles implicit member accesses like 'x' which parser transforms to 'this->x'
-	if (std::holds_alternative<MemberAccessNode>(expr)) {
-		[[maybe_unused]] const auto& member_access = std::get<MemberAccessNode>(expr);
-		// TODO: Handle member access evaluation for 'this->x' pattern
-		// For now, fall back to regular evaluation
-	}
-	
+	// Reading is handled by the fall-through to evaluate_expression_with_bindings_const below.
+	// Writing (this->x = ...) is handled above in the assignment operator branch.
+
 	// For other expression types, use the const version (cast bindings to const)
 	const std::unordered_map<std::string_view, EvalResult>& const_bindings = bindings;
 	return evaluate_expression_with_bindings_const(expr_node, const_bindings, context);
