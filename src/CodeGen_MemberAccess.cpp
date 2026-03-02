@@ -2561,10 +2561,10 @@
 											match = false; break;
 										}
 										const auto& param_type = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-										const auto& arg_type = arg_types[i].as<TypeSpecifierNode>();
 										if (param_type.type() != arg_type.type()) { match = false; break; }
 										if (param_type.type() == Type::Struct &&
 											param_type.type_index() != arg_type.type_index()) { match = false; break; }
+										if (param_type.reference_qualifier() != arg_type.reference_qualifier()) { match = false; break; }
 									}
 									if (match) { selected_ctor = &mf; break; }
 								}
