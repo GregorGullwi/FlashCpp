@@ -399,7 +399,10 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 									
 									// Use the function pointer's stored return type
-									Type ret_type = member.function_signature ? member.function_signature->return_type : Type::Void;
+									if (!member.function_signature) {
+										throw InternalError("Function pointer member missing function_signature for indirect call return type");
+									}
+									Type ret_type = member.function_signature->return_type;
 									int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
 									return { ret_type, ret_size, ret_var, 0ULL };
 								}
@@ -601,7 +604,10 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 							
 							// Use the function pointer's stored return type
-							Type ret_type = member.function_signature ? member.function_signature->return_type : Type::Void;
+							if (!member.function_signature) {
+								throw InternalError("Function pointer member missing function_signature for indirect call return type");
+							}
+							Type ret_type = member.function_signature->return_type;
 							int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
 							return { ret_type, ret_size, ret_var, 0ULL };
 						}
