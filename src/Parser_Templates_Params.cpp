@@ -177,7 +177,9 @@ ParseResult Parser::parse_template_parameter() {
 					if (!arg_result.is_error() && arg_result.node().has_value()) {
 						concept_template_args.push_back(*arg_result.node());
 					} else {
-						// Fall back: skip unrecognized token
+						// Skip unrecognized token with a diagnostic
+						FLASH_LOG_FORMAT(Parser, Warning, "Skipping unrecognized token '{}' in concept template arguments for '{}'",
+							!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>", potential_concept);
 						advance();
 					}
 					if (peek() == ","_tok) {

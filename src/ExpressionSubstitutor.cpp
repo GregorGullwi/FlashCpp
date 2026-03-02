@@ -1101,13 +1101,15 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(arg_part));
 							if (type_it != gTypesByName.end()) {
 								TemplateTypeArg concrete_arg;
-								concrete_arg.base_type = type_it->second->getStructInfo() ? Type::Struct : Type::Int;
+								concrete_arg.base_type = type_it->second->type_;
 								concrete_arg.type_index = type_it->second->type_index_;
 								substituted_args.push_back(concrete_arg);
 							} else {
-								// Could be a non-type argument (integer literal) - try to parse
-								// For now, just mark as failed
-								FLASH_LOG(Templates, Debug, "  Could not substitute argument: ", arg_part);
+								// Unrecognized argument: could be a non-type value (integer literal),
+								// an unexpanded pack, or a type not yet registered.
+								// Template instantiation for this base will be skipped.
+								FLASH_LOG(Templates, Debug, "  Unrecognized template argument '", arg_part,
+									"': not found in param_map or type registry, skipping instantiation");
 								all_substituted = false;
 								break;
 							}
