@@ -858,9 +858,13 @@
 			else if (func_decl.identifier_token().value() == "main") {
 				emitReturn(0ULL, Type::Int, 32, func_decl.identifier_token());
 			}
-			// For other non-void functions, this is an error (missing return statement)
-			// TODO: This should be a compile error, but for now we'll allow it
-			// Full implementation requires control flow analysis to check all paths
+			// For other non-void functions, this is a warning (missing return statement)
+			// A full implementation would require control flow analysis to check all paths,
+			// but warning on functions that don't end with a return catches common cases.
+			else {
+				FLASH_LOG_FORMAT(Codegen, Warning, "Non-void function '{}' may not return a value on all code paths",
+					func_decl.identifier_token().value());
+			}
 		}
 
 		symbol_table.exit_scope();

@@ -116,7 +116,20 @@ ParseResult Parser::parse_template_parameter() {
 		// Create template template parameter node
 		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params), param_name_token);
 
-		// TODO: Handle default arguments (e.g., template<typename> class Container = std::vector)
+		// Handle default arguments (e.g., template<typename> class Container = std::vector)
+		if (peek() == "="_tok) {
+			advance(); // consume '='
+
+			// Parse the default type
+			auto default_type_result = parse_type_specifier();
+			if (default_type_result.is_error()) {
+				return ParseResult::error("Expected type after '=' in template template parameter default", current_token_);
+			}
+
+			if (default_type_result.node().has_value()) {
+				param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
+			}
+		}
 
 		return saved_position.success(param_node);
 	}

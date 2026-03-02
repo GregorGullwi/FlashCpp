@@ -819,7 +819,7 @@ ParseResult Parser::parse_struct_declaration()
 							
 							// Check for function pointer member pattern: type (*name)(params);
 							// This handles patterns like: void (*sa_sigaction)(int, siginfo_t *, void *);
-							if (auto funcptr_member = try_parse_function_pointer_member()) {
+							if (auto funcptr_member = try_parse_function_pointer_member(member_type_spec.type())) {
 								anon_struct_info->members.push_back(*funcptr_member);
 								continue;  // Continue with next member
 							}
@@ -3584,7 +3584,7 @@ ParseResult Parser::parse_enum_declaration()
 	return saved_position.success(enum_node);
 }
 
-std::optional<StructMember> Parser::try_parse_function_pointer_member()
+std::optional<StructMember> Parser::try_parse_function_pointer_member(Type return_type)
 {
 	// Check for function pointer pattern: '(' followed by '*'
 	if (peek() != "("_tok) {
@@ -3652,7 +3652,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member()
 	
 	discard_saved_token(funcptr_saved_pos);
 	
-	return StructMember{
+	StructMember member{
 		funcptr_name_handle,
 		Type::FunctionPointer,
 		0,  // type_index for function pointers
@@ -3668,6 +3668,11 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member()
 		0,      // pointer_depth
 		std::nullopt // bitfield_width
 	};
+	// Store the function signature so codegen can use the real return type
+	FunctionSignature sig;
+	sig.return_type = return_type;
+	member.function_signature = std::move(sig);
+	return member;
 }
 
 // Helper function to parse members of anonymous struct/union (handles recursive nesting)
@@ -3826,7 +3831,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		
 		// Check for function pointer member pattern: type (*name)(params);
 		// This handles patterns like: void (*_function)(__sigval_t);
-		if (auto funcptr_member = try_parse_function_pointer_member()) {
+		if (auto funcptr_member = try_parse_function_pointer_member(member_type_spec.type())) {
 			out_struct_info->members.push_back(*funcptr_member);
 			continue;  // Continue with next member
 		}

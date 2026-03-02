@@ -681,7 +681,7 @@ private:
         // Pattern: type (*name)(params);
         // Returns std::optional<StructMember> - empty if not a function pointer pattern
         // Advances token position if successful, restores on failure
-        std::optional<StructMember> try_parse_function_pointer_member();
+        std::optional<StructMember> try_parse_function_pointer_member(Type return_type = Type::Void);
         
         // Helper function to get Type and size for built-in type keywords
         std::optional<std::pair<Type, unsigned char>> get_builtin_type_info(std::string_view type_name);

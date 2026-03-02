@@ -274,6 +274,7 @@ struct StructMember {
 	bool is_array;          // True if member is an array
 	std::vector<size_t> array_dimensions;  // Dimensions for multidimensional arrays
 	int pointer_depth;      // Pointer indirection level (e.g., int* = 1, int** = 2)
+	std::optional<FunctionSignature> function_signature;  // For FunctionPointer members: stores return type and parameter types
 
 	// Convenience helpers for common checks
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
