@@ -678,24 +678,20 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	
 	// Search for the operator overload in member functions
 	// For member function form: Number::operator+(const Number& other)
-	// Phase 1: Exact type match on the parameter
+	// Phase 1: Exact type match on the parameter's type_index
 	const StructMemberFunction* first_match = nullptr;
 	for (const auto& member_func : left_struct_info->member_functions) {
-		if (member_func.is_operator_overload && member_func.operator_symbol == operator_symbol) {
-			if (!first_match) first_match = &member_func;
-			// Check if the parameter type matches the right-hand operand
-			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-				const auto& func_node = member_func.function_decl.as<FunctionDeclarationNode>();
-				const auto& params = func_node.parameter_nodes();
-				if (params.size() == 1 && params[0].is<DeclarationNode>()) {
-					const auto& param_decl = params[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node();
-					if (param_type.is<TypeSpecifierNode>()) {
-						const auto& param_spec = param_type.as<TypeSpecifierNode>();
-						if (param_spec.type_index() == right_type_index) {
-							return OperatorOverloadResult(&member_func);
-						}
-					}
+		if (!member_func.is_operator_overload || member_func.operator_symbol != operator_symbol)
+			continue;
+		if (!first_match) first_match = &member_func;
+		// Check if the single parameter type_index matches the right operand
+		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+			if (params.size() == 1 && params[0].is<DeclarationNode>()) {
+				const auto& param_type = params[0].as<DeclarationNode>().type_node();
+				if (param_type.is<TypeSpecifierNode>() &&
+					param_type.as<TypeSpecifierNode>().type_index() == right_type_index) {
+					return OperatorOverloadResult(&member_func);
 				}
 			}
 		}

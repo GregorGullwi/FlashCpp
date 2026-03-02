@@ -467,6 +467,14 @@ public:
 		return lookup_function(identifier, arg_types, get_current_scope_handle());
 	}
 
+	// Helper: Check if a parameter's type matches the expected type
+	static bool parameterMatchesType(const ASTNode& param, Type expected_type) {
+		if (!param.is<DeclarationNode>()) return false;
+		const auto& type_node = param.as<DeclarationNode>().type_node();
+		if (!type_node.is<TypeSpecifierNode>()) return false;
+		return type_node.as<TypeSpecifierNode>().type() == expected_type;
+	}
+
 	std::optional<ASTNode> lookup_function(std::string_view identifier, [[maybe_unused]] const std::vector<Type>& arg_types, ScopeHandle scope_limit_handle) const {
 		// Get all overloads
 		auto overloads = lookup_all(identifier, scope_limit_handle);
@@ -483,18 +491,15 @@ public:
 		// Phase 1: Try exact parameter count and type match
 		for (const auto& overload : overloads) {
 			if (!overload.is<FunctionDeclarationNode>()) continue;
-			const auto& func_decl = overload.as<FunctionDeclarationNode>();
-			const auto& params = func_decl.parameter_nodes();
+			const auto& params = overload.as<FunctionDeclarationNode>().parameter_nodes();
 			if (params.size() != arg_types.size()) continue;
 
 			bool exact_match = true;
 			for (size_t i = 0; i < params.size(); ++i) {
-				if (!params[i].is<DeclarationNode>()) { exact_match = false; break; }
-				const auto& param_decl = params[i].as<DeclarationNode>();
-				const auto& type_node = param_decl.type_node();
-				if (!type_node.is<TypeSpecifierNode>()) { exact_match = false; break; }
-				const auto& type_spec = type_node.as<TypeSpecifierNode>();
-				if (type_spec.type() != arg_types[i]) { exact_match = false; break; }
+				if (!parameterMatchesType(params[i], arg_types[i])) {
+					exact_match = false;
+					break;
+				}
 			}
 			if (exact_match) return overload;
 		}
@@ -502,8 +507,7 @@ public:
 		// Phase 2: Try parameter count match only (allows implicit conversions)
 		for (const auto& overload : overloads) {
 			if (!overload.is<FunctionDeclarationNode>()) continue;
-			const auto& func_decl = overload.as<FunctionDeclarationNode>();
-			if (func_decl.parameter_nodes().size() == arg_types.size()) {
+			if (overload.as<FunctionDeclarationNode>().parameter_nodes().size() == arg_types.size()) {
 				return overload;
 			}
 		}
