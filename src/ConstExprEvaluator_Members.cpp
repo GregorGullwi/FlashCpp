@@ -23,7 +23,7 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_arity(
 		return nullptr;
 	}
 
-	auto ctor_candidates = struct_info->getConstructorsByArity(arg_count, true);
+	auto ctor_candidates = struct_info->getConstructorsByArity(arg_count, false);
 	if (ctor_candidates.empty()) {
 		return nullptr;
 	}
