@@ -824,7 +824,11 @@
 	}
 
 	std::vector<IrOperand> AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
-		if (type == Type::Struct) {
+		// Include type_index for struct types and for UserDefined types that have actual struct info
+		// (i.e., are instantiated template structs, not placeholders or primitive type params)
+		bool include_type_index = (type == Type::Struct) ||
+			(type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size() && gTypeInfo[type_index].getStructInfo() != nullptr);
+		if (include_type_index) {
 			return { type, size_bits, result_var, static_cast<unsigned long long>(type_index) };
 		}
 		return { type, size_bits, result_var };
@@ -989,7 +993,7 @@
 				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
 					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
-				if (base_type != Type::Struct) {
+				if (base_type != Type::Struct && base_type != Type::UserDefined) {
 					throw InternalError("nested member access on non-struct type");
 				}
 				if (is_arrow) {
@@ -1111,7 +1115,7 @@
 		// Try to find by direct index lookup
 		if (base_type_index < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[base_type_index];
-			if (ti.type_ == Type::Struct && ti.getStructInfo()) {
+			if ((ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
 				type_info = &ti;
 			}
 		}
@@ -1120,7 +1124,7 @@
 		// This handles cases where type_index might not be set correctly
 		if (!type_info) {
 			for (const auto& ti : gTypeInfo) {
-				if (ti.type_index_ == base_type_index && ti.type_ == Type::Struct && ti.getStructInfo()) {
+				if (ti.type_index_ == base_type_index && (ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
 					type_info = &ti;
 					break;
 				}
