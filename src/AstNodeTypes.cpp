@@ -642,6 +642,16 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     return nullptr;
 }
 
+bool StructTypeInfo::hasUserDefinedConstructor() const {
+	for (const auto& func : member_functions) {
+		if (!func.is_constructor) continue;
+		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+		if (ctor_node.is_implicit()) continue;
+		return true;
+	}
+	return false;
+}
+
 // Auto-extract is_noexcept, is_const, is_volatile from the AST node stored in a
 // StructMemberFunction. This centralises property propagation so that every
 // addMemberFunction / addConstructor / addDestructor / addOperatorOverload call
@@ -690,6 +700,7 @@ const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
     for (const auto& func : member_functions) {
         if (func.is_constructor) {
             const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+            if (ctor_node.is_implicit()) continue;
             const auto& params = ctor_node.parameter_nodes();
 
             // Copy constructor has exactly one parameter of the same type (by reference)
@@ -712,6 +723,7 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
     for (const auto& func : member_functions) {
         if (func.is_constructor) {
             const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+            if (ctor_node.is_implicit()) continue;
             const auto& params = ctor_node.parameter_nodes();
 
             // Move constructor has exactly one parameter of the same type (by rvalue reference)
@@ -738,6 +750,7 @@ const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
             // or Type& operator=(Type& other)
             const auto* func_node = get_function_decl_node(func.function_decl);
             if (!func_node) continue;  // Skip if not a function (e.g., template that can't be resolved)
+            if (func_node->is_implicit()) continue;
             const auto& params = func_node->parameter_nodes();
 
             // Copy assignment operator has exactly one parameter (by reference)
@@ -763,6 +776,7 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
             // Move assignment operator has signature: Type& operator=(Type&& other)
             const auto* func_node = get_function_decl_node(func.function_decl);
             if (!func_node) continue;  // Skip if not a function (e.g., template that can't be resolved)
+            if (func_node->is_implicit()) continue;
             const auto& params = func_node->parameter_nodes();
 
             // Move assignment operator has exactly one parameter (by rvalue reference)
