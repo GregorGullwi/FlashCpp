@@ -1131,7 +1131,7 @@ bool Parser::parse_static_member_function(
 	FLASH_LOG(Templates, Debug, "Adding static member function '", decl_node.identifier_token().value(), "' to struct '", StringTable::getStringView(struct_name_handle), "'");
 	struct_ref.add_member_function(member_func_node, current_access,
 	                               false, false, false, false,
-	                               member_quals.is_const(), member_quals.is_volatile());
+	                               member_quals.cv);
 	FLASH_LOG(Templates, Debug, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
 	
 	// Also register in StructTypeInfo
@@ -1143,11 +1143,9 @@ bool Parser::parse_static_member_function(
 		false,  // is_pure_virtual
 		false   // is_override
 	);
-	registered.is_const = member_quals.is_const();
-	registered.is_volatile = member_quals.is_volatile();
+	registered.cv_qualifier = member_quals.cv;
 	// Extract noexcept from the underlying function declaration node
-	if (member_func_node.is<FunctionDeclarationNode>())
-		registered.is_noexcept = member_func_node.as<FunctionDeclarationNode>().is_noexcept();
+	registered.is_noexcept = member_func_node.as<FunctionDeclarationNode>().is_noexcept();
 
 	return true;  // Successfully handled as a function
 }

@@ -321,11 +321,14 @@ struct StructMemberFunction {
 	int vtable_index = -1;          // Index in vtable, -1 if not virtual
 
 	// CV qualifiers for member functions (Phase 4)
-	bool is_const = false;          // True if const member function (e.g., void foo() const)
-	bool is_volatile = false;       // True if volatile member function (e.g., void foo() volatile)
+	CVQualifier cv_qualifier = CVQualifier::None;
 
 	// noexcept tracking for type traits
 	bool is_noexcept = false;       // True if declared noexcept (e.g., void foo() noexcept)
+
+	// Convenience accessors for CV qualifiers
+	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
+	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
 	StructMemberFunction(StringHandle n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
 	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")

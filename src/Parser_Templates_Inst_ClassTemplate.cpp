@@ -1023,8 +1023,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				);
 				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
 				if (!struct_info->member_functions.empty()) {
-					struct_info->member_functions.back().is_const = mem_func.is_const;
-					struct_info->member_functions.back().is_volatile = mem_func.is_volatile;
+					struct_info->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
 				}
 			}
 		}
@@ -4157,7 +4156,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.is_pure_virtual = mem_func.is_pure_virtual;
 				lazy_info.is_override = mem_func.is_override;
 				lazy_info.is_final = mem_func.is_final;
-				lazy_info.is_const_method = mem_func.is_const;
+				lazy_info.is_const_method = mem_func.is_const();
 				lazy_info.is_constructor = false;
 				lazy_info.is_destructor = false;
 				
@@ -4331,8 +4330,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
 				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
-					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
+					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
 				}
 				
 				// Skip to next function - body will be instantiated on-demand
@@ -4586,8 +4584,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
 				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
-					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
+					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
 				}
 			} else {
 				// No definition, but still need to substitute parameter types and return type
@@ -4733,8 +4730,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
 				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().is_const = mem_func.is_const;
-					struct_info_ptr->member_functions.back().is_volatile = mem_func.is_volatile;
+					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
 				}
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
@@ -5723,7 +5719,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const auto& decl = func.decl_node();
 						// Match by name and const qualifier
 						if (decl.identifier_token().value() == deferred.function_name &&
-						    mem_func.is_const == deferred.is_const_method) {
+						    mem_func.is_const() == deferred.is_const_method) {
 							target_func = &func;
 							break;
 						}

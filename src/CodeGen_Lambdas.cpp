@@ -559,7 +559,7 @@
 					false,  // is_operator_overload
 					""     // operator_symbol
 				);
-				member_func.is_const = false;  // Mutable lambdas have non-const operator()
+				member_func.cv_qualifier = CVQualifier::None;  // Mutable lambdas have non-const operator()
 				member_func.is_virtual = false;
 				member_func.is_pure_virtual = false;
 				member_func.is_override = false;

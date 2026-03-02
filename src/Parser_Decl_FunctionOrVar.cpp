@@ -408,8 +408,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		size_t def_param_count = func_ref.parameter_nodes().size();
 		for (auto& member : struct_info->member_functions) {
 			if (member.getName() == function_name_token.handle() &&
-				member.is_const == member_quals.is_const() &&
-				member.is_volatile == member_quals.is_volatile()) {
+				member.is_const() == member_quals.is_const() &&
+				member.is_volatile() == member_quals.is_volatile()) {
 				// Also check parameter count for overload resolution
 				if (member.function_decl.is<FunctionDeclarationNode>()) {
 					const auto& decl_func = member.function_decl.as<FunctionDeclarationNode>();
@@ -433,8 +433,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			for (const auto& member : struct_info->member_functions) {
 				if (member.getName() == function_name_token.handle()) {
 					has_name_match = true;
-					if (member.is_const == member_quals.is_const() &&
-						member.is_volatile == member_quals.is_volatile()) {
+					if (member.is_const() == member_quals.is_const() &&
+						member.is_volatile() == member_quals.is_volatile()) {
 						has_qualifier_match = true;
 					}
 				}
@@ -469,8 +469,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				/*is_final_func=*/false);
 			// Propagate const/volatile qualifiers to the newly added member
 			if (!struct_info->member_functions.empty()) {
-				struct_info->member_functions.back().is_const = member_quals.is_const();
-				struct_info->member_functions.back().is_volatile = member_quals.is_volatile();
+				struct_info->member_functions.back().cv_qualifier = member_quals.cv;
 			}
 
 			// Check for declaration only (;) or function definition ({)

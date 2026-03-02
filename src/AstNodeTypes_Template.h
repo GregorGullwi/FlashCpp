@@ -552,11 +552,14 @@ struct StructMemberFunctionDecl {
 	bool is_final = false;          // True if declared with 'final' keyword
 
 	// CV qualifiers for member functions (Phase 4)
-	bool is_const = false;          // True if const member function (e.g., void foo() const)
-	bool is_volatile = false;       // True if volatile member function (e.g., void foo() volatile)
+	CVQualifier cv_qualifier = CVQualifier::None;
 
 	// noexcept tracking for type traits
 	bool is_noexcept = false;       // True if declared noexcept (e.g., void foo() noexcept)
+
+	// Convenience accessors for CV qualifiers
+	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
+	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
 	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false,
 	                         bool is_op_overload = false, std::string_view op_symbol = "")
@@ -671,15 +674,14 @@ public:
 	void add_member_function(ASTNode function_decl, AccessSpecifier access,
 	                         bool is_virtual = false, bool is_pure_virtual = false,
 	                         bool is_override = false, bool is_final = false,
-	                         bool is_const = false, bool is_volatile = false) {
+	                         CVQualifier cv_qualifier = CVQualifier::None) {
 		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
 		func_decl.is_override = is_override;
 		func_decl.is_final = is_final;
-		func_decl.is_const = is_const;
-		func_decl.is_volatile = is_volatile;
-		// Extract noexcept from the underlying function declaration node
+		func_decl.cv_qualifier = cv_qualifier;
+		// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
 		if (function_decl.is<FunctionDeclarationNode>())
 			func_decl.is_noexcept = function_decl.as<FunctionDeclarationNode>().is_noexcept();
 	}
@@ -687,29 +689,26 @@ public:
 	void add_constructor(ASTNode constructor_decl, AccessSpecifier access) {
 		auto& ctor = member_functions_.emplace_back(constructor_decl, access, true, false);
 		// Extract noexcept from the constructor declaration node
-		if (constructor_decl.is<ConstructorDeclarationNode>())
-			ctor.is_noexcept = constructor_decl.as<ConstructorDeclarationNode>().is_noexcept();
+		ctor.is_noexcept = constructor_decl.as<ConstructorDeclarationNode>().is_noexcept();
 	}
 
 	void add_destructor(ASTNode destructor_decl, AccessSpecifier access, bool is_virtual = false) {
 		auto& dtor_decl = member_functions_.emplace_back(destructor_decl, access, false, true, false, "");
 		dtor_decl.is_virtual = is_virtual;
 		// Extract noexcept from the destructor declaration node
-		if (destructor_decl.is<DestructorDeclarationNode>())
-			dtor_decl.is_noexcept = destructor_decl.as<DestructorDeclarationNode>().is_noexcept();
+		dtor_decl.is_noexcept = destructor_decl.as<DestructorDeclarationNode>().is_noexcept();
 	}
 
 	void add_operator_overload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access,
 	                           bool is_virtual = false, bool is_pure_virtual = false,
 	                           bool is_override = false, bool is_final = false,
-	                           bool is_const = false, bool is_volatile = false) {
+	                           CVQualifier cv_qualifier = CVQualifier::None) {
 		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false, true, operator_symbol);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
 		func_decl.is_override = is_override;
 		func_decl.is_final = is_final;
-		func_decl.is_const = is_const;
-		func_decl.is_volatile = is_volatile;
+		func_decl.cv_qualifier = cv_qualifier;
 		// Extract noexcept from the underlying function declaration node
 		if (function_decl.is<FunctionDeclarationNode>())
 			func_decl.is_noexcept = function_decl.as<FunctionDeclarationNode>().is_noexcept();
