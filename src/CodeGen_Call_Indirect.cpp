@@ -302,8 +302,8 @@
 						const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
 						object_name = ptr_ident.name();
 
-						// Look up the pointer in the symbol table
-						const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+						// Look up the pointer in both local and global symbol tables
+						const std::optional<ASTNode> symbol = lookupSymbol(object_name);
 						if (symbol.has_value()) {
 							const DeclarationNode* ptr_decl = get_decl_from_symbol(*symbol);
 							if (ptr_decl) {
