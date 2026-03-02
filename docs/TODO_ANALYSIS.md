@@ -27,12 +27,12 @@ Each item is assessed as one of:
 
 | File | Line | Status |
 |------|------|--------|
-| `src/ExpressionSubstitutor.cpp` | 1069 | ✅ Valid |
-| `src/ExpressionSubstitutor.cpp` | 1123 | ✅ Valid |
+| `src/ExpressionSubstitutor.cpp` | 1069 | ✅ Fixed |
+| `src/ExpressionSubstitutor.cpp` | 1123 | ✅ Fixed |
 
-**Line 1069** – `substituteType()` can build a new base-class template instantiation only for single-argument templates (`base_trait<T>`). Multi-argument bases such as `std::pair<T, U>` or `integral_constant<bool, N>` will have their substitution silently skipped. The fix requires splitting `args_str` on commas and substituting each argument independently.
+**Line 1069** – ~~`substituteType()` can build a new base-class template instantiation only for single-argument templates (`base_trait<T>`). Multi-argument bases such as `std::pair<T, U>` or `integral_constant<bool, N>` will have their substitution silently skipped.~~ **Fixed**: Template argument strings are now split on commas (respecting angle-bracket depth) and each argument is substituted independently. Non-parameter arguments are looked up as concrete types in `gTypesByName`.
 
-**Line 1123** – `ensureTemplateInstantiated()` is a stub with an empty body. It is currently called from the substitutor when a base class name is encountered, but no instantiation is actually triggered. This is lower priority because the caller often falls back gracefully, but it means recursive template chains may not be fully resolved.
+**Line 1123** – ~~`ensureTemplateInstantiated()` is a stub with an empty body.~~ **Fixed**: Now delegates to `parser_.try_instantiate_class_template()` to trigger actual template instantiation when a base class name is encountered during substitution.
 
 ---
 
@@ -322,11 +322,11 @@ The comment asks whether this special case is still necessary. The original reas
 | Category | Count | Status |
 |----------|-------|--------|
 | Function pointer return types (indirect call) | 3 | ✅ Fixed |
-| Template substitutor gaps | 2 | ✅ Valid |
+| Template substitutor gaps | 2 | ✅ Fixed |
 | Preprocessor `#line` filename | 1 | ✅ Fixed |
 | IR converter error messages / SSE moves | 3 | ✅ Fixed |
 | Member struct template base classes | 2 | ✅ Valid |
-| Declarator parsing gaps | 2 | ✅ Fixed |
+| Declarator parsing gaps | 2 | 1 ✅ Valid, 1 ✅ Fixed |
 | Specifier propagation to struct decl | 1 | ✅ Valid |
 | Constexpr evaluation gaps | 4 | ✅ Valid |
 | Overload resolution | 3 | ✅ Valid |
@@ -347,6 +347,6 @@ The comment asks whether this special case is still necessary. The original reas
 | **Total** | **47** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
-**Fixed**: 16 items (funcptr return types ×3, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, copy/move ctor + assignment type_index ×1, stale comments ×2, missing return diagnostic ×1, template template defaults ×1, concept template arguments ×1, linkage in parenthesized declarators ×2)  
+**Fixed**: 16 file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 23 items
+**Genuinely unimplemented**: 21 items

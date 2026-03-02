@@ -1063,27 +1063,59 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 				
 				if (needs_substitution) {
 					// We need to parse and substitute the template arguments
-					// For a simple case like "base_trait<T>", we substitute T
-					
-					// Simple parser for single template argument (most common case)
-					// TODO: Handle multiple arguments separated by commas
+					// Split args_str on commas and substitute each argument independently
 					std::vector<TemplateTypeArg> substituted_args;
 					
-					// Trim whitespace
-					while (!args_str.empty() && (args_str.front() == ' ' || args_str.front() == '\t')) {
-						args_str.remove_prefix(1);
-					}
-					while (!args_str.empty() && (args_str.back() == ' ' || args_str.back() == '\t')) {
-						args_str.remove_suffix(1);
+					// Split arguments on commas (respecting angle-bracket depth)
+					std::vector<std::string_view> arg_parts;
+					{
+						size_t start = 0;
+						int depth = 0;
+						for (size_t i = 0; i < args_str.size(); ++i) {
+							if (args_str[i] == '<') ++depth;
+							else if (args_str[i] == '>') --depth;
+							else if (args_str[i] == ',' && depth == 0) {
+								arg_parts.push_back(args_str.substr(start, i - start));
+								start = i + 1;
+							}
+						}
+						arg_parts.push_back(args_str.substr(start));
 					}
 					
-					// Check if this is a simple identifier that needs substitution
-					auto it = param_map_.find(args_str);
-					if (it != param_map_.end()) {
-						FLASH_LOG(Templates, Debug, "  Substituting template argument: ", args_str, " -> type_index=", it->second.type_index);
-						substituted_args.push_back(it->second);
+					bool all_substituted = true;
+					for (auto arg_part : arg_parts) {
+						// Trim whitespace
+						while (!arg_part.empty() && (arg_part.front() == ' ' || arg_part.front() == '\t')) {
+							arg_part.remove_prefix(1);
+						}
+						while (!arg_part.empty() && (arg_part.back() == ' ' || arg_part.back() == '\t')) {
+							arg_part.remove_suffix(1);
+						}
 						
-						// Now instantiate the template with the substituted argument
+						auto it = param_map_.find(arg_part);
+						if (it != param_map_.end()) {
+							FLASH_LOG(Templates, Debug, "  Substituting template argument: ", arg_part, " -> type_index=", it->second.type_index);
+							substituted_args.push_back(it->second);
+						} else {
+							// Non-parameter argument (e.g., a concrete type) - look up as type
+							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(arg_part));
+							if (type_it != gTypesByName.end()) {
+								TemplateTypeArg concrete_arg;
+								concrete_arg.base_type = type_it->second->getStructInfo() ? Type::Struct : Type::Int;
+								concrete_arg.type_index = type_it->second->type_index_;
+								substituted_args.push_back(concrete_arg);
+							} else {
+								// Could be a non-type argument (integer literal) - try to parse
+								// For now, just mark as failed
+								FLASH_LOG(Templates, Debug, "  Could not substitute argument: ", arg_part);
+								all_substituted = false;
+								break;
+							}
+						}
+					}
+					
+					if (all_substituted && !substituted_args.empty()) {
+						// Now instantiate the template with the substituted arguments
 						auto instantiated_node = parser_.try_instantiate_class_template(base_name, substituted_args, true);
 						if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
 							const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
@@ -1116,12 +1148,17 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 void ExpressionSubstitutor::ensureTemplateInstantiated(
 	std::string_view template_name,
-	[[maybe_unused]] const std::vector<TemplateTypeArg>& args) {
+	const std::vector<TemplateTypeArg>& args) {
 	
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Ensuring template instantiated: ", template_name);
 	
-	// TODO: Use parser to trigger template instantiation
-	// This will be implemented once we integrate with the parser
+	// Attempt to instantiate the template through the parser
+	auto result = parser_.try_instantiate_class_template(template_name, args, true);
+	if (result.has_value()) {
+		FLASH_LOG(Templates, Debug, "  Successfully ensured instantiation of: ", template_name);
+	} else {
+		FLASH_LOG(Templates, Debug, "  Could not instantiate (may already exist or not be a class template): ", template_name);
+	}
 }
 
 // Helper: Check if a template argument node is a pack expansion
