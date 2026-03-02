@@ -642,6 +642,47 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     return nullptr;
 }
 
+InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByParameterCount(
+	size_t parameter_count,
+	bool skip_implicit) const {
+	InlineVector<const StructMemberFunction*, 4> matches;
+	bool hasNonImplicitMatch = false;
+	for (const auto& func : member_functions) {
+		if (!func.is_constructor) {
+			continue;
+		}
+		if (!func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+		bool ctor_is_implicit = ctor_node.is_implicit();
+		if (skip_implicit && ctor_is_implicit) {
+			continue;
+		}
+		if (ctor_node.parameter_nodes().size() == parameter_count) {
+			if (!ctor_is_implicit) {
+				hasNonImplicitMatch = true;
+			}
+			matches.push_back(&func);
+		}
+	}
+
+	if (!skip_implicit && hasNonImplicitMatch) {
+		// Prefer user-declared constructors over implicit ones when both
+		// match the same parameter count.
+		InlineVector<const StructMemberFunction*, 4> filtered_matches;
+		for (const StructMemberFunction* match : matches) {
+			const auto& ctor_node = match->function_decl.as<ConstructorDeclarationNode>();
+			if (!ctor_node.is_implicit()) {
+				filtered_matches.push_back(match);
+			}
+		}
+		return filtered_matches;
+	}
+
+	return matches;
+}
+
 bool StructTypeInfo::hasUserDefinedConstructor() const {
 	for (const auto& func : member_functions) {
 		if (!func.is_constructor) continue;

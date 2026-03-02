@@ -503,6 +503,11 @@ struct StructTypeInfo {
 	// Find move constructor (takes Type&& parameter)
 	const StructMemberFunction* findMoveConstructor() const;
 
+	// Collect constructor candidates matching argument count.
+	InlineVector<const StructMemberFunction*, 4> getConstructorsByParameterCount(
+		size_t parameter_count,
+		bool skip_implicit) const;
+
 	// Find destructor
 	const StructMemberFunction* findDestructor() const {
 		for (const auto& func : member_functions) {
