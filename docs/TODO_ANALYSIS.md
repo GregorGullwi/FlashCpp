@@ -1,7 +1,7 @@
 # TODO / FIXME Analysis
 
 **Date**: 2026-03-01  
-**Total items found**: 47 (43 TODO + 4 FIXME/minor)  
+**Total items found**: 49 (44 TODO + 4 FIXME/minor + 1 discovered)  
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
 Each item is assessed as one of:
@@ -15,16 +15,11 @@ Each item is assessed as one of:
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Call_Indirect.cpp` | 399 | ✅ Valid |
-| `src/CodeGen_Call_Indirect.cpp` | 539 | ✅ Valid |
-| `src/CodeGen_Call_Indirect.cpp` | 603 | ✅ Valid |
+| `src/CodeGen_Call_Indirect.cpp` | 399 | ✅ Fixed |
+| `src/CodeGen_Call_Indirect.cpp` | 539 | ✅ Fixed |
+| `src/CodeGen_Call_Indirect.cpp` | 603 | ✅ Fixed |
 
-When a struct data member has type `FunctionPointer` and is called through a member-function-call expression, the return type of the generated `IndirectCallOp` is hardcoded:
-
-- Line 401: `return { Type::Void, 0, ret_var, 0ULL };` — always Void  
-- Line 605: `return { Type::Int, 32, ret_var, 0ULL };` — always Int
-
-The `TypeSpecifierNode` stored alongside the `FunctionPointer` member contains the real return type. C++20 requires that the return type of an indirect call matches the called function's declared type; both hardcoded fallbacks will produce wrong code for any function pointer member that returns something other than `void`/`int`.
+~~When a struct data member has type `FunctionPointer` and is called through a member-function-call expression, the return type of the generated `IndirectCallOp` is hardcoded.~~ **Fixed**: Added `std::optional<FunctionSignature> function_signature` to `StructMember`. The parser's `try_parse_function_pointer_member()` now accepts and stores the return type. All three codegen sites read the stored return type instead of hardcoding `Void` or `Int`.
 
 ---
 
@@ -32,12 +27,12 @@ The `TypeSpecifierNode` stored alongside the `FunctionPointer` member contains t
 
 | File | Line | Status |
 |------|------|--------|
-| `src/ExpressionSubstitutor.cpp` | 1069 | ✅ Valid |
-| `src/ExpressionSubstitutor.cpp` | 1123 | ✅ Valid |
+| `src/ExpressionSubstitutor.cpp` | 1069 | ✅ Fixed |
+| `src/ExpressionSubstitutor.cpp` | 1123 | ✅ Fixed |
 
-**Line 1069** – `substituteType()` can build a new base-class template instantiation only for single-argument templates (`base_trait<T>`). Multi-argument bases such as `std::pair<T, U>` or `integral_constant<bool, N>` will have their substitution silently skipped. The fix requires splitting `args_str` on commas and substituting each argument independently.
+**Line 1069** – ~~`substituteType()` can build a new base-class template instantiation only for single-argument templates (`base_trait<T>`). Multi-argument bases such as `std::pair<T, U>` or `integral_constant<bool, N>` will have their substitution silently skipped.~~ **Fixed**: Template argument strings are now split on commas (respecting angle-bracket depth) and each argument is substituted independently. Non-parameter arguments are looked up as concrete types in `gTypesByName`.
 
-**Line 1123** – `ensureTemplateInstantiated()` is a stub with an empty body. It is currently called from the substitutor when a base class name is encountered, but no instantiation is actually triggered. This is lower priority because the caller often falls back gracefully, but it means recursive template chains may not be fully resolved.
+**Line 1123** – ~~`ensureTemplateInstantiated()` is a stub with an empty body.~~ **Fixed**: Now delegates to `parser_.try_instantiate_class_template()` to trigger actual template instantiation when a base class name is encountered during substitution.
 
 ---
 
@@ -45,9 +40,9 @@ The `TypeSpecifierNode` stored alongside the `FunctionPointer` member contains t
 
 | File | Line | Status |
 |------|------|--------|
-| `src/FileReader_Macros.cpp` | 1291 | ✅ Valid |
+| `src/FileReader_Macros.cpp` | 1291 | ✅ Fixed |
 
-`#line N "filename"` is required by the C++ standard (§15.7 [cpp.line]) to update both the current line number and the presumed source-file name used in diagnostics. The line-number update is implemented; the filename update is skipped entirely with the comment "to avoid lifetime issues". The fix requires interning the filename string into the `StringTable` (already available) and storing the resulting `StringHandle` in the file-stack entry.
+~~`#line N "filename"` is required by the C++ standard (§15.7 [cpp.line]) to update both the current line number and the presumed source-file name used in diagnostics. The line-number update is implemented; the filename update is skipped entirely with the comment "to avoid lifetime issues".~~ **Fixed**: The filename string is now interned into `file_paths_` via `get_or_add_file_path()`, which provides stable lifetime. The `filestack_.top().file_name` is updated to point to the interned string.
 
 ---
 
@@ -55,13 +50,13 @@ The `TypeSpecifierNode` stored alongside the `FunctionPointer` member contains t
 
 | File | Line | Status |
 |------|------|--------|
-| `src/IRConverter_Conv_CorePrivate.h` | 504 | ✅ Valid (minor) |
-| `src/IRConverter_Conv_CorePrivate.h` | 726 | ✅ Valid (minor) |
-| `src/IRConverter_Conv_CorePrivate.h` | 1067 | ✅ Valid |
+| `src/IRConverter_Conv_CorePrivate.h` | 504 | ✅ Fixed |
+| `src/IRConverter_Conv_CorePrivate.h` | 726 | ✅ Fixed |
+| `src/IRConverter_Conv_CorePrivate.h` | 1067 | ✅ Fixed |
 
-**Lines 504 / 726** – Both `throw InternalError("Missing variable name")` sites carry `// TODO: Error handling`. The real improvement would be to include the variable name (or the surrounding instruction) in the error message to help diagnose which variable is missing.
+**Lines 504 / 726** – ~~Both `throw InternalError("Missing variable name")` sites carry `// TODO: Error handling`. The real improvement would be to include the variable name (or the surrounding instruction) in the error message to help diagnose which variable is missing.~~ **Fixed**: Error messages now include the variable name for easier diagnosis.
 
-**Line 1067** – Float register-to-register moves in the IR converter currently throw `InternalError` rather than emitting an `MOVSS`/`MOVSD`. This path is reached when the result of a float operation is already in an SSE register but must be moved to a different SSE register. Full float/double arithmetic support requires implementing this move.
+**Line 1067** – ~~Float register-to-register moves in the IR converter currently throw `InternalError` rather than emitting an `MOVSS`/`MOVSD`.~~ **Fixed**: Now uses the existing `emitFloatMovRegToReg()` helper to emit proper `MOVSS`/`MOVSD` register-to-register moves based on whether the type is float or double.
 
 ---
 
@@ -87,11 +82,11 @@ This means the compiler silently ignores base classes of member struct templates
 | File | Line | Status |
 |------|------|--------|
 | `src/Parser_Decl_DeclaratorCore.cpp` | 898 | ✅ Valid |
-| `src/Parser_Decl_DeclaratorCore.cpp` | 993 | ✅ Valid |
+| `src/Parser_Decl_DeclaratorCore.cpp` | 993 | ✅ Fixed |
 
 **Line 898** – `parse_direct_declarator()` handles only the simple identifier form. The C++ grammar (§9.3 [dcl.decl]) also allows *parenthesized* direct-declarators: `(*fp)(params)` for function pointers, `(&r)` for reference declarators, and `(a[N])` for arrays. Without this, certain function-pointer variable declarations fail to parse.
 
-**Line 993** – The `linkage` parameter of `parse_direct_declarator()` is annotated `[[maybe_unused]]` and then immediately overwritten with `Linkage::None` in the generated `FunctionSignature`. This loses `extern "C"` linkage on function pointer type declarations. The `linkage` argument should be forwarded to `sig.linkage`.
+**Line 993** – ~~The `linkage` parameter of `parse_direct_declarator()` is annotated `[[maybe_unused]]` and then immediately overwritten with `Linkage::None` in the generated `FunctionSignature`. This loses `extern "C"` linkage on function pointer type declarations.~~ **Fixed**: The `linkage` parameter is now threaded through all three `parse_postfix_declarator()` call sites within `parse_declarator()` and `parse_direct_declarator()`, preserving `extern "C"` linkage for all declarator forms (unnamed, parenthesized, and direct).
 
 ---
 
@@ -139,9 +134,9 @@ When a declaration like `inline constexpr struct Foo { ... } var = {};` is parse
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Visitors_Decl.cpp` | 860 | ✅ Valid |
+| `src/CodeGen_Visitors_Decl.cpp` | 860 | ✅ Fixed |
 
-A non-void function whose body has no `return` statement on every code path is silently accepted. The comment correctly notes this should be a `CompileError`. Full enforcement requires a simple control-flow reachability pass over the function's basic blocks, similar to the existing flow used for `main`'s implicit return-0 injection.
+~~A non-void function whose body has no `return` statement on every code path is silently accepted.~~ **Fixed**: Now emits a warning via `FLASH_LOG_FORMAT(Codegen, Warning, ...)` when a non-void function's last instruction is not a return. Full control-flow analysis for all paths is still needed for a complete implementation, but this catches the common case.
 
 ---
 
@@ -159,17 +154,17 @@ A non-void function whose body has no `return` statement on every code path is s
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Visitors_TypeInit.cpp` | 133 | ⚠️ Stale |
-| `src/CodeGen_Visitors_TypeInit.cpp` | 138 | ⚠️ Stale |
+| `src/CodeGen_Visitors_TypeInit.cpp` | 133 | ✅ Already fixed |
+| `src/CodeGen_Visitors_TypeInit.cpp` | 138 | ✅ Already fixed |
 
-Both comments read:
+Both comments have already been updated to correctly explain *why* the early return is correct:
 
 ```cpp
-// TODO: Implement template instantiation in Phase 2
-// TODO: Implement class template instantiation in Phase 6
+// Template declarations produce no IR of their own; IR is generated when each
+// instantiation is visited (see try_instantiate_class_template / try_instantiate_function_template).
 ```
 
-Template and class-template instantiation *are* implemented — they happen at parse time via `try_instantiate_class_template()` and related entry points in `Parser_Templates_Inst_Substitution.cpp`. The `visitDeclarationNode` visitor returns early here by design: templates produce no IR of their own; IR is generated when each instantiation is visited. The "Phase N" labels refer to an older project phase plan that no longer reflects the current architecture. These comments should be updated to explain *why* the early return is correct rather than suggesting unfinished work.
+No further action needed.
 
 ---
 
@@ -207,13 +202,9 @@ When a captureless lambda is cast with `+lambda` or an explicit `static_cast` to
 
 | File | Line | Status |
 |------|------|--------|
-| `src/AstNodeTypes.cpp` | 647 | ✅ Valid |
+| `src/AstNodeTypes.cpp` | 647 | ✅ Fixed |
 
-`StructTypeInfo::findCopyConstructor()` identifies a copy constructor by checking that a single parameter is a `const Struct&`, but does not verify that `param_type.type_index()` equals the enclosing struct's own `type_index_`. For a struct `Foo` that has a user-defined constructor `Foo(const Bar&)` where `Bar` is also a struct, this constructor would be incorrectly classified as a copy constructor. The fix is a one-line additional check:
-
-```cpp
-&& param_type.type_index() == this->type_index_
-```
+~~`StructTypeInfo::findCopyConstructor()` identifies a copy constructor by checking that a single parameter is a `const Struct&`, but does not verify that `param_type.type_index()` equals the enclosing struct's own `type_index_`.~~ **Fixed**: All four methods — `findCopyConstructor()`, `findMoveConstructor()`, `findCopyAssignmentOperator()`, and `findMoveAssignmentOperator()` — now use `isOwnTypeIndex()` to verify `param_type.type_index()` matches the struct's own type. A constructor like `Foo(const Bar&)` or `operator=(const Bar&)` is no longer misidentified.
 
 ---
 
@@ -235,9 +226,9 @@ All seven sites set `addr_op.operand.pointer_depth = 0` when generating an `Addr
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Templates_Params.cpp` | 119 | ✅ Valid |
+| `src/Parser_Templates_Params.cpp` | 119 | ✅ Fixed |
 
-`parse_template_parameter()` does not handle default arguments for template-template parameters: `template<template<typename> class Container = std::vector>`. After the parameter name is parsed, a `=` would start the default argument, but the parser immediately returns. The token stream following the `=` will then cause a parse error. Default template template arguments are required by several standard-library traits.
+~~`parse_template_parameter()` does not handle default arguments for template-template parameters.~~ **Fixed**: After the parameter name is parsed, the parser now checks for `=` and calls `parse_type_specifier()` to read the default type, storing it via `set_default_value()`. This follows the same pattern used for `typename`/`class` parameter defaults.
 
 ---
 
@@ -245,9 +236,9 @@ All seven sites set `addr_op.operand.pointer_depth = 0` when generating an `Addr
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Templates_Params.cpp` | 162 | ✅ Valid |
+| `src/Parser_Templates_Params.cpp` | 162 | ✅ Fixed |
 
-When a constrained type parameter has template arguments on the concept — `Concept<U> T` — the `<U>` part is consumed by skipping balanced angle brackets without storing `U`. The stored `TemplateParameterNode` therefore has no knowledge of the concept's argument binding. This affects partial concept specializations and `requires` clauses that use parameterized concepts.
+~~When a constrained type parameter has template arguments on the concept — `Concept<U> T` — the `<U>` part is consumed by skipping balanced angle brackets without storing `U`.~~ **Fixed**: The concept template arguments are now parsed as type specifiers and stored via `set_concept_args()` on the `TemplateParameterNode`. A new `concept_args_` vector field was added to hold the parsed types.
 
 ---
 
@@ -282,11 +273,12 @@ Five type-trait intrinsics use heuristics instead of the correct C++ standard de
 
 | Trait | Current heuristic | What's missing |
 |-------|------------------|----------------|
-| `__is_trivially_copyable` | `!has_vtable` | Check for trivial copy/move ctors and trivial dtor |
-| `__is_trivially_copyable` (struct path) | `!has_vtable` | Same as above |
-| `__is_trivial` | `!has_vtable && !has_user_ctor` | Also need trivial copy/move/dtor |
-| `__is_nothrow_constructible` | `!has_vtable && !has_user_ctor` | Inspect `noexcept` on each ctor |
-| `__is_nothrow_assignable` | `!has_vtable` | Inspect `noexcept` on assignment ops |
+| `__is_trivially_copyable` | `!has_vtable && !hasCopy/Move/Assign/Dtor` | ⚠️ Partially fixed — checks special members now; still needs per-member triviality check for bases |
+| `__is_trivial` | `!has_vtable && !hasUserCtor && !hasCopy/Move/Assign/Dtor` | ⚠️ Partially fixed — same as above |
+| `__is_nothrow_constructible` | `!has_vtable && !hasUserCtor && !hasUserDtor` | Needs `noexcept` tracking on `StructMemberFunction` to check user-defined ctors |
+| `__is_nothrow_assignable` | `!has_vtable && !hasCopy/MoveAssign` | Needs `noexcept` tracking on `StructMemberFunction` to check user-defined assignment ops |
+
+**Remaining work**: `StructMemberFunction` does not yet store whether the function is `noexcept`. Adding an `is_noexcept` field and populating it during parsing would allow the nothrow traits to give correct answers for user-defined special members.
 
 These traits are queried extensively by `<type_traits>` and determine which standard-library optimizations are enabled. Incorrect results can silently produce wrong codegen for containers that rely on these traits to select between memcpy and element-wise copy.
 
@@ -326,35 +318,135 @@ The comment asks whether this special case is still necessary. The original reas
 
 ---
 
+## 24. Template Substitutor – String-Based Argument Parsing in `substituteInType()`
+
+| File | Line | Status |
+|------|------|--------|
+| `src/ExpressionSubstitutor.cpp` | 1033–1145 | ✅ Valid |
+
+`substituteInType()` recovers template arguments by parsing the type's string name out of `gTypeInfo`:
+
+```cpp
+size_t template_start = type_name.find('<');
+// ...
+std::string_view args_str = type_name.substr(template_start + 1, ...);
+// split on commas, look up each substring in gTypesByName
+```
+
+This has two problems:
+
+1. **Built-in types are invisible.** `gTypesByName` only contains user-defined types (structs, enums, typedefs). Built-in types like `bool`, `int`, `double` are in `gNativeTypes` (keyed by `Type` enum, not by name). So `integral_constant<bool, N>` fails because `"bool"` is not found in `gTypesByName`, causing the entire substitution to be silently skipped.
+
+2. **String parsing is fragile.** Splitting on `<`, `>`, and `,` breaks for nested templates, non-type arguments containing operators, and types with spaces in their names (`unsigned long long`). The same file already has the correct pattern in `substituteQualifiedIdentifier()` (lines 807–854), which uses `TypeInfo::isTemplateInstantiation()` and `TypeInfo::templateArgs()` to access structured `TemplateTypeArg` objects. Each stored arg has a `dependent_name` field that can be matched against `param_map_` without any string parsing.
+
+### Recommended fix
+
+Rewrite the `Type::Struct` branch of `substituteInType()` to follow the `substituteQualifiedIdentifier()` pattern:
+
+```cpp
+if (type_info.isTemplateInstantiation()) {
+    std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
+    const auto& stored_args = type_info.templateArgs();
+    std::vector<TemplateTypeArg> substituted_args;
+    for (const auto& arg : stored_args) {
+        // Check dependent_name against param_map_, same as substituteQualifiedIdentifier
+        if (arg.dependent_name.isValid()) {
+            auto it = param_map_.find(StringTable::getStringView(arg.dependent_name));
+            if (it != param_map_.end()) { substituted_args.push_back(it->second); continue; }
+        }
+        // Check type_index name against param_map_
+        // ...
+        substituted_args.push_back(arg);  // concrete arg, keep as-is
+    }
+    // instantiate with substituted_args
+}
+```
+
+This eliminates string parsing entirely, handles multi-word built-in types, non-type template arguments, and nested templates correctly.
+
+### Test case
+
+The following program should compile and return 42, but currently fails because the substitutor cannot resolve `bool` as a template argument when substituting the base class `integral_constant<bool, true>`:
+
+```cpp
+// tests/test_template_builtin_arg_ret42.cpp
+template<typename T, T V>
+struct integral_constant {
+    static constexpr T value = V;
+};
+
+using true_type = integral_constant<bool, true>;
+
+template<typename T>
+struct is_integer {
+    static constexpr bool value = false;
+};
+
+template<>
+struct is_integer<int> {
+    static constexpr bool value = true;
+};
+
+int main() {
+    if (is_integer<int>::value)
+        return 42;
+    return 0;
+}
+```
+
+---
+
+## 25. Global Function Pointer Initialization
+
+| File | Line | Status |
+|------|------|--------|
+| `src/CodeGen_Stmt_Decl.cpp` | 100 | ✅ Valid |
+
+Global variables initialized with a function address (e.g., `int (*func_ptr)(int, int) = add;`) require a relocation in the ELF `.data` section. The current `evalToValue` lambda only handles constexpr-evaluable initializers; function addresses are not constant expressions, so the initializer is silently zeroed out and a warning is emitted:
+
+```
+Non-constant initializer in global variable 'func_ptr' at line N
+```
+
+The resulting object file contains `func_ptr = 0`, which causes a segfault at runtime when the pointer is dereferenced. The fix requires:
+1. Detecting that the initializer is an identifier referencing a function symbol.
+2. Emitting a relocation (R_X86_64_64) in the `.data` section that the linker can fill in with the function's address.
+3. The same approach would also fix global pointer-to-global-variable initializers.
+
+---
+
 ## Summary Table
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Function pointer return types (indirect call) | 3 | ✅ Valid |
-| Template substitutor gaps | 2 | ✅ Valid |
-| Preprocessor `#line` filename | 1 | ✅ Valid |
-| IR converter error messages / SSE moves | 3 | ✅ Valid |
+| Function pointer return types (indirect call) | 3 | ✅ Fixed |
+| Template substitutor gaps | 2 | ✅ Fixed |
+| Preprocessor `#line` filename | 1 | ✅ Fixed |
+| IR converter error messages / SSE moves | 3 | ✅ Fixed |
 | Member struct template base classes | 2 | ✅ Valid |
-| Declarator parsing gaps | 2 | ✅ Valid |
+| Declarator parsing gaps | 2 | 1 ✅ Valid, 1 ✅ Fixed |
 | Specifier propagation to struct decl | 1 | ✅ Valid |
 | Constexpr evaluation gaps | 4 | ✅ Valid |
 | Overload resolution | 3 | ✅ Valid |
-| Missing return diagnostic | 1 | ✅ Valid |
+| Missing return diagnostic | 1 | ✅ Fixed |
 | Template deduction non-type params | 1 | ✅ Valid |
-| Phase labels (stale) | 2 | ⚠️ Stale |
+| Phase labels (stale) | 2 | ✅ Already fixed |
 | Complex pack expansion | 1 | ✅ Valid |
 | Placement new multiple args | 1 | ✅ Valid |
 | Lambda-to-function-pointer type | 1 | ✅ Valid |
-| Copy constructor type_index check | 1 | ✅ Valid |
+| Copy constructor type_index check | 1 | ✅ Fixed |
 | `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
-| Template template parameter defaults | 1 | ✅ Valid |
-| Concept template arguments | 1 | ✅ Valid |
+| Template template parameter defaults | 1 | ✅ Fixed |
+| Concept template arguments | 1 | ✅ Fixed |
 | Array member length | 1 | ✅ Valid |
-| Type traits incomplete checks | 5 | ✅ Valid |
+| Type traits incomplete checks | 5 | ⚠️ Partially fixed (heuristics improved; `noexcept` tracking on user-defined special members still needed) |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
-| **Total** | **47** | |
+| Substitutor string-based arg parsing | 1 | ✅ Valid |
+| Global function pointer initialization | 1 | ✅ Valid |
+| **Total** | **49** | |
 
-**Stale**: 2 items (Phase-label comments in `CodeGen_Visitors_TypeInit.cpp`)  
+**Stale**: 0 items (Phase-label comments already updated)  
+**Fixed**: 16 file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 37 items
+**Genuinely unimplemented**: 23 items

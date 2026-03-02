@@ -116,7 +116,23 @@ ParseResult Parser::parse_template_parameter() {
 		// Create template template parameter node
 		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params), param_name_token);
 
-		// TODO: Handle default arguments (e.g., template<typename> class Container = std::vector)
+		// Handle default arguments (e.g., template<typename> class Container = std::vector)
+		if (peek() == "="_tok) {
+			advance(); // consume '='
+
+			// Parse the default type.
+			// parse_type_specifier() handles both simple names (MyContainer) and
+			// namespace-qualified names (my_ns::NsContainer, std::vector) via
+			// its qualified identifier resolution infrastructure.
+			auto default_type_result = parse_type_specifier();
+			if (default_type_result.is_error()) {
+				return ParseResult::error("Expected type after '=' in template template parameter default", current_token_);
+			}
+
+			if (default_type_result.node().has_value()) {
+				param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
+			}
+		}
 
 		return saved_position.success(param_node);
 	}
@@ -155,16 +171,27 @@ ParseResult Parser::parse_template_parameter() {
 		if (gConceptRegistry.hasConcept(potential_concept)) {
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_template_parameter: '{}' IS a registered concept", potential_concept);
 			// Check for template arguments: Concept<U>
-			// For now, we'll skip template argument parsing for concepts
-			// and just expect the parameter name
+			std::vector<ASTNode> concept_template_args;
 			if (peek() == "<"_tok) {
-				// Skip template arguments for now
-				// TODO: Parse and store concept template arguments
-				int angle_depth = 0;
-				do {
-					update_angle_depth(peek(), angle_depth);
-					advance();
-				} while (angle_depth > 0 && !peek().is_eof());
+				advance(); // consume '<'
+				// Parse concept template arguments as type specifiers
+				while (peek() != ">"_tok && !peek().is_eof()) {
+					auto arg_result = parse_type_specifier();
+					if (!arg_result.is_error() && arg_result.node().has_value()) {
+						concept_template_args.push_back(*arg_result.node());
+					} else {
+						// Skip unrecognized token with a diagnostic
+						FLASH_LOG_FORMAT(Parser, Warning, "Skipping unrecognized token '{}' in concept template arguments for '{}'",
+							!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>", potential_concept);
+						advance();
+					}
+					if (peek() == ","_tok) {
+						advance(); // consume ','
+					}
+				}
+				if (peek() == ">"_tok) {
+					advance(); // consume '>'
+				}
 			}
 			
 			// Check for ellipsis (parameter pack): Concept... Ts
@@ -190,6 +217,11 @@ ParseResult Parser::parse_template_parameter() {
 			
 			// Store the concept constraint
 			param_node.as<TemplateParameterNode>().set_concept_constraint(potential_concept);
+			
+			// Store concept template arguments if present (e.g., Concept<U> T stores {U})
+			if (!concept_template_args.empty()) {
+				param_node.as<TemplateParameterNode>().set_concept_args(std::move(concept_template_args));
+			}
 			
 			// Set variadic flag if this is a parameter pack
 			if (is_variadic) {

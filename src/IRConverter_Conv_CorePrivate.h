@@ -501,7 +501,7 @@
 				ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, operand_type, ctx.operand_size_in_bits);
 				
 				if (ctx.result_physical_reg == X64Register::Count) {
-					throw InternalError("Missing variable name"); // TODO: Error handling
+					throw InternalError(std::string("Missing variable: ") + std::string(lhs_var_name));
 				}
 			}
 		}
@@ -723,7 +723,7 @@
 				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits, ctx.result_physical_reg);
 				
 				if (ctx.rhs_physical_reg == X64Register::Count) {
-					throw InternalError("Missing variable name"); // TODO: Error handling
+					throw InternalError(std::string("Missing variable: ") + std::string(rhs_var_name));
 				}
 			}
 		}
@@ -1064,9 +1064,8 @@
 					if (res_reg != actual_source_reg) {
 						if (is_float_type) {
 							// For float types, use SSE mov instructions for register-to-register moves
-							// TODO: Implement SSE register-to-register moves if needed
-							// For now, assert false since we shouldn't hit this path with current code
-							throw InternalError("Float register-to-register move not yet implemented");
+							bool is_double = (ctx.result_value.type == Type::Double);
+							emitFloatMovRegToReg(res_reg.value(), actual_source_reg, is_double);
 						} else {
 							auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits / 8);
 							textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);

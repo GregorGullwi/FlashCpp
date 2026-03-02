@@ -819,7 +819,7 @@ ParseResult Parser::parse_struct_declaration()
 							
 							// Check for function pointer member pattern: type (*name)(params);
 							// This handles patterns like: void (*sa_sigaction)(int, siginfo_t *, void *);
-							if (auto funcptr_member = try_parse_function_pointer_member()) {
+							if (auto funcptr_member = try_parse_function_pointer_member(member_type_spec)) {
 								anon_struct_info->members.push_back(*funcptr_member);
 								continue;  // Continue with next member
 							}
@@ -852,6 +852,9 @@ ParseResult Parser::parse_struct_declaration()
 								0,      // pointer_depth
 								std::nullopt // bitfield_width
 							});
+							if (member_type_spec.has_function_signature()) {
+								anon_struct_info->members.back().function_signature = member_type_spec.function_signature();
+							}
 							
 							// Expect semicolon
 							if (!consume(";"_tok)) {
@@ -2594,7 +2597,8 @@ ParseResult Parser::parse_struct_declaration()
 			is_array,
 			array_dimensions,
 			static_cast<int>(type_spec.pointer_depth()),
-			member_decl.bitfield_width
+			member_decl.bitfield_width,
+			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
 		);
 		
 		member_index++;
@@ -3584,7 +3588,7 @@ ParseResult Parser::parse_enum_declaration()
 	return saved_position.success(enum_node);
 }
 
-std::optional<StructMember> Parser::try_parse_function_pointer_member()
+std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecifierNode return_type_spec)
 {
 	// Check for function pointer pattern: '(' followed by '*'
 	if (peek() != "("_tok) {
@@ -3598,61 +3602,48 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member()
 		restore_token_position(funcptr_saved_pos);
 		return std::nullopt;
 	}
-	advance(); // consume '*'
 	
-	// Parse optional CV-qualifiers after *
-	parse_cv_qualifiers();
+	// Looks like a function pointer — restore position and delegate to parse_declarator,
+	// which handles the full (*name)(params) pattern including parameter type parsing.
+	// This produces a DeclarationNode with a complete FunctionSignature (return type + param types).
+	restore_token_position(funcptr_saved_pos);
 	
-	// Parse function pointer name
-	if (!peek().is_identifier()) {
-		restore_token_position(funcptr_saved_pos);
-		return std::nullopt;
-	}
-	Token funcptr_name_token = peek_info();
-	advance(); // consume the name
-	
-	// Expect closing ')' after the name
-	if (peek() != ")"_tok) {
-		restore_token_position(funcptr_saved_pos);
-		return std::nullopt;
-	}
-	advance(); // consume ')'
-	
-	// Expect '(' for function parameters
-	if (peek() != "("_tok) {
+	auto result = parse_declarator(return_type_spec, Linkage::None);
+	if (result.is_error() || !result.node().has_value()) {
 		restore_token_position(funcptr_saved_pos);
 		return std::nullopt;
 	}
 	
-	// Parse function parameters - skip through until matching ')'
-	advance(); // consume '('
-	int paren_depth = 1;
-	while (!peek().is_eof() && paren_depth > 0) {
-		if (peek() == "("_tok) {
-			paren_depth++;
-		} else if (peek() == ")"_tok) {
-			paren_depth--;
-		}
-		advance();
+	// parse_declarator produces a DeclarationNode whose TypeSpecifierNode has Type::FunctionPointer
+	if (!result.node()->is<DeclarationNode>()) {
+		restore_token_position(funcptr_saved_pos);
+		return std::nullopt;
 	}
 	
-	// Expect semicolon after function pointer declaration
+	const DeclarationNode& decl = result.node()->as<DeclarationNode>();
+	const TypeSpecifierNode& fp_type = decl.type_node().as<TypeSpecifierNode>();
+	
+	if (fp_type.type() != Type::FunctionPointer) {
+		restore_token_position(funcptr_saved_pos);
+		return std::nullopt;
+	}
+	
+	// Expect semicolon after function pointer declaration in struct context
 	if (peek() != ";"_tok) {
 		restore_token_position(funcptr_saved_pos);
 		return std::nullopt;
 	}
 	advance(); // consume ';'
 	
-	// Create StructMember for the function pointer
-	// Use pointer size from target architecture (defaulting to 64-bit)
+	discard_saved_token(funcptr_saved_pos);
+	
+	// Build StructMember from the parsed result
 	constexpr size_t pointer_size = sizeof(void*);
 	constexpr size_t pointer_alignment = alignof(void*);
 	
-	StringHandle funcptr_name_handle = funcptr_name_token.handle();
+	StringHandle funcptr_name_handle = decl.identifier_token().handle();
 	
-	discard_saved_token(funcptr_saved_pos);
-	
-	return StructMember{
+	StructMember member{
 		funcptr_name_handle,
 		Type::FunctionPointer,
 		0,  // type_index for function pointers
@@ -3668,6 +3659,11 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member()
 		0,      // pointer_depth
 		std::nullopt // bitfield_width
 	};
+	// Copy the COMPLETE function signature (return type + parameter types) from parse_declarator
+	if (fp_type.has_function_signature()) {
+		member.function_signature = fp_type.function_signature();
+	}
+	return member;
 }
 
 // Helper function to parse members of anonymous struct/union (handles recursive nesting)
@@ -3826,7 +3822,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		
 		// Check for function pointer member pattern: type (*name)(params);
 		// This handles patterns like: void (*_function)(__sigval_t);
-		if (auto funcptr_member = try_parse_function_pointer_member()) {
+		if (auto funcptr_member = try_parse_function_pointer_member(member_type_spec)) {
 			out_struct_info->members.push_back(*funcptr_member);
 			continue;  // Continue with next member
 		}
@@ -3891,6 +3887,9 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			0,      // pointer_depth
 			std::nullopt // bitfield_width
 		});
+		if (member_type_spec.has_function_signature()) {
+			out_struct_info->members.back().function_signature = member_type_spec.function_signature();
+		}
 		
 		// Expect semicolon
 		if (!consume(";"_tok)) {

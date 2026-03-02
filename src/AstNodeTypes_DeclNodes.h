@@ -58,6 +58,10 @@ struct StructTypeInfo {
 	// Error tracking for semantic errors detected during finalization
 	std::string finalization_error_;  // Non-empty if semantic error occurred during finalization
 
+	// Cached type_index from the owning TypeInfo, set by TypeInfo::setStructInfo().
+	// Avoids fragile gTypesByName lookups in isOwnTypeIndex().
+	std::optional<TypeIndex> own_type_index_;
+
 	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
 		: name(n), default_access(default_acc), is_union(union_type) {}
 	
@@ -73,7 +77,8 @@ struct StructTypeInfo {
 	               bool is_array = false,
 	               std::vector<size_t> array_dimensions = {},
 	               int pointer_depth = 0,
-	               std::optional<size_t> bitfield_width = std::nullopt) {
+	               std::optional<size_t> bitfield_width = std::nullopt,
+	               std::optional<FunctionSignature> function_sig = std::nullopt) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members.
 		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
@@ -151,6 +156,9 @@ struct StructTypeInfo {
 			              access, std::move(default_initializer), reference_qualifier,
 			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
+		if (function_sig.has_value()) {
+			members.back().function_signature = std::move(function_sig);
+		}
 
 		// Update struct size and alignment
 		if (is_union) {
@@ -476,6 +484,9 @@ struct StructTypeInfo {
 	// Find default constructor (no parameters)
 	const StructMemberFunction* findDefaultConstructor() const;
 
+	// Check if a parameter's type_index matches this struct's own type_index
+	bool isOwnTypeIndex(TypeIndex param_type_index) const;
+
 	// Find copy constructor (takes const Type& or Type& parameter)
 	const StructMemberFunction* findCopyConstructor() const;
 
@@ -755,6 +766,9 @@ struct TypeInfo
 	StructTypeInfo* getStructInfo() { return struct_info_.get(); }
 
 	void setStructInfo(std::unique_ptr<StructTypeInfo> info) {
+		if (info) {
+			info->own_type_index_ = type_index_;
+		}
 		struct_info_ = std::move(info);
 	}
 
@@ -1060,6 +1074,12 @@ public:
 	std::string_view concept_constraint() const { return concept_constraint_; }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
+
+// Unified helper: creates a TypeInfo for a type alias, copies pointer_depth,
+// reference_qualifier, and function_signature from the TypeSpecifierNode, then
+// registers it in gTypesByName.  Returns a reference for callers that need to
+// do additional work (e.g. namespace-qualified registration).
+TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec);
 
 class DeclarationNode {
 public:

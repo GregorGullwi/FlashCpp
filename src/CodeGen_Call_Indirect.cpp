@@ -398,9 +398,13 @@
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 									
-									// TODO: Return type should be determined from the function pointer's signature
-									// For now, return void as most callbacks are void-returning
-									return { Type::Void, 0, ret_var, 0ULL };
+									// Use the function pointer's stored return type
+									if (!member.function_signature) {
+										throw InternalError("Function pointer member missing function_signature for indirect call return type");
+									}
+									Type ret_type = member.function_signature->return_type;
+									int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+									return { ret_type, ret_size, ret_var, 0ULL };
 								}
 							}
 							
@@ -538,8 +542,6 @@
 						if (member.getName() == func_name_handle && member.type == Type::FunctionPointer) {
 							// This is a call through a function pointer member!
 							// Generate an indirect call instead of a member function call
-							// TODO: Get actual return type from function signature stored in member's TypeSpecifierNode
-							// For now, we assume int return type which works for most common cases
 							
 							TempVar ret_var = var_counter.next();
 							std::vector<IrOperand> func_ptr_call_operands;
@@ -601,10 +603,13 @@
 							};
 							ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 							
-							// Return with function pointer's return type
-							// TODO: Need to get the actual return type from the function signature stored in the member's TypeSpecifierNode
-							// For now, assume int return type (common case)
-							return { Type::Int, 32, ret_var, 0ULL };
+							// Use the function pointer's stored return type
+							if (!member.function_signature) {
+								throw InternalError("Function pointer member missing function_signature for indirect call return type");
+							}
+							Type ret_type = member.function_signature->return_type;
+							int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+							return { ret_type, ret_size, ret_var, 0ULL };
 						}
 					}
 				}

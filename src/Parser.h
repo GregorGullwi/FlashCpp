@@ -131,7 +131,7 @@ public:
         }
         
         // Format error message with file:line:column information and include stack
-        std::string format_error(const std::vector<std::string>& file_paths, 
+        std::string format_error(const std::deque<std::string>& file_paths, 
                                 const std::vector<SourceLineMapping>& line_map = {},
                                 const Lexer* lexer = nullptr) const {
                 if (!is_error()) return "";
@@ -665,7 +665,7 @@ private:
         ParseResult parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier);  // NEW: Parse structured bindings: auto [a, b] = expr; auto& [x, y] = pair;
         ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);  // NEW: Parse declarators (function pointers, arrays, etc.)
         ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators
-        ParseResult parse_postfix_declarator(TypeSpecifierNode& base_type, const Token& identifier);  // NEW: Helper for postfix declarators
+        ParseResult parse_postfix_declarator(TypeSpecifierNode& base_type, const Token& identifier, Linkage linkage = Linkage::None);  // NEW: Helper for postfix declarators
         ParseResult parse_namespace();
         ParseResult parse_using_directive_or_declaration();  // Parse using directive/declaration/alias
         ParseResult parse_type_specifier();
@@ -681,7 +681,7 @@ private:
         // Pattern: type (*name)(params);
         // Returns std::optional<StructMember> - empty if not a function pointer pattern
         // Advances token position if successful, restores on failure
-        std::optional<StructMember> try_parse_function_pointer_member();
+        std::optional<StructMember> try_parse_function_pointer_member(TypeSpecifierNode return_type_spec);
         
         // Helper function to get Type and size for built-in type keywords
         std::optional<std::pair<Type, unsigned char>> get_builtin_type_info(std::string_view type_name);

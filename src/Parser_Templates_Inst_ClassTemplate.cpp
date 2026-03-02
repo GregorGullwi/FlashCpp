@@ -895,7 +895,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				false,
 				{},
 				static_cast<int>(ptr_depth),
-				resolve_bitfield_width(member_decl, template_params, template_args)
+				resolve_bitfield_width(member_decl, template_params, template_args),
+				type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
 			);
 		}
 		
@@ -3182,7 +3183,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			false,
 			{},
 			static_cast<int>(type_spec.pointer_depth()),
-			resolve_bitfield_width(member_decl, template_params, template_args_to_use)
+			resolve_bitfield_width(member_decl, template_params, template_args_to_use),
+			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
 		);
 	}
 
@@ -3768,7 +3770,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					false,
 					{},
 					static_cast<int>(substituted_type_spec.pointer_depth()),
-					member_decl.bitfield_width
+					member_decl.bitfield_width,
+					substituted_type_spec.has_function_signature() ? std::optional(substituted_type_spec.function_signature()) : std::nullopt
 				);
 			}
 			

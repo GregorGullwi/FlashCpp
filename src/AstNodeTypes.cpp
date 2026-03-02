@@ -103,6 +103,17 @@ TypeInfo& add_enum_type(StringHandle name) {
     return type_info;
 }
 
+TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec) {
+    auto& info = gTypeInfo.emplace_back(name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
+    info.pointer_depth_ = type_spec.pointer_depth();
+    info.reference_qualifier_ = type_spec.reference_qualifier();
+    if (type_spec.has_function_signature()) {
+        info.function_signature_ = type_spec.function_signature();
+    }
+    gTypesByName.emplace(info.name(), &info);
+    return info;
+}
+
 void initialize_native_types() {
     // Initialize native types if not already done
     if (!gNativeTypes.empty()) {
@@ -631,6 +642,12 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     return nullptr;
 }
 
+// Helper to check if a parameter's type_index matches this struct's own type_index.
+// Uses own_type_index_ cached by TypeInfo::setStructInfo() — no map lookup needed.
+bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
+    return own_type_index_.has_value() && param_type_index == *own_type_index_;
+}
+
 const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
     for (const auto& func : member_functions) {
         if (func.is_constructor) {
@@ -643,8 +660,8 @@ const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
                 const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
                 // Check if it's a reference to the same struct type
-                if (param_type.is_reference() && param_type.type() == Type::Struct) {
-                    // TODO: Also check that the type_index matches this struct
+                if (param_type.is_reference() && param_type.type() == Type::Struct
+                    && isOwnTypeIndex(param_type.type_index())) {
                     return &func;
                 }
             }
@@ -665,7 +682,8 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
                 const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
                 // Check if it's an rvalue reference to the same struct type
-                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+                    && isOwnTypeIndex(param_type.type_index())) {
                     return &func;
                 }
             }
@@ -690,7 +708,8 @@ const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
                 const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
                 // Check if it's a reference to the same struct type (not rvalue reference)
-                if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+                if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+                    && isOwnTypeIndex(param_type.type_index())) {
                     return &func;
                 }
             }
@@ -714,7 +733,8 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
                 const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
                 // Check if it's an rvalue reference to the same struct type
-                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+                    && isOwnTypeIndex(param_type.type_index())) {
                     return &func;
                 }
             }

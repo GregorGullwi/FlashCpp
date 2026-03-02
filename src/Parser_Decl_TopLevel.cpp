@@ -982,15 +982,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 					// Register the type alias in gTypesByName
 					// Create a TypeInfo for the alias that points to the underlying type
-					auto& alias_type_info = gTypeInfo.emplace_back(alias_token.handle(), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
-					alias_type_info.pointer_depth_ = type_spec.pointer_depth();
-					alias_type_info.reference_qualifier_ = type_spec.reference_qualifier();
-					// Copy function signature for function pointer/reference type aliases
-					if (type_spec.has_function_signature()) {
-						alias_type_info.function_signature_ = type_spec.function_signature();
-					}
-					
-					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+					auto& alias_type_info = register_type_alias(alias_token.handle(), type_spec);
 					
 					// Also register with namespace-qualified name for type aliases defined in namespaces
 					NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();

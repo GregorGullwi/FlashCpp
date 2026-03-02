@@ -3,6 +3,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <deque>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -486,7 +487,7 @@ public:
 	FileReader(CompileContext& settings, FileTree& tree);
 
 	const std::vector<SourceLineMapping>& get_line_map() const { return line_map_; }
-	const std::vector<std::string>& get_file_paths() const { return file_paths_; }
+	const std::deque<std::string>& get_file_paths() const { return file_paths_; }
 
 	size_t find_first_non_whitespace_after_hash(const std::string& str);
 	bool readFile(std::string_view file, long included_at_line = 0);
@@ -532,7 +533,7 @@ private:
 	std::unordered_set<std::string> processedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
-	std::vector<std::string> file_paths_;  // Unique list of source file paths
+	std::deque<std::string> file_paths_;  // Unique list of source file paths (deque for stable references)
 	std::vector<SourceLineMapping> line_map_;  // Maps preprocessed lines to source locations
 	size_t current_output_line_ = 1;  // Track current line number in preprocessed output
 	size_t current_file_index_ = 0;  // Track current file index (updated when switching files)

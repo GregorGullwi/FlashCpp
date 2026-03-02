@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <variant>
 #include <vector>
+#include <deque>
 #include <string>
 #include <algorithm>
 
@@ -23,7 +24,7 @@ class Lexer {
 public:
 	explicit Lexer(std::string_view source, 
 	               const std::vector<SourceLineMapping>& line_map = {},
-	               const std::vector<std::string>& file_paths = {})
+	               const std::deque<std::string>& file_paths = {})
 		: source_(source), source_size_(source.size()), cursor_(0), line_(1),
 		column_(1), file_paths_(file_paths), line_map_(line_map) {
 		if (file_paths_.empty()) {
@@ -32,7 +33,7 @@ public:
 		update_file_index_from_line();
 	}
 	
-	const std::vector<std::string>& file_paths() const {
+	const std::deque<std::string>& file_paths() const {
 		return file_paths_;
 	}
 	
@@ -171,7 +172,7 @@ private:
 	size_t column_;
 	size_t current_file_index_ = 0;
 	bool msvc_seh_keywords_ = true;
-	mutable std::vector<std::string> file_paths_;  // Mutable to allow adding "<unknown>" in constructor
+	mutable std::deque<std::string> file_paths_;  // Mutable to allow adding "<unknown>" in constructor; deque for stable references
 	std::vector<SourceLineMapping> line_map_;  // Changed from reference to value to avoid dangling reference
 	
 	// Update current_file_index_ based on current line_

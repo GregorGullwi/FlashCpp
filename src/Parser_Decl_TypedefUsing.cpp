@@ -396,10 +396,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			qualified_alias_name = StringTable::getOrInternStringHandle(qualified_builder.commit());
 		}
 		
-		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, final_type_spec.type(), final_type_spec.type_index(), final_type_spec.size_in_bits());
-		alias_type_info.reference_qualifier_ = final_type_spec.reference_qualifier();
-		alias_type_info.pointer_depth_ = final_type_spec.pointer_depth();
-		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+		register_type_alias(qualified_alias_name, final_type_spec);
 		
 		return ParseResult::success();
 	}
@@ -657,9 +654,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the alias globally
-			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size(), type_spec.size_in_bits());
-			alias_type_info.type_index_ = type_spec.type_index();
-			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+			register_type_alias(alias_name, type_spec);
 			
 			return ParseResult::success();
 		}
@@ -843,9 +838,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the alias globally
-			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
-			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
-			
+			register_type_alias(alias_name, type_spec);
 			return ParseResult::success();
 		}
 	}
@@ -924,8 +917,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					}
 
 					// Register the alias globally
-					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
-					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+					register_type_alias(alias_name, type_spec);
 
 					// Consume semicolon
 					if (!consume(";"_tok)) {
@@ -966,9 +958,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	}
 	
 	// Also register it globally
-	auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
-	alias_type_info.reference_qualifier_ = type_spec.reference_qualifier();
-	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+	register_type_alias(alias_name, type_spec);
 	
 	return ParseResult::success();
 }
@@ -2031,10 +2021,7 @@ ParseResult Parser::parse_typedef_declaration()
 	// Register the typedef alias in the type system
 	// The typedef should resolve to the underlying type, not be a new UserDefined type
 	// We create a TypeInfo entry that mirrors the underlying type
-	auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
-	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
-	alias_type_info.reference_qualifier_ = type_spec.reference_qualifier();
-	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+	register_type_alias(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec);
 
 	// Update the type_node with the modified type_spec (with pointers)
 	type_node = emplace_node<TypeSpecifierNode>(type_spec);

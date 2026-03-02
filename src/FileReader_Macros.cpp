@@ -1281,14 +1281,10 @@ void FileReader::processLineDirective(const std::string& line) {
 		if (filename.size() >= 2 && filename.front() == '"' && filename.back() == '"') {
 			filename = filename.substr(1, filename.size() - 2);
 		}
-		// Update the filename
-		if (!filestack_.empty()) {
-			// We need to store the filename somewhere persistent
-			// For now, we'll just update the file_name in the stack
-			// Note: This is a bit tricky because file_name is a string_view
-			// In a real implementation, we'd need to manage the lifetime properly
-			// For now, we'll skip updating the filename to avoid lifetime issues
-			// TODO: Properly handle filename updates in #line directives
+		// Update the filename by interning it into file_paths_ for stable lifetime
+		if (!filestack_.empty() && !filename.empty()) {
+			size_t path_index = get_or_add_file_path(filename);
+			filestack_.top().file_name = file_paths_[path_index];
 		}
 	}
 }

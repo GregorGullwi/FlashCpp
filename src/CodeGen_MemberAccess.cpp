@@ -2328,34 +2328,28 @@
 			case TypeTraitKind::IsTriviallyCopyable:
 				// A trivially copyable type can be copied with memcpy
 				// - Scalar types (arithmetic, pointers, enums)
-				// - Classes with trivial copy/move constructors and destructors, no virtual
-				// TODO: Implement proper checking of copy/move constructors and assignment operators
-				//       for full C++ standard compliance
+				// - Classes with no virtual, no user-defined copy/move ctors,
+				//   no user-defined copy/move assignment ops, no user-defined dtor
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				// Classes: need to check for trivial special members and no virtual
 				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						// Simple heuristic: no virtual functions means likely trivially copyable
-						// TODO: A more complete check would verify copy/move ctors are trivial
-						result = !struct_info->has_vtable;
+						result = !struct_info->has_vtable
+							&& !struct_info->hasCopyConstructor()
+							&& !struct_info->hasMoveConstructor()
+							&& !struct_info->hasCopyAssignmentOperator()
+							&& !struct_info->hasMoveAssignmentOperator()
+							&& !struct_info->hasUserDefinedDestructor();
 					}
 				}
 				break;
 
 			case TypeTraitKind::IsTrivial:
 				// A trivial type is trivially copyable and has a trivial default constructor
-				// TODO: Full compliance requires checking that:
-				//       - Has trivial default constructor
-				//       - Has trivial copy constructor
-				//       - Has trivial move constructor
-				//       - Has trivial copy assignment operator
-				//       - Has trivial move assignment operator
-				//       - Has trivial destructor
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
@@ -2364,8 +2358,14 @@
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						// Simple heuristic: no virtual functions and no user-defined constructors
-						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
+						// Trivial = trivially copyable + trivial default ctor
+						result = !struct_info->has_vtable
+							&& !struct_info->hasUserDefinedConstructor()
+							&& !struct_info->hasCopyConstructor()
+							&& !struct_info->hasMoveConstructor()
+							&& !struct_info->hasCopyAssignmentOperator()
+							&& !struct_info->hasMoveAssignmentOperator()
+							&& !struct_info->hasUserDefinedDestructor();
 					}
 				}
 				break;
@@ -2525,14 +2525,18 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				// Class types: similar to trivially constructible for now
-				// TODO: Check for noexcept constructors
+				// Class types: implicitly-generated default ctors are noexcept;
+				// user-defined ctors may throw unless marked noexcept (not yet tracked)
 				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
-						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
+						// Per C++20 §20.15.4.4 [meta.unary.prop], is_nothrow_constructible
+						// only depends on whether the selected constructor is noexcept.
+						// The destructor is irrelevant to constructibility.
+						result = !struct_info->has_vtable
+							&& !struct_info->hasUserDefinedConstructor();
 					}
 				}
 				break;
@@ -2603,14 +2607,16 @@
 						isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
 							result = true;
 						}
-						// Class types: similar to trivially assignable for now
-						// TODO: Check for noexcept assignment operators
+						// Class types: implicitly-generated assignment ops are noexcept;
+						// user-defined ops may throw unless marked noexcept (not yet tracked)
 						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
 						!is_reference && pointer_depth == 0) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && !struct_info->is_union) {
-								result = !struct_info->has_vtable;
+								result = !struct_info->has_vtable
+									&& !struct_info->hasCopyAssignmentOperator()
+									&& !struct_info->hasMoveAssignmentOperator();
 							}
 						}
 					}
