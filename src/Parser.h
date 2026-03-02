@@ -936,6 +936,8 @@ public:  // Public methods for template instantiation
         ParseResult parse_primary_expression(ExpressionContext context);
         ParseResult parse_postfix_expression(ExpressionContext context);  // Phase 3: New postfix operator layer
         ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
+        std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
+            const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
         ParseResult parse_unary_expression(ExpressionContext context);
         ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
         // Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.

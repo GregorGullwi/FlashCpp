@@ -1,4 +1,29 @@
 
+// Helper: resolve object type from expression and try to instantiate member function template.
+// Uses get_expression_type() to handle any expression (identifiers, function calls, member access, etc.).
+// Returns the instantiated function node if successful, nullopt otherwise.
+std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
+	const std::optional<ASTNode>& object_expr, std::string_view member_name,
+	const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args,
+	const std::vector<TypeSpecifierNode>& arg_types)
+{
+	if (!object_expr.has_value()) return std::nullopt;
+	auto type_opt = get_expression_type(*object_expr);
+	if (!type_opt.has_value()) return std::nullopt;
+	const auto& type_spec = *type_opt;
+	if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return std::nullopt;
+	TypeIndex type_idx = type_spec.type_index();
+	if (type_idx >= gTypeInfo.size()) return std::nullopt;
+	auto struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
+	instantiateLazyClassToPhase(gTypeInfo[type_idx].name(), ClassInstantiationPhase::Full);
+	if (explicit_template_args.has_value()) {
+		return try_instantiate_member_function_template_explicit(struct_name, member_name, *explicit_template_args);
+	} else if (!arg_types.empty()) {
+		return try_instantiate_member_function_template(struct_name, member_name, arg_types);
+	}
+	return std::nullopt;
+}
+
 // Apply postfix operators (., ->, [], (), ++, --) to an existing expression result
 // This allows cast expressions (static_cast, dynamic_cast, etc.) to be followed by member access
 // e.g., static_cast<T&&>(t).operator<=>(u)
@@ -122,12 +147,23 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			// Actually, we consumed the '.', so we need to handle member access here or error
 			
 			// Simple member access without operator
+			// Skip 'template' keyword if present (dependent context disambiguator)
+			// e.g., obj.template emplace<T>(args)
+			if (peek() == "template"_tok) advance();
+
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected member name after '.'", dot_token);
 			}
 			
 			Token member_name_token = peek_info();
 			advance();
+
+			// Parse explicit template arguments: obj.template emplace<T>(args)
+			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
+			if (peek() == "<"_tok) {
+				explicit_template_args = parse_explicit_template_arguments();
+				// nullopt means disambiguation failed - '<' is a comparison operator, not template args
+			}
 			
 			// Check if this is a member function call (followed by '(')
 			if (peek() == "("_tok) {
@@ -142,18 +178,29 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 				
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after member function call arguments", current_token_);
 				}
 				
-				// Create a member function call node
-				auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
-				auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
-				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+				// Try to resolve object type and instantiate member function template
+				auto instantiated_func = tryResolveMemberFunctionTemplate(
+					result, member_name_token.value(), explicit_template_args, arg_types);
+				
+				// Use instantiated function or create placeholder
+				FunctionDeclarationNode* func_ref_ptr = nullptr;
+				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+				} else {
+					auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
+					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
+					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+					func_ref_ptr = &func_decl_node;
+				}
 				
 				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_name_token));
+					MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
 			} else {
 				// Simple member access
 				result = emplace_node<ExpressionNode>(
@@ -175,12 +222,22 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			}
 			
 			// Simple member access via arrow
+			// Skip 'template' keyword if present (dependent context disambiguator)
+			// e.g., ptr->template emplace<T>(args)
+			if (peek() == "template"_tok) advance();
+
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected member name after '->'", arrow_token);
 			}
 			
 			Token member_name_token = peek_info();
 			advance();
+
+			// Parse explicit template arguments: ptr->template emplace<T>(args)
+			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
+			if (peek() == "<"_tok) {
+				explicit_template_args = parse_explicit_template_arguments();
+			}
 			
 			// Check if this is a member function call (followed by '(')
 			if (peek() == "("_tok) {
@@ -195,17 +252,29 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 				
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after arrow member function call arguments", current_token_);
 				}
 				
-				auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
-				auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
-				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+				// Try to resolve object type and instantiate member function template
+				auto instantiated_func = tryResolveMemberFunctionTemplate(
+					result, member_name_token.value(), explicit_template_args, arg_types);
+				
+				// Use instantiated function or create placeholder
+				FunctionDeclarationNode* func_ref_ptr = nullptr;
+				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+				} else {
+					auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, member_name_token);
+					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
+					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+					func_ref_ptr = &func_decl_node;
+				}
 				
 				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_name_token));
+					MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
 			} else {
 				// Create arrow access node
 				result = emplace_node<ExpressionNode>(
@@ -1106,6 +1175,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			continue;  // Continue checking for more postfix operators
 		}
 		
+		// Skip 'template' keyword if present (dependent context disambiguator)
+		if (peek() == "template"_tok) advance();
+
 		if (!peek().is_identifier()) {
 			return ParseResult::error("Expected member name after '.' or '->'", current_token_);
 		}
@@ -1117,9 +1189,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
 		if (peek() == "<"_tok) {
 			explicit_template_args = parse_explicit_template_arguments();
-			if (!explicit_template_args.has_value()) {
-				return ParseResult::error("Failed to parse template arguments for member function", current_token_);
-			}
+			// nullopt means disambiguation failed - '<' is a comparison operator, not template args
 		}
 
 		// Check if this is a member function call (followed by '(')
