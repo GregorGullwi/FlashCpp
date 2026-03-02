@@ -239,9 +239,6 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
 			if (peek() == "<"_tok) {
 				explicit_template_args = parse_explicit_template_arguments();
-				if (!explicit_template_args.has_value()) {
-					return ParseResult::error("Failed to parse template arguments for member function", current_token_);
-				}
 			}
 			
 			// Check if this is a member function call (followed by '(')
