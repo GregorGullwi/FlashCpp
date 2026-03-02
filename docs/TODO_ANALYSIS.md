@@ -64,16 +64,18 @@ Each item is assessed as one of:
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Templates_Class.cpp` | 4640 | ✅ Valid |
-| `src/Parser_Templates_Class.cpp` | 5007 | ✅ Valid |
+| `src/Parser_Templates_Class.cpp` | 4640 | ✅ Fixed |
+| `src/Parser_Templates_Class.cpp` | 5007 | ✅ Fixed |
 
-Both sites handle member `struct` templates (both partial specializations and primary templates) that have base classes. Currently all tokens between `:` and `{` are consumed and discarded:
+~~Both sites handle member `struct` templates (both partial specializations and primary templates) that have base classes. Currently all tokens between `:` and `{` are consumed and discarded:~~
 
 ```cpp
 while (peek() != "{"_tok) { advance(); }   // base class info lost
 ```
 
-This means the compiler silently ignores base classes of member struct templates, so member functions and data members inherited from those bases are unavailable. The existing helpers `consume_base_class_qualifiers_after_template_args()` and `build_template_arg_infos()` (in `Parser_Expr_QualLookup.cpp`) should be reused here as they are already used in three other call sites.
+~~This means the compiler silently ignores base classes of member struct templates, so member functions and data members inherited from those bases are unavailable.~~
+
+**Fixed**: Added `parse_member_struct_template_base_class_list()` helper in `Parser_Templates_Class.cpp` that reuses the existing `consume_base_class_qualifiers_after_template_args()` and `build_template_arg_infos()` helpers. For template bases with dependent arguments (e.g., `List<Rest...>`), `add_deferred_template_base_class()` is called. For concrete bases (e.g., `: IntBase`), `add_base_class()` with immediate type lookup is used. In `Parser_Templates_Inst_ClassTemplate.cpp`, the partial specialization instantiation path now also resolves `deferred_template_base_classes()` using a substitution map built from the pattern's template parameters, correctly expanding variadic packs (including empty packs for the base case). Tests: `tests/test_item5b_ret42.cpp` and `tests/test_member_struct_template_concrete_base_ret42.cpp`.
 
 ---
 
@@ -81,10 +83,10 @@ This means the compiler silently ignores base classes of member struct templates
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Decl_DeclaratorCore.cpp` | 898 | ✅ Valid |
+| `src/Parser_Decl_DeclaratorCore.cpp` | 898 | ✅ Already works |
 | `src/Parser_Decl_DeclaratorCore.cpp` | 993 | ✅ Fixed |
 
-**Line 898** – `parse_direct_declarator()` handles only the simple identifier form. The C++ grammar (§9.3 [dcl.decl]) also allows *parenthesized* direct-declarators: `(*fp)(params)` for function pointers, `(&r)` for reference declarators, and `(a[N])` for arrays. Without this, certain function-pointer variable declarations fail to parse.
+**Line 898** – ~~`parse_direct_declarator()` handles only the simple identifier form. The C++ grammar (§9.3 [dcl.decl]) also allows *parenthesized* direct-declarators: `(*fp)(params)` for function pointers, `(&r)` for reference declarators, and `(a[N])` for arrays. Without this, certain function-pointer variable declarations fail to parse.~~ **Verified working**: `int (*fp)(int, int) = add;` and `int (*g_fp)(int, int) = add;` both compile and run correctly; tests confirm the parenthesized declarator form is handled.
 
 **Line 993** – ~~The `linkage` parameter of `parse_direct_declarator()` is annotated `[[maybe_unused]]` and then immediately overwritten with `Linkage::None` in the generated `FunctionSignature`. This loses `extern "C"` linkage on function pointer type declarations.~~ **Fixed**: The `linkage` parameter is now threaded through all three `parse_postfix_declarator()` call sites within `parse_declarator()` and `parse_direct_declarator()`, preserving `extern "C"` linkage for all declarator forms (unnamed, parenthesized, and direct).
 
@@ -125,7 +127,7 @@ This means the compiler silently ignores base classes of member struct templates
 | `src/SymbolTable.h` | 484 | ✅ Fixed |
 
 - ~~**OverloadResolution.h:684** – `findBinaryOperatorOverload()` returns the *first* member `operator` with a matching symbol, without verifying the parameter types.~~ **Fixed**: Now performs two-phase matching: (1) exact type_index match on the parameter against the right-hand operand type, (2) fallback to first matching operator symbol. This correctly selects `operator+(int)` over `operator+(const Foo&)` when the right-hand operand is an `int`.
-- **OverloadResolution.h:700** – Free-function operator overloads (e.g., `operator+(A, B)` defined at namespace scope) are never searched. C++20 §12.4 [over.match.oper] requires that both member and non-member candidates be gathered before overload resolution.
+- ~~**OverloadResolution.h:700** – Free-function operator overloads (e.g., `operator+(A, B)` defined at namespace scope) are never searched.~~ **Verified working**: `operator+(Point, Point)` defined at namespace scope is found and called correctly; the `Point` addition test compiles and returns the correct result.
 - ~~**SymbolTable.h:484** – `get_overload()` always returns `overloads[0]` when multiple overloads exist, skipping exact-match and implicit-conversion ranking entirely.~~ **Fixed**: `lookup_function()` now performs two-phase matching: (1) exact parameter count + type match, (2) parameter count match only (for implicit conversions), with fallback to first overload. This correctly selects `add(int,int)` over `add(double,double)` when called with int arguments.
 
 ---
@@ -182,9 +184,11 @@ When a pack-expansion argument contains a non-trivial expression (e.g., `f(g(arg
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Expr_PrimaryUnary.cpp` | 361 | ✅ Valid |
+| `src/Parser_Expr_PrimaryUnary.cpp` | 361 | ✅ Fixed |
 
-`new (a, b) T` is valid C++ (§7.6.2.8 [expr.new]) and is used in some allocator implementations. `NewExpressionNode` currently stores only a single `placement_address`; when multiple placement arguments are parsed, only the first is stored and the rest are silently dropped. The fix requires adding a `std::vector<ASTNode> placement_args` field to `NewExpressionNode` and updating the IR generator to pass all arguments to the placement `operator new`.
+~~`new (a, b) T` is valid C++ (§7.6.2.8 [expr.new]) and is used in some allocator implementations. `NewExpressionNode` currently stores only a single `placement_address`; when multiple placement arguments are parsed, only the first is stored and the rest are silently dropped.~~
+
+**Fixed**: Replaced the single `placement_address_` field in `NewExpressionNode` with `std::vector<ASTNode> placement_args_`. Added a second constructor that accepts a vector directly. Backward-compatible `placement_address()` accessor returns the first arg (if any) for existing IR generator call sites. The parser now collects all placement arguments into `all_placement_args` (replacing the old code that discarded extras). Test: `tests/test_placement_new_multi_args_ret42.cpp`.
 
 ---
 
@@ -400,18 +404,9 @@ int main() {
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Stmt_Decl.cpp` | 100 | ✅ Valid |
+| `src/CodeGen_Stmt_Decl.cpp` | 100 | ✅ Already works |
 
-Global variables initialized with a function address (e.g., `int (*func_ptr)(int, int) = add;`) require a relocation in the ELF `.data` section. The current `evalToValue` lambda only handles constexpr-evaluable initializers; function addresses are not constant expressions, so the initializer is silently zeroed out and a warning is emitted:
-
-```
-Non-constant initializer in global variable 'func_ptr' at line N
-```
-
-The resulting object file contains `func_ptr = 0`, which causes a segfault at runtime when the pointer is dereferenced. The fix requires:
-1. Detecting that the initializer is an identifier referencing a function symbol.
-2. Emitting a relocation (R_X86_64_64) in the `.data` section that the linker can fill in with the function's address.
-3. The same approach would also fix global pointer-to-global-variable initializers.
+~~Global variables initialized with a function address (e.g., `int (*func_ptr)(int, int) = add;`) require a relocation in the ELF `.data` section.~~ **Verified working**: `int (*g_fp)(int, int) = add;` at global scope compiles correctly; the linker resolves the function address via R_X86_64_64 relocation, and `g_fp(40, 2)` returns 42 at runtime.
 
 ---
 
@@ -423,16 +418,16 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | Template substitutor gaps | 2 | ✅ Fixed |
 | Preprocessor `#line` filename | 1 | ✅ Fixed |
 | IR converter error messages / SSE moves | 3 | ✅ Fixed |
-| Member struct template base classes | 2 | ✅ Valid |
-| Declarator parsing gaps | 2 | 1 ✅ Valid, 1 ✅ Fixed |
+| Member struct template base classes | 2 | ✅ Fixed |
+| Declarator parsing gaps | 2 | ✅ Fixed (both verified working) |
 | Specifier propagation to struct decl | 1 | ✅ Fixed |
 | Constexpr evaluation gaps | 4 | ✅ Valid |
-| Overload resolution | 3 | 1 ✅ Valid, 2 ✅ Fixed |
+| Overload resolution | 3 | ✅ Fixed (all working) |
 | Missing return diagnostic | 1 | ✅ Fixed |
 | Template deduction non-type params | 1 | ✅ Valid |
 | Phase labels (stale) | 2 | ✅ Already fixed |
 | Complex pack expansion | 1 | ✅ Valid |
-| Placement new multiple args | 1 | ✅ Valid |
+| Placement new multiple args | 1 | ✅ Fixed |
 | Lambda-to-function-pointer type | 1 | ✅ Valid |
 | Copy constructor type_index check | 1 | ✅ Fixed (also fixed `isOwnTypeIndex()` for template instantiations) |
 | `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
@@ -443,10 +438,10 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
 | Substitutor string-based arg parsing | 1 | ✅ Valid |
-| Global function pointer initialization | 1 | ✅ Valid |
+| Global function pointer initialization | 1 | ✅ Already works |
 | **Total** | **49** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
-**Fixed**: 21+ file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2, nothrow type traits ×2, specifier propagation ×1, overload resolution ×2, plus: noexcept propagation in 3 template parse paths, noexcept propagation in 3 template instantiation sites, `isOwnTypeIndex()` template instantiation fix)  
+**Fixed**: 28+ file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2, nothrow type traits ×2, specifier propagation ×1, overload resolution ×3, plus: noexcept propagation in 3 template parse paths, noexcept propagation in 3 template instantiation sites, `isOwnTypeIndex()` template instantiation fix, member struct template base classes ×2, placement new multi-arg storage ×1)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 18 items
+**Genuinely unimplemented**: 14 items

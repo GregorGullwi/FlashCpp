@@ -1054,6 +1054,12 @@ public:  // Public methods for template instantiation
             const std::vector<TemplateTypeArg>& template_args,
             const std::vector<ASTNode>& template_arg_nodes);
 
+        // Helper: Parse base class list for a member struct template (already consumed ':').
+        // All base classes are stored as deferred entries since the struct is inside a template body.
+        ParseResult parse_member_struct_template_base_class_list(
+            StructDeclarationNode& struct_ref,
+            bool is_class);
+
         // Helper: Look up a type alias including inherited ones from base classes
         // Returns the TypeInfo pointer if found, nullptr otherwise
         // Uses depth limit to prevent infinite recursion in malformed input

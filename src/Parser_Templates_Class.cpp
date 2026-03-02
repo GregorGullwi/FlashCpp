@@ -4386,6 +4386,93 @@ if (struct_type_info.getStructInfo()) {
 	}
 }
 
+// Helper: Parse base class list for a member struct template.
+// The ':' has already been consumed by the caller.
+// Since we are inside a template body, all base classes are stored as deferred entries
+// (using add_deferred_template_base_class / add_base_class with is_deferred=true) so they
+// are resolved during later template instantiation.
+ParseResult Parser::parse_member_struct_template_base_class_list(
+	StructDeclarationNode& struct_ref,
+	bool is_class)
+{
+	do {
+		// Optional 'virtual' keyword
+		bool is_virtual_base = false;
+		if (peek() == "virtual"_tok) {
+			is_virtual_base = true;
+			advance();
+		}
+
+		// Optional access specifier
+		AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+		if (peek().is_keyword()) {
+			std::string_view kw = peek_info().value();
+			if (kw == "public") { base_access = AccessSpecifier::Public; advance(); }
+			else if (kw == "protected") { base_access = AccessSpecifier::Protected; advance(); }
+			else if (kw == "private") { base_access = AccessSpecifier::Private; advance(); }
+		}
+		// Allow virtual after access specifier too
+		if (!is_virtual_base && peek() == "virtual"_tok) {
+			is_virtual_base = true;
+			advance();
+		}
+
+		if (!peek().is_identifier()) {
+			return ParseResult::error("Expected base class name", peek_info());
+		}
+
+		Token base_name_token = advance();
+		StringBuilder base_class_name_builder;
+		base_class_name_builder.append(base_name_token.value());
+
+		// Handle qualified names (e.g., ns::Base)
+		while (peek() == "::"_tok) {
+			advance(); // consume '::'
+			if (!peek().is_identifier()) {
+				return ParseResult::error("Expected identifier after '::'", peek_info());
+			}
+			auto next_tok = advance();
+			base_class_name_builder.append("::"sv).append(next_tok.value());
+			base_name_token = next_tok;
+		}
+		std::string_view base_class_name = base_class_name_builder.commit();
+
+		// Check for template arguments
+		if (peek() == "<"_tok) {
+			std::vector<ASTNode> template_arg_nodes;
+			auto template_args_opt = parse_explicit_template_arguments(&template_arg_nodes);
+			if (!template_args_opt.has_value()) {
+				return ParseResult::error("Failed to parse template arguments for base class", peek_info());
+			}
+
+			auto post_info_opt = consume_base_class_qualifiers_after_template_args();
+			if (!post_info_opt.has_value()) {
+				return ParseResult::error("Expected member name after '::'", current_token_);
+			}
+			auto post_info = *post_info_opt;
+
+			// Always defer since we are inside a template body
+			auto arg_infos = build_template_arg_infos(*template_args_opt, template_arg_nodes);
+			StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
+			struct_ref.add_deferred_template_base_class(
+				template_name_handle, std::move(arg_infos),
+				post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
+		} else {
+			// Simple identifier base class – look it up now; defer only if it's a template parameter
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
+			if (type_it != gTypesByName.end()) {
+				// Concrete type found – register immediately (no deferral needed)
+				struct_ref.add_base_class(base_class_name, type_it->second->type_index_, base_access, is_virtual_base, /*is_deferred=*/false);
+			} else {
+				// Not yet known – likely a template parameter or forward-declared type; defer
+				struct_ref.add_base_class(base_class_name, 0, base_access, is_virtual_base, /*is_deferred=*/true);
+			}
+		}
+	} while (consume(","_tok));
+
+	return ParseResult::success();
+}
+
 // Parse a C++20 concept declaration
 // Syntax: concept Name = constraint_expression;
 // Where constraint_expression can be a requires expression, a type trait, or a conjunction/disjunction
@@ -4612,12 +4699,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Parse base class list if present (e.g., : List<Rest...>)
 		if (peek() == ":"_tok) {
 			advance();  // consume ':'
-			
-			// For now, we'll skip base class parsing for member struct templates
-			// to keep the implementation simple. We just consume tokens until '{'
-			// TODO: Implement full base class parsing for member struct template partial specializations
-			while (peek() != "{"_tok) {
-				advance();
+			auto base_result = parse_member_struct_template_base_class_list(member_struct_ref, is_class);
+			if (base_result.is_error()) {
+				return base_result;
 			}
 		}
 		
@@ -4980,11 +5064,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	// Handle base class list if present (e.g., : true_type<T>)
 	if (peek() == ":"_tok) {
 		advance();  // consume ':'
-		
-		// Parse base class(es) - skip tokens until '{' for now
-		// TODO: Implement full base class parsing for member struct templates
-		while (peek() != "{"_tok) {
-			advance();
+		auto base_result = parse_member_struct_template_base_class_list(member_struct_ref, is_class);
+		if (base_result.is_error()) {
+			return base_result;
 		}
 	}
 
