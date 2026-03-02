@@ -1062,18 +1062,18 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 				if (arg.dependent_name.isValid()) {
 					std::string_view dep_name = StringTable::getStringView(arg.dependent_name);
-					auto subst_it = param_map_.find(dep_name);
-					if (subst_it != param_map_.end()) {
-						ta = subst_it->second;
+					auto dep_subst_it = param_map_.find(dep_name);
+					if (dep_subst_it != param_map_.end()) {
+						ta = dep_subst_it->second;
 						needs_substitution = true;
 					}
 				}
 
 				if (!ta.is_value && arg.type_index < gTypeInfo.size()) {
 					std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
-					auto subst_it = param_map_.find(arg_type_name);
-					if (subst_it != param_map_.end()) {
-						ta = subst_it->second;
+					auto type_subst_it = param_map_.find(arg_type_name);
+					if (type_subst_it != param_map_.end()) {
+						ta = type_subst_it->second;
 						needs_substitution = true;
 					}
 				}
