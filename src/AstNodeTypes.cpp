@@ -657,13 +657,10 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
         const auto& dtor = mf.function_decl.as<DestructorDeclarationNode>();
         mf.is_noexcept = dtor.is_noexcept();
     }
-    // is_const / is_volatile are only meaningful for regular member functions.
-    // They cannot be read from a bare FunctionDeclarationNode (no CV-qualifier
-    // field there) — the caller must still set them when known from
-    // MemberQualifiers.  The add*() path via StructDeclarationNode already
-    // handles that; the StructTypeInfo path is for contexts that don't have
-    // MemberQualifiers (e.g. template instantiation copies from the pattern's
-    // StructMemberFunctionDecl, which stores them).
+    // Note: is_const / is_volatile are NOT extracted here.
+    // FunctionDeclarationNode has no CV-qualifier field — those qualifiers
+    // live in MemberQualifiers (parser) or StructMemberFunctionDecl (pattern).
+    // Callers that have that context set them manually after calling add*().
 }
 
 // Helper to check if a parameter's type_index matches this struct's own type_index.
