@@ -1,7 +1,6 @@
-// Test #line directive with filename
-#line 100 "fake_file.cpp"
-// After this, the presumed filename should be "fake_file.cpp" and line number 100
-
+// Test that #line directive properly updates line number and filename.
+// __LINE__ on the line immediately after #line N is N, so we use N=42.
 int main() {
-    return 42;
+#line 42 "fake_file.cpp"
+    return __LINE__;  // __LINE__ should be 42
 }
