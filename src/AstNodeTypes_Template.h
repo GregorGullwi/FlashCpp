@@ -49,6 +49,11 @@ public:
 	std::string_view concept_constraint() const { return concept_constraint_.value(); }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 
+	// For concept template arguments (e.g., Concept<U> T stores {U})
+	const std::vector<ASTNode>& concept_args() const { return concept_args_; }
+	void set_concept_args(std::vector<ASTNode> args) { concept_args_ = std::move(args); }
+	bool has_concept_args() const { return !concept_args_.empty(); }
+
 private:
 	TemplateParameterKind kind_;
 	StringHandle name_;  // Points directly into source text from lexer token
@@ -58,6 +63,7 @@ private:
 	Token token_;  // For error reporting
 	bool is_variadic_ = false;  // True for parameter packs (typename... Args)
 	std::optional<std::string_view> concept_constraint_;  // Concept name for constrained parameters (e.g., Addable T)
+	std::vector<ASTNode> concept_args_;  // Template arguments for parameterized concepts (e.g., Concept<U> stores {U})
 };
 
 // Template function declaration node - represents a function template

@@ -697,7 +697,8 @@ const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
                 const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
                 // Check if it's a reference to the same struct type (not rvalue reference)
-                if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+                if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+                    && isOwnTypeIndex(param_type.type_index())) {
                     return &func;
                 }
             }
@@ -721,7 +722,8 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
                 const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
                 // Check if it's an rvalue reference to the same struct type
-                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+                    && isOwnTypeIndex(param_type.type_index())) {
                     return &func;
                 }
             }

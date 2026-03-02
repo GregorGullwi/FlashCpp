@@ -761,7 +761,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
             // Create a dummy identifier token for the unnamed parameter
             Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
             
-            return parse_postfix_declarator(base_type, dummy_identifier);
+            return parse_postfix_declarator(base_type, dummy_identifier, linkage);
         }
 
         // Parse identifier
@@ -872,7 +872,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
         }
 
         // Now parse the function parameters: '(' params ')'
-        return parse_postfix_declarator(base_type, identifier_token);
+        return parse_postfix_declarator(base_type, identifier_token, linkage);
     }
 
     // Handle pointer prefix: * [const] [volatile] *...

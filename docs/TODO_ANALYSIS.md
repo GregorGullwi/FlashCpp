@@ -86,7 +86,7 @@ This means the compiler silently ignores base classes of member struct templates
 
 **Line 898** – `parse_direct_declarator()` handles only the simple identifier form. The C++ grammar (§9.3 [dcl.decl]) also allows *parenthesized* direct-declarators: `(*fp)(params)` for function pointers, `(&r)` for reference declarators, and `(a[N])` for arrays. Without this, certain function-pointer variable declarations fail to parse.
 
-**Line 993** – ~~The `linkage` parameter of `parse_direct_declarator()` is annotated `[[maybe_unused]]` and then immediately overwritten with `Linkage::None` in the generated `FunctionSignature`. This loses `extern "C"` linkage on function pointer type declarations.~~ **Fixed**: The `linkage` parameter is now threaded through `parse_direct_declarator()` → `parse_postfix_declarator()` → `FunctionSignature.linkage`, preserving `extern "C"` linkage.
+**Line 993** – ~~The `linkage` parameter of `parse_direct_declarator()` is annotated `[[maybe_unused]]` and then immediately overwritten with `Linkage::None` in the generated `FunctionSignature`. This loses `extern "C"` linkage on function pointer type declarations.~~ **Fixed**: The `linkage` parameter is now threaded through all three `parse_postfix_declarator()` call sites within `parse_declarator()` and `parse_direct_declarator()`, preserving `extern "C"` linkage for all declarator forms (unnamed, parenthesized, and direct).
 
 ---
 
@@ -204,7 +204,7 @@ When a captureless lambda is cast with `+lambda` or an explicit `static_cast` to
 |------|------|--------|
 | `src/AstNodeTypes.cpp` | 647 | ✅ Fixed |
 
-~~`StructTypeInfo::findCopyConstructor()` identifies a copy constructor by checking that a single parameter is a `const Struct&`, but does not verify that `param_type.type_index()` equals the enclosing struct's own `type_index_`.~~ **Fixed**: Both `findCopyConstructor()` and `findMoveConstructor()` now look up the struct's own `type_index_` via `gTypesByName` and verify it matches `param_type.type_index()`. A constructor like `Foo(const Bar&)` is no longer misidentified as a copy constructor for `Foo`.
+~~`StructTypeInfo::findCopyConstructor()` identifies a copy constructor by checking that a single parameter is a `const Struct&`, but does not verify that `param_type.type_index()` equals the enclosing struct's own `type_index_`.~~ **Fixed**: All four methods — `findCopyConstructor()`, `findMoveConstructor()`, `findCopyAssignmentOperator()`, and `findMoveAssignmentOperator()` — now use `isOwnTypeIndex()` to verify `param_type.type_index()` matches the struct's own type. A constructor like `Foo(const Bar&)` or `operator=(const Bar&)` is no longer misidentified.
 
 ---
 
@@ -236,9 +236,9 @@ All seven sites set `addr_op.operand.pointer_depth = 0` when generating an `Addr
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Templates_Params.cpp` | 162 | ✅ Valid |
+| `src/Parser_Templates_Params.cpp` | 162 | ✅ Fixed |
 
-When a constrained type parameter has template arguments on the concept — `Concept<U> T` — the `<U>` part is consumed by skipping balanced angle brackets without storing `U`. The stored `TemplateParameterNode` therefore has no knowledge of the concept's argument binding. This affects partial concept specializations and `requires` clauses that use parameterized concepts.
+~~When a constrained type parameter has template arguments on the concept — `Concept<U> T` — the `<U>` part is consumed by skipping balanced angle brackets without storing `U`.~~ **Fixed**: The concept template arguments are now parsed as type specifiers and stored via `set_concept_args()` on the `TemplateParameterNode`. A new `concept_args_` vector field was added to hold the parsed types.
 
 ---
 
@@ -326,7 +326,7 @@ The comment asks whether this special case is still necessary. The original reas
 | Preprocessor `#line` filename | 1 | ✅ Fixed |
 | IR converter error messages / SSE moves | 3 | ✅ Fixed |
 | Member struct template base classes | 2 | ✅ Valid |
-| Declarator parsing gaps | 2 | 1 ✅ Valid, 1 ✅ Fixed |
+| Declarator parsing gaps | 2 | ✅ Fixed |
 | Specifier propagation to struct decl | 1 | ✅ Valid |
 | Constexpr evaluation gaps | 4 | ✅ Valid |
 | Overload resolution | 3 | ✅ Valid |
@@ -339,7 +339,7 @@ The comment asks whether this special case is still necessary. The original reas
 | Copy constructor type_index check | 1 | ✅ Fixed |
 | `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
 | Template template parameter defaults | 1 | ✅ Fixed |
-| Concept template arguments | 1 | ✅ Valid |
+| Concept template arguments | 1 | ✅ Fixed |
 | Array member length | 1 | ✅ Valid |
 | Type traits incomplete checks | 5 | ✅ Valid |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
@@ -347,6 +347,6 @@ The comment asks whether this special case is still necessary. The original reas
 | **Total** | **47** | |
 
 **Stale**: 0 items (Phase-label comments already updated)  
-**Fixed**: 14 items (funcptr return types ×3, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, copy/move ctor type_index ×1, stale comments ×2, missing return diagnostic ×1, template template defaults ×1, funcptr return types ×1)  
+**Fixed**: 16 items (funcptr return types ×3, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, copy/move ctor + assignment type_index ×1, stale comments ×2, missing return diagnostic ×1, template template defaults ×1, concept template arguments ×1, linkage in parenthesized declarators ×2)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 25 items
+**Genuinely unimplemented**: 23 items
