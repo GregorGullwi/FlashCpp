@@ -1388,7 +1388,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		
 		// Check if there's a constructor that matches the argument count and types
 		bool found_matching_ctor = false;
-		auto ctor_candidates = struct_info.getConstructorsByArity(elements.size(), false);
+		auto ctor_candidates = struct_info.getConstructorsByParameterCount(elements.size(), false);
 		for (const auto* member_func : ctor_candidates) {
 			if (!member_func || !member_func->function_decl.has_value()) continue;
 			

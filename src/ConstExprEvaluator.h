@@ -307,10 +307,9 @@ private:
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
-	static std::string_view get_identifier_name(const ASTNode& node);
-	static const ConstructorDeclarationNode* find_matching_constructor_by_arity(
+	static const ConstructorDeclarationNode* find_matching_constructor_by_parameter_count(
 		const StructTypeInfo* struct_info,
-		size_t arg_count);
+		size_t parameter_count);
 
 	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);

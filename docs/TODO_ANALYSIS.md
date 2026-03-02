@@ -452,3 +452,4 @@ int main() {
 
 - `tests/test_type_traits_intrinsics_ret147.cpp` has a stale trailing comment in `main()` (`Expected: 146`) that does not match the filename expectation (`ret147`).
 - Global `constexpr` arrays of struct objects (e.g., `constexpr Item items[2] = {Item(10), Item(42)};`) still trigger the Codegen warning `Non-constant initializer in global variable` from `src/CodeGen_Stmt_Decl.cpp:100`, even though dependent constant expressions like `constexpr int extracted = items[1].value;` now evaluate correctly.
+- With overloaded constructors sharing parameter count (e.g., `constexpr Item(double)`, `constexpr Item(char)`, and non-constexpr `Item(int)`), `constexpr` extraction through `arr[index].member` can still be reported as non-constant for globals in current codegen/evaluator integration (observed in `tests/test_constexpr_array_subscript_member_ret42.cpp` as warning on global `extracted`).
