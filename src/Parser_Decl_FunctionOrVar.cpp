@@ -25,10 +25,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	    (peek() == "struct"_tok || peek() == "class"_tok)) {
 		// Delegate to struct parsing which will handle the full definition
 		// and any trailing variable declarations
-		// TODO: Pass specs (is_constexpr, is_inline, etc.) to parse_struct_declaration()
+		// TODO is now resolved: specs are passed to parse_struct_declaration_with_specs()
 		// so they can be applied to trailing variable declarations after the struct body.
-		// Currently, these specifiers are parsed but not propagated.
-		auto result = parse_struct_declaration();
+		auto result = parse_struct_declaration_with_specs(is_constexpr, is_inline);
 		if (!result.is_error()) {
 			// Successfully parsed struct, propagate the result
 			return saved_position.propagate(std::move(result));

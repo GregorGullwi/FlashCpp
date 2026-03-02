@@ -721,7 +721,8 @@ private:
         ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
         FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
         void compute_and_set_mangled_name(FunctionDeclarationNode& func_node);  // Phase 6 (mangling): Generate and set mangled name
-        ParseResult parse_struct_declaration();  // Add struct declaration parser
+        ParseResult parse_struct_declaration();  // Add struct declaration parser (entry point)
+        ParseResult parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline);  // With pre-parsed specifiers
         ParseResult parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access);  // Helper: Parse typedef/using in struct/template
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser

@@ -1,5 +1,10 @@
 ParseResult Parser::parse_struct_declaration()
 {
+	return parse_struct_declaration_with_specs(false, false);
+}
+
+ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline)
+{
 	ScopedTokenPosition saved_position(*this);
 
 	// Check for alignas specifier before struct/class keyword
@@ -2367,8 +2372,9 @@ ParseResult Parser::parse_struct_declaration()
 	
 	// First, skip any storage class specifiers before the variable name
 	// Valid specifiers: inline, constexpr, static, extern, thread_local
-	bool has_inline = false;
-	bool has_constexpr = false;
+	// Combine with pre-struct specifiers passed from the caller
+	bool has_inline = pre_is_inline;
+	bool has_constexpr = pre_is_constexpr;
 	[[maybe_unused]] bool has_static = false;
 	while (peek().is_keyword()) {
 		std::string_view kw = peek_info().value();
@@ -2389,7 +2395,6 @@ ParseResult Parser::parse_struct_declaration()
 	}
 	
 	(void)has_inline;  // Mark as used
-	(void)has_constexpr;  // Mark as used
 	
 	if (!peek().is_eof() && 
 	    (peek().is_identifier() || 
@@ -2440,6 +2445,11 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Wrap in VariableDeclarationNode so it gets processed properly by code generator
 			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, init_expr);
+
+			// Apply constexpr specifier from pre-struct or post-struct keywords
+			if (has_constexpr) {
+				var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
+			}
 
 			struct_variables.push_back(var_decl_node);
 
