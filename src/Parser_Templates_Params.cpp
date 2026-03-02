@@ -120,7 +120,10 @@ ParseResult Parser::parse_template_parameter() {
 		if (peek() == "="_tok) {
 			advance(); // consume '='
 
-			// Parse the default type
+			// Parse the default type.
+			// parse_type_specifier() handles both simple names (MyContainer) and
+			// namespace-qualified names (my_ns::NsContainer, std::vector) via
+			// its qualified identifier resolution infrastructure.
 			auto default_type_result = parse_type_specifier();
 			if (default_type_result.is_error()) {
 				return ParseResult::error("Expected type after '=' in template template parameter default", current_token_);

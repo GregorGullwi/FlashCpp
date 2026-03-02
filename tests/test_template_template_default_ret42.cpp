@@ -17,8 +17,27 @@ struct Holder {
     T data;
 };
 
+// Namespace-qualified template template default.
+// Verifies parse_type_specifier resolves qualified names (ns::Template) correctly.
+namespace my_ns {
+    template<typename T>
+    struct NsContainer {
+        T val;
+    };
+}
+
+// Parser should handle namespace-qualified default via its qualified name resolution
+template<typename T, template<typename> class C = my_ns::NsContainer>
+struct QualifiedWrapper {
+    T data;
+};
+
 int main() {
     Wrapper<int> w;
     w.data = 42;
+
+    QualifiedWrapper<int> qw;
+    qw.data = 42;
+
     return w.data;
 }
