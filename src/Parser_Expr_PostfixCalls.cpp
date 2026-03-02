@@ -122,6 +122,10 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			// Actually, we consumed the '.', so we need to handle member access here or error
 			
 			// Simple member access without operator
+			// Skip 'template' keyword if present (dependent context disambiguator)
+			// e.g., obj.template emplace<T>(args)
+			if (peek() == "template"_tok) advance();
+
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected member name after '.'", dot_token);
 			}
@@ -175,6 +179,10 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			}
 			
 			// Simple member access via arrow
+			// Skip 'template' keyword if present (dependent context disambiguator)
+			// e.g., ptr->template emplace<T>(args)
+			if (peek() == "template"_tok) advance();
+
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected member name after '->'", arrow_token);
 			}
@@ -1106,6 +1114,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			continue;  // Continue checking for more postfix operators
 		}
 		
+		// Skip 'template' keyword if present (dependent context disambiguator)
+		if (peek() == "template"_tok) advance();
+
 		if (!peek().is_identifier()) {
 			return ParseResult::error("Expected member name after '.' or '->'", current_token_);
 		}
