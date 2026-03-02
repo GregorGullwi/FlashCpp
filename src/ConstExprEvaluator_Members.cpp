@@ -2,6 +2,10 @@
 
 namespace ConstExpr {
 
+static const ConstructorDeclarationNode* find_matching_constructor(
+	const StructTypeInfo* struct_info,
+	size_t arg_count);
+
 EvalResult Evaluator::evaluate_expression_with_bindings(
 	const ASTNode& expr_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -1226,16 +1230,7 @@ std::optional<ASTNode> Evaluator::get_member_initializer(
 	const auto& ctor_args = ctor_call.arguments();
 	
 	// Find the matching constructor
-	const ConstructorDeclarationNode* matching_ctor = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (!member_func.is_constructor) continue;
-		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == ctor_args.size()) {
-			matching_ctor = &ctor;
-			break;
-		}
-	}
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args.size());
 	
 	if (!matching_ctor) {
 		return std::nullopt;
@@ -1272,6 +1267,21 @@ const StructTypeInfo* Evaluator::get_struct_info_from_type(const TypeSpecifierNo
 	
 	const TypeInfo& type_info = gTypeInfo[type_index];
 	return type_info.getStructInfo();
+}
+
+static const ConstructorDeclarationNode* find_matching_constructor(
+	const StructTypeInfo* struct_info,
+	size_t arg_count) {
+	if (!struct_info) return nullptr;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (!member_func.is_constructor) continue;
+		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
+		const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+		if (ctor.parameter_nodes().size() == arg_count) {
+			return &ctor;
+		}
+	}
+	return nullptr;
 }
 
 // Evaluate nested member access (e.g., obj.inner.value)
@@ -1499,16 +1509,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 
 		// Find matching constructor by argument count
 		const auto& ctor_args = ctor_call.arguments();
-		const ConstructorDeclarationNode* matching_ctor = nullptr;
-		for (const auto& member_func : struct_info->member_functions) {
-			if (!member_func.is_constructor) continue;
-			if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-			if (ctor.parameter_nodes().size() == ctor_args.size()) {
-				matching_ctor = &ctor;
-				break;
-			}
-		}
+		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args.size());
 
 		// Build parameter bindings for member initializers
 		std::unordered_map<std::string_view, EvalResult> param_bindings;
@@ -1548,6 +1549,19 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		return nullptr;
 	};
 
+	auto evaluate_element_from_initializer = [&](const ASTNode& element_init) -> EvalResult {
+		const ConstructorCallNode* element_ctor = get_ctor_from_element(element_init);
+		if (!element_ctor) {
+			return EvalResult::error("Array element is not a struct initializer");
+		}
+		if (!element_ctor->type_node().is<TypeSpecifierNode>()) {
+			return EvalResult::error("Invalid element type in array initializer");
+		}
+		const auto& element_type = element_ctor->type_node().as<TypeSpecifierNode>();
+		const StructTypeInfo* element_struct = get_struct_info_from_type(element_type);
+		return evaluate_element_member(*element_ctor, element_struct);
+	};
+
 	// Helper to fetch the array initializer (InitializerListNode) and element for a variable declaration
 	// handle_element callable signature: (const ASTNode& element_init) -> EvalResult
 	auto evaluate_from_array_initializer = [&](const InitializerListNode& init_list, auto&& handle_element) -> EvalResult {
@@ -1585,18 +1599,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			return EvalResult::error("Constexpr array has no initializer");
 		}
 		return evaluate_from_array_initializer(initializer->as<InitializerListNode>(),
-			[&](const ASTNode& element_init) -> EvalResult {
-				const ConstructorCallNode* element_ctor = get_ctor_from_element(element_init);
-				if (!element_ctor) {
-					return EvalResult::error("Array element is not a struct initializer");
-				}
-				if (!element_ctor->type_node().is<TypeSpecifierNode>()) {
-					return EvalResult::error("Invalid element type in array initializer");
-				}
-				const auto& element_type = element_ctor->type_node().as<TypeSpecifierNode>();
-				const StructTypeInfo* element_struct = get_struct_info_from_type(element_type);
-				return evaluate_element_member(*element_ctor, element_struct);
-			});
+			evaluate_element_from_initializer);
 	};
 
 	// Determine the array expression kind
@@ -1650,18 +1653,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			}
 
 			return evaluate_from_array_initializer(member_init_opt->as<InitializerListNode>(),
-				[&](const ASTNode& element_init) -> EvalResult {
-					const ConstructorCallNode* element_ctor = get_ctor_from_element(element_init);
-					if (!element_ctor) {
-						return EvalResult::error("Array element is not a struct initializer");
-					}
-					if (!element_ctor->type_node().is<TypeSpecifierNode>()) {
-						return EvalResult::error("Invalid element type in array initializer");
-					}
-					const auto& element_type = element_ctor->type_node().as<TypeSpecifierNode>();
-					const StructTypeInfo* element_struct = get_struct_info_from_type(element_type);
-					return evaluate_element_member(*element_ctor, element_struct);
-				});
+				evaluate_element_from_initializer);
 		}
 
 		// Case: simple identifier wrapped in ExpressionNode
