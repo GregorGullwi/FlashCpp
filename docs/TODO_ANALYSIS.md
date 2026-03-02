@@ -278,11 +278,11 @@ Five type-trait intrinsics use heuristics instead of the correct C++ standard de
 | Trait | Current heuristic | What's missing |
 |-------|------------------|----------------|
 | `__is_trivially_copyable` | recursive base-class + member check via `isTriviallyCopyableStruct()` | ✅ Fixed — `isTriviallyCopyableStruct()` now recursively checks base classes AND all non-static data members of class type |
-| `__is_trivial` | recursive base-class + member check via `isTrivialStruct()` | ✅ Fixed — same as above; `isTrivialStruct()` also checks `hasUserDefinedConstructor()`. Note: `findCopyConstructor()` currently returns implicit constructors for structs with no user-defined ctors; this pre-existing issue may cause false negatives on simple structs (see TODO below) |
+| `__is_trivial` | recursive base-class + member check via `isTrivialStruct()` | ✅ Fixed — same as above; `isTrivialStruct()` also checks `hasUserDefinedConstructor()`. |
 | `__is_nothrow_constructible` | checks user-defined ctor noexcept status | ✅ Fixed |
 | `__is_nothrow_assignable` | checks user-defined assignment op noexcept status | ✅ Fixed |
 
-**TODO (pre-existing)**: `StructTypeInfo::findCopyConstructor()` / `findMoveConstructor()` do not skip implicitly-generated (compiler-synthesized) constructors. A struct `struct Foo { int x; }` has no user-defined copy constructor, but if the compiler implicitly generates and registers one via `set_is_implicit(true)`, `hasCopyConstructor()` returns `true`, making `isTriviallyCopyableStruct()` incorrectly return `false`. Fix: add a check for `!ctor_node.is_implicit()` in `findCopyConstructor()` and `findMoveConstructor()`.
+✅ **Fixed (2026-03-02)**: `StructTypeInfo::findCopyConstructor()` / `findMoveConstructor()` now skip implicitly-generated constructors (`ctor_node.is_implicit()`). `findCopyAssignmentOperator()` / `findMoveAssignmentOperator()` also now skip implicit operators, and `hasUserDefinedConstructor()` now ignores implicit constructors. This fixes false negatives where a plain struct (e.g., `struct Foo { int x; }`) was incorrectly treated as non-trivially-copyable/non-trivial because implicit special members were counted as user-defined.
 
 ~~**Remaining work**: `StructMemberFunction` does not yet store whether the function is `noexcept`. Adding an `is_noexcept` field and populating it during parsing would allow the nothrow traits to give correct answers for user-defined special members.~~ **Partially addressed**: `is_noexcept` field added and nothrow traits now use it. Remaining: `__is_trivially_copyable` and `__is_trivial` still need per-member triviality checks for base classes.
 
@@ -444,6 +444,10 @@ int main() {
 | **Total** | **49** | |
 
 **Stale**: 0 items  
-**Fixed**: 32+ entries (all previous fixes plus: constexpr this->member assignment, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage)  
+**Fixed**: 33+ entries (all previous fixes plus: constexpr this->member assignment, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
 **Genuinely unimplemented**: 11 items (complex constexpr patterns, pack expansion, lambda-to-funcptr type, array member length, Type::Pointer enum, substitutor string parsing, template deduction non-type params)
+
+## Existing issues encountered while implementing
+
+- `tests/test_type_traits_intrinsics_ret147.cpp` has a stale trailing comment in `main()` (`Expected: 146`) that does not match the filename expectation (`ret147`).

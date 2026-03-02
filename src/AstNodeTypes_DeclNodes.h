@@ -555,14 +555,7 @@ struct StructTypeInfo {
 	}
 
 	// Check if the class has any user-defined constructor
-	bool hasUserDefinedConstructor() const {
-		for (const auto& func : member_functions) {
-			if (func.is_constructor) {
-				return true;
-			}
-		}
-		return false;
-	}
+	bool hasUserDefinedConstructor() const;
 
 	// Check if any member has a default initializer (e.g., "int x = 5;")
 	// This is important because implicit default constructors must be called
@@ -1585,4 +1578,3 @@ private:
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 };
-
