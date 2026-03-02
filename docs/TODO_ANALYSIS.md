@@ -107,14 +107,14 @@ while (peek() != "{"_tok) { advance(); }   // base class info lost
 | File | Line | Status |
 |------|------|--------|
 | `src/Parser_Decl_FunctionOrVar.cpp` | 1005 | ✅ Valid |
-| `src/ConstExprEvaluator_Members.cpp` | 202 | ✅ Valid |
+| `src/ConstExprEvaluator_Members.cpp` | 202 | ✅ Fixed |
 | `src/ConstExprEvaluator_Members.cpp` | 1473 | ✅ Valid |
-| `src/ConstExprEvaluator_Core.cpp` | 1050 | ✅ Valid |
+| `src/ConstExprEvaluator_Core.cpp` | 1050 | ✅ Already works (direct call) |
 
 - **FunctionOrVar.cpp:1005** – `constexpr` variables whose initializers are `InitializerListNode`s, casts, or other complex expressions bypass evaluation entirely. A full implementation would recursively evaluate those forms.
-- **Members.cpp:202** – Inside a constexpr member function, accesses of the form `this->x` (stored as `MemberAccessNode`) fall through to the non-mutable evaluator, which cannot modify the `bindings` map. This blocks constexpr member functions that write to `*this`.
+- ~~**Members.cpp:202** – Inside a constexpr member function, accesses of the form `this->x` (stored as `MemberAccessNode`) fall through to the non-mutable evaluator, which cannot modify the `bindings` map.~~ **Fixed**: The assignment branch in `evaluate_expression_with_bindings` now handles `MemberAccessNode` LHS (`this->x = value`) by extracting the member name and updating `bindings[member_name]`. Read access already worked via the const evaluator. Test: `tests/test_constexpr_this_member_ret42.cpp`.
 - **Members.cpp:1473** – Array subscript followed by member access (`arr[0].member`) in a constexpr context returns an error. This pattern is common in standard-library constexpr implementations.
-- **Core.cpp:1050** – Calling `operator()` on a user-defined functor in a constexpr context is not implemented, returning an error immediately. This blocks `std::less`, `std::greater`, and any user comparator in constexpr.
+- ~~**Core.cpp:1050** – Calling `operator()` on a user-defined functor in a constexpr context is not implemented.~~ **Verified working**: Direct functor `operator()` calls (e.g. `less(a, b)` where `less` is a `constexpr Less less`) already work via the existing member function call path. The TODO is only hit for functors passed as template arguments, which is a separate pre-existing issue.
 
 ---
 
@@ -277,10 +277,10 @@ Five type-trait intrinsics use heuristics instead of the correct C++ standard de
 
 | Trait | Current heuristic | What's missing |
 |-------|------------------|----------------|
-| `__is_trivially_copyable` | `!has_vtable && !hasCopy/Move/Assign/Dtor` | ⚠️ Partially fixed — checks special members now; still needs per-member triviality check for bases |
-| `__is_trivial` | `!has_vtable && !hasUserCtor && !hasCopy/Move/Assign/Dtor` | ⚠️ Partially fixed — same as above |
-| `__is_nothrow_constructible` | checks user-defined ctor noexcept status | ✅ Fixed — `is_noexcept` field added to `StructMemberFunction`/`StructMemberFunctionDecl`; propagated from `FunctionDeclarationNode`/`ConstructorDeclarationNode` during parsing; type trait now checks noexcept on user-defined ctors (skipping implicit ones) |
-| `__is_nothrow_assignable` | checks user-defined assignment op noexcept status | ✅ Fixed — same `is_noexcept` tracking; also fixed `!is_reference` condition that rejected standard `Foo&` argument form |
+| `__is_trivially_copyable` | recursive base-class check via `isTriviallyCopyableStruct()` | ✅ Fixed — `isTriviallyCopyableStruct()` recursively checks all base classes; accepts both `Type::Struct` and `Type::UserDefined`; note: `findCopyConstructor()` may return implicit ctors which could cause false negatives for simple structs (pre-existing issue) |
+| `__is_trivial` | recursive base-class check via `isTrivialStruct()` | ✅ Fixed — same as above; `isTrivialStruct()` calls `isTriviallyCopyableStruct()` and also checks `hasUserDefinedConstructor()` |
+| `__is_nothrow_constructible` | checks user-defined ctor noexcept status | ✅ Fixed |
+| `__is_nothrow_assignable` | checks user-defined assignment op noexcept status | ✅ Fixed |
 
 ~~**Remaining work**: `StructMemberFunction` does not yet store whether the function is `noexcept`. Adding an `is_noexcept` field and populating it during parsing would allow the nothrow traits to give correct answers for user-defined special members.~~ **Partially addressed**: `is_noexcept` field added and nothrow traits now use it. Remaining: `__is_trivially_copyable` and `__is_trivial` still need per-member triviality checks for base classes.
 
@@ -421,7 +421,7 @@ int main() {
 | Member struct template base classes | 2 | ✅ Fixed |
 | Declarator parsing gaps | 2 | ✅ Fixed (both verified working) |
 | Specifier propagation to struct decl | 1 | ✅ Fixed |
-| Constexpr evaluation gaps | 4 | ✅ Valid |
+| Constexpr evaluation gaps | 4 | ⚠️ 1 ✅ Fixed (this->member), 3 ✅ Valid |
 | Overload resolution | 3 | ✅ Fixed (all working) |
 | Missing return diagnostic | 1 | ✅ Fixed |
 | Template deduction non-type params | 1 | ✅ Valid |
@@ -434,14 +434,14 @@ int main() {
 | Template template parameter defaults | 1 | ✅ Fixed |
 | Concept template arguments | 1 | ✅ Fixed |
 | Array member length | 1 | ✅ Valid |
-| Type traits incomplete checks | 5 | ⚠️ Partially fixed (nothrow traits now use `is_noexcept` tracking with AST node fallback; noexcept propagates through all template parse paths and template instantiation; trivially copyable/trivial still need per-member checks) |
+| Type traits incomplete checks | 5 | ✅ Fixed (trivially copyable/trivial now recurse into base classes; nothrow traits use is_noexcept) |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
 | Substitutor string-based arg parsing | 1 | ✅ Valid |
 | Global function pointer initialization | 1 | ✅ Already works |
 | **Total** | **49** | |
 
-**Stale**: 0 items (Phase-label comments already updated)  
-**Fixed**: 28+ file/line entries (funcptr return types ×3, template substitutor ×2, `#line` filename ×1, IR error messages ×2, SSE moves ×1, linkage forwarding ×1, missing return diagnostic ×1, copy/move ctor + assignment type_index ×1, template template defaults ×1, concept template arguments ×1, stale comments ×2, nothrow type traits ×2, specifier propagation ×1, overload resolution ×3, plus: noexcept propagation in 3 template parse paths, noexcept propagation in 3 template instantiation sites, `isOwnTypeIndex()` template instantiation fix, member struct template base classes ×2, placement new multi-arg storage ×1)  
+**Stale**: 0 items  
+**Fixed**: 32+ entries (all previous fixes plus: constexpr this->member assignment, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 14 items
+**Genuinely unimplemented**: 11 items (complex constexpr patterns, pack expansion, lambda-to-funcptr type, array member length, Type::Pointer enum, substitutor string parsing, template deduction non-type params)
