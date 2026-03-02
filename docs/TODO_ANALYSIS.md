@@ -273,11 +273,12 @@ Five type-trait intrinsics use heuristics instead of the correct C++ standard de
 
 | Trait | Current heuristic | What's missing |
 |-------|------------------|----------------|
-| `__is_trivially_copyable` | `!has_vtable` | Check for trivial copy/move ctors and trivial dtor |
-| `__is_trivially_copyable` (struct path) | `!has_vtable` | Same as above |
-| `__is_trivial` | `!has_vtable && !has_user_ctor` | Also need trivial copy/move/dtor |
-| `__is_nothrow_constructible` | `!has_vtable && !has_user_ctor` | Inspect `noexcept` on each ctor |
-| `__is_nothrow_assignable` | `!has_vtable` | Inspect `noexcept` on assignment ops |
+| `__is_trivially_copyable` | `!has_vtable && !hasCopy/Move/Assign/Dtor` | ⚠️ Partially fixed — checks special members now; still needs per-member triviality check for bases |
+| `__is_trivial` | `!has_vtable && !hasUserCtor && !hasCopy/Move/Assign/Dtor` | ⚠️ Partially fixed — same as above |
+| `__is_nothrow_constructible` | `!has_vtable && !hasUserCtor && !hasUserDtor` | Needs `noexcept` tracking on `StructMemberFunction` to check user-defined ctors |
+| `__is_nothrow_assignable` | `!has_vtable && !hasCopy/MoveAssign` | Needs `noexcept` tracking on `StructMemberFunction` to check user-defined assignment ops |
+
+**Remaining work**: `StructMemberFunction` does not yet store whether the function is `noexcept`. Adding an `is_noexcept` field and populating it during parsing would allow the nothrow traits to give correct answers for user-defined special members.
 
 These traits are queried extensively by `<type_traits>` and determine which standard-library optimizations are enabled. Incorrect results can silently produce wrong codegen for containers that rely on these traits to select between memcpy and element-wise copy.
 
@@ -438,7 +439,7 @@ The resulting object file contains `func_ptr = 0`, which causes a segfault at ru
 | Template template parameter defaults | 1 | ✅ Fixed |
 | Concept template arguments | 1 | ✅ Fixed |
 | Array member length | 1 | ✅ Valid |
-| Type traits incomplete checks | 5 | ✅ Valid |
+| Type traits incomplete checks | 5 | ⚠️ Partially fixed (heuristics improved; `noexcept` tracking on user-defined special members still needed) |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
 | Substitutor string-based arg parsing | 1 | ✅ Valid |
