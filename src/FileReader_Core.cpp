@@ -1,5 +1,28 @@
 #include "FileReader.h"
 
+// Strip // single-line comments from a line, respecting string/char literals.
+// (C++ standard §5.2: comments are replaced by a single space in translation
+// phase 3, before macro expansion.)
+static void stripLineComment(std::string& line) {
+	bool in_string = false;
+	bool in_char = false;
+	for (size_t i = 0; i < line.size(); ++i) {
+		char c = line[i];
+		if (c == '\\' && (in_string || in_char)) {
+			++i; // skip escaped character
+			continue;
+		}
+		if (c == '"' && !in_char) {
+			in_string = !in_string;
+		} else if (c == '\'' && !in_string) {
+			in_char = !in_char;
+		} else if (c == '/' && !in_string && !in_char && i + 1 < line.size() && line[i + 1] == '/') {
+			line.erase(i);
+			return;
+		}
+	}
+}
+
 FileReader::FileReader(CompileContext& settings, FileTree& tree) : settings_(settings), tree_(tree) {
 	addBuiltinDefines();
 	result_.reserve(default_result_size);
@@ -152,6 +175,10 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				continue;
 			}
 		}
+
+		// Strip // single-line comments (C++ standard §5.2: comments are replaced
+		// by a single space in translation phase 3, before macro expansion).
+		stripLineComment(line);
 
 		if (skipping_stack.size() == 0) {
 			FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number,
@@ -441,6 +468,11 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 					--line_number;
 					return false;
 				}
+
+				// Strip // comments from merged lines (they were not processed
+				// by the main loop's comment stripping since they come from
+				// raw stream reads during multi-line macro merging).
+				stripLineComment(next_line);
 				
 				line += " " + next_line;
 				return true;
