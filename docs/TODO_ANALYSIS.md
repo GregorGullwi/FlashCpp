@@ -55,13 +55,13 @@ The `TypeSpecifierNode` stored alongside the `FunctionPointer` member contains t
 
 | File | Line | Status |
 |------|------|--------|
-| `src/IRConverter_Conv_CorePrivate.h` | 504 | ✅ Valid (minor) |
-| `src/IRConverter_Conv_CorePrivate.h` | 726 | ✅ Valid (minor) |
-| `src/IRConverter_Conv_CorePrivate.h` | 1067 | ✅ Valid |
+| `src/IRConverter_Conv_CorePrivate.h` | 504 | ✅ Fixed |
+| `src/IRConverter_Conv_CorePrivate.h` | 726 | ✅ Fixed |
+| `src/IRConverter_Conv_CorePrivate.h` | 1067 | ✅ Fixed |
 
-**Lines 504 / 726** – Both `throw InternalError("Missing variable name")` sites carry `// TODO: Error handling`. The real improvement would be to include the variable name (or the surrounding instruction) in the error message to help diagnose which variable is missing.
+**Lines 504 / 726** – ~~Both `throw InternalError("Missing variable name")` sites carry `// TODO: Error handling`. The real improvement would be to include the variable name (or the surrounding instruction) in the error message to help diagnose which variable is missing.~~ **Fixed**: Error messages now include the variable name for easier diagnosis.
 
-**Line 1067** – Float register-to-register moves in the IR converter currently throw `InternalError` rather than emitting an `MOVSS`/`MOVSD`. This path is reached when the result of a float operation is already in an SSE register but must be moved to a different SSE register. Full float/double arithmetic support requires implementing this move.
+**Line 1067** – ~~Float register-to-register moves in the IR converter currently throw `InternalError` rather than emitting an `MOVSS`/`MOVSD`.~~ **Fixed**: Now uses the existing `emitFloatMovRegToReg()` helper to emit proper `MOVSS`/`MOVSD` register-to-register moves based on whether the type is float or double.
 
 ---
 
@@ -87,11 +87,11 @@ This means the compiler silently ignores base classes of member struct templates
 | File | Line | Status |
 |------|------|--------|
 | `src/Parser_Decl_DeclaratorCore.cpp` | 898 | ✅ Valid |
-| `src/Parser_Decl_DeclaratorCore.cpp` | 993 | ✅ Valid |
+| `src/Parser_Decl_DeclaratorCore.cpp` | 993 | ✅ Fixed |
 
 **Line 898** – `parse_direct_declarator()` handles only the simple identifier form. The C++ grammar (§9.3 [dcl.decl]) also allows *parenthesized* direct-declarators: `(*fp)(params)` for function pointers, `(&r)` for reference declarators, and `(a[N])` for arrays. Without this, certain function-pointer variable declarations fail to parse.
 
-**Line 993** – The `linkage` parameter of `parse_direct_declarator()` is annotated `[[maybe_unused]]` and then immediately overwritten with `Linkage::None` in the generated `FunctionSignature`. This loses `extern "C"` linkage on function pointer type declarations. The `linkage` argument should be forwarded to `sig.linkage`.
+**Line 993** – ~~The `linkage` parameter of `parse_direct_declarator()` is annotated `[[maybe_unused]]` and then immediately overwritten with `Linkage::None` in the generated `FunctionSignature`. This loses `extern "C"` linkage on function pointer type declarations.~~ **Fixed**: The `linkage` parameter is now threaded through `parse_direct_declarator()` → `parse_postfix_declarator()` → `FunctionSignature.linkage`, preserving `extern "C"` linkage.
 
 ---
 
@@ -159,17 +159,17 @@ A non-void function whose body has no `return` statement on every code path is s
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Visitors_TypeInit.cpp` | 133 | ⚠️ Stale |
-| `src/CodeGen_Visitors_TypeInit.cpp` | 138 | ⚠️ Stale |
+| `src/CodeGen_Visitors_TypeInit.cpp` | 133 | ✅ Already fixed |
+| `src/CodeGen_Visitors_TypeInit.cpp` | 138 | ✅ Already fixed |
 
-Both comments read:
+Both comments have already been updated to correctly explain *why* the early return is correct:
 
 ```cpp
-// TODO: Implement template instantiation in Phase 2
-// TODO: Implement class template instantiation in Phase 6
+// Template declarations produce no IR of their own; IR is generated when each
+// instantiation is visited (see try_instantiate_class_template / try_instantiate_function_template).
 ```
 
-Template and class-template instantiation *are* implemented — they happen at parse time via `try_instantiate_class_template()` and related entry points in `Parser_Templates_Inst_Substitution.cpp`. The `visitDeclarationNode` visitor returns early here by design: templates produce no IR of their own; IR is generated when each instantiation is visited. The "Phase N" labels refer to an older project phase plan that no longer reflects the current architecture. These comments should be updated to explain *why* the early return is correct rather than suggesting unfinished work.
+No further action needed.
 
 ---
 
@@ -207,13 +207,9 @@ When a captureless lambda is cast with `+lambda` or an explicit `static_cast` to
 
 | File | Line | Status |
 |------|------|--------|
-| `src/AstNodeTypes.cpp` | 647 | ✅ Valid |
+| `src/AstNodeTypes.cpp` | 647 | ✅ Fixed |
 
-`StructTypeInfo::findCopyConstructor()` identifies a copy constructor by checking that a single parameter is a `const Struct&`, but does not verify that `param_type.type_index()` equals the enclosing struct's own `type_index_`. For a struct `Foo` that has a user-defined constructor `Foo(const Bar&)` where `Bar` is also a struct, this constructor would be incorrectly classified as a copy constructor. The fix is a one-line additional check:
-
-```cpp
-&& param_type.type_index() == this->type_index_
-```
+~~`StructTypeInfo::findCopyConstructor()` identifies a copy constructor by checking that a single parameter is a `const Struct&`, but does not verify that `param_type.type_index()` equals the enclosing struct's own `type_index_`.~~ **Fixed**: Both `findCopyConstructor()` and `findMoveConstructor()` now look up the struct's own `type_index_` via `gTypesByName` and verify it matches `param_type.type_index()`. A constructor like `Foo(const Bar&)` is no longer misidentified as a copy constructor for `Foo`.
 
 ---
 
@@ -333,19 +329,19 @@ The comment asks whether this special case is still necessary. The original reas
 | Function pointer return types (indirect call) | 3 | ✅ Valid |
 | Template substitutor gaps | 2 | ✅ Valid |
 | Preprocessor `#line` filename | 1 | ✅ Valid |
-| IR converter error messages / SSE moves | 3 | ✅ Valid |
+| IR converter error messages / SSE moves | 3 | ✅ Fixed |
 | Member struct template base classes | 2 | ✅ Valid |
-| Declarator parsing gaps | 2 | ✅ Valid |
+| Declarator parsing gaps | 2 | 1 ✅ Valid, 1 ✅ Fixed |
 | Specifier propagation to struct decl | 1 | ✅ Valid |
 | Constexpr evaluation gaps | 4 | ✅ Valid |
 | Overload resolution | 3 | ✅ Valid |
 | Missing return diagnostic | 1 | ✅ Valid |
 | Template deduction non-type params | 1 | ✅ Valid |
-| Phase labels (stale) | 2 | ⚠️ Stale |
+| Phase labels (stale) | 2 | ✅ Already fixed |
 | Complex pack expansion | 1 | ✅ Valid |
 | Placement new multiple args | 1 | ✅ Valid |
 | Lambda-to-function-pointer type | 1 | ✅ Valid |
-| Copy constructor type_index check | 1 | ✅ Valid |
+| Copy constructor type_index check | 1 | ✅ Fixed |
 | `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
 | Template template parameter defaults | 1 | ✅ Valid |
 | Concept template arguments | 1 | ✅ Valid |
@@ -355,6 +351,7 @@ The comment asks whether this special case is still necessary. The original reas
 | `main` line-mapping guard | 1 | 🔍 Needs investigation |
 | **Total** | **47** | |
 
-**Stale**: 2 items (Phase-label comments in `CodeGen_Visitors_TypeInit.cpp`)  
+**Stale**: 0 items (Phase-label comments already updated)  
+**Fixed**: 7 items (IR error messages ×2, SSE moves ×1, linkage forwarding ×1, copy/move ctor type_index ×1, stale comments ×2)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 37 items
+**Genuinely unimplemented**: 32 items
