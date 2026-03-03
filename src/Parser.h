@@ -876,6 +876,9 @@ public:  // Public methods for template instantiation
         // Helper functions for auto type deduction
         Type deduce_type_from_expression(const ASTNode& expr);
         void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
+        std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
+        std::optional<TypeSpecifierNode> build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda);
+        std::optional<TypeSpecifierNode> build_function_pointer_type_from_struct(const StructTypeInfo& struct_info, const Token& source_token);
         void process_deferred_lambda_deductions();  // Process deferred lambda return type deductions
         bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;  // Check if two types are compatible
         std::string type_to_string(const TypeSpecifierNode& type) const;  // Convert type to string for error messages

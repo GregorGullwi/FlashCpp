@@ -1094,8 +1094,131 @@ std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle id
         return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
     }
 
-    // Otherwise, do normal symbol lookup
-    return gSymbolTable.lookup(identifier);
+	// Otherwise, do normal symbol lookup
+	return gSymbolTable.lookup(identifier);
+}
+
+std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaExpressionNode& lambda) {
+	if (lambda.return_type().has_value() && lambda.return_type()->is<TypeSpecifierNode>()) {
+		return lambda.return_type()->as<TypeSpecifierNode>();
+	}
+
+	std::optional<TypeSpecifierNode> deduced_type;
+
+	auto consider_expr = [&](const ASTNode& expr) {
+		if (deduced_type.has_value()) {
+			return;
+		}
+		auto type_opt = get_expression_type(expr);
+		if (type_opt.has_value()) {
+			deduced_type = *type_opt;
+		}
+	};
+
+	std::function<void(const ASTNode&)> walk = [&](const ASTNode& node) {
+		if (node.is<ReturnStatementNode>()) {
+			const auto& ret = node.as<ReturnStatementNode>();
+			if (ret.expression().has_value()) {
+				consider_expr(*ret.expression());
+			}
+		} else if (node.is<BlockNode>()) {
+			const auto& block = node.as<BlockNode>();
+			block.get_statements().visit([&](const ASTNode& stmt) {
+				walk(stmt);
+			});
+		} else if (node.is<IfStatementNode>()) {
+			const auto& if_stmt = node.as<IfStatementNode>();
+			if (if_stmt.get_then_statement().has_value()) {
+				walk(if_stmt.get_then_statement());
+			}
+			if (if_stmt.get_else_statement().has_value()) {
+				walk(*if_stmt.get_else_statement());
+			}
+		} else if (node.is<ForStatementNode>()) {
+			const auto& for_stmt = node.as<ForStatementNode>();
+			if (for_stmt.get_body_statement().has_value()) {
+				walk(for_stmt.get_body_statement());
+			}
+		} else if (node.is<WhileStatementNode>()) {
+			const auto& while_stmt = node.as<WhileStatementNode>();
+			if (while_stmt.get_body_statement().has_value()) {
+				walk(while_stmt.get_body_statement());
+			}
+		} else if (node.is<DoWhileStatementNode>()) {
+			const auto& do_while = node.as<DoWhileStatementNode>();
+			if (do_while.get_body_statement().has_value()) {
+				walk(do_while.get_body_statement());
+			}
+		} else if (node.is<SwitchStatementNode>()) {
+			const auto& switch_stmt = node.as<SwitchStatementNode>();
+			if (switch_stmt.get_body().has_value()) {
+				walk(switch_stmt.get_body());
+			}
+		}
+	};
+
+	const ASTNode& body = lambda.body();
+	if (body.is<BlockNode>()) {
+		body.as<BlockNode>().get_statements().visit([&](const ASTNode& stmt) {
+			walk(stmt);
+		});
+	} else {
+		consider_expr(body);
+	}
+
+	return deduced_type;
+}
+
+std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda) {
+	if (!lambda.captures().empty()) {
+		return std::nullopt;
+	}
+
+	FunctionSignature sig;
+	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
+		sig.return_type = deduced_return->type();
+	} else {
+		sig.return_type = Type::Int;
+	}
+
+	for (const auto& param : lambda.parameters()) {
+		if (param.is<DeclarationNode>()) {
+			const auto& param_decl = param.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			sig.parameter_types.push_back(param_type.type());
+		}
+	}
+
+	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token());
+	fp_type.set_function_signature(sig);
+	return fp_type;
+}
+
+std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct(const StructTypeInfo& struct_info, const Token& source_token) {
+	if (!struct_info.members.empty()) {
+		return std::nullopt;
+	}
+
+	for (const auto& member_func : struct_info.member_functions) {
+		if (member_func.getName() == StringTable::getOrInternStringHandle("operator()") &&
+			member_func.function_decl.is<FunctionDeclarationNode>()) {
+			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			FunctionSignature sig;
+			sig.return_type = return_type.type();
+			for (const auto& param_node : func_decl.parameter_nodes()) {
+				if (param_node.is<DeclarationNode>()) {
+					const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					sig.parameter_types.push_back(param_type.type());
+				}
+			}
+			TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, source_token);
+			fp_type.set_function_signature(sig);
+			return fp_type;
+		}
+	}
+
+	return std::nullopt;
 }
 
 // Helper to extract type from an expression for overload resolution
@@ -1249,36 +1372,17 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// Unary plus on a captureless lambda decays to function pointer type
 		if (op == "+") {
 			const ASTNode& operand_node = unary.get_operand();
-			auto build_fp_type = [](const LambdaExpressionNode& lambda) {
-				FunctionSignature sig;
-				TypeSpecifierNode ret_type(Type::Int, TypeQualifier::None, 32, lambda.lambda_token());
-				if (lambda.return_type().has_value() && lambda.return_type()->is<TypeSpecifierNode>()) {
-					ret_type = lambda.return_type()->as<TypeSpecifierNode>();
-				}
-				sig.return_type = ret_type.type();
-				for (const auto& param : lambda.parameters()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& param_decl = param.as<DeclarationNode>();
-						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-						sig.parameter_types.push_back(param_type.type());
-					}
-				}
-				TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token());
-				fp_type.set_function_signature(sig);
-				return fp_type;
-			};
-
 			if (operand_node.is<LambdaExpressionNode>()) {
 				const auto& lambda = operand_node.as<LambdaExpressionNode>();
-				if (lambda.captures().empty()) {
+				if (auto fp_type = build_function_pointer_type_from_lambda(lambda)) {
 					FLASH_LOG(Parser, Debug, "Unary + lambda decay (direct node) to function pointer");
-					return build_fp_type(lambda);
+					return *fp_type;
 				}
 			} else if (operand_node.is<ExpressionNode>() && std::holds_alternative<LambdaExpressionNode>(operand_node.as<ExpressionNode>())) {
 				const auto& lambda = std::get<LambdaExpressionNode>(operand_node.as<ExpressionNode>());
-				if (lambda.captures().empty()) {
+				if (auto fp_type = build_function_pointer_type_from_lambda(lambda)) {
 					FLASH_LOG(Parser, Debug, "Unary + lambda decay (expr variant) to function pointer");
-					return build_fp_type(lambda);
+					return *fp_type;
 				}
 			} else if (operand_node.is<IdentifierNode>() || (operand_node.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(operand_node.as<ExpressionNode>()))) {
 				const IdentifierNode& ident = operand_node.is<IdentifierNode>()
@@ -1302,29 +1406,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && struct_info->members.empty()) {
-								for (const auto& member_func : struct_info->member_functions) {
-									if (member_func.getName() == StringTable::getOrInternStringHandle("operator()") &&
-									    member_func.function_decl.is<FunctionDeclarationNode>()) {
-										const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-										const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-										FunctionSignature sig;
-										sig.return_type = return_type.type();
-										for (const auto& param_node : func_decl.parameter_nodes()) {
-											if (param_node.is<DeclarationNode>()) {
-												const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-												sig.parameter_types.push_back(param_type.type());
-											}
-										}
-										TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, decl.identifier_token());
-										fp_type.set_function_signature(sig);
-										return fp_type;
-									}
+								if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, decl.identifier_token())) {
+									return *fp_type;
 								}
 							}
 						}
 					}
-					if (lambda_ptr && lambda_ptr->captures().empty()) {
-						return build_fp_type(*lambda_ptr);
+					if (lambda_ptr) {
+						if (auto fp_type = build_function_pointer_type_from_lambda(*lambda_ptr)) {
+							return *fp_type;
+						}
 					}
 				}
 			}
@@ -1358,23 +1449,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			const TypeInfo& type_info = gTypeInfo[operand_type.type_index()];
 			const StructTypeInfo* struct_info = type_info.getStructInfo();
 			if (struct_info && struct_info->members.empty()) {
-				for (const auto& member_func : struct_info->member_functions) {
-					if (member_func.getName() == StringTable::getOrInternStringHandle("operator()") &&
-						member_func.function_decl.is<FunctionDeclarationNode>()) {
-						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-						FunctionSignature sig;
-						sig.return_type = return_type.type();
-						for (const auto& param_node : func_decl.parameter_nodes()) {
-							if (param_node.is<DeclarationNode>()) {
-								const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-								sig.parameter_types.push_back(param_type.type());
-							}
-						}
-						TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, operand_type.token());
-						fp_type.set_function_signature(sig);
-						return fp_type;
-					}
+				if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, operand_type.token())) {
+					return *fp_type;
 				}
 			}
 		}

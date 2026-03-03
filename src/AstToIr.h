@@ -130,6 +130,7 @@ private:
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context = ExpressionContext::Load);
+	std::optional<std::vector<IrOperand>> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
 	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
 	std::vector<IrOperand>
 		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);

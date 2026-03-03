@@ -893,7 +893,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 			ReferenceQualifier original_ref_qual = type_specifier.reference_qualifier();
 			CVQualifier original_cv_qual = type_specifier.cv_qualifier();
 			
-			auto try_deduce_lambda_plus_fp = [](const ASTNode& init) -> std::optional<TypeSpecifierNode> {
+			auto try_deduce_lambda_plus_fp = [this](const ASTNode& init) -> std::optional<TypeSpecifierNode> {
 				const UnaryOperatorNode* unop_ptr = nullptr;
 				if (init.is<UnaryOperatorNode>()) {
 					unop_ptr = &init.as<UnaryOperatorNode>();
@@ -920,22 +920,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 					return std::nullopt;
 				}
 
-				FunctionSignature sig;
-				TypeSpecifierNode ret_type(Type::Int, TypeQualifier::None, 32, lambda_ptr->lambda_token());
-				if (lambda_ptr->return_type().has_value() && lambda_ptr->return_type()->is<TypeSpecifierNode>()) {
-					ret_type = lambda_ptr->return_type()->as<TypeSpecifierNode>();
-				}
-				sig.return_type = ret_type.type();
-				for (const auto& param : lambda_ptr->parameters()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& param_decl = param.as<DeclarationNode>();
-						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-						sig.parameter_types.push_back(param_type.type());
-					}
-				}
-				TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, lambda_ptr->lambda_token());
-				fp_type.set_function_signature(sig);
-				return fp_type;
+				return build_function_pointer_type_from_lambda(*lambda_ptr);
 			};
 
 			FLASH_LOG(Parser, Debug, "Auto initializer is_expr=", initializer->is<ExpressionNode>());

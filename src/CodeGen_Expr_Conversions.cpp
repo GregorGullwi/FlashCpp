@@ -359,6 +359,53 @@
 		return std::nullopt;
 	}
 
+	std::optional<std::vector<IrOperand>> AstToIr::decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token) {
+		if (!struct_info.members.empty()) {
+			return std::nullopt;
+		}
+
+		for (const auto& member_func : struct_info.member_functions) {
+			if (member_func.getName() != StringTable::getOrInternStringHandle("operator()") ||
+				!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			std::vector<TypeSpecifierNode> param_types;
+			for (const auto& param_node : func_decl.parameter_nodes()) {
+				if (param_node.is<DeclarationNode>()) {
+					param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+				}
+			}
+
+			std::string_view invoke_name = StringBuilder()
+				.append(StringTable::getStringView(struct_info.getName()))
+				.append("_invoke")
+				.commit();
+
+			std::string_view mangled = generateMangledNameForCall(
+				invoke_name,
+				return_type,
+				param_types,
+				false,
+				""
+			);
+
+			TempVar func_addr_var = var_counter.next();
+			FunctionAddressOp op;
+			op.result.type = Type::FunctionPointer;
+			op.result.size_in_bits = 64;
+			op.result.value = func_addr_var;
+			op.function_name = StringTable::getOrInternStringHandle(invoke_name);
+			op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
+			return std::vector<IrOperand>{ Type::FunctionPointer, 64, func_addr_var, 0ULL };
+		}
+
+		return std::nullopt;
+	}
+
 	std::vector<IrOperand> AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
 	ExpressionContext context) {
 		std::vector<IrOperand> irOperands;
@@ -1038,9 +1085,7 @@
 		if (unaryOperatorNode.op() == "+" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			const LambdaExpressionNode* lambda_ptr = nullptr;
-			std::string_view closure_invoke_name;
-			std::vector<TypeSpecifierNode> invoke_param_types;
-			TypeSpecifierNode invoke_return_type;
+			const StructTypeInfo* closure_struct_info = nullptr;
 
 			if (std::holds_alternative<LambdaExpressionNode>(operandExpr)) {
 				lambda_ptr = &std::get<LambdaExpressionNode>(operandExpr);
@@ -1054,29 +1099,9 @@
 					if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info && struct_info->members.empty()) {  // captureless
-							// Find operator() declaration to recover signature
-							for (const auto& member_func : struct_info->member_functions) {
-								if (member_func.getName() == StringTable::getOrInternStringHandle("operator()")) {
-									if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-										const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-										const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-										invoke_return_type = return_type;
-										for (const auto& param_node : func_decl.parameter_nodes()) {
-											if (param_node.is<DeclarationNode>()) {
-												invoke_param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
-											}
-										}
-										closure_invoke_name = StringBuilder()
-											.append(StringTable::getStringView(struct_info->getName()))
-											.append("_invoke")
-											.commit();
-										FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus on lambda identifier '{}' -> using invoke '{}'",
-											StringTable::getStringView(type_info.name()), closure_invoke_name);
-									}
-									break;
-								}
-							}
+						if (struct_info && struct_info->members.empty()) {
+							closure_struct_info = struct_info;
+							FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus on lambda identifier '{}' -> using struct info", StringTable::getStringView(type_info.name()));
 						}
 					} else if (decl.has_default_value()) {
 						const ASTNode& init = decl.default_value();
@@ -1096,26 +1121,10 @@
 				// Return the address of the __invoke function
 				TempVar func_addr_var = generateLambdaInvokeFunctionAddress(*lambda_ptr);
 				return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
-			} else if (!closure_invoke_name.empty()) {
-				// Use recovered operator() signature to build FunctionAddress for __invoke
-				std::string_view invoke_name = closure_invoke_name;
-				std::string_view mangled = generateMangledNameForCall(
-					invoke_name,
-					invoke_return_type,
-					invoke_param_types,
-					false,
-					""
-				);
-
-				TempVar func_addr_var = var_counter.next();
-				FunctionAddressOp op;
-				op.result.type = Type::FunctionPointer;
-				op.result.size_in_bits = 64;
-				op.result.value = func_addr_var;
-				op.function_name = StringTable::getOrInternStringHandle(invoke_name);
-				op.mangled_name = StringTable::getOrInternStringHandle(mangled);
-				ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), unaryOperatorNode.get_token()));
-				return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
+			} else if (closure_struct_info) {
+				if (auto fp_operands = decayLambdaStructToFunctionPointer(*closure_struct_info, unaryOperatorNode.get_token())) {
+					return *fp_operands;
+				}
 			}
 		}
 
@@ -1187,38 +1196,8 @@
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && struct_info->members.empty()) {
 					FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus decay via struct info: type_index={}, name={}", struct_type_index, StringTable::getStringView(type_info.name()));
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.getName() == StringTable::getOrInternStringHandle("operator()") &&
-							member_func.function_decl.is<FunctionDeclarationNode>()) {
-							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-							const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-							std::vector<TypeSpecifierNode> param_types;
-							for (const auto& param_node : func_decl.parameter_nodes()) {
-								if (param_node.is<DeclarationNode>()) {
-									param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
-								}
-							}
-							std::string_view invoke_name = StringBuilder()
-								.append(StringTable::getStringView(struct_info->getName()))
-								.append("_invoke")
-								.commit();
-							std::string_view mangled = generateMangledNameForCall(
-								invoke_name,
-								return_type,
-								param_types,
-								false,
-								""
-							);
-							TempVar func_addr_var = var_counter.next();
-							FunctionAddressOp op;
-							op.result.type = Type::FunctionPointer;
-							op.result.size_in_bits = 64;
-							op.result.value = func_addr_var;
-							op.function_name = StringTable::getOrInternStringHandle(invoke_name);
-							op.mangled_name = StringTable::getOrInternStringHandle(mangled);
-							ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), unaryOperatorNode.get_token()));
-							return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
-						}
+					if (auto fp_operands = decayLambdaStructToFunctionPointer(*struct_info, unaryOperatorNode.get_token())) {
+						return *fp_operands;
 					}
 				}
 			}
