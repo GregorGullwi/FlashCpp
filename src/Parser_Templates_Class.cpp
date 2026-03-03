@@ -2567,11 +2567,13 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Generate a unique name for the pattern template
 			// We use the template parameter names + modifiers to create unique pattern names
-			// E.g., Container<T*> -> Container_pattern_TP
-			//       Container<T**> -> Container_pattern_TPP
-			//       Container<T&> -> Container_pattern_TR
+			// E.g., Container<T*> -> Container$pattern_TP
+			//       Container<T**> -> Container$pattern_TPP
+			//       Container<T&> -> Container$pattern_TR
+			// The '$' separator cannot appear in standard C++ identifiers, avoiding
+			// collisions with user-defined names that might contain "_pattern".
 			StringBuilder pattern_name_builder;
-			pattern_name_builder.append(template_name).append("_pattern");
+			pattern_name_builder.append(template_name).append("$pattern");
 			for (const auto& arg : pattern_args) {
 				// Add modifiers to make pattern unique
 				pattern_name_builder.append("_");
@@ -2607,8 +2609,8 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			auto instantiated_name = StringTable::getOrInternStringHandle(pattern_name_builder);
 			
-			// Register this as a pattern struct name for O(1) lookup
-			gTemplateRegistry.registerPatternStructName(instantiated_name);
+			// Register this as a pattern struct name with its base template name for non-string-based lookup
+			gTemplateRegistry.registerPatternStructName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
 			
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -2768,7 +2770,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Build pattern key for lookup
 				StringBuilder pattern_key;
-				pattern_key.append(template_name).append("_pattern");
+				pattern_key.append(template_name).append("$pattern");
 				for (const auto& arg : pattern_args) {
 					pattern_key.append("_");
 					for (size_t i = 0; i < arg.pointer_depth; ++i) {
@@ -3003,7 +3005,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Check for constructor (identifier matching template name followed by '('
 				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),
-				// not the instantiated pattern name (e.g., "Calculator_pattern_P")
+				// not the instantiated pattern name (e.g., "Calculator$pattern_P")
 				SaveHandle saved_pos = save_token_position();
 				if (!peek().is_eof() && peek().is_identifier() &&
 				    peek_info().value() == template_name) {
@@ -4629,9 +4631,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		
 		// Generate a unique name for the pattern template
 		// We use the template parameter names + modifiers to create unique pattern names
-		// E.g., List<T*> -> ParentClass::List_pattern_TP
+		// E.g., List<T*> -> ParentClass::List$pattern_TP
+		// The '$' separator cannot appear in standard C++ identifiers, avoiding
+		// collisions with user-defined names that might contain "_pattern".
 		StringBuilder pattern_name;
-		pattern_name.append(struct_name).append("_pattern"sv);
+		pattern_name.append(struct_name).append("$pattern"sv);
 		for (const auto& arg : pattern_args) {
 			// Add modifiers to make pattern unique
 			pattern_name.append("_"sv);
@@ -4677,8 +4681,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// multiple partial specializations with the same pattern but different constraints.
 		// e.g., __cat<_Iter> with requires A<_Iter> vs __cat<_Iter> with requires B<_Iter>
 		if (requires_clause.has_value()) {
-			static std::atomic<size_t> constrained_pattern_counter{0};
-			pattern_name.append("_C"sv).append(static_cast<int64_t>(constrained_pattern_counter.fetch_add(1)));
+			pattern_name.append("_C"sv).append(static_cast<int64_t>(gTemplateRegistry.constrained_pattern_counter.fetch_add(1)));
 		}
 		
 		// Qualify with parent struct name
@@ -4686,8 +4689,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
 			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name_str));
 		
-		// Register this as a pattern struct name for O(1) lookup
-		gTemplateRegistry.registerPatternStructName(qualified_pattern_name);
+		// Register this as a pattern struct name with its base template name for non-string-based lookup
+		auto qualified_base_name = StringTable::getOrInternStringHandle(
+			StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+		gTemplateRegistry.registerPatternStructName(qualified_pattern_name, qualified_base_name);
 		
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -4936,7 +4941,64 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 			
 			// Check if this is a member function (has '(') or data member (has ';', ':', or '=')
-			if (peek() == ":"_tok) {
+			if (peek() == "("_tok) {
+				// Member function
+				DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+				
+				// Parse function declaration with parameters
+				auto func_result = parse_function_declaration(decl_node);
+				if (func_result.is_error()) {
+					return func_result;
+				}
+				
+				if (!func_result.node().has_value()) {
+					return ParseResult::error("Failed to create function declaration node", peek_info());
+				}
+				
+				FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+				
+				// Create member function node
+				auto [member_func_node, member_func_ref] =
+					emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_pattern_name);
+				
+				// Copy parameters
+				for (const auto& param : func_decl.parameter_nodes()) {
+					member_func_ref.add_parameter_node(param);
+				}
+				
+				// Parse trailing specifiers
+				FlashCpp::MemberQualifiers member_quals;
+				FlashCpp::FunctionSpecifiers func_specs;
+				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+				if (specs_result.is_error()) {
+					return specs_result;
+				}
+
+				// Propagate noexcept specifier to the function declaration node
+				if (func_specs.is_noexcept) {
+					member_func_ref.set_noexcept(true);
+					if (func_specs.noexcept_expr)
+						member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
+				}
+				
+				// Handle function body or semicolon
+				if (peek() == "{"_tok) {
+					// Save position for re-parsing during instantiation
+					SaveHandle body_start = save_token_position();
+					member_func_ref.set_template_body_position(body_start);
+					
+					// Skip over the body
+					skip_balanced_braces();
+				} else if (peek() == ";"_tok) {
+					advance(); // consume ';'
+				}
+				
+				// Add member function to struct
+				member_struct_ref.add_member_function(member_func_node, current_access,
+					func_specs.is_virtual, func_specs.is_pure_virtual(),
+					func_specs.is_override, func_specs.is_final,
+					member_quals.cv_qualifier);
+			} else if (peek() == ":"_tok) {
 				// Bitfield data member
 				std::optional<size_t> bitfield_width;
 				std::optional<ASTNode> bitfield_width_expr;
@@ -4975,8 +5037,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
 			} else {
-				// Skip other complex cases for now (member functions, etc.)
-				// Just consume tokens until we hit ';' or '}'
+				// Skip other complex cases (e.g., friend declarations)
 				int brace_depth = 0;
 				while (!peek().is_eof()) {
 					if (peek() == "{"_tok) {
@@ -5309,7 +5370,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 			
 			// Add member function to struct
-			member_struct_ref.add_member_function(member_func_node, current_access);
+			member_struct_ref.add_member_function(member_func_node, current_access,
+				func_specs.is_virtual, func_specs.is_pure_virtual(),
+				func_specs.is_override, func_specs.is_final,
+				member_quals.cv_qualifier);
 		} else if (peek() == ":"_tok) {
 			// Bitfield data member
 			std::optional<size_t> bitfield_width;

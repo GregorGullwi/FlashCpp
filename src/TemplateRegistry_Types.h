@@ -456,6 +456,43 @@ struct TemplateTypeArgHash {
 	}
 };
 
+// Strip pattern modifiers from a concrete argument to recover the deduced type.
+// Per C++ deduction rules: for pattern T*, T is deduced as int (not int*);
+// for pattern T&, T is deduced as int (not int&); etc.
+//
+// @param concrete_arg  The fully instantiated type argument (e.g., int* for Container<int*>).
+// @param pattern_arg   The pattern from the partial specialization (e.g., T* for Container<T*>).
+// @return              The deduced template parameter type with pattern modifiers stripped.
+//                      Example: deduceArgFromPattern(int*, T*) → int;
+//                               deduceArgFromPattern(const int&, const T&) → int.
+//
+// Used by TemplateRegistry pattern matching (TemplateRegistry_Pattern.h) and
+// deferred body re-parsing during pattern-based instantiation
+// (Parser_Templates_Inst_ClassTemplate.cpp).
+inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg, const TemplateTypeArg& pattern_arg) {
+	TemplateTypeArg deduced = concrete_arg;
+	if (pattern_arg.is_reference()) deduced.ref_qualifier = ReferenceQualifier::None;
+	if (pattern_arg.pointer_depth > 0 && deduced.pointer_depth >= pattern_arg.pointer_depth) {
+		deduced.pointer_depth -= pattern_arg.pointer_depth;
+		// Strip the first pattern_arg.pointer_depth CV qualifiers by rebuilding the vector
+		InlineVector<CVQualifier, 4> remaining;
+		for (size_t pd = pattern_arg.pointer_depth; pd < deduced.pointer_cv_qualifiers.size(); ++pd) {
+			remaining.push_back(deduced.pointer_cv_qualifiers[pd]);
+		}
+		deduced.pointer_cv_qualifiers = std::move(remaining);
+	}
+	if (pattern_arg.is_array) {
+		deduced.is_array = false;
+		deduced.array_size = std::nullopt;
+	}
+	// Strip cv_qualifier contributed by the pattern (e.g., const T → T=int, not T=const int)
+	if (pattern_arg.cv_qualifier != CVQualifier::None) {
+		deduced.cv_qualifier = static_cast<CVQualifier>(
+			static_cast<uint8_t>(deduced.cv_qualifier) & ~static_cast<uint8_t>(pattern_arg.cv_qualifier));
+	}
+	return deduced;
+}
+
 // ============================================================================
 // Implementation of TemplateTypes.h helper functions
 // ============================================================================

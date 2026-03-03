@@ -784,27 +784,41 @@ public:
 		instantiation_to_pattern_.clear();
 		class_template_names_.clear();
 		pattern_struct_names_.clear();
+		pattern_to_base_name_.clear();
+		constrained_pattern_counter.store(0, std::memory_order_relaxed);
 		outer_template_bindings_.clear();
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
 	std::unordered_map<StringHandle, std::vector<TemplatePattern>, TransparentStringHash, TransparentStringEqual> specialization_patterns_;
 	
-	// Register a pattern struct name (for partial specializations)
-	void registerPatternStructName(StringHandle pattern_name) {
+	// Register a pattern struct name (for partial specializations) along with its base template name.
+	// The base_template_name is stored for non-string-based reverse lookup (pattern → base template).
+	void registerPatternStructName(StringHandle pattern_name, StringHandle base_template_name) {
 		pattern_struct_names_.insert(pattern_name);
+		pattern_to_base_name_[pattern_name] = base_template_name;
 	}
 
 	// Returns true if 'name' was registered as a pattern struct name
-	// (partial specialization pattern like "Container_pattern_TP")
 	bool isPatternStructName(StringHandle name) const {
 		return pattern_struct_names_.count(name) > 0;
 	}
 
+	// Look up the base template name for a pattern struct (non-string-based).
+	// Returns the base template name (e.g., "Container" for "Container$pattern_TP"),
+	// or std::nullopt if not found.
+	std::optional<StringHandle> getPatternBaseTemplateName(StringHandle pattern_name) const {
+		auto it = pattern_to_base_name_.find(pattern_name);
+		if (it != pattern_to_base_name_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+
 	// Register mapping from instantiated name to pattern name (for partial specializations)
-	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name) {
+	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name, StringHandle base_template_name) {
 		instantiation_to_pattern_[instantiated_name] = pattern_name;
-		pattern_struct_names_.insert(pattern_name);
+		registerPatternStructName(pattern_name, base_template_name);
 	}
 
 	
@@ -874,7 +888,7 @@ private:
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
 	
 	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
-	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
+	// Example: "Wrapper_int_0" -> "Wrapper$pattern__"
 	// This allows looking up member aliases from the correct specialization
 	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> instantiation_to_pattern_;
 
@@ -884,9 +898,19 @@ private:
 	std::unordered_set<StringHandle, StringHandleHash> class_template_names_;
 
 	// Set of StringHandles that are pattern struct names (partial specialization patterns).
-	// Used by isPatternStructName() for O(1) lookup, replacing find("_pattern_") substring searches.
+	// Used by isPatternStructName() for O(1) lookup.
 	std::unordered_set<StringHandle, StringHandleHash> pattern_struct_names_;
 
+	// Map from pattern struct name to its base template name (non-string-based reverse lookup).
+	// E.g., StringHandle("Container$pattern_TP") → StringHandle("Container")
+	// Used by getPatternBaseTemplateName() to recover the base template name without parsing strings.
+	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> pattern_to_base_name_;
+
+public:
+	// Counter for disambiguating constrained partial specialization pattern names.
+	// Lives here (rather than as a static local) so that clear() resets it between
+	// translation units processed in a single compiler invocation.
+	std::atomic<size_t> constrained_pattern_counter{0};
 
 };
 

@@ -1248,14 +1248,14 @@ private:
 	// may be:
 	//   • namespace-qualified  – "std::__use_cache"
 	//   • a $hash instantiation – "std::__use_cache$00a6ac8c5dbe3409"
-	//   • a _pattern_ struct   – "std::__use_cache_pattern_P"
+	//   • a $pattern struct    – "std::__use_cache$pattern_P"
 	//
 	// The helper therefore tries, in order:
 	//   1. Exact match on the full accessing name.
 	//   2. The registered base-template name from TypeInfo (strips $hash).
 	//   3. A manual $-strip (fallback for instantiations not yet in TypeInfo).
 	//   4. For partial-specialisation pattern structs (identified via the registry):
-	//      strip the "_pattern" separator to recover the base template name,
+	//      strip the "$pattern" separator to recover the base template name,
 	//      preserving the namespace prefix for correct matching.
 	bool checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
 	                             const StructTypeInfo* accessing_struct) const {
@@ -1284,17 +1284,28 @@ private:
 		}
 
 		// 4. Partial-specialisation pattern structs.
-		//    Pattern names follow the scheme "BaseName_pattern_<type-encoding>"
-		//    where "_pattern" is the fixed separator (see Parser_Templates_Class.cpp).
-		//    Use the registry for O(1) detection, then locate "_pattern" to recover
-		//    the base template name (handles all encodings: _P, _R, _RR, _C, …).
-		//    We preserve the namespace prefix (if any) so that "std::__use_cache_pattern_P"
-		//    becomes "std::__use_cache", matching the qualified friend entry.
+		//    Use the registry for non-string-based lookup of the base template name.
+		//    The base template name was stored when the pattern was registered,
+		//    so no string parsing of the pattern name is needed.
 		if (gTemplateRegistry.isPatternStructName(accessing_struct->getName())) {
-			auto pat_pos = acc_name.rfind("_pattern");
-			if (pat_pos != std::string_view::npos) {
-				std::string_view base_from_pattern = acc_name.substr(0, pat_pos);
-				if (member_owner_struct->isFriendClass(base_from_pattern)) return true;
+			auto base_opt = gTemplateRegistry.getPatternBaseTemplateName(accessing_struct->getName());
+			if (base_opt.has_value()) {
+				if (member_owner_struct->isFriendClass(*base_opt)) return true;
+				// Also try with namespace prefix from the accessing name
+				// e.g., pattern "std::__use_cache$pattern_P" has base "__use_cache",
+				// but the friend entry might be "std::__use_cache"
+				// Only prepend namespace if the base name is not already qualified
+				// (member struct patterns store fully qualified names like "ParentStruct::List")
+				std::string_view base_sv = StringTable::getStringView(*base_opt);
+				if (base_sv.find("::") == std::string_view::npos) {
+					auto last_scope = acc_name.rfind("::");
+					if (last_scope != std::string_view::npos) {
+						std::string_view ns_prefix = acc_name.substr(0, last_scope + 2);
+						StringBuilder qualified_base;
+						std::string_view qualified = qualified_base.append(ns_prefix).append(base_sv).commit();
+						if (member_owner_struct->isFriendClass(qualified)) return true;
+					}
+				}
 			}
 		}
 
