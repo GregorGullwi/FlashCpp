@@ -28,6 +28,7 @@ int main() {
 	AggregateWithTail v = {{{10}, 20}, {{30}, 40}, 42};
 	ArrayWithTail a = {1, 2, 3, 7};
 	MultiDimArrayWithTail m = {1, 2, 3, 4, 5, 6, 9};
+	ArrayWithTail tooFew = {0, 8};
 
 	return (v.nested.leaf.value == 10 &&
 		v.nested.extra == 20 &&

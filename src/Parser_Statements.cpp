@@ -1155,6 +1155,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	TypeIndex type_index = type_specifier.type_index();
 	if (type_index >= gTypeInfo.size() ||
 		(type_index < gTypeInfo.size() && !gTypeInfo[type_index].struct_info_)) {
+		if (!(parsing_template_body_ || !struct_parsing_context_stack_.empty())) {
+			if (type_index >= gTypeInfo.size()) {
+				return ParseResult::error("Invalid struct type index", current_token_);
+			}
+			return ParseResult::error("Type is not a struct", current_token_);
+		}
+
 		// Dependent/unresolved types may not have struct_info_ yet.
 		// Parse as a generic initializer list (comma-separated expressions).
 		while (true) {
