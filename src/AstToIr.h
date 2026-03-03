@@ -940,18 +940,48 @@ private:
 			);
 		}
 
-		TypedValue zero_value{member.type, element_size_bits, 0ULL};
+		// Zero-fill trailing uninitialized elements.
+		// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
+		// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
+		const bool is_struct_element = (member.type == Type::Struct || member.type == Type::UserDefined)
+			&& member.type_index < gTypeInfo.size()
+			&& gTypeInfo[member.type_index].struct_info_
+			&& element_size_bits > 64;
+
 		for (size_t i = emit_count; i < element_count; ++i) {
-			emitArrayStore(
-				member.type,
-				element_size_bits,
-				base_object,
-				TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
-				zero_value,
-				base_offset + static_cast<int>(member.offset),
-				false,
-				token
-			);
+			if (is_struct_element) {
+				// Zero each sub-member of the struct element individually.
+				const StructTypeInfo& elem_struct = *gTypeInfo[member.type_index].struct_info_;
+				int element_byte_offset = base_offset
+					+ static_cast<int>(member.offset)
+					+ static_cast<int>(i) * (element_size_bits / 8);
+
+				for (const StructMember& sub_member : elem_struct.members) {
+					MemberStoreOp member_store;
+					member_store.value.type = sub_member.type;
+					member_store.value.size_in_bits = static_cast<int>(sub_member.size * 8);
+					member_store.value.value = 0ULL;
+					member_store.object = base_object;
+					member_store.member_name = sub_member.getName();
+					member_store.offset = element_byte_offset + static_cast<int>(sub_member.offset);
+					member_store.is_reference = sub_member.is_reference();
+					member_store.is_rvalue_reference = sub_member.is_rvalue_reference();
+					member_store.struct_type_info = nullptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+				}
+			} else {
+				TypedValue zero_value{member.type, element_size_bits, 0ULL};
+				emitArrayStore(
+					member.type,
+					element_size_bits,
+					base_object,
+					TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+					zero_value,
+					base_offset + static_cast<int>(member.offset),
+					false,
+					token
+				);
+			}
 		}
 
 		return true;
