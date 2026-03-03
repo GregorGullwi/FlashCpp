@@ -1873,7 +1873,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											dep_count++;
 									}
 									if (dep_count == param_idx) {
-										deduced_args[pname] = template_args[pi];
+										deduced_args[pname] = deduceArgFromPattern(template_args[pi], pattern_args[pi]);
 										break;
 									}
 								}

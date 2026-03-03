@@ -688,27 +688,7 @@ struct TemplatePattern {
 				// Don't increment param_index - we reused an existing parameter binding
 			} else {
 				// Bind this parameter to the concrete type, stripping pattern qualifiers.
-				// Per C++ deduction rules: for pattern T&, T is deduced as int (not int&).
-				TemplateTypeArg deduced_arg = concrete_arg;
-				if (pattern_arg.is_reference()) deduced_arg.ref_qualifier = ReferenceQualifier::None;
-				if (pattern_arg.pointer_depth > 0 && deduced_arg.pointer_depth >= pattern_arg.pointer_depth) {
-					deduced_arg.pointer_depth -= pattern_arg.pointer_depth;
-					// Strip the first pattern_arg.pointer_depth CV qualifiers by rebuilding the vector
-					InlineVector<CVQualifier, 4> remaining;
-					for (size_t pd = pattern_arg.pointer_depth; pd < deduced_arg.pointer_cv_qualifiers.size(); ++pd) {
-						remaining.push_back(deduced_arg.pointer_cv_qualifiers[pd]);
-					}
-					deduced_arg.pointer_cv_qualifiers = std::move(remaining);
-				}
-				if (pattern_arg.is_array) {
-					deduced_arg.is_array = false;
-					deduced_arg.array_size = std::nullopt;
-				}
-				// Strip cv_qualifier contributed by the pattern (e.g., const T → T=int, not T=const int)
-				if (pattern_arg.cv_qualifier != CVQualifier::None) {
-					deduced_arg.cv_qualifier = static_cast<CVQualifier>(
-						static_cast<uint8_t>(deduced_arg.cv_qualifier) & ~static_cast<uint8_t>(pattern_arg.cv_qualifier));
-				}
+				TemplateTypeArg deduced_arg = deduceArgFromPattern(concrete_arg, pattern_arg);
 				param_substitutions[param_name] = deduced_arg;
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", StringTable::getStringView(param_name), " to concrete type (qualifiers stripped)");
 				// Increment param_index since we bound a new template parameter
