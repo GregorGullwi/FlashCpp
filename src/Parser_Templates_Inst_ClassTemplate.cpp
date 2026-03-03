@@ -1852,14 +1852,44 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// concrete template arguments so the definition is available at codegen.
 					FLASH_LOG(Templates, Debug, "Re-parsing deferred function body from template body position");
 					
+					// Build deduced param → arg mapping using pattern_args-based deduction.
+					// For partial specializations, template_args are the raw concrete arguments
+					// (e.g., [int*] for Container<int*>), not the deduced parameter values.
+					// pattern_args describe the pattern (e.g., [T*]) and we match dependent
+					// entries to find the correct template_args position for each param.
+					std::unordered_map<std::string_view, TemplateTypeArg> deduced_args;
+					if (!pattern_args.empty()) {
+						for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
+							if (!template_params[param_idx].is<TemplateParameterNode>()) continue;
+							std::string_view pname = template_params[param_idx].as<TemplateParameterNode>().name();
+							for (size_t pi = 0; pi < pattern_args.size() && pi < template_args.size(); ++pi) {
+								if (!pattern_args[pi].is_value && pattern_args[pi].is_dependent) {
+									size_t dep_count = 0;
+									for (size_t j = 0; j < pi; ++j) {
+										if (!pattern_args[j].is_value && pattern_args[j].is_dependent)
+											dep_count++;
+									}
+									if (dep_count == param_idx) {
+										deduced_args[pname] = template_args[pi];
+										break;
+									}
+								}
+							}
+						}
+					} else {
+						// Fallback: direct 1:1 mapping (primary template path)
+						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+							if (!template_params[i].is<TemplateParameterNode>()) continue;
+							deduced_args[template_params[i].as<TemplateParameterNode>().name()] = template_args[i];
+						}
+					}
+					
 					FlashCpp::TemplateParameterScope template_scope;
-					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-						if (!template_params[i].is<TemplateParameterNode>()) continue;
-						std::string_view param_name = template_params[i].as<TemplateParameterNode>().name();
-						Type concrete_type = template_args[i].base_type;
+					for (const auto& [param_name, deduced_arg] : deduced_args) {
+						Type concrete_type = deduced_arg.base_type;
 						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
-						type_info.reference_qualifier_ = template_args[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
-							: (template_args[i].is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+						type_info.reference_qualifier_ = deduced_arg.is_rvalue_reference() ? ReferenceQualifier::RValueReference
+							: (deduced_arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
 						gTypesByName.emplace(type_info.name(), &type_info);
 						template_scope.addParameter(&type_info);
 					}
@@ -1883,15 +1913,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					if (!block_result.is_error() && block_result.node().has_value()) {
 						// Substitute template parameters in the parsed body
-						std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 						std::vector<std::string_view> template_param_order;
-						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-							if (!template_params[i].is<TemplateParameterNode>()) continue;
-							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-							param_map[tparam.name()] = template_args[i];
-							template_param_order.push_back(tparam.name());
+						for (const auto& [pname, _] : deduced_args) {
+							template_param_order.push_back(pname);
 						}
-						ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+						ExpressionSubstitutor substitutor(deduced_args, *this, template_param_order);
 						ASTNode substituted_body = substitutor.substitute(*block_result.node());
 						new_func.set_definition(substituted_body);
 					}
