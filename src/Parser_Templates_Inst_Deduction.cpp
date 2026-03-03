@@ -1018,9 +1018,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				type_arg.pointer_depth = type_spec.pointer_depth();
 				type_arg.cv_qualifier = type_spec.cv_qualifier();
 			} else {
-				// Fallback to legacy behavior for backward compatibility
+				// Fallback: use stored type_value and type_index.
+				// type_index may be non-zero for struct types pre-deduced via makeType(base, idx).
 				type_arg.base_type = arg.type_value;
-				type_arg.type_index = 0;  // Simple types don't have an index
+				type_arg.type_index = arg.type_index;
 			}
 			
 			template_args_as_type_args.push_back(type_arg);
@@ -1659,6 +1660,30 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					auto [subst_type, subst_type_index] = substitute_template_parameter(
 						orig_param_type, template_params, template_args_as_type_args
 					);
+					// substitute_template_parameter only resolves UserDefined types by name
+					// matching against template parameter names. When the original parameter
+					// type is a UserDefined dependent-placeholder (e.g., the TypeInfo entry
+					// for Array$xxxx created when parsing `Array<T,N>& arr` inside the
+					// template with T and N still dependent), the full mangled name doesn't
+					// match any template param name, so the substitution returns unchanged.
+					// The call-site argument already holds the fully-resolved concrete type
+					// (e.g., Array<Point,3>). Use it when:
+					//   - substitution left a UserDefined type (dependent placeholder)
+					//   - the type_index was unchanged (no substitution happened)
+					//   - the TypeInfo at that index is a template instantiation (placeholder)
+					//   - we have a concrete call-site argument of type Struct
+					if (subst_type == Type::UserDefined &&
+					    subst_type_index == orig_param_type.type_index() &&
+					    subst_type_index > 0 && subst_type_index < gTypeInfo.size() &&
+					    gTypeInfo[subst_type_index].isTemplateInstantiation() &&
+					    arg_type_index < arg_types.size() &&
+					    arg_types[arg_type_index].type() == Type::Struct) {
+						subst_type = Type::Struct;
+						subst_type_index = arg_types[arg_type_index].type_index();
+						FLASH_LOG_FORMAT(Templates, Debug,
+							"[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
+							recursion_depth, subst_type_index);
+					}
 					param_type = emplace_node<TypeSpecifierNode>(
 						subst_type,
 						TypeQualifier::None,
