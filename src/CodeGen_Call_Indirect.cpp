@@ -557,9 +557,11 @@
 				struct_info = declaring_struct;
 				
 				// If not found as member function, check if it's a function pointer data member
+				// Use findMemberRecursive to also search base classes for inherited function pointer members
 				if (!called_member_func) {
-					for (const auto& member : struct_info->members) {
-						if (member.getName() == func_name_handle && member.type == Type::FunctionPointer) {
+					const StructMember* fp_member = struct_info->findMemberRecursive(func_name_handle);
+					if (fp_member && fp_member->type == Type::FunctionPointer) {
+						const auto& member = *fp_member;
 							// This is a call through a function pointer member!
 							// Generate an indirect call instead of a member function call
 							
