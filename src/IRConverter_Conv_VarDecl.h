@@ -1728,9 +1728,8 @@
 			}
 		}
 
-		// Add line mapping for the return statement itself (only for functions without function calls)
-		// For functions with function calls (like main), the closing brace is already mapped in handleFunctionCall
-		if (instruction.getLineNumber() > 0 && current_function_name_ != StringTable::getOrInternStringHandle("main")) {	// TODO: Is main special case still needed here?
+		// Add line mapping for the return statement itself
+		if (instruction.getLineNumber() > 0) {
 			addLineMapping(instruction.getLineNumber());
 		}
 

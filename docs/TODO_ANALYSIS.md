@@ -219,13 +219,14 @@ When a pack-expansion argument contains a non-trivial expression (e.g., `f(g(arg
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Expr_Operators.cpp` | 585, 662 | 🔍 Needs investigation |
-| `src/CodeGen_Visitors_Namespace.cpp` | 334 | 🔍 Needs investigation |
-| `src/CodeGen_Stmt_Decl.cpp` | 808, 1154, 1564 | 🔍 Needs investigation |
-| `src/CodeGen_NewDeleteCast.cpp` | 673 | 🔍 Needs investigation |
-| `src/CodeGen_Lambdas.cpp` | 1841 | 🔍 Needs investigation |
+| `src/CodeGen_Expr_Operators.cpp` | 585, 662 | ✅ Verified |
+| `src/CodeGen_Visitors_Namespace.cpp` | 334 | ✅ Verified |
+| `src/CodeGen_Stmt_Decl.cpp` | 808, 1154, 1564 | ✅ Verified |
+| `src/CodeGen_NewDeleteCast.cpp` | 673 | ✅ Verified |
+| `src/CodeGen_Lambdas.cpp` | 1841 | ✅ Verified |
+| `src/AstToIr.h` | 3274 | ✅ Verified |
 
-All seven sites set `addr_op.operand.pointer_depth = 0` when generating an `AddressOf` IR operand. For simple variables this is correct, but for expressions that are already pointers (e.g., `&(*ptr)` or `&ptr->member`) the depth should be incremented from the operand's depth. The current code may produce incorrect pointer arithmetic for multi-level indirection. These sites need a dedicated test with pointer-to-pointer variables before fixing.
+**Verified**: `handleAddressOf()` in `IRConverter_Conv_Memory.h` does not read `op.operand.pointer_depth` at all. The field is set but never consumed during IR-to-machine-code lowering. The value `0` is therefore a safe no-op at all eight sites. The TODO comments can remain as documentation but no code change is required.
 
 ---
 
@@ -253,16 +254,9 @@ All seven sites set `addr_op.operand.pointer_depth = 0` when generating an `Addr
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_MemberAccess.cpp` | 447 | ✅ Valid |
+| `src/CodeGen_MemberAccess.cpp` | 447 | ✅ Fixed |
 
-When generating a subscript into an array data member, the total size of the member is known but the element count is reconstructed heuristically:
-
-```cpp
-if (base_element_size > 0 && element_size_bits > base_element_size)
-    element_size_bits = base_element_size;
-```
-
-The actual array length is not stored in `StructMemberInfo`. Without it the bounds of the member-array are unknown, preventing proper bounds-check generation and correct multi-dimensional array layout.
+~~When generating a subscript into an array data member, the total size of the member is known but the element count is reconstructed heuristically~~ **Fixed**: `StructMember` already stores `array_dimensions` (populated during struct layout in `Parser_Decl_StructEnum.cpp`). The element-size heuristic at `CodeGen_MemberAccess.cpp:424` now divides the total size by the product of all `array_dimensions` instead of using `get_type_size_bits()`. This correctly handles struct-typed array members (e.g., `Item items[3]`) where `get_type_size_bits(Type::Struct)` returns 0. The symbol lookup also now uses `get_decl_from_symbol()` to handle both `DeclarationNode` and `VariableDeclarationNode` symbols. The return value propagates `member->type_index` so that downstream member-access expressions (e.g., `c.items[0].value`) can look up the struct layout. Test: `tests/test_struct_member_array_elem_ret42.cpp`.
 
 ---
 
@@ -314,16 +308,9 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 | File | Line | Status |
 |------|------|--------|
-| `src/IRConverter_Conv_VarDecl.h` | 1733 | 🔍 Needs investigation |
+| `src/IRConverter_Conv_VarDecl.h` | 1733 | ✅ Fixed |
 
-The `Return` handler skips `addLineMapping()` for `main`:
-
-```cpp
-if (instruction.getLineNumber() > 0 &&
-    current_function_name_ != StringTable::getOrInternStringHandle("main"))
-```
-
-The comment asks whether this special case is still necessary. The original reason was that `main`'s implicit return-0 was being double-mapped. Since line-mapping logic was refactored, it should be verified whether removing this guard regresses any debugger-step behaviour. Until verified, the guard should stay.
+~~The `Return` handler skips `addLineMapping()` for `main`~~ **Fixed**: The `main` exclusion guard has been removed. All 1244 tests pass with the guard removed, confirming it was no longer necessary. The `addLineMapping()` call now fires for every function (including `main`) when the instruction has a valid line number.
 
 ---
 
@@ -371,21 +358,21 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 | Placement new multiple args | 1 | ✅ Fixed |
 | Lambda-to-function-pointer type | 1 | ✅ Fixed |
 | Copy constructor type_index check | 1 | ✅ Fixed (also fixed `isOwnTypeIndex()` for template instantiations) |
-| `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
+| `pointer_depth` in address-of | 8 | ✅ Verified (field not read by handler; 0 is safe) |
 | Template template parameter defaults | 1 | ✅ Fixed |
 | Concept template arguments | 1 | ✅ Fixed |
-| Array member length | 1 | ✅ Valid |
+| Array member length | 1 | ✅ Fixed (uses array_dimensions; propagates type_index) |
 | Type traits incomplete checks | 5 | ✅ Fixed (trivially copyable/trivial now recurse into base classes; nothrow traits use is_noexcept) |
 | `Type::Pointer` enum gap | 1 | ✅ Valid |
-| `main` line-mapping guard | 1 | 🔍 Needs investigation |
+| `main` line-mapping guard | 1 | ✅ Fixed (guard removed; all tests pass) |
 | Substitutor string-based arg parsing | 1 | ✅ Fixed |
 | Global function pointer initialization | 1 | ✅ Already works |
 | **Total** | **49** | |
 
 **Stale**: 0 items  
-**Fixed**: 35+ entries (all previous fixes plus: constexpr this->member assignment, constexpr `arr[0].member` evaluation, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits, lambda-to-function-pointer decay typing and structured substitutor template-arg handling)  
-**Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 7 items (complex constexpr patterns, pack expansion, array member length, Type::Pointer enum, template deduction non-type params)
+**Fixed**: 39+ entries (all previous fixes plus: array member element-size using `array_dimensions`, `VariableDeclarationNode` lookup for member array subscript, type_index propagation from struct member arrays, `main` line-mapping guard removed)  
+**Verified (no change needed)**: 8 items (pointer_depth sites — `handleAddressOf()` does not read the field)  
+**Genuinely unimplemented**: 4 items (complex constexpr patterns, complex pack expansion, Type::Pointer enum, template deduction non-type params)
 
 ## Existing issues encountered while implementing
 
@@ -405,3 +392,5 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
   constexpr Dispatch d;
   constinit int x = d(40, 2); // Error: ambiguous operator() overload
   ```
+
+- **New (2026-03-03)** `src/CodeGen_Call_Indirect.cpp:561`: Function-pointer member call on a temporary expression result is not yet supported. Code like `getContainer().fp_member(args)` where `getContainer()` returns a struct by value and `fp_member` is a function-pointer member reaches a `throw InternalError("Function pointer member call on expression not yet supported")`. The fix would generate a MemberLoadOp from the TempVar holding the expression result instead of requiring a named variable.
