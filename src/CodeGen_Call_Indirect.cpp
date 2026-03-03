@@ -600,7 +600,7 @@
 						member_load.offset = static_cast<int>(member.offset);  // Member offset
 						member_load.is_reference = member.is_reference();
 						member_load.is_rvalue_reference = member.is_rvalue_reference();
-						member_load.struct_type_info = (struct_type_index < gTypeInfo.size()) ? &gTypeInfo[struct_type_index] : nullptr;
+						member_load.struct_type_info = nullptr;  // Not used downstream; consistent with all other MemberLoadOp sites
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
