@@ -785,6 +785,7 @@ public:
 		class_template_names_.clear();
 		pattern_struct_names_.clear();
 		pattern_to_base_name_.clear();
+		constrained_pattern_counter.store(0, std::memory_order_relaxed);
 		outer_template_bindings_.clear();
 	}
 
@@ -905,6 +906,11 @@ private:
 	// Used by getPatternBaseTemplateName() to recover the base template name without parsing strings.
 	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> pattern_to_base_name_;
 
+public:
+	// Counter for disambiguating constrained partial specialization pattern names.
+	// Lives here (rather than as a static local) so that clear() resets it between
+	// translation units processed in a single compiler invocation.
+	std::atomic<size_t> constrained_pattern_counter{0};
 
 };
 

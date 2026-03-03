@@ -4681,8 +4681,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// multiple partial specializations with the same pattern but different constraints.
 		// e.g., __cat<_Iter> with requires A<_Iter> vs __cat<_Iter> with requires B<_Iter>
 		if (requires_clause.has_value()) {
-			static std::atomic<size_t> constrained_pattern_counter{0};
-			pattern_name.append("_C"sv).append(static_cast<int64_t>(constrained_pattern_counter.fetch_add(1)));
+			pattern_name.append("_C"sv).append(static_cast<int64_t>(gTemplateRegistry.constrained_pattern_counter.fetch_add(1)));
 		}
 		
 		// Qualify with parent struct name
