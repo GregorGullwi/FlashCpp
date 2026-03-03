@@ -1048,6 +1048,28 @@ EvalResult Evaluator::evaluate_callable_object(
 	// Check for ConstructorCallNode (user-defined functor)
 	const auto& initializer = var_decl.initializer();
 	if (initializer.has_value() && initializer->is<ConstructorCallNode>()) {
+		auto bindArgumentValues = [&](const auto& params,
+		                              const auto& args,
+		                              std::unordered_map<std::string_view, EvalResult>& bindings,
+		                              std::string_view errorMessage,
+		                              bool skipInvalidParams) -> EvalResult {
+			for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
+				if (!params[i].template is<DeclarationNode>()) {
+					if (skipInvalidParams) {
+						continue;
+					}
+					return EvalResult::error(std::string(errorMessage));
+				}
+				const DeclarationNode& param_decl = params[i].template as<DeclarationNode>();
+				auto arg_result = evaluate(args[i], context);
+				if (!arg_result.success()) {
+					return arg_result;
+				}
+				bindings[param_decl.identifier_token().value()] = arg_result;
+			}
+			return EvalResult::from_bool(true);
+		};
+
 		const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
 		const ASTNode& type_node = ctor_call.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -1093,6 +1115,9 @@ EvalResult Evaluator::evaluate_callable_object(
 		if (!definition.has_value()) {
 			return EvalResult::error("Callable object operator() has no body");
 		}
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
+		}
 
 		// Build object member bindings from constructor/member initializers.
 		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
@@ -1104,16 +1129,14 @@ EvalResult Evaluator::evaluate_callable_object(
 
 		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 		const auto& ctor_params = matching_ctor->parameter_nodes();
-		for (size_t i = 0; i < ctor_params.size() && i < ctor_args.size(); ++i) {
-			if (!ctor_params[i].is<DeclarationNode>()) {
-				continue;
-			}
-			const DeclarationNode& param_decl = ctor_params[i].as<DeclarationNode>();
-			auto arg_result = evaluate(ctor_args[i], context);
-			if (!arg_result.success()) {
-				return arg_result;
-			}
-			ctor_param_bindings[param_decl.identifier_token().value()] = arg_result;
+		auto ctor_bind_result = bindArgumentValues(
+			ctor_params,
+			ctor_args,
+			ctor_param_bindings,
+			"Invalid parameter node in callable object constructor",
+			true);
+		if (!ctor_bind_result.success()) {
+			return ctor_bind_result;
 		}
 
 		for (const auto& mem_init : matching_ctor->member_initializers()) {
@@ -1135,16 +1158,14 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 
 		const auto& parameters = call_operator->parameter_nodes();
-		for (size_t i = 0; i < arguments.size(); ++i) {
-			if (!parameters[i].is<DeclarationNode>()) {
-				return EvalResult::error("Invalid parameter node in callable object operator()");
-			}
-			const DeclarationNode& param_decl = parameters[i].as<DeclarationNode>();
-			auto arg_result = evaluate(arguments[i], context);
-			if (!arg_result.success()) {
-				return arg_result;
-			}
-			evaluation_bindings[param_decl.identifier_token().value()] = arg_result;
+		auto call_bind_result = bindArgumentValues(
+			parameters,
+			arguments,
+			evaluation_bindings,
+			"Invalid parameter node in callable object operator()",
+			false);
+		if (!call_bind_result.success()) {
+			return call_bind_result;
 		}
 
 		if (context.current_depth >= context.max_recursion_depth) {
