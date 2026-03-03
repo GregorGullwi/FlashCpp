@@ -1103,7 +1103,10 @@
 							lambda_struct_info = struct_info;
 							FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus on lambda identifier '{}' -> using struct info", StringTable::getStringView(type_info.name()));
 						}
-					} else if (decl.has_default_value()) {
+					}
+					// Fallback: if struct info path didn't find a captureless closure,
+					// try extracting the lambda AST node from the initializer.
+					if (!lambda_struct_info && !lambda_ptr && decl.has_default_value()) {
 						const ASTNode& init = decl.default_value();
 						if (init.is<LambdaExpressionNode>()) {
 							lambda_ptr = &init.as<LambdaExpressionNode>();
