@@ -1521,21 +1521,7 @@ ParseResult Parser::parse_template_declaration() {
 						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 						if (auto result_node = template_result.node()) {
 							if (result_node->is<FriendDeclarationNode>()) {
-								const auto& friend_decl = result_node->as<FriendDeclarationNode>();
-								if (friend_decl.kind() == FriendKind::TemplateClass && friend_decl.name().isValid()) {
-									StringHandle friend_name = friend_decl.name();
-									struct_info->addFriendClass(friend_name);
-									std::string_view friend_sv = StringTable::getStringView(friend_name);
-									if (friend_sv.find("::") == std::string_view::npos) {
-										NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
-										std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
-										if (!ns_name.empty()) {
-											StringHandle qualified_friend = StringTable::getOrInternStringHandle(
-												StringBuilder().append(ns_name).append("::").append(friend_sv).commit());
-											struct_info->addFriendClass(qualified_friend);
-										}
-									}
-								}
+								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info.get());
 							}
 						}
 						continue;
@@ -1597,36 +1583,10 @@ ParseResult Parser::parse_template_declaration() {
 							return friend_result;
 						}
 
-						// Register friend in AST and StructTypeInfo (mirrors parse_struct_definition)
+						// Register friend in AST and StructTypeInfo
 						if (auto friend_node = friend_result.node()) {
 							struct_ref.add_friend(*friend_node);
-
-							const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
-							if (friend_decl.kind() == FriendKind::Class || friend_decl.kind() == FriendKind::TemplateClass) {
-								StringHandle friend_class_name_handle = friend_decl.name();
-								if (friend_class_name_handle.isValid()) {
-									struct_info->addFriendClass(friend_class_name_handle);
-									std::string_view friend_sv = StringTable::getStringView(friend_class_name_handle);
-									if (friend_sv.find("::") == std::string_view::npos) {
-										NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
-										std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
-										if (!ns_name.empty()) {
-											StringHandle qualified_friend = StringTable::getOrInternStringHandle(
-												StringBuilder().append(ns_name).append("::").append(friend_sv).commit());
-											struct_info->addFriendClass(qualified_friend);
-										}
-									}
-								}
-							} else if (friend_decl.kind() == FriendKind::Function) {
-								StringHandle friend_func_name_handle = friend_decl.name();
-								struct_info->addFriendFunction(friend_func_name_handle);
-							} else if (friend_decl.kind() == FriendKind::MemberFunction) {
-								StringHandle friend_class_name_handle = friend_decl.class_name();
-								StringHandle friend_func_name_handle = friend_decl.name();
-								struct_info->addFriendMemberFunction(
-									friend_class_name_handle,
-									friend_func_name_handle);
-							}
+							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info.get());
 						}
 						continue;
 					}
@@ -3003,36 +2963,10 @@ ParseResult Parser::parse_template_declaration() {
 							return friend_result;
 						}
 
-						// Register friend in AST and StructTypeInfo (mirrors parse_struct_definition)
+						// Register friend in AST and StructTypeInfo
 						if (auto friend_node = friend_result.node()) {
 							struct_ref.add_friend(*friend_node);
-
-							const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
-							if (friend_decl.kind() == FriendKind::Class || friend_decl.kind() == FriendKind::TemplateClass) {
-								StringHandle friend_class_name_handle = friend_decl.name();
-								if (friend_class_name_handle.isValid()) {
-									struct_info->addFriendClass(friend_class_name_handle);
-									std::string_view friend_sv = StringTable::getStringView(friend_class_name_handle);
-									if (friend_sv.find("::") == std::string_view::npos) {
-										NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
-										std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
-										if (!ns_name.empty()) {
-											StringHandle qualified_friend = StringTable::getOrInternStringHandle(
-												StringBuilder().append(ns_name).append("::").append(friend_sv).commit());
-											struct_info->addFriendClass(qualified_friend);
-										}
-									}
-								}
-							} else if (friend_decl.kind() == FriendKind::Function) {
-								StringHandle friend_func_name_handle = friend_decl.name();
-								struct_info->addFriendFunction(friend_func_name_handle);
-							} else if (friend_decl.kind() == FriendKind::MemberFunction) {
-								StringHandle friend_class_name_handle = friend_decl.class_name();
-								StringHandle friend_func_name_handle = friend_decl.name();
-								struct_info->addFriendMemberFunction(
-									friend_class_name_handle,
-									friend_func_name_handle);
-							}
+							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info.get());
 						}
 						continue;
 					} else if (peek() == "template"_tok) {
@@ -3044,21 +2978,7 @@ ParseResult Parser::parse_template_declaration() {
 						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 						if (auto result_node = template_result.node()) {
 							if (result_node->is<FriendDeclarationNode>()) {
-								const auto& friend_decl = result_node->as<FriendDeclarationNode>();
-								if (friend_decl.kind() == FriendKind::TemplateClass && friend_decl.name().isValid()) {
-									StringHandle friend_name = friend_decl.name();
-									struct_info->addFriendClass(friend_name);
-									std::string_view friend_sv = StringTable::getStringView(friend_name);
-									if (friend_sv.find("::") == std::string_view::npos) {
-										NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
-										std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
-										if (!ns_name.empty()) {
-											StringHandle qualified_friend = StringTable::getOrInternStringHandle(
-												StringBuilder().append(ns_name).append("::").append(friend_sv).commit());
-											struct_info->addFriendClass(qualified_friend);
-										}
-									}
-								}
+								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info.get());
 							}
 						}
 						continue;

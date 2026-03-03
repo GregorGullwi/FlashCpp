@@ -683,20 +683,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 				if (auto result_node = template_result.node()) {
 					if (result_node->is<FriendDeclarationNode>()) {
-						const auto& friend_decl = result_node->as<FriendDeclarationNode>();
-						if (friend_decl.kind() == FriendKind::TemplateClass && friend_decl.name().isValid()) {
-							StringHandle friend_name = friend_decl.name();
-							struct_info->addFriendClass(friend_name);
-							// Also store the namespace-qualified form so that access checks
-							// against fully-qualified accessing struct names can match exactly,
-							// without needing to strip namespaces at check time.
-							std::string_view friend_sv = StringTable::getStringView(friend_name);
-							if (friend_sv.find("::") == std::string_view::npos && !qualified_namespace.empty()) {
-								StringHandle qualified_friend = StringTable::getOrInternStringHandle(
-									StringBuilder().append(qualified_namespace).append("::").append(friend_sv).commit());
-								struct_info->addFriendClass(qualified_friend);
-							}
-						}
+						registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info.get());
 					}
 				}
 				continue;
@@ -1314,33 +1301,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Add friend declaration to struct
 			if (auto friend_node = friend_result.node()) {
 				struct_ref.add_friend(*friend_node);
-
-				// Add to StructTypeInfo
-				const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
-				if (friend_decl.kind() == FriendKind::Class || friend_decl.kind() == FriendKind::TemplateClass) {
-					StringHandle friend_class_name_handle = friend_decl.name();
-					if (friend_class_name_handle.isValid()) {
-						struct_info->addFriendClass(friend_class_name_handle);
-						// Also store the namespace-qualified form so that access checks
-						// against fully-qualified accessing struct names can match exactly,
-						// without needing to strip namespaces at check time.
-						std::string_view friend_sv = StringTable::getStringView(friend_class_name_handle);
-						if (friend_sv.find("::") == std::string_view::npos && !qualified_namespace.empty()) {
-							StringHandle qualified_friend = StringTable::getOrInternStringHandle(
-								StringBuilder().append(qualified_namespace).append("::").append(friend_sv).commit());
-							struct_info->addFriendClass(qualified_friend);
-						}
-					}
-				} else if (friend_decl.kind() == FriendKind::Function) {
-					StringHandle friend_func_name_handle = friend_decl.name();
-					struct_info->addFriendFunction(friend_func_name_handle);
-				} else if (friend_decl.kind() == FriendKind::MemberFunction) {
-					StringHandle friend_class_name_handle = friend_decl.class_name();
-					StringHandle friend_func_name_handle = friend_decl.name();
-					struct_info->addFriendMemberFunction(
-						friend_class_name_handle,
-						friend_func_name_handle);
-				}
+				registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info.get());
 			}
 
 			continue;  // Skip to next member
@@ -4231,5 +4192,30 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	struct_node.add_friend(friend_node);
 
 	return saved_position.success(friend_node);
+}
+
+// Helper: register a friend declaration in StructTypeInfo, handling all FriendKinds and
+// adding the namespace-qualified form so access checks against fully-qualified names match.
+// Does NOT add the node to the struct's AST friend list (callers that need that call
+// struct_ref.add_friend() separately; parse_template_friend_declaration already calls it).
+void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info) {
+	if (!struct_info) return;
+	if (friend_decl.kind() == FriendKind::Class || friend_decl.kind() == FriendKind::TemplateClass) {
+		StringHandle name = friend_decl.name();
+		if (!name.isValid()) return;
+		struct_info->addFriendClass(name);
+		std::string_view sv = StringTable::getStringView(name);
+		if (sv.find("::") == std::string_view::npos) {
+			std::string_view ns_name = gNamespaceRegistry.getQualifiedName(gSymbolTable.get_current_namespace_handle());
+			if (!ns_name.empty()) {
+				struct_info->addFriendClass(StringTable::getOrInternStringHandle(
+					StringBuilder().append(ns_name).append("::").append(sv).commit()));
+			}
+		}
+	} else if (friend_decl.kind() == FriendKind::Function) {
+		struct_info->addFriendFunction(friend_decl.name());
+	} else if (friend_decl.kind() == FriendKind::MemberFunction) {
+		struct_info->addFriendMemberFunction(friend_decl.class_name(), friend_decl.name());
+	}
 }
 
