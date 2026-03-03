@@ -1117,7 +1117,7 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 		}
 	};
 
-	std::function<void(const ASTNode&)> walk = [&](const ASTNode& node) {
+	auto walk = [&](const ASTNode& node, const auto& self) -> void {
 		if (node.is<ReturnStatementNode>()) {
 			const auto& ret = node.as<ReturnStatementNode>();
 			if (ret.expression().has_value()) {
@@ -1126,35 +1126,35 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 		} else if (node.is<BlockNode>()) {
 			const auto& block = node.as<BlockNode>();
 			block.get_statements().visit([&](const ASTNode& stmt) {
-				walk(stmt);
+				self(stmt, self);
 			});
 		} else if (node.is<IfStatementNode>()) {
 			const auto& if_stmt = node.as<IfStatementNode>();
 			if (if_stmt.get_then_statement().has_value()) {
-				walk(if_stmt.get_then_statement());
+				self(if_stmt.get_then_statement(), self);
 			}
 			if (if_stmt.get_else_statement().has_value()) {
-				walk(*if_stmt.get_else_statement());
+				self(*if_stmt.get_else_statement(), self);
 			}
 		} else if (node.is<ForStatementNode>()) {
 			const auto& for_stmt = node.as<ForStatementNode>();
 			if (for_stmt.get_body_statement().has_value()) {
-				walk(for_stmt.get_body_statement());
+				self(for_stmt.get_body_statement(), self);
 			}
 		} else if (node.is<WhileStatementNode>()) {
 			const auto& while_stmt = node.as<WhileStatementNode>();
 			if (while_stmt.get_body_statement().has_value()) {
-				walk(while_stmt.get_body_statement());
+				self(while_stmt.get_body_statement(), self);
 			}
 		} else if (node.is<DoWhileStatementNode>()) {
 			const auto& do_while = node.as<DoWhileStatementNode>();
 			if (do_while.get_body_statement().has_value()) {
-				walk(do_while.get_body_statement());
+				self(do_while.get_body_statement(), self);
 			}
 		} else if (node.is<SwitchStatementNode>()) {
 			const auto& switch_stmt = node.as<SwitchStatementNode>();
 			if (switch_stmt.get_body().has_value()) {
-				walk(switch_stmt.get_body());
+				self(switch_stmt.get_body(), self);
 			}
 		}
 	};
@@ -1162,14 +1162,15 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 	const ASTNode& body = lambda.body();
 	if (body.is<BlockNode>()) {
 		body.as<BlockNode>().get_statements().visit([&](const ASTNode& stmt) {
-			walk(stmt);
+			walk(stmt, walk);
 		});
 	} else {
 		consider_expr(body);
 	}
 
 	if (has_incompatible_return && deduced_type.has_value()) {
-		FLASH_LOG(Parser, Warning, "Lambda has inconsistent return types; using first deduced type ", type_to_string(*deduced_type));
+		FLASH_LOG(Parser, Warning, "Lambda at ", lambda.lambda_token().line(), ":", lambda.lambda_token().column(),
+			" has inconsistent return types; using first deduced type ", type_to_string(*deduced_type));
 	}
 
 	return deduced_type;
@@ -1184,7 +1185,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
 		sig.return_type = deduced_return->type();
 	} else {
-		// Fallback when no return statements are present or deduction fails; preserves prior default-to-int decay for captureless lambdas
+		// Fallback when no return statements are present or deduction fails; preserves prior default-to-int decay for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void)
 		sig.return_type = Type::Int;
 	}
 
