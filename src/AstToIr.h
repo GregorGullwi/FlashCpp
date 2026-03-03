@@ -842,6 +842,81 @@ private:
 	}
 
 	// Implementation of recursive nested member store generation
+	bool tryEmitArrayMemberStores(
+	const StructMember& member,
+	const InitializerListNode& init_list,
+	StringHandle base_object,
+	int base_offset,
+	const Token& token)
+	{
+		if (!member.is_array || member.array_dimensions.empty()) {
+			return false;
+		}
+
+		size_t element_count = 1;
+		for (size_t dim : member.array_dimensions) {
+			element_count *= dim;
+		}
+		if (element_count == 0) {
+			return false;
+		}
+
+		int element_size_bits = 0;
+		if (member.type_index < gTypeInfo.size()) {
+			element_size_bits = static_cast<int>(gTypeInfo[member.type_index].type_size_ * 8);
+		}
+		if (element_size_bits <= 0) {
+			element_size_bits = static_cast<int>((member.size * 8) / element_count);
+		}
+
+		std::vector<const ExpressionNode*> flat_initializers;
+		auto collect_initializers = [&](const auto& self, const InitializerListNode& list) -> void {
+			for (const ASTNode& node : list.initializers()) {
+				if (node.is<ExpressionNode>()) {
+					flat_initializers.push_back(&node.as<ExpressionNode>());
+				} else if (node.is<InitializerListNode>()) {
+					self(self, node.as<InitializerListNode>());
+				}
+			}
+		};
+		collect_initializers(collect_initializers, init_list);
+
+		const size_t emit_count = std::min(element_count, flat_initializers.size());
+		for (size_t i = 0; i < emit_count; ++i) {
+			auto init_operands = visitExpressionNode(*flat_initializers[i]);
+			if (init_operands.size() < 3) {
+				throw InternalError("Invalid array member initializer operands");
+			}
+
+			emitArrayStore(
+				member.type,
+				element_size_bits,
+				base_object,
+				TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+				toTypedValue(init_operands),
+				base_offset + static_cast<int>(member.offset),
+				false,
+				token
+			);
+		}
+
+		TypedValue zero_value{member.type, element_size_bits, 0ULL};
+		for (size_t i = emit_count; i < element_count; ++i) {
+			emitArrayStore(
+				member.type,
+				element_size_bits,
+				base_object,
+				TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+				zero_value,
+				base_offset + static_cast<int>(member.offset),
+				false,
+				token
+			);
+		}
+
+		return true;
+	}
+
 	void generateNestedMemberStores(
 	const StructTypeInfo& struct_info,
 	const InitializerListNode& init_list,
@@ -889,6 +964,10 @@ private:
 			if (init_expr.is<InitializerListNode>()) {
 				// Nested brace initializer - check if member is a struct
 				const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+
+				if (tryEmitArrayMemberStores(member, nested_init_list, base_object, base_offset, token)) {
+					continue;
+				}
 
 				if (member.type_index < gTypeInfo.size()) {
 					const TypeInfo& member_type_info = gTypeInfo[member.type_index];

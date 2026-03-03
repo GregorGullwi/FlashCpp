@@ -12,6 +12,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <algorithm>
+#include <numeric>
 #include <string_view>
 #include <source_location>
 #include <functional>

@@ -775,6 +775,7 @@
 													found_matching_ctor = true;
 													if (!ctor_node.is_explicit()) {
 														found_non_explicit_ctor = true;
+														break;
 													}
 												}
 											}

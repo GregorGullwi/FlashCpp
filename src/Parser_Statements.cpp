@@ -1604,7 +1604,12 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// Values are consumed recursively for the current array member before moving to next member.
 			if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok) {
 				auto [nested_init_list_node, nested_init_list_ref] = create_node_ref(InitializerListNode());
-				size_t element_limit = target_member.array_dimensions[0];
+				size_t element_limit = std::accumulate(
+					target_member.array_dimensions.begin(),
+					target_member.array_dimensions.end(),
+					size_t{1},
+					std::multiplies<size_t>()
+				);
 				size_t element_count = 0;
 
 				while (element_count < element_limit && peek() != "}"_tok) {

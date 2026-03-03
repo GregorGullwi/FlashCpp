@@ -932,6 +932,10 @@
 										if (init_expr.is<InitializerListNode>()) {
 											// Nested braced initializer - handle it recursively using the helper function
 											const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+
+											if (tryEmitArrayMemberStores(member, nested_init_list, decl.identifier_token().handle(), 0, decl.identifier_token())) {
+												continue;
+											}
 											
 											// Get the type info for the nested member
 											TypeIndex nested_member_type_index = member.type_index;
@@ -2644,4 +2648,3 @@
 		
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", binding_idx, " bindings");
 	}
-
