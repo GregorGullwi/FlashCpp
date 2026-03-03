@@ -1085,7 +1085,7 @@
 		if (unaryOperatorNode.op() == "+" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			const LambdaExpressionNode* lambda_ptr = nullptr;
-			const StructTypeInfo* closure_struct_info = nullptr;
+			const StructTypeInfo* lambda_struct_info = nullptr;
 
 			if (std::holds_alternative<LambdaExpressionNode>(operandExpr)) {
 				lambda_ptr = &std::get<LambdaExpressionNode>(operandExpr);
@@ -1100,7 +1100,7 @@
 						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info && struct_info->members.empty()) {
-							closure_struct_info = struct_info;
+							lambda_struct_info = struct_info;
 							FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus on lambda identifier '{}' -> using struct info", StringTable::getStringView(type_info.name()));
 						}
 					} else if (decl.has_default_value()) {
@@ -1121,8 +1121,8 @@
 				// Return the address of the __invoke function
 				TempVar func_addr_var = generateLambdaInvokeFunctionAddress(*lambda_ptr);
 				return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
-			} else if (closure_struct_info) {
-				if (auto fp_operands = decayLambdaStructToFunctionPointer(*closure_struct_info, unaryOperatorNode.get_token())) {
+			} else if (lambda_struct_info) {
+				if (auto fp_operands = decayLambdaStructToFunctionPointer(*lambda_struct_info, unaryOperatorNode.get_token())) {
 					return *fp_operands;
 				}
 			}

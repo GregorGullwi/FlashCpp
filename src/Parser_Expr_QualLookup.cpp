@@ -1178,6 +1178,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
 		sig.return_type = deduced_return->type();
 	} else {
+		// Fallback when no return statements are present or deduction fails (preserves prior default)
 		sig.return_type = Type::Int;
 	}
 
