@@ -23,9 +23,8 @@ int main() {
     int x = 42;
     Outer::Inner<int*> ip{&x};
     
-    // On a 64-bit platform: sizeof(int) == 4, sizeof(int*) == 8
-    // If T is correctly deduced as int, get_size() returns 4
-    // If T is incorrectly left as int*, get_size() returns 8
+    // sizeof(T) should equal sizeof(int) if T is correctly deduced as int
+    // If T is incorrectly left as int*, sizeof(T) would equal sizeof(int*)
     int sz = ip.get_size();
     
     // Return 0 only if sizeof(T) == sizeof(int) (correct deduction)

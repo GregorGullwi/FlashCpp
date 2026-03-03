@@ -459,8 +459,16 @@ struct TemplateTypeArgHash {
 // Strip pattern modifiers from a concrete argument to recover the deduced type.
 // Per C++ deduction rules: for pattern T*, T is deduced as int (not int*);
 // for pattern T&, T is deduced as int (not int&); etc.
-// This is the shared implementation used by both TemplateRegistry pattern matching
-// and deferred body re-parsing during pattern-based instantiation.
+//
+// @param concrete_arg  The fully instantiated type argument (e.g., int* for Container<int*>).
+// @param pattern_arg   The pattern from the partial specialization (e.g., T* for Container<T*>).
+// @return              The deduced template parameter type with pattern modifiers stripped.
+//                      Example: deduceArgFromPattern(int*, T*) → int;
+//                               deduceArgFromPattern(const int&, const T&) → int.
+//
+// Used by TemplateRegistry pattern matching (TemplateRegistry_Pattern.h) and
+// deferred body re-parsing during pattern-based instantiation
+// (Parser_Templates_Inst_ClassTemplate.cpp).
 inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg, const TemplateTypeArg& pattern_arg) {
 	TemplateTypeArg deduced = concrete_arg;
 	if (pattern_arg.is_reference()) deduced.ref_qualifier = ReferenceQualifier::None;
