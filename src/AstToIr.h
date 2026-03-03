@@ -841,6 +841,43 @@ private:
 		return false;
 	}
 
+	// Recursively zero-initialize all scalar leaf members of a struct.
+	// For sub-members that are themselves structs (> 64 bits), recurse instead of
+	// emitting a single MemberStore with 0ULL (which would only zero the first 8 bytes).
+	void emitRecursiveZeroFill(
+		const StructTypeInfo& struct_info,
+		StringHandle base_object,
+		int base_offset,
+		const Token& token)
+	{
+		for (const StructMember& sub_member : struct_info.members) {
+			bool is_nested_struct = (sub_member.type == Type::Struct || sub_member.type == Type::UserDefined)
+				&& sub_member.type_index < gTypeInfo.size()
+				&& gTypeInfo[sub_member.type_index].struct_info_
+				&& (sub_member.size * 8) > 64;
+
+			if (is_nested_struct) {
+				emitRecursiveZeroFill(
+					*gTypeInfo[sub_member.type_index].struct_info_,
+					base_object,
+					base_offset + static_cast<int>(sub_member.offset),
+					token);
+			} else {
+				MemberStoreOp member_store;
+				member_store.value.type = sub_member.type;
+				member_store.value.size_in_bits = static_cast<int>(sub_member.size * 8);
+				member_store.value.value = 0ULL;
+				member_store.object = base_object;
+				member_store.member_name = sub_member.getName();
+				member_store.offset = base_offset + static_cast<int>(sub_member.offset);
+				member_store.is_reference = sub_member.is_reference();
+				member_store.is_rvalue_reference = sub_member.is_rvalue_reference();
+				member_store.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+			}
+		}
+	}
+
 	// Implementation of recursive nested member store generation
 	bool tryEmitArrayMemberStores(
 	const StructMember& member,
@@ -950,25 +987,13 @@ private:
 
 		for (size_t i = emit_count; i < element_count; ++i) {
 			if (is_struct_element) {
-				// Zero each sub-member of the struct element individually.
-				const StructTypeInfo& elem_struct = *gTypeInfo[member.type_index].struct_info_;
+				// Recursively zero each sub-member of the struct element.
 				int element_byte_offset = base_offset
 					+ static_cast<int>(member.offset)
 					+ static_cast<int>(i) * (element_size_bits / 8);
 
-				for (const StructMember& sub_member : elem_struct.members) {
-					MemberStoreOp member_store;
-					member_store.value.type = sub_member.type;
-					member_store.value.size_in_bits = static_cast<int>(sub_member.size * 8);
-					member_store.value.value = 0ULL;
-					member_store.object = base_object;
-					member_store.member_name = sub_member.getName();
-					member_store.offset = element_byte_offset + static_cast<int>(sub_member.offset);
-					member_store.is_reference = sub_member.is_reference();
-					member_store.is_rvalue_reference = sub_member.is_rvalue_reference();
-					member_store.struct_type_info = nullptr;
-					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
-				}
+				emitRecursiveZeroFill(*gTypeInfo[member.type_index].struct_info_,
+					base_object, element_byte_offset, token);
 			} else {
 				TypedValue zero_value{member.type, element_size_bits, 0ULL};
 				emitArrayStore(
