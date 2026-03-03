@@ -1147,6 +1147,9 @@ EvalResult Evaluator::evaluate_callable_object(
 			evaluation_bindings[param_decl.identifier_token().value()] = arg_result;
 		}
 
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
+		}
 		context.current_depth++;
 		const ASTNode& body_node = definition.value();
 		if (!body_node.is<BlockNode>()) {
