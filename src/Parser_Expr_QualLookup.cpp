@@ -1105,56 +1105,60 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 
 	std::optional<TypeSpecifierNode> deduced_type;
 	bool has_incompatible_return = false;
+	std::optional<Token> first_incompatible_return_token;
 
-	auto record_return_type = [&](const ASTNode& expr) {
+	auto record_return_type = [&](const ASTNode& expr, const Token& return_token) {
 		auto type_opt = get_expression_type(expr);
 		if (type_opt.has_value()) {
 			if (!deduced_type.has_value()) {
 				deduced_type = *type_opt;
 			} else if (!are_types_compatible(*deduced_type, *type_opt)) {
 				has_incompatible_return = true;
+				if (!first_incompatible_return_token.has_value()) {
+					first_incompatible_return_token = return_token;
+				}
 			}
 		}
 	};
 
-	auto traverse_returns = [&](const ASTNode& node, const auto& self) -> void {
+	auto traverse_returns = [&](const ASTNode& node, const auto& recurse) -> void {
 		if (node.is<ReturnStatementNode>()) {
 			const auto& ret = node.as<ReturnStatementNode>();
 			if (ret.expression().has_value()) {
-				record_return_type(*ret.expression());
+				record_return_type(*ret.expression(), ret.return_token());
 			}
 		} else if (node.is<BlockNode>()) {
 			const auto& block = node.as<BlockNode>();
 			block.get_statements().visit([&](const ASTNode& stmt) {
-				self(stmt, self);
+				recurse(stmt, recurse);
 			});
 		} else if (node.is<IfStatementNode>()) {
 			const auto& if_stmt = node.as<IfStatementNode>();
 			if (if_stmt.get_then_statement().has_value()) {
-				self(if_stmt.get_then_statement(), self);
+				recurse(if_stmt.get_then_statement(), recurse);
 			}
 			if (if_stmt.get_else_statement().has_value()) {
-				self(*if_stmt.get_else_statement(), self);
+				recurse(*if_stmt.get_else_statement(), recurse);
 			}
 		} else if (node.is<ForStatementNode>()) {
 			const auto& for_stmt = node.as<ForStatementNode>();
 			if (for_stmt.get_body_statement().has_value()) {
-				self(for_stmt.get_body_statement(), self);
+				recurse(for_stmt.get_body_statement(), recurse);
 			}
 		} else if (node.is<WhileStatementNode>()) {
 			const auto& while_stmt = node.as<WhileStatementNode>();
 			if (while_stmt.get_body_statement().has_value()) {
-				self(while_stmt.get_body_statement(), self);
+				recurse(while_stmt.get_body_statement(), recurse);
 			}
 		} else if (node.is<DoWhileStatementNode>()) {
 			const auto& do_while = node.as<DoWhileStatementNode>();
 			if (do_while.get_body_statement().has_value()) {
-				self(do_while.get_body_statement(), self);
+				recurse(do_while.get_body_statement(), recurse);
 			}
 		} else if (node.is<SwitchStatementNode>()) {
 			const auto& switch_stmt = node.as<SwitchStatementNode>();
 			if (switch_stmt.get_body().has_value()) {
-				self(switch_stmt.get_body(), self);
+				recurse(switch_stmt.get_body(), recurse);
 			}
 		}
 	};
@@ -1165,12 +1169,16 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 			traverse_returns(stmt, traverse_returns);
 		});
 	} else {
-		record_return_type(body);
+		record_return_type(body, lambda.lambda_token());
 	}
 
 	if (has_incompatible_return && deduced_type.has_value()) {
 		FLASH_LOG(Parser, Warning, "Lambda at ", lambda.lambda_token().line(), ":", lambda.lambda_token().column(),
-			" has inconsistent return types; using first deduced type ", type_to_string(*deduced_type));
+			" has inconsistent return types; using first deduced type ", type_to_string(*deduced_type),
+			first_incompatible_return_token.has_value() ? ", first conflicting return at " : "",
+			first_incompatible_return_token.has_value() ? std::to_string(first_incompatible_return_token->line()) : "",
+			first_incompatible_return_token.has_value() ? ":" : "",
+			first_incompatible_return_token.has_value() ? std::to_string(first_incompatible_return_token->column()) : "");
 	}
 
 	return deduced_type;
@@ -1186,7 +1194,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 		sig.return_type = deduced_return->type();
 	} else {
 		// Fallback when no return statements are present or deduction fails; preserves prior default-to-int decay
-		// for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void). TODO: document this deviation in KNOWN_ISSUES.
+		// for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void). Documented in docs/KNOWN_ISSUES.md.
 		sig.return_type = Type::Int;
 	}
 
