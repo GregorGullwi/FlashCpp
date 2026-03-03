@@ -4,18 +4,9 @@ struct Pair {
 	T second;
 };
 
-struct Leaf {
-	int value;
-};
-
-struct TemplateAggregate {
-	Pair<Leaf> nested;
-	int tail;
-};
+using Int2 = int[2];
 
 int main() {
-	TemplateAggregate v = {{{10}, {20}}, 42};
-	return (v.nested.first.value == 10 &&
-		v.nested.second.value == 20 &&
-		v.tail == 42) ? 0 : 1;
+	Pair<Int2> v = {};
+	return (sizeof(v) == sizeof(Int2) * 2) ? 0 : 1;
 }

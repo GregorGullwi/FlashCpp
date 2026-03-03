@@ -876,6 +876,36 @@ private:
 			element_size_bits = static_cast<int>((member.size * 8) / element_count);
 		}
 
+		auto count_expressions = [&](const auto& self, const InitializerListNode& list) -> size_t {
+			size_t count = 0;
+			for (const ASTNode& node : list.initializers()) {
+				if (node.is<ExpressionNode>()) {
+					count++;
+				} else if (node.is<InitializerListNode>()) {
+					count += self(self, node.as<InitializerListNode>());
+				}
+			}
+			return count;
+		};
+
+		const size_t first_dimension_limit = member.array_dimensions[0];
+		size_t nested_subarray_count = 0;
+		const size_t subarray_limit = member.array_dimensions.size() > 1
+			? (element_count / first_dimension_limit)
+			: element_count;
+		for (const ASTNode& node : init_list.initializers()) {
+			if (node.is<InitializerListNode>()) {
+				nested_subarray_count++;
+				if (nested_subarray_count > first_dimension_limit) {
+					throw CompileError("Too many initializers for array");
+				}
+				if (member.array_dimensions.size() > 1 &&
+					count_expressions(count_expressions, node.as<InitializerListNode>()) > subarray_limit) {
+					throw CompileError("Too many initializers for array subobject");
+				}
+			}
+		}
+
 		std::vector<const ExpressionNode*> flat_initializers;
 		auto collect_initializers = [&](const auto& self, const InitializerListNode& list) -> void {
 			for (const ASTNode& node : list.initializers()) {
@@ -887,6 +917,9 @@ private:
 			}
 		};
 		collect_initializers(collect_initializers, init_list);
+		if (flat_initializers.size() > element_count) {
+			throw CompileError("Too many initializers for array");
+		}
 
 		const size_t emit_count = std::min(element_count, flat_initializers.size());
 		for (size_t i = 0; i < emit_count; ++i) {

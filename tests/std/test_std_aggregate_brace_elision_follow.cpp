@@ -19,9 +19,15 @@ struct ArrayWithTail {
 	int tail;
 };
 
+struct MultiDimArrayWithTail {
+	int arr[2][3];
+	int tail;
+};
+
 int main() {
 	AggregateWithTail v = {{{10}, 20}, {{30}, 40}, 42};
 	ArrayWithTail a = {1, 2, 3, 7};
+	MultiDimArrayWithTail m = {1, 2, 3, 4, 5, 6, 9};
 
 	return (v.nested.leaf.value == 10 &&
 		v.nested.extra == 20 &&
@@ -31,5 +37,7 @@ int main() {
 		a.arr[0] == 1 &&
 		a.arr[1] == 2 &&
 		a.arr[2] == 3 &&
-		a.tail == 7) ? 0 : 1;
+		a.tail == 7 &&
+		m.arr[1][2] == 6 &&
+		m.tail == 9) ? 0 : 1;
 }

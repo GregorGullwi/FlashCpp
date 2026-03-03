@@ -278,6 +278,34 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	};
 
+	auto resolve_array_dimensions = [&](
+		const DeclarationNode& decl,
+		const std::vector<ASTNode>& params,
+		const std::vector<TemplateTypeArg>& args) -> std::vector<size_t> {
+		std::vector<size_t> resolved_dims;
+		if (!decl.is_array()) {
+			return resolved_dims;
+		}
+		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
+		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
+		for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
+			if (!params[pi].is<TemplateParameterNode>()) continue;
+			const auto& tparam = params[pi].as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::NonType && args[pi].is_value) {
+				nontype_sub_map[tparam.name()] = args[pi].value;
+			}
+		}
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		for (const auto& dim_expr : decl.array_dimensions()) {
+			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map);
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
+			if (eval_result.success() && eval_result.as_int() > 0) {
+				resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
+			}
+		}
+		return resolved_dims;
+	};
+
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -991,6 +1019,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto [member_type, member_type_index] = substitute_template_parameter(
 				type_spec, template_params, template_args);
 			size_t ptr_depth = type_spec.pointer_depth();
+			std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args);
+			bool is_array_member = !resolved_array_dimensions.empty();
 			
 			// Calculate member size accounting for pointer depth
 			size_t member_size;
@@ -1013,6 +1043,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			} else {
 				member_size = get_type_size_bits(member_type) / 8;
+			}
+			for (size_t dim_size : resolved_array_dimensions) {
+				member_size *= dim_size;
 			}
 			// Calculate member alignment
 			// For pointers and references, use 8-byte alignment (pointer alignment on x64)
@@ -1055,8 +1088,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_default_initializer,
 				ref_qual,
 				ref_qual != ReferenceQualifier::None ? get_type_size_bits(member_type) : 0,
-				false,
-				{},
+				is_array_member,
+				std::move(resolved_array_dimensions),
 				static_cast<int>(ptr_depth),
 				resolve_bitfield_width(member_decl, template_params, template_args),
 				type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
@@ -3257,6 +3290,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
 
 		// Calculate member size - for arrays, multiply element size by array size
+		bool is_array_member = false;
+		std::vector<size_t> resolved_array_dimensions;
 		size_t member_size;
 		if (substituted_array_size.has_value()) {
 			// Extract the array size value
@@ -3271,6 +3306,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						array_size = static_cast<size_t>(std::get<unsigned long long>(val));
 					}
 				}
+			}
+			if (array_size > 0) {
+				is_array_member = true;
+				resolved_array_dimensions.push_back(array_size);
 			}
 			member_size = (get_type_size_bits(member_type) / 8) * array_size;
 		} else {
@@ -3347,8 +3386,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_default_initializer,
 			ref_qual,
 			referenced_size_bits,
-			false,
-			{},
+			is_array_member,
+			std::move(resolved_array_dimensions),
 			static_cast<int>(type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, template_params, template_args_to_use),
 			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt

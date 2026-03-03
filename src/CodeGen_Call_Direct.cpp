@@ -754,8 +754,8 @@
 												param_matches = true;
 												// For class types, require exact type match, not just Type::Struct kind.
 												if ((arg_type == Type::Struct || arg_type == Type::UserDefined) &&
-													arg_type_index > 0 && ctor_param_type.type_index() > 0 &&
-													ctor_param_type.type_index() != arg_type_index) {
+													(arg_type_index == 0 || ctor_param_type.type_index() == 0 ||
+													ctor_param_type.type_index() != arg_type_index)) {
 													param_matches = false;
 												}
 											}
@@ -774,7 +774,7 @@
 												if (all_have_defaults) {
 													found_matching_ctor = true;
 													if (!ctor_node.is_explicit()) {
-                                                                                                        found_non_explicit_ctor = true; break; // Optimization: a valid non-explicit ctor is found.
+														found_non_explicit_ctor = true; // Optimization: a valid non-explicit ctor is found.
 														break;
 													}
 												}
