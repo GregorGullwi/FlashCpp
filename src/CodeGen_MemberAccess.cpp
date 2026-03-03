@@ -4,26 +4,26 @@
 		MultiDimMemberArrayAccess result;
 		std::vector<ASTNode> indices_reversed;
 		const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
-		
+
 		// Collect the outermost index first
 		indices_reversed.push_back(subscript.index_expr());
-		
+
 		// Walk down the chain of ArraySubscriptNodes
 		while (std::holds_alternative<ArraySubscriptNode>(*current)) {
 			const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
 			indices_reversed.push_back(inner.index_expr());
 			current = &inner.array_expr().as<ExpressionNode>();
 		}
-		
+
 		FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Collected {} indices", indices_reversed.size());
-		
+
 		// The base should be a member access (obj.member)
 		if (std::holds_alternative<MemberAccessNode>(*current)) {
 			const MemberAccessNode& base_member = std::get<MemberAccessNode>(*current);
 			result.member_name = base_member.member_name();
 			FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found MemberAccessNode, member_name={}", 
 				std::string(result.member_name));
-			
+
 			// Get the object
 			if (base_member.object().is<ExpressionNode>()) {
 				const ExpressionNode& obj_expr = base_member.object().as<ExpressionNode>();
@@ -31,7 +31,7 @@
 					const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
 					result.object_name = object_ident.name();
 					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: object_name={}", std::string(result.object_name));
-					
+
 					// Look up the object to get struct type
 					std::optional<ASTNode> symbol = symbol_table.lookup(result.object_name);
 					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol.has_value()={}", symbol.has_value());
@@ -48,40 +48,40 @@
 							decl_node = &symbol->as<VariableDeclarationNode>().declaration();
 						}
 					}
-					
+
 					if (decl_node) {
 						const auto& type_node = decl_node->type_node().as<TypeSpecifierNode>();
-						
+
 						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}", 
 							is_struct_type(type_node.type()), type_node.type_index());
-						
+
 						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
 							TypeIndex type_index = type_node.type_index();
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 								type_index,
 								StringTable::getOrInternStringHandle(std::string(result.member_name)));
-							
+
 							FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: gLazyMemberResolver.resolve returned {}", static_cast<bool>(member_result));
-							
+
 							if (member_result) {
 								const StructMember* member = member_result.member;
 								result.member_info = member;
-								
+
 								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: member->is_array={}, array_dimensions.size()={}", 
 									member->is_array, member->array_dimensions.size());
-								
+
 								// Reverse the indices so they're in order from outermost to innermost
 								result.indices.reserve(indices_reversed.size());
 								for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
 									result.indices.push_back(*it);
 								}
-								
+
 								// Valid if member is a multidimensional array with matching indices
 								result.is_valid = member->is_array && 
 								!member->array_dimensions.empty() &&
 								(member->array_dimensions.size() == result.indices.size()) &&
 								(result.indices.size() > 1);
-								
+
 								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: is_valid={} (is_array={}, dim_size={}, indices_size={}, indices>1={})",
 									result.is_valid, member->is_array, member->array_dimensions.size(), 
 									result.indices.size(), (result.indices.size() > 1));
@@ -91,7 +91,7 @@
 				}
 			}
 		}
-		
+
 		return result;
 	}
 
@@ -99,37 +99,37 @@
 		MultiDimArrayAccess result;
 		std::vector<ASTNode> indices_reversed;
 		const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
-		
+
 		// Collect the outermost index first (the one in the current subscript)
 		indices_reversed.push_back(subscript.index_expr());
-		
+
 		// Walk down the chain of ArraySubscriptNodes
 		while (std::holds_alternative<ArraySubscriptNode>(*current)) {
 			const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
 			indices_reversed.push_back(inner.index_expr());
 			current = &inner.array_expr().as<ExpressionNode>();
 		}
-		
+
 		// The base should be an identifier
 		if (std::holds_alternative<IdentifierNode>(*current)) {
 			const IdentifierNode& base_ident = std::get<IdentifierNode>(*current);
 			result.base_array_name = base_ident.name();
-			
+
 			// Look up the declaration
 			result.base_decl = lookupDeclaration(result.base_array_name);
-			
+
 			// Reverse the indices so they're in order from outermost to innermost
 			// For arr[i][j], we collected [j, i], now reverse to [i, j]
 			result.indices.reserve(indices_reversed.size());
 			for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
 				result.indices.push_back(*it);
 			}
-			
+
 			result.is_valid = (result.base_decl != nullptr) && 
 			(result.base_decl->array_dimension_count() == result.indices.size()) &&
 			(result.indices.size() > 1);  // Only valid for multidimensional
 		}
-		
+
 		return result;
 	}
 
@@ -147,30 +147,30 @@
 			// First check if this is a multidimensional member array access (obj.arr[i][j])
 			auto member_multi_dim = collectMultiDimMemberArrayIndices(arraySubscriptNode);
 			FLASH_LOG_FORMAT(Codegen, Debug, "Member multidim check: is_valid={}", member_multi_dim.is_valid);
-			
+
 			if (member_multi_dim.is_valid && member_multi_dim.member_info) {
 				FLASH_LOG(Codegen, Debug, "Flattening multidimensional member array access!");
 				// We have a valid multidimensional member array access
 				// For obj.arr[M][N] accessed as obj.arr[i][j], compute flat_index = i*N + j
-				
+
 				const StructMember* member = member_multi_dim.member_info;
 				Type element_type = member->type;
 				int base_element_size = get_type_size_bits(element_type);
-				
+
 				// Get all dimension sizes
 				const std::vector<size_t>& dim_sizes = member->array_dimensions;
-				
+
 				// Compute strides: stride[k] = product of dimensions after k
 				std::vector<size_t> strides(dim_sizes.size());
 				strides.back() = 1;
 				for (int k = static_cast<int>(dim_sizes.size()) - 2; k >= 0; --k) {
 					strides[k] = strides[k + 1] * dim_sizes[k + 1];
 				}
-				
+
 				// Generate code to compute flat index
 				auto idx0_operands = visitExpressionNode(member_multi_dim.indices[0].as<ExpressionNode>());
 				TempVar flat_index = var_counter.next();
-				
+
 				if (strides[0] == 1) {
 					BinaryOp add_op;
 					add_op.lhs = toTypedValue(idx0_operands);
@@ -184,11 +184,11 @@
 					mul_op.result = IrValue{flat_index};
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 				}
-				
+
 				// Add remaining indices
 				for (size_t k = 1; k < member_multi_dim.indices.size(); ++k) {
 					auto idx_operands = visitExpressionNode(member_multi_dim.indices[k].as<ExpressionNode>());
-					
+
 					if (strides[k] == 1) {
 						TempVar new_flat = var_counter.next();
 						BinaryOp add_op;
@@ -204,7 +204,7 @@
 						mul_op.rhs = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(strides[k])};
 						mul_op.result = IrValue{temp_prod};
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
-						
+
 						TempVar new_flat = var_counter.next();
 						BinaryOp add_op;
 						add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
@@ -214,12 +214,12 @@
 						flat_index = new_flat;
 					}
 				}
-				
+
 				// Generate single array access with flat index
 				TempVar result_var = var_counter.next();
 				StringHandle qualified_name = StringTable::getOrInternStringHandle(
 					StringBuilder().append(member_multi_dim.object_name).append(".").append(member_multi_dim.member_name));
-				
+
 				LValueInfo lvalue_info(
 					LValueInfo::Kind::ArrayElement,
 					qualified_name,
@@ -228,7 +228,7 @@
 				lvalue_info.array_index = IrValue{flat_index};
 				lvalue_info.is_pointer_to_array = false;
 				setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
-				
+
 				ArrayAccessOp payload;
 				payload.result = result_var;
 				payload.element_type = element_type;
@@ -239,27 +239,27 @@
 				payload.index.type = Type::UnsignedLongLong;
 				payload.index.size_in_bits = 64;
 				payload.index.value = flat_index;
-				
+
 				if (context == ExpressionContext::LValueAddress) {
 					return { element_type, base_element_size, result_var, 0ULL };
 				}
-				
+
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 				return { element_type, base_element_size, result_var, 0ULL };
 			}
-			
+
 			// This could be a multidimensional array access
 			auto multi_dim = collectMultiDimArrayIndices(arraySubscriptNode);
-			
+
 			if (multi_dim.is_valid && multi_dim.base_decl) {
 				// We have a valid multidimensional array access
 				// For arr[M][N][P] accessed as arr[i][j][k], compute flat_index = i*N*P + j*P + k
-				
+
 				const auto& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
 				Type element_type = type_node.type();
 				int element_size_bits = static_cast<int>(type_node.size_in_bits());
 				size_t element_type_index = (element_type == Type::Struct) ? type_node.type_index() : 0;
-				
+
 				// Get element size for struct types
 				if (element_size_bits == 0 && element_type == Type::Struct && element_type_index > 0) {
 					const TypeInfo& type_info = gTypeInfo[element_type_index];
@@ -268,7 +268,7 @@
 						element_size_bits = static_cast<int>(struct_info->total_size * 8);
 					}
 				}
-				
+
 				// Get all dimension sizes
 				std::vector<size_t> dim_sizes;
 				const auto& dims = multi_dim.base_decl->array_dimensions();
@@ -282,24 +282,24 @@
 						break;
 					}
 				}
-				
+
 				if (dim_sizes.size() == multi_dim.indices.size()) {
 					// All dimensions evaluated successfully, compute flat index
 					// For arr[D0][D1][D2] accessed as arr[i0][i1][i2]:
 					// flat_index = i0 * (D1*D2) + i1 * D2 + i2
-					
+
 					// First, compute strides: stride[k] = product of dimensions after k
 					std::vector<size_t> strides(dim_sizes.size());
 					strides.back() = 1;
 					for (int k = static_cast<int>(dim_sizes.size()) - 2; k >= 0; --k) {
 						strides[k] = strides[k + 1] * dim_sizes[k + 1];
 					}
-					
+
 					// Generate code to compute flat index
 					// Start with the first index times its stride
 					auto idx0_operands = visitExpressionNode(multi_dim.indices[0].as<ExpressionNode>());
 					TempVar flat_index = var_counter.next();
-					
+
 					if (strides[0] == 1) {
 						// Simple case: stride is 1, just copy the index
 						// Use Add with 0 to effectively copy
@@ -316,11 +316,11 @@
 						mul_op.result = IrValue{flat_index};
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 					}
-					
+
 					// Add remaining indices: flat_index += indices[k] * strides[k]
 					for (size_t k = 1; k < multi_dim.indices.size(); ++k) {
 						auto idx_operands = visitExpressionNode(multi_dim.indices[k].as<ExpressionNode>());
-						
+
 						if (strides[k] == 1) {
 							// flat_index += indices[k]
 							TempVar new_flat = var_counter.next();
@@ -338,7 +338,7 @@
 							mul_op.rhs = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(strides[k])};
 							mul_op.result = IrValue{temp_prod};
 							ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
-							
+
 							// flat_index += temp
 							TempVar new_flat = var_counter.next();
 							BinaryOp add_op;
@@ -349,10 +349,10 @@
 							flat_index = new_flat;
 						}
 					}
-					
+
 					// Now generate the array access using the flat index
 					TempVar result_var = var_counter.next();
-					
+
 					// Mark array element access as lvalue using metadata system
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::ArrayElement,
@@ -362,7 +362,7 @@
 					lvalue_info.array_index = IrValue{flat_index};
 					lvalue_info.is_pointer_to_array = false;  // This is a real array, not a pointer
 					setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
-					
+
 					// Create ArrayAccessOp with the flat index
 					ArrayAccessOp payload;
 					payload.result = result_var;
@@ -374,14 +374,14 @@
 					payload.index.type = Type::UnsignedLongLong;
 					payload.index.size_in_bits = 64;
 					payload.index.value = flat_index;
-					
+
 					if (context == ExpressionContext::LValueAddress) {
 						// Don't emit ArrayAccess instruction (no load)
 						return { element_type, element_size_bits, result_var, static_cast<unsigned long long>(element_type_index) };
 					}
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-					
+
 					return { element_type, element_size_bits, result_var, static_cast<unsigned long long>(element_type_index) };
 				}
 			}
@@ -392,27 +392,24 @@
 			const MemberAccessNode& member_access = std::get<MemberAccessNode>(array_expr);
 			const ASTNode& object_node = member_access.object();
 			std::string_view member_name = member_access.member_name();
-
 			// Handle simple case: obj.array[index]
 			if (object_node.is<ExpressionNode>()) {
 				const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 					const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
 					std::string_view object_name = object_ident.name();
-
 					// Look up the object to get struct type
 					const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-						const auto& decl_node = symbol->as<DeclarationNode>();
-						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-
-						if (is_struct_type(type_node.type())) {
+					const DeclarationNode* member_decl_ptr = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+					if (member_decl_ptr) {
+						const auto& type_node = member_decl_ptr->type_node().as<TypeSpecifierNode>();
+							if (is_struct_type(type_node.type())) {
 							TypeIndex struct_type_index = type_node.type_index();
-							if (struct_type_index < gTypeInfo.size()) {
+								if (struct_type_index < gTypeInfo.size()) {
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 									struct_type_index,
 									StringTable::getOrInternStringHandle(std::string(member_name)));
-								
+
 								if (member_result) {
 									const StructMember* member = member_result.member;
 									// Get index expression
@@ -421,22 +418,25 @@
 									// Get element type and size from the member
 									Type element_type = member->type;
 									int element_size_bits = static_cast<int>(member->size * 8);
-									
-									// For array members, member->size is the total size, we need element size
-									// This is a simplified assumption - we need better array type info
-									// For now, assume arrays of primitives and compute element size
-									// TODO: Get actual array length from type info
-									// For now, use a heuristic: if size is larger than element type, it's an array
-									int base_element_size = get_type_size_bits(element_type);  // Use existing helper
-									
-									if (base_element_size > 0 && element_size_bits > base_element_size) {
-										// It's an array
-										element_size_bits = base_element_size;
+
+									// Use array_dimensions to compute actual element size
+									// member->size is the total array size; array_dimensions stores per-dimension counts
+									if (member->is_array && !member->array_dimensions.empty()) {
+										size_t total_elements = 1;
+										for (auto dim : member->array_dimensions)
+											total_elements *= dim;
+										if (total_elements > 0)
+											element_size_bits /= static_cast<int>(total_elements);
+									} else {
+										// Fallback heuristic for cases where array_dimensions may not be set
+										int base_element_size = get_type_size_bits(element_type);
+										if (base_element_size > 0 && element_size_bits > base_element_size)
+											element_size_bits = base_element_size;
 									}
 
 									// Create a temporary variable for the result
 									TempVar result_var = var_counter.next();
-									
+
 									// Mark array element access as lvalue (Option 2: Value Category Tracking)
 									StringHandle qualified_name = StringTable::getOrInternStringHandle(
 										StringBuilder().append(object_name).append(".").append(member_name));
@@ -458,7 +458,7 @@
 									payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 									payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
 									payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
-									
+
 									// Set index as TypedValue
 									payload.index.type = std::get<Type>(index_operands[0]);
 									payload.index.size_in_bits = std::get<int>(index_operands[1]);
@@ -470,18 +470,22 @@
 										payload.index.value = std::get<StringHandle>(index_operands[2]);
 									}
 
+									// Propagate type_index for struct element types so downstream member access
+									// (e.g. c.items[0].value) can look up the struct's member layout
+									unsigned long long elem_type_index = static_cast<unsigned long long>(member->type_index);
+
 									// When context is LValueAddress, skip the load and return address/metadata only
 									if (context == ExpressionContext::LValueAddress) {
 										// Don't emit ArrayAccess instruction (no load)
 										// Just return the metadata with the result temp var
-										return { element_type, element_size_bits, result_var, 0ULL };
+										return { element_type, element_size_bits, result_var, elem_type_index };
 									}
 
 									// Create instruction with typed payload (Load context - default)
 									ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-									// Return the result with the element type
-									return { element_type, element_size_bits, result_var, 0ULL };
+									// Return the result with the element type and its type index
+									return { element_type, element_size_bits, result_var, elem_type_index };
 								}
 							}
 						}
@@ -513,12 +517,12 @@
 			const DeclarationNode* decl_ptr = lookupDeclaration(arr_ident.name());
 			if (decl_ptr) {
 				const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-				
+
 				// Capture type_index for struct types (important for member access on array elements)
 				if (type_node.type() == Type::Struct) {
 					element_type_index = type_node.type_index();
 				}
-				
+
 				// For array types, ALWAYS get the element size from type_node, not from array_operands
 				// array_operands[1] contains 64 (pointer size) for arrays, not the element size
 				if (decl_ptr->is_array() || type_node.is_array()) {
@@ -564,7 +568,7 @@
 				}
 			}
 		}
-		
+
 		// Fix element size for array members accessed through TempVar (e.g., vls.values[i])
 		// When array comes from member_access, element_size_bits is the TOTAL array size (e.g., 640 bits for int[20])
 		// We need to derive the actual element size from the element type
@@ -582,7 +586,7 @@
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
-		
+
 		// If the array expression resolved to a TempVar that actually refers to a member,
 		// recover the qualified name and offset from its lvalue metadata so we don't lose
 		// struct/offset information (important for member arrays).
@@ -657,7 +661,7 @@
 		if (!std::holds_alternative<TempVar>(base_variant) && std::holds_alternative<TempVar>(array_operands[2])) {
 			base_variant = std::get<TempVar>(array_operands[2]);
 		}
-		
+
 		// Mark array element access as lvalue (Option 2: Value Category Tracking)
 		// arr[i] is an lvalue - it designates an object with a stable address
 		LValueInfo lvalue_info(
@@ -679,20 +683,20 @@
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;
-		
+
 		// Set array (either variable name or temp)
 		if (std::holds_alternative<StringHandle>(array_operands[2])) {
 			payload.array = std::get<StringHandle>(array_operands[2]);
 		} else if (std::holds_alternative<TempVar>(array_operands[2])) {
 			payload.array = std::get<TempVar>(array_operands[2]);
 		}
-		
+
 		// Set index as TypedValue
 		Type index_type = std::get<Type>(index_operands[0]);
 		int index_size = std::get<int>(index_operands[1]);
 		payload.index.type = index_type;
 		payload.index.size_in_bits = index_size;
-		
+
 		if (std::holds_alternative<unsigned long long>(index_operands[2])) {
 			payload.index.value = std::get<unsigned long long>(index_operands[2]);
 		} else if (std::holds_alternative<TempVar>(index_operands[2])) {
@@ -736,15 +740,15 @@
 		Type& base_type,
 		size_t& base_type_index,
 		bool& is_pointer_dereference) {
-		
+
 		// Look up the object in the symbol table (local first, then global)
 		std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-		
+
 		// If not found locally, try global symbol table (for global struct variables)
 		if (!symbol.has_value() && global_symbol_table_) {
 			symbol = global_symbol_table_->lookup(object_name);
 		}
-		
+
 		// If not found in symbol tables, check if it's a type name (for static member access like ClassName::member)
 		if (!symbol.has_value()) {
 			FLASH_LOG(Codegen, Debug, "validateAndSetupIdentifierMemberAccess: object_name='", object_name, "' not in symbol table, checking gTypesByName");
@@ -758,7 +762,7 @@
 				is_pointer_dereference = false;  // Type names don't need dereferencing
 				return true;
 			}
-			
+
 			FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table or type registry");
 			return false;
 		}
@@ -786,14 +790,14 @@
 		base_object = StringTable::getOrInternStringHandle(object_name);
 		base_type = object_type.type();
 		base_type_index = object_type.type_index();
-		
+
 		// Check if this is a pointer to struct (e.g., P* pp) or a reference to struct (e.g., P& pr)
 		// In this case, member access like pp->member or pr.member should be treated as pointer dereference
 		// References are implemented as pointers internally, so they need the same treatment
 		if (object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference()) {
 			is_pointer_dereference = true;
 		}
-		
+
 		return true;
 	}
 
@@ -897,30 +901,30 @@
 		// If this is arrow access (obj->member), check if the object has operator->() overload
 		if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident->name());
-			
+
 			const TypeSpecifierNode* type_node = nullptr;
 			if (const DeclarationNode* decl = lookupDeclaration(identifier_handle)) {
 				type_node = &decl->type_node().as<TypeSpecifierNode>();
 			}
-			
+
 			// Check if it's a struct with operator-> overload
 			if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
 				auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::Arrow);
-				
+
 				if (overload_result.has_overload) {
 					// Found an overload! Call operator->() to get pointer, then access member
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}", 
 					type_node->type_index());
-					
+
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-					
+
 					// Get struct name for mangling
 					std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
-					
+
 					// Get the return type from the function declaration (should be a pointer)
 					const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-					
+
 					// Generate mangled name for operator->
 					std::string_view operator_func_name = "operator->";
 					std::vector<TypeSpecifierNode> empty_params;
@@ -934,10 +938,10 @@
 						empty_namespace,
 						Linkage::CPlusPlus
 					);
-					
+
 					// Generate the call to operator->()
 					TempVar ptr_result = var_counter.next();
-					
+
 					CallOp call_op;
 					call_op.result = ptr_result;
 					call_op.return_type = return_type.type();
@@ -948,17 +952,17 @@
 					call_op.function_name = mangled_name;
 					call_op.is_variadic = false;
 					call_op.is_member_function = true;
-					
+
 					// Add 'this' pointer as first argument
 					call_op.args.push_back(TypedValue{
 						.type = type_node->type(),
 						.size_in_bits = 64,  // Pointer size
 						.value = IrValue(identifier_handle)
 					});
-					
+
 					// Add the function call instruction
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
-					
+
 					// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
 					if (return_type.pointer_depth() > 0) {
 						base_object = ptr_result;
@@ -1012,13 +1016,13 @@
 					throw InternalError(std::string("dereference operand is not an expression for member '") + std::string(memberAccessNode.member_token().value()) + "' (unary op '" + std::string(unary_op.op()) + "')");
 				}
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
-				
+
 				// Special handling for 'this' in lambdas with [this] or [*this] capture
 				bool is_lambda_this = false;
 				if (std::holds_alternative<IdentifierNode>(operand_expr)) {
 					const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
 					std::string_view ptr_name = ptr_ident.name();
-					
+
 					if (ptr_name == "this" && current_lambda_context_.isActive() && 
 					current_lambda_context_.captures.find(StringTable::getOrInternStringHandle("this"sv)) != current_lambda_context_.captures.end()) {
 						is_lambda_this = true;
@@ -1030,7 +1034,7 @@
 							const StructMember* copy_this_member = closure_struct ? closure_struct->findMember("__copy_this") : nullptr;
 							int copy_this_offset = copy_this_member ? static_cast<int>(copy_this_member->offset) : 0;
 							int copy_this_size_bits = copy_this_member ? static_cast<int>(copy_this_member->size * 8) : 64;
-							
+
 							TempVar copy_this_ref = var_counter.next();
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
@@ -1043,7 +1047,7 @@
 							load_copy_this.is_rvalue_reference = false;
 							load_copy_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
-							
+
 							LValueInfo lvalue_info(
 								LValueInfo::Kind::Member,
 								StringTable::getOrInternStringHandle("this"sv),
@@ -1052,14 +1056,14 @@
 							lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							lvalue_info.is_pointer_to_member = true;
 							setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info));
-							
+
 							base_object = copy_this_ref;
 							base_type = Type::Struct;
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						} else {
 							// [this] capture: load the pointer from __this
 							int this_member_offset = getClosureMemberOffset("__this");
-							
+
 							TempVar this_ptr = var_counter.next();
 							MemberLoadOp load_this;
 							load_this.result.value = this_ptr;
@@ -1072,14 +1076,14 @@
 							load_this.is_rvalue_reference = false;
 							load_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
-							
+
 							base_object = this_ptr;
 							base_type = Type::Struct;
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						}
 					}
 				}
-				
+
 				if (!is_lambda_this) {
 					auto pointer_operands = visitExpressionNode(operand_expr);
 					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
@@ -1153,7 +1157,7 @@
 		}
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
-		
+
 		// FIRST check if this is a static member (can be accessed via instance in C++)
 		auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(member_name));
 		if (static_member) {
@@ -1165,12 +1169,12 @@
 			qualified_name_sb.append("::"sv);
 			qualified_name_sb.append(member_name);
 			std::string_view qualified_name = qualified_name_sb.commit();
-			
+
 			FLASH_LOG(Codegen, Debug, "Static member access: ", member_name, " in struct ", type_info->name(), " owned by ", owner_struct->getName(), " -> qualified_name: ", qualified_name);
-			
+
 			// Create a temporary variable for the result
 			TempVar result_var = var_counter.next();
-			
+
 			int sm_size_bits = static_cast<int>(static_member->size * 8);
 			// If size is 0 for struct types, look up from type info
 			if (sm_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
@@ -1179,19 +1183,19 @@
 					sm_size_bits = static_cast<int>(sm_si->total_size * 8);
 				}
 			}
-			
+
 			// Build GlobalLoadOp for the static member
 			GlobalLoadOp global_load;
 			global_load.result.value = result_var;
 			global_load.result.type = static_member->type;
 			global_load.result.size_in_bits = sm_size_bits;
 			global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
-			
+
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
-			
+
 			return makeMemberResult(static_member->type, sm_size_bits, result_var, static_member->type_index);
 		}
-		
+
 		// Use recursive lookup to find instance members in base classes as well
 		auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, StringTable::getOrInternStringHandle(member_name));
 
@@ -1203,7 +1207,7 @@
 			}
 			throw InternalError("Member not found in struct");
 		}
-		
+
 		const StructMember* member = member_result.member;
 
 		// Check access control
@@ -1232,11 +1236,11 @@
 		std::variant<StringHandle, TempVar> ultimate_base = base_object;
 		StringHandle ultimate_member_name = StringTable::getOrInternStringHandle(member_name);
 		bool did_unwrap = false;
-		
+
 		if (context == ExpressionContext::LValueAddress && std::holds_alternative<TempVar>(base_object)) {
 			TempVar base_temp = std::get<TempVar>(base_object);
 			auto base_lvalue_info = getTempVarLValueInfo(base_temp);
-			
+
 			if (base_lvalue_info.has_value() && base_lvalue_info->kind == LValueInfo::Kind::Member) {
 				// The base is itself a member access
 				// Combine the offsets and use the ultimate base (LValueAddress context only)
@@ -1254,7 +1258,7 @@
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
-		
+
 		// Mark member access as lvalue (Option 2: Value Category Tracking)
 		// obj.member is an lvalue - it designates a specific object member
 		// Use adjusted_offset from member_result to handle inheritance correctly
@@ -1281,7 +1285,7 @@
 		std::visit([&](auto& base_value) { member_load.object = base_value; }, effective_base);
 		member_load.member_name = did_unwrap ? ultimate_member_name : StringTable::getOrInternStringHandle(member_name);
 		member_load.offset = did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset);
-	
+
 		// Add reference metadata (required for proper handling of reference members)
 		member_load.is_reference = member->is_reference();
 		member_load.is_rvalue_reference = member->is_rvalue_reference();
@@ -1324,7 +1328,7 @@
 
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 		size_t element_size = type_spec.size_in_bits() / 8;
-		
+
 		// For struct types, get size from gTypeInfo instead of size_in_bits()
 		if (element_size == 0 && type_spec.type() == Type::Struct) {
 			size_t type_index = type_spec.type_index();
@@ -1336,11 +1340,11 @@
 				}
 			}
 		}
-		
+
 		if (element_size == 0) {
 			return std::nullopt;
 		}
-		
+
 		// Get array size - support multidimensional arrays
 		const auto& dims = decl.array_dimensions();
 		if (dims.empty()) {
@@ -1350,18 +1354,18 @@
 		// Evaluate all dimension size expressions and compute total element count
 		size_t array_count = 1;
 		ConstExpr::EvaluationContext ctx(symbol_table);
-		
+
 		for (const auto& dim_expr : dims) {
 			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 			if (!eval_result.success()) {
 				return std::nullopt;
 			}
-			
+
 			long long dim_size = eval_result.as_int();
 			if (dim_size <= 0) {
 				return std::nullopt;
 			}
-			
+
 			// Check for potential overflow in multiplication
 			size_t dim_size_u = static_cast<size_t>(dim_size);
 			if (array_count > SIZE_MAX / dim_size_u) {
@@ -1370,13 +1374,13 @@
 			}
 			array_count *= dim_size_u;
 		}
-		
+
 		// Check for potential overflow in multiplication with element size
 		if (array_count > SIZE_MAX / element_size) {
 			FLASH_LOG(Codegen, Warning, "Array size calculation would overflow: ", array_count, " * ", element_size);
 			return std::nullopt;
 		}
-		
+
 		return element_size * array_count;
 	}
 
@@ -1443,7 +1447,7 @@
 			// If size_in_bits is 0, try looking up the identifier in the symbol table.
 			if (type_spec.size_in_bits() == 0 && type_spec.token().type() == Token::Type::Identifier) {
 				StringHandle identifier = StringTable::getOrInternStringHandle(type_spec.token().value());
-				
+
 				// Check if this is a qualified name (e.g., Foo::val) parsed as a type placeholder.
 				// The type name in gTypeInfo will contain "::" for qualified names.
 				if (type_spec.type_index() < gTypeInfo.size()) {
@@ -1459,7 +1463,7 @@
 						}
 					}
 				}
-				
+
 				// Look up the identifier in the symbol table
 				const DeclarationNode* decl = lookupDeclaration(identifier);
 				if (decl) {
@@ -1469,7 +1473,7 @@
 						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
 					}
 				}
-				
+
 				// Handle template parameters in member functions with trailing requires clauses
 				// When sizeof(T) is used in a template class member function, T is a template parameter
 				// that should be resolved from the instantiated class's template arguments
@@ -1477,7 +1481,7 @@
 					// We're in a member function - try to resolve the template parameter
 					std::string_view struct_name = StringTable::getStringView(current_struct_name_);
 					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
-					
+
 					if (param_size_bytes > 0) {
 						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(param_size_bytes) };
 					}
@@ -1488,11 +1492,11 @@
 			if (type_spec.is_array()) {
 				size_t element_size = type_spec.size_in_bits() / 8;
 				size_t array_count = 0;
-				
+
 				if (type_spec.array_size().has_value()) {
 					array_count = *type_spec.array_size();
 				}
-				
+
 				if (array_count > 0) {
 					size_in_bytes = element_size * array_count;
 				} else {
@@ -1534,7 +1538,7 @@
 			const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-				
+
 				// Look up the identifier in the symbol table
 				const DeclarationNode* decl = lookupDeclaration(id_node.name());
 				if (decl) {
@@ -1544,7 +1548,7 @@
 						// Return sizeof result for array
 						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
 					}
-					
+
 					// For regular variables, get the type size from the declaration
 					const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
 					if (var_type.type() == Type::Struct) {
@@ -1580,7 +1584,7 @@
 				const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
 				std::string_view member_name = member_access.member_name();
 				FLASH_LOG(Codegen, Debug, "sizeof(member_access): member_name=", member_name);
-				
+
 				// Get the object's type to find the struct info
 				const ASTNode& object_node = member_access.object();
 				if (object_node.is<ExpressionNode>()) {
@@ -1588,7 +1592,7 @@
 					if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 						const IdentifierNode& id_node = std::get<IdentifierNode>(obj_expr);
 						FLASH_LOG(Codegen, Debug, "sizeof(member_access): object_name=", id_node.name());
-						
+
 						// Look up the identifier to get its type
 						const DeclarationNode* decl = lookupDeclaration(id_node.name());
 						if (decl) {
@@ -1601,7 +1605,7 @@
 									std::string_view base_type_name = StringTable::getStringView(type_info.name());
 									FLASH_LOG(Codegen, Debug, "sizeof(member_access): type_info name=", base_type_name);
 									const StructTypeInfo* struct_info = type_info.getStructInfo();
-									
+
 									// First try the direct struct_info
 									size_t direct_member_size = 0;
 									if (struct_info && !struct_info->members.empty()) {
@@ -1615,14 +1619,14 @@
 											}
 										}
 									}
-									
+
 									// If direct lookup found a member with size > 1, use it
 									// Otherwise, search for instantiated types (template vs instantiation mismatch)
 									if (direct_member_size > 1) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
 										return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
 									}
-									
+
 									// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
 									// search for instantiated types that match this base template name
 									// This handles cases like test<int> where type_index points to 'test' 
@@ -1645,7 +1649,7 @@
 											}
 										}
 									}
-									
+
 									// If no instantiation found but direct lookup had a result, use that
 									if (direct_member_size > 0) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
@@ -1662,24 +1666,24 @@
 			else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
 				const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(expr);
 				const ASTNode& array_expr_node = array_subscript.array_expr();
-				
+
 				// Check if the array expression is an identifier
 				if (array_expr_node.is<ExpressionNode>()) {
 					const ExpressionNode& array_expr = array_expr_node.as<ExpressionNode>();
 					if (std::holds_alternative<IdentifierNode>(array_expr)) {
 						const IdentifierNode& id_node = std::get<IdentifierNode>(array_expr);
-						
+
 						// Look up the array identifier in the symbol table
 						const DeclarationNode* decl = lookupDeclaration(id_node.name());
 						if (decl) {
 							const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
-							
+
 							// Get the base element type size
 							size_t element_size = var_type.size_in_bits() / 8;
 							if (element_size == 0) {
 								element_size = get_type_size_bits(var_type.type()) / 8;
 							}
-							
+
 							// Handle struct element types
 							if (element_size == 0 && var_type.type() == Type::Struct) {
 								size_t type_index = var_type.type_index();
@@ -1691,7 +1695,7 @@
 									}
 								}
 							}
-							
+
 							// For multidimensional arrays, arr[0] should return size of the sub-array
 							// e.g., for int arr[3][4], sizeof(arr[0]) = sizeof(int[4]) = 16
 							const auto& dims = decl->array_dimensions();
@@ -1699,7 +1703,7 @@
 								// Calculate sub-array size: element_size * product of all dims except first
 								size_t sub_array_count = 1;
 								ConstExpr::EvaluationContext ctx(symbol_table);
-								
+
 								for (size_t i = 1; i < dims.size(); ++i) {
 									auto eval_result = ConstExpr::Evaluator::evaluate(dims[i], ctx);
 									if (!eval_result.success()) {
@@ -1708,17 +1712,17 @@
 										" for '", id_node.name(), "', falling back to IR generation");
 										goto fallback_to_ir;
 									}
-									
+
 									long long dim_size = eval_result.as_int();
 									if (dim_size <= 0) {
 										FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Invalid dimension size ", dim_size, 
 										" for '", id_node.name(), "'");
 										goto fallback_to_ir;
 									}
-									
+
 									sub_array_count *= static_cast<size_t>(dim_size);
 								}
-								
+
 								size_in_bytes = element_size * sub_array_count;
 								FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): multidim array=", id_node.name(), 
 								" element_size=", element_size, " sub_array_count=", sub_array_count,
@@ -1729,13 +1733,13 @@
 								FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
 								" element_size=", size_in_bytes);
 							}
-							
+
 							// Return the size without generating runtime IR
 							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 						}
-						
+
 						fallback_to_ir:
-						
+
 						// If we couldn't resolve compile-time, log and fall through
 						FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not resolve '", id_node.name(), 
 						"' at compile-time, falling back to IR generation");
@@ -1748,7 +1752,7 @@
 				std::string_view struct_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
 				std::string_view member_name = qual_id.name();
 				FLASH_LOG(Codegen, Debug, "sizeof(qualified_id): struct=", struct_name, " member=", member_name);
-				
+
 				size_t member_size = lookupStructMemberSize(struct_name, member_name);
 				if (member_size > 0) {
 					return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_size) };
@@ -1838,10 +1842,10 @@
 			const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-				
+
 				// Look up the identifier in the symbol table
 				std::optional<ASTNode> symbol = lookupSymbol(id_node.name());
-				
+
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 					if (decl) {
@@ -2054,7 +2058,7 @@
 		bool is_reference = type_spec.is_reference();
 		bool is_rvalue_reference = type_spec.is_rvalue_reference();
 		size_t pointer_depth = type_spec.pointer_depth();
-		
+
 		// Get TypeInfo and StructTypeInfo for use by shared evaluator and binary traits
 		[[maybe_unused]] const TypeInfo* outer_type_info = (type_spec.type_index() < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index()] : nullptr;
 		[[maybe_unused]] const StructTypeInfo* outer_struct_info = outer_type_info ? outer_type_info->getStructInfo() : nullptr;
@@ -2067,19 +2071,19 @@
 					const ASTNode& second_type_node = traitNode.second_type_node();
 					if (second_type_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& derived_spec = second_type_node.as<TypeSpecifierNode>();
-						
+
 						// Both types must be class types (not references, not pointers)
 						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
 						!is_reference && pointer_depth == 0 &&
 						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
 						type_spec.type_index() < gTypeInfo.size() &&
 						derived_spec.type_index() < gTypeInfo.size()) {
-							
+
 							const TypeInfo& base_info = gTypeInfo[type_spec.type_index()];
 							const TypeInfo& derived_info = gTypeInfo[derived_spec.type_index()];
 							const StructTypeInfo* base_struct = base_info.getStructInfo();
 							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
-							
+
 							if (base_struct && derived_struct) {
 								// Same type is considered base of itself
 								if (type_spec.type_index() == derived_spec.type_index()) {
@@ -2105,7 +2109,7 @@
 					const ASTNode& second_type_node = traitNode.second_type_node();
 					if (second_type_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& second_spec = second_type_node.as<TypeSpecifierNode>();
-						
+
 						// Check if all properties match exactly
 						result = (type == second_spec.type() &&
 						is_reference == second_spec.is_reference() &&
@@ -2126,14 +2130,14 @@
 					if (second_type_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
 						const TypeSpecifierNode& from_spec = type_spec;
-						
+
 						Type from_type = from_spec.type();
 						Type to_type = to_spec.type();
 						bool from_is_ref = from_spec.is_reference();
 						bool to_is_ref = to_spec.is_reference();
 						size_t from_ptr_depth = from_spec.pointer_depth();
 						size_t to_ptr_depth = to_spec.pointer_depth();
-						
+
 						// Same type is always convertible
 						if (from_type == to_type && from_is_ref == to_is_ref && 
 						from_ptr_depth == to_ptr_depth && 
@@ -2186,14 +2190,14 @@
 					if (second_type_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
 						const TypeSpecifierNode& from_spec = type_spec;
-						
+
 						Type from_type = from_spec.type();
 						Type to_type = to_spec.type();
 						bool from_is_ref = from_spec.is_reference();
 						bool to_is_ref = to_spec.is_reference();
 						size_t from_ptr_depth = from_spec.pointer_depth();
 						size_t to_ptr_depth = to_spec.pointer_depth();
-						
+
 						// Same type is always nothrow convertible
 						if (from_type == to_type && from_is_ref == to_is_ref && 
 						from_ptr_depth == to_ptr_depth && 
@@ -2319,10 +2323,10 @@
 								}
 							}
 						}
-						
+
 						bool no_virtual = !struct_info->has_vtable;
 						bool all_public = true;
-						
+
 						for (const auto& member : struct_info->members) {
 							if (member.access == AccessSpecifier::Private || 
 							member.access == AccessSpecifier::Protected) {
@@ -2330,7 +2334,7 @@
 								break;
 							}
 						}
-						
+
 						result = !has_user_constructors && no_virtual && all_public;
 					}
 				}
@@ -2644,7 +2648,7 @@
 					const ASTNode& from_node = traitNode.second_type_node();
 					if (from_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
-						
+
 						// For scalar types, check type compatibility
 						if (isScalarType(type, is_reference, pointer_depth)) {
 							// Scalars are assignable from compatible types
@@ -2671,7 +2675,7 @@
 					const ASTNode& from_node = traitNode.second_type_node();
 					if (from_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
-						
+
 						// Scalar types are trivially assignable
 						if (isScalarType(type, is_reference, pointer_depth) &&
 						isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
@@ -2698,7 +2702,7 @@
 					const ASTNode& from_node = traitNode.second_type_node();
 					if (from_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
-						
+
 						// Scalar types don't throw on assignment
 						if (isScalarType(type, is_reference, pointer_depth) &&
 						isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
@@ -2849,7 +2853,7 @@
 						// For now, we check if the class has a vtable (which implies virtual methods)
 						// and if it has a user-defined destructor
 						result = struct_info->has_vtable && struct_info->hasUserDefinedDestructor();
-						
+
 						// If the class has a vtable but no explicit destructor, check base classes
 						if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
 							// Check if any base class has a virtual destructor
@@ -2876,7 +2880,7 @@
 					const ASTNode& second_node = traitNode.second_type_node();
 					if (second_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& second_spec = second_node.as<TypeSpecifierNode>();
-						
+
 						// Same type is always layout compatible with itself
 						if (type == second_spec.type() && 
 						pointer_depth == second_spec.pointer_depth() &&
@@ -2905,19 +2909,19 @@
 					const ASTNode& derived_node = traitNode.second_type_node();
 					if (derived_node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& derived_spec = derived_node.as<TypeSpecifierNode>();
-						
+
 						// Both must be class types (not references, not pointers)
 						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
 						!is_reference && pointer_depth == 0 &&
 						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
 						type_spec.type_index() < gTypeInfo.size() &&
 						derived_spec.type_index() < gTypeInfo.size()) {
-							
+
 							const TypeInfo& base_info = gTypeInfo[type_spec.type_index()];
 							const TypeInfo& derived_info = gTypeInfo[derived_spec.type_index()];
 							const StructTypeInfo* base_struct = base_info.getStructInfo();
 							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
-							
+
 							if (base_struct && derived_struct) {
 								// Same type is pointer interconvertible with itself
 								if (type_spec.type_index() == derived_spec.type_index()) {
@@ -2926,7 +2930,7 @@
 									// Both types must be standard-layout for pointer interconvertibility
 									bool base_is_standard_layout = base_struct->isStandardLayout();
 									bool derived_is_standard_layout = derived_struct->isStandardLayout();
-									
+
 									if (base_is_standard_layout && derived_is_standard_layout) {
 										// Check if Base is the first base class at offset 0
 										for (size_t i = 0; i < derived_struct->base_classes.size(); ++i) {
