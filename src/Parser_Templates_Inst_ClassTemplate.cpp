@@ -612,7 +612,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Register the mapping from instantiated name to pattern name
 		// This allows member alias lookup to find the correct specialization
-		gTemplateRegistry.register_instantiation_pattern(instantiated_name, pattern_struct.name());
+		gTemplateRegistry.register_instantiation_pattern(instantiated_name, pattern_struct.name(), StringTable::getOrInternStringHandle(template_name));
 		
 		// Get template parameters from the pattern (partial specialization), NOT the primary template
 		// The pattern stores its own template parameters (e.g., <typename First, typename... Rest>)

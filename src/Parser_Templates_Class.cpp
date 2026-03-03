@@ -2567,11 +2567,13 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Generate a unique name for the pattern template
 			// We use the template parameter names + modifiers to create unique pattern names
-			// E.g., Container<T*> -> Container_pattern_TP
-			//       Container<T**> -> Container_pattern_TPP
-			//       Container<T&> -> Container_pattern_TR
+			// E.g., Container<T*> -> Container$pattern_TP
+			//       Container<T**> -> Container$pattern_TPP
+			//       Container<T&> -> Container$pattern_TR
+			// The '$' separator cannot appear in standard C++ identifiers, avoiding
+			// collisions with user-defined names that might contain "_pattern".
 			StringBuilder pattern_name_builder;
-			pattern_name_builder.append(template_name).append("_pattern");
+			pattern_name_builder.append(template_name).append("$pattern");
 			for (const auto& arg : pattern_args) {
 				// Add modifiers to make pattern unique
 				pattern_name_builder.append("_");
@@ -2607,8 +2609,8 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			auto instantiated_name = StringTable::getOrInternStringHandle(pattern_name_builder);
 			
-			// Register this as a pattern struct name for O(1) lookup
-			gTemplateRegistry.registerPatternStructName(instantiated_name);
+			// Register this as a pattern struct name with its base template name for non-string-based lookup
+			gTemplateRegistry.registerPatternStructName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
 			
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -2768,7 +2770,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Build pattern key for lookup
 				StringBuilder pattern_key;
-				pattern_key.append(template_name).append("_pattern");
+				pattern_key.append(template_name).append("$pattern");
 				for (const auto& arg : pattern_args) {
 					pattern_key.append("_");
 					for (size_t i = 0; i < arg.pointer_depth; ++i) {
@@ -3003,7 +3005,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Check for constructor (identifier matching template name followed by '('
 				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),
-				// not the instantiated pattern name (e.g., "Calculator_pattern_P")
+				// not the instantiated pattern name (e.g., "Calculator$pattern_P")
 				SaveHandle saved_pos = save_token_position();
 				if (!peek().is_eof() && peek().is_identifier() &&
 				    peek_info().value() == template_name) {
@@ -4629,9 +4631,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		
 		// Generate a unique name for the pattern template
 		// We use the template parameter names + modifiers to create unique pattern names
-		// E.g., List<T*> -> ParentClass::List_pattern_TP
+		// E.g., List<T*> -> ParentClass::List$pattern_TP
+		// The '$' separator cannot appear in standard C++ identifiers, avoiding
+		// collisions with user-defined names that might contain "_pattern".
 		StringBuilder pattern_name;
-		pattern_name.append(struct_name).append("_pattern"sv);
+		pattern_name.append(struct_name).append("$pattern"sv);
 		for (const auto& arg : pattern_args) {
 			// Add modifiers to make pattern unique
 			pattern_name.append("_"sv);
@@ -4686,8 +4690,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
 			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name_str));
 		
-		// Register this as a pattern struct name for O(1) lookup
-		gTemplateRegistry.registerPatternStructName(qualified_pattern_name);
+		// Register this as a pattern struct name with its base template name for non-string-based lookup
+		auto qualified_base_name = StringTable::getOrInternStringHandle(
+			StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+		gTemplateRegistry.registerPatternStructName(qualified_pattern_name, qualified_base_name);
 		
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
