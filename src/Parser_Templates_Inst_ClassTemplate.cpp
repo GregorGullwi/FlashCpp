@@ -3290,11 +3290,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
 
 		// Calculate member size - for arrays, multiply element size by array size
-		bool is_array_member = false;
-		std::vector<size_t> resolved_array_dimensions;
+		std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args_to_use);
+		bool is_array_member = !resolved_array_dimensions.empty();
 		size_t member_size;
-		if (substituted_array_size.has_value()) {
-			// Extract the array size value
+		if (is_array_member) {
+			member_size = get_type_size_bits(member_type) / 8;
+			for (size_t dim_size : resolved_array_dimensions) {
+				member_size *= dim_size;
+			}
+		} else if (substituted_array_size.has_value()) {
+			// Fallback for arrays where resolve_array_dimensions couldn't resolve
+			// (e.g., literal array sizes that aren't template-parameter-dependent)
 			size_t array_size = 1;
 			const ASTNode& size_node = *substituted_array_size;
 			if (size_node.is<ExpressionNode>()) {
