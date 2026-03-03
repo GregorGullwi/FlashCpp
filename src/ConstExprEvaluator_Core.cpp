@@ -2276,7 +2276,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	if (stmt_node.is<ExpressionNode>()) {
 		// Evaluate the expression (which may have side effects like assignments)
 		auto result = evaluate_expression_with_bindings(stmt_node, bindings, context);
-		// Expression statements don't return values to the caller
+		// Propagate evaluation errors (e.g., failed assignment RHS).
+		// Successful results are discarded — expression statements don't produce
+		// return values for the caller; only the side effects (bindings mutations) matter.
+		if (!result.success()) {
+			return result;
+		}
 		return EvalResult::error("Statement executed (not a return)");
 	}
 	
