@@ -1518,6 +1518,26 @@ ParseResult Parser::parse_template_declaration() {
 						if (template_result.is_error()) {
 							return template_result;
 						}
+						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
+						if (auto result_node = template_result.node()) {
+							if (result_node->is<FriendDeclarationNode>()) {
+								const auto& friend_decl = result_node->as<FriendDeclarationNode>();
+								if (friend_decl.kind() == FriendKind::TemplateClass && friend_decl.name().isValid()) {
+									StringHandle friend_name = friend_decl.name();
+									struct_info->addFriendClass(friend_name);
+									std::string_view friend_sv = StringTable::getStringView(friend_name);
+									if (friend_sv.find("::") == std::string_view::npos) {
+										NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
+										std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+										if (!ns_name.empty()) {
+											StringHandle qualified_friend = StringTable::getOrInternStringHandle(
+												StringBuilder().append(ns_name).append("::").append(friend_sv).commit());
+											struct_info->addFriendClass(qualified_friend);
+										}
+									}
+								}
+							}
+						}
 						continue;
 					} else if (peek() == "static"_tok) {
 						// Handle static members: static const int size = 10;
@@ -2949,6 +2969,26 @@ ParseResult Parser::parse_template_declaration() {
 						auto template_result = parse_member_template_or_function(struct_ref, current_access);
 						if (template_result.is_error()) {
 							return template_result;
+						}
+						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
+						if (auto result_node = template_result.node()) {
+							if (result_node->is<FriendDeclarationNode>()) {
+								const auto& friend_decl = result_node->as<FriendDeclarationNode>();
+								if (friend_decl.kind() == FriendKind::TemplateClass && friend_decl.name().isValid()) {
+									StringHandle friend_name = friend_decl.name();
+									struct_info->addFriendClass(friend_name);
+									std::string_view friend_sv = StringTable::getStringView(friend_name);
+									if (friend_sv.find("::") == std::string_view::npos) {
+										NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
+										std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+										if (!ns_name.empty()) {
+											StringHandle qualified_friend = StringTable::getOrInternStringHandle(
+												StringBuilder().append(ns_name).append("::").append(friend_sv).commit());
+											struct_info->addFriendClass(qualified_friend);
+										}
+									}
+								}
+							}
 						}
 						continue;
 					} else if (peek() == "static_assert"_tok) {
