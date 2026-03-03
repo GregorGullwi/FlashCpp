@@ -4941,7 +4941,61 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 			
 			// Check if this is a member function (has '(') or data member (has ';', ':', or '=')
-			if (peek() == ":"_tok) {
+			if (peek() == "("_tok) {
+				// Member function
+				DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+				
+				// Parse function declaration with parameters
+				auto func_result = parse_function_declaration(decl_node);
+				if (func_result.is_error()) {
+					return func_result;
+				}
+				
+				if (!func_result.node().has_value()) {
+					return ParseResult::error("Failed to create function declaration node", peek_info());
+				}
+				
+				FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+				
+				// Create member function node
+				auto [member_func_node, member_func_ref] =
+					emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_pattern_name);
+				
+				// Copy parameters
+				for (const auto& param : func_decl.parameter_nodes()) {
+					member_func_ref.add_parameter_node(param);
+				}
+				
+				// Parse trailing specifiers
+				FlashCpp::MemberQualifiers member_quals;
+				FlashCpp::FunctionSpecifiers func_specs;
+				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+				if (specs_result.is_error()) {
+					return specs_result;
+				}
+
+				// Propagate noexcept specifier to the function declaration node
+				if (func_specs.is_noexcept) {
+					member_func_ref.set_noexcept(true);
+					if (func_specs.noexcept_expr)
+						member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
+				}
+				
+				// Handle function body or semicolon
+				if (peek() == "{"_tok) {
+					// Save position for re-parsing during instantiation
+					SaveHandle body_start = save_token_position();
+					member_func_ref.set_template_body_position(body_start);
+					
+					// Skip over the body
+					skip_balanced_braces();
+				} else if (peek() == ";"_tok) {
+					advance(); // consume ';'
+				}
+				
+				// Add member function to struct
+				member_struct_ref.add_member_function(member_func_node, current_access);
+			} else if (peek() == ":"_tok) {
 				// Bitfield data member
 				std::optional<size_t> bitfield_width;
 				std::optional<ASTNode> bitfield_width_expr;
@@ -4980,8 +5034,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
 			} else {
-				// Skip other complex cases for now (member functions, etc.)
-				// Just consume tokens until we hit ';' or '}'
+				// Skip other complex cases (e.g., friend declarations)
 				int brace_depth = 0;
 				while (!peek().is_eof()) {
 					if (peek() == "{"_tok) {

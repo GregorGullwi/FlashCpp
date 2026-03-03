@@ -1846,6 +1846,66 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (orig_func.get_definition().has_value()) {
 					FLASH_LOG(Templates, Debug, "Copying function definition to new function");
 					new_func.set_definition(*orig_func.get_definition());
+				} else if (orig_func.has_template_body_position()) {
+					// Member struct template partial specializations store function bodies
+					// as deferred template body positions — re-parse the body now with
+					// concrete template arguments so the definition is available at codegen.
+					FLASH_LOG(Templates, Debug, "Re-parsing deferred function body from template body position");
+					
+					FlashCpp::TemplateParameterScope template_scope;
+					std::vector<std::string_view> param_names;
+					param_names.reserve(template_params.size());
+					for (const auto& tparam_node : template_params) {
+						if (tparam_node.is<TemplateParameterNode>()) {
+							param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+						}
+					}
+					
+					for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+						std::string_view param_name = param_names[i];
+						Type concrete_type = template_args[i].base_type;
+						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
+						type_info.reference_qualifier_ = template_args[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
+							: (template_args[i].is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+						gTypesByName.emplace(type_info.name(), &type_info);
+						template_scope.addParameter(&type_info);
+					}
+					
+					SaveHandle current_pos = save_token_position();
+					const FunctionDeclarationNode* saved_current_function = current_function_;
+					
+					restore_lexer_position_only(orig_func.template_body_position());
+					
+					gSymbolTable.enter_scope(ScopeType::Function);
+					current_function_ = &new_func;
+					
+					for (const auto& param : new_func.parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							gSymbolTable.insert(param_decl.identifier_token().value(), param);
+						}
+					}
+					
+					auto block_result = parse_block();
+					
+					if (!block_result.is_error() && block_result.node().has_value()) {
+						// Substitute template parameters in the parsed body
+						std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+						std::vector<std::string_view> template_param_order;
+						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+							param_map[tparam.name()] = template_args[i];
+							template_param_order.push_back(tparam.name());
+						}
+						ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+						ASTNode substituted_body = substitutor.substitute(*block_result.node());
+						new_func.set_definition(substituted_body);
+					}
+					
+					current_function_ = saved_current_function;
+					gSymbolTable.exit_scope();
+					restore_lexer_position_only(current_pos);
+					discard_saved_token(current_pos);
 				} else {
 					FLASH_LOG(Templates, Debug, "Original function has NO definition - may need delayed parsing");
 				}
