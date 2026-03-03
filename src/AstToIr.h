@@ -1306,7 +1306,7 @@ private:
 			if (ns_pos != std::string_view::npos)
 				local = acc_name.substr(ns_pos + 2);
 
-			auto pat_pos = local.find("_pattern");
+			auto pat_pos = local.rfind("_pattern");
 			if (pat_pos != std::string_view::npos) {
 				std::string_view base_from_pattern = local.substr(0, pat_pos);
 				if (tryQualAndUnqual(base_from_pattern)) return true;
