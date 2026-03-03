@@ -1,19 +1,19 @@
 struct Source {
-int value;
+	int value;
 };
 
 struct Target {
-int value;
+	int value;
 
-explicit Target(const Target& other) : value(other.value) {}
-Target(const Source& src) : value(src.value) {}
+	explicit Target(const Target& other) : value(other.value) {}
+	Target(const Source& src) : value(src.value) {}
 };
 
 int useTarget(Target t) {
-return t.value;
+	return t.value;
 }
 
 int main() {
-Source s{42};
-return useTarget(s);
+	Source s{42};
+	return useTarget(s);
 }
