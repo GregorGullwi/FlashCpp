@@ -1167,6 +1167,45 @@ EvalResult Evaluator::evaluate_callable_object(
 			evaluation_bindings[member_name] = default_result;
 		}
 
+		// Evaluate constructor body statements (e.g., member assignments like `m_val = x;`).
+		// The member initializer list is processed above; this handles the constructor body
+		// which may contain additional assignments or logic that modifies member state.
+		const auto& ctor_definition = matching_ctor->get_definition();
+		if (ctor_definition.has_value() && ctor_definition->is<BlockNode>()) {
+			const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
+			const auto& ctor_statements = ctor_body.get_statements();
+
+			// Merge constructor parameter bindings into evaluation_bindings so
+			// that body statements like `m_val = x;` can resolve parameter names.
+			// Parameters shadow members with the same name (correct C++ semantics).
+			std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = evaluation_bindings;
+			for (const auto& [name, val] : ctor_param_bindings) {
+				ctor_body_bindings[name] = val;
+			}
+
+			for (const auto& ctor_stmt : ctor_statements) {
+				auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
+				if (stmt_result.success()) {
+					// A return statement in a constructor body is unusual but valid
+					// (e.g., early return in constexpr constructor). Stop processing.
+					break;
+				}
+				if (!stmt_result.success() && stmt_result.error_message != "Statement executed (not a return)") {
+					return stmt_result;
+				}
+			}
+
+			// Copy back any member bindings that were modified by the constructor body.
+			// We only copy names that correspond to struct members (not constructor params).
+			for (const auto& member : struct_info->members) {
+				std::string_view member_name = StringTable::getStringView(member.getName());
+				auto it = ctor_body_bindings.find(member_name);
+				if (it != ctor_body_bindings.end()) {
+					evaluation_bindings[member_name] = it->second;
+				}
+			}
+		}
+
 		const auto& parameters = call_operator->parameter_nodes();
 		auto call_bind_result = bindArgumentValues(
 			parameters,
