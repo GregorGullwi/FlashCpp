@@ -1161,9 +1161,10 @@ EvalResult Evaluator::evaluate_callable_object(
 				continue;
 			}
 			auto default_result = evaluate(member.default_initializer.value(), context);
-			if (default_result.success()) {
-				evaluation_bindings[member_name] = default_result;
+			if (!default_result.success()) {
+				return default_result;
 			}
+			evaluation_bindings[member_name] = default_result;
 		}
 
 		const auto& parameters = call_operator->parameter_nodes();
