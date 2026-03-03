@@ -4213,7 +4213,7 @@ void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl
 			}
 		}
 	} else if (friend_decl.kind() == FriendKind::Function) {
-		struct_info->addFriendFunction(friend_decl.name());
+		if (friend_decl.name().isValid()) struct_info->addFriendFunction(friend_decl.name());
 	} else if (friend_decl.kind() == FriendKind::MemberFunction) {
 		struct_info->addFriendMemberFunction(friend_decl.class_name(), friend_decl.name());
 	}
