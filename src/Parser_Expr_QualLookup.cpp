@@ -1,3 +1,5 @@
+#include "LambdaHelpers.h"
+
 ParseResult Parser::parse_qualified_identifier() {
 	// This method parses qualified identifiers like std::print or ns1::ns2::func
 	// It should be called when we've already seen an identifier followed by ::
@@ -1222,30 +1224,20 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 }
 
 std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct(const StructTypeInfo& struct_info, const Token& source_token) {
-	if (!struct_info.members.empty()) {
+	auto sig_opt = getFunctionSignatureFromLambdaStruct(struct_info);
+	if (!sig_opt.has_value()) {
 		return std::nullopt;
 	}
 
-	for (const auto& member_func : struct_info.member_functions) {
-		if (member_func.getName() == StringTable::getOrInternStringHandle("operator()") &&
-			member_func.function_decl.is<FunctionDeclarationNode>()) {
-			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-			FunctionSignature sig;
-			sig.return_type = return_type.type();
-			for (const auto& param_node : func_decl.parameter_nodes()) {
-				if (param_node.is<DeclarationNode>()) {
-					const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					sig.parameter_types.push_back(param_type.type());
-				}
-			}
-			TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, source_token);
-			fp_type.set_function_signature(sig);
-			return fp_type;
-		}
+	FunctionSignature sig;
+	sig.return_type = sig_opt->return_type.type();
+	for (const auto& param_type : sig_opt->param_types) {
+		sig.parameter_types.push_back(param_type.type());
 	}
 
-	return std::nullopt;
+	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, source_token);
+	fp_type.set_function_signature(sig);
+	return fp_type;
 }
 
 // Helper to extract type from an expression for overload resolution
@@ -1432,7 +1424,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
-							if (struct_info && struct_info->members.empty()) {
+							if (struct_info && isLambdaClosureStruct(*struct_info)) {
 								if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, decl.identifier_token())) {
 									return *fp_type;
 								}
@@ -1475,7 +1467,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (op == "+" && operand_type.type() == Type::Struct && operand_type.type_index() < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[operand_type.type_index()];
 			const StructTypeInfo* struct_info = type_info.getStructInfo();
-			if (struct_info && struct_info->members.empty()) {
+			if (struct_info && isLambdaClosureStruct(*struct_info)) {
 				if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, operand_type.token())) {
 					return *fp_type;
 				}

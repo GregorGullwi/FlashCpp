@@ -1,4 +1,5 @@
 #include "CodeGen.h"
+#include "LambdaHelpers.h"
 
 	std::vector<IrOperand> AstToIr::generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
@@ -360,50 +361,35 @@
 	}
 
 	std::optional<std::vector<IrOperand>> AstToIr::decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token) {
-		if (!struct_info.members.empty()) {
+		auto sig_opt = getFunctionSignatureFromLambdaStruct(struct_info);
+		if (!sig_opt.has_value()) {
 			return std::nullopt;
 		}
 
-		for (const auto& member_func : struct_info.member_functions) {
-			if (member_func.getName() != StringTable::getOrInternStringHandle("operator()") ||
-				!member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
+		const auto& sig = *sig_opt;
 
-			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-			std::vector<TypeSpecifierNode> param_types;
-			for (const auto& param_node : func_decl.parameter_nodes()) {
-				if (param_node.is<DeclarationNode>()) {
-					param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
-				}
-			}
+		std::string_view invoke_name = StringBuilder()
+			.append(StringTable::getStringView(struct_info.getName()))
+			.append("_invoke")
+			.commit();
 
-			std::string_view invoke_name = StringBuilder()
-				.append(StringTable::getStringView(struct_info.getName()))
-				.append("_invoke")
-				.commit();
+		std::string_view mangled = generateMangledNameForCall(
+			invoke_name,
+			sig.return_type,
+			sig.param_types,
+			false,
+			""
+		);
 
-			std::string_view mangled = generateMangledNameForCall(
-				invoke_name,
-				return_type,
-				param_types,
-				false,
-				""
-			);
-
-			TempVar func_addr_var = var_counter.next();
-			FunctionAddressOp op;
-			op.result.type = Type::FunctionPointer;
-			op.result.size_in_bits = 64;
-			op.result.value = func_addr_var;
-			op.function_name = StringTable::getOrInternStringHandle(invoke_name);
-			op.mangled_name = StringTable::getOrInternStringHandle(mangled);
-			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
-			return std::vector<IrOperand>{ Type::FunctionPointer, 64, func_addr_var, 0ULL };
-		}
-
-		return std::nullopt;
+		TempVar func_addr_var = var_counter.next();
+		FunctionAddressOp op;
+		op.result.type = Type::FunctionPointer;
+		op.result.size_in_bits = 64;
+		op.result.value = func_addr_var;
+		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
+		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
+		return std::vector<IrOperand>{ Type::FunctionPointer, 64, func_addr_var, 0ULL };
 	}
 
 	std::vector<IrOperand> AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
@@ -1099,7 +1085,7 @@
 					if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info && struct_info->members.empty()) {
+						if (struct_info && isLambdaClosureStruct(*struct_info)) {
 							lambda_struct_info = struct_info;
 							FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus on lambda identifier '{}' -> using struct info", StringTable::getStringView(type_info.name()));
 						}
@@ -1197,7 +1183,7 @@
 			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[struct_type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (struct_info && struct_info->members.empty()) {
+				if (struct_info && isLambdaClosureStruct(*struct_info)) {
 					FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus decay via struct info: type_index={}, name={}", struct_type_index, StringTable::getStringView(type_info.name()));
 					if (auto fp_operands = decayLambdaStructToFunctionPointer(*struct_info, unaryOperatorNode.get_token())) {
 						return *fp_operands;
