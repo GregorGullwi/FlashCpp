@@ -1882,15 +1882,28 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	
 	// Look up the actual member function in the struct's type info
 	const FunctionDeclarationNode* actual_func = nullptr;
+	const auto& arguments = member_func_call.arguments();
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+	bool ambiguous = false;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.is_constructor || member_func.is_destructor) continue;
 		if (member_func.getName() != func_name_handle) continue;
 		
 		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-			actual_func = &member_func.function_decl.as<FunctionDeclarationNode>();
-			break;
+			const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (candidate.parameter_nodes().size() != arguments.size()) {
+				continue;
+			}
+			if (actual_func != nullptr) {
+				ambiguous = true;
+				break;
+			}
+			actual_func = &candidate;
 		}
+	}
+
+	if (ambiguous) {
+		return EvalResult::error("Ambiguous member function overload in constant expression");
 	}
 	
 	if (!actual_func) {
@@ -1917,12 +1930,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	}
 	
 	// Evaluate function arguments and add to bindings
-	const auto& arguments = member_func_call.arguments();
 	const auto& parameters = actual_func->parameter_nodes();
-	
-	if (arguments.size() != parameters.size()) {
-		return EvalResult::error("Member function argument count mismatch in constant expression");
-	}
 	
 	for (size_t i = 0; i < arguments.size(); ++i) {
 		// Get parameter name
