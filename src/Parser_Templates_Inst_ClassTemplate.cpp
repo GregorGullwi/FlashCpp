@@ -3294,7 +3294,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		bool is_array_member = !resolved_array_dimensions.empty();
 		size_t member_size;
 		if (is_array_member) {
-			member_size = get_type_size_bits(member_type) / 8;
+			// Compute per-element size, looking up struct sizes from gTypeInfo
+			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				member_size = 8;  // Pointers and references are 64-bit on x64
+			} else if (member_type == Type::Struct && member_type_index != 0) {
+				const TypeInfo* member_struct_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == member_type_index) {
+						member_struct_info = &ti;
+						break;
+					}
+				}
+				if (member_struct_info && member_struct_info->getStructInfo()) {
+					member_size = member_struct_info->getStructInfo()->total_size;
+				} else {
+					member_size = get_type_size_bits(member_type) / 8;
+				}
+			} else {
+				member_size = get_type_size_bits(member_type) / 8;
+			}
 			for (size_t dim_size : resolved_array_dimensions) {
 				member_size *= dim_size;
 			}
@@ -3356,7 +3374,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (!resolved_array_dimensions.empty()) {
 				is_array_member = true;
 			}
-			member_size = (get_type_size_bits(member_type) / 8) * total_elements;
+			// Compute per-element size, looking up struct sizes from gTypeInfo
+			size_t element_size;
+			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				element_size = 8;
+			} else if (member_type == Type::Struct && member_type_index != 0) {
+				const TypeInfo* member_struct_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == member_type_index) {
+						member_struct_info = &ti;
+						break;
+					}
+				}
+				if (member_struct_info && member_struct_info->getStructInfo()) {
+					element_size = member_struct_info->getStructInfo()->total_size;
+				} else {
+					element_size = get_type_size_bits(member_type) / 8;
+				}
+			} else {
+				element_size = get_type_size_bits(member_type) / 8;
+			}
+			member_size = element_size * total_elements;
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
