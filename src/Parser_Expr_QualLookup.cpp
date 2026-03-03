@@ -1160,6 +1160,17 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 			if (switch_stmt.get_body().has_value()) {
 				recurse_fn(switch_stmt.get_body(), recurse_fn);
 			}
+		} else if (node.is<TryStatementNode>()) {
+			const auto& try_stmt = node.as<TryStatementNode>();
+			recurse_fn(try_stmt.try_block(), recurse_fn);
+			for (const auto& catch_clause : try_stmt.catch_clauses()) {
+				if (catch_clause.is<CatchClauseNode>()) {
+					recurse_fn(catch_clause.as<CatchClauseNode>().body(), recurse_fn);
+				}
+			}
+		} else if (node.is<RangedForStatementNode>()) {
+			const auto& ranged_for = node.as<RangedForStatementNode>();
+			recurse_fn(ranged_for.get_body_statement(), recurse_fn);
 		}
 	};
 
