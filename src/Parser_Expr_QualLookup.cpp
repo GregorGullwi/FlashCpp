@@ -1104,14 +1104,16 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 	}
 
 	std::optional<TypeSpecifierNode> deduced_type;
+	bool has_incompatible_return = false;
 
 	auto consider_expr = [&](const ASTNode& expr) {
-		if (deduced_type.has_value()) {
-			return;
-		}
 		auto type_opt = get_expression_type(expr);
 		if (type_opt.has_value()) {
-			deduced_type = *type_opt;
+			if (!deduced_type.has_value()) {
+				deduced_type = *type_opt;
+			} else if (!are_types_compatible(*deduced_type, *type_opt)) {
+				has_incompatible_return = true;
+			}
 		}
 	};
 
@@ -1166,6 +1168,10 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 		consider_expr(body);
 	}
 
+	if (has_incompatible_return && deduced_type.has_value()) {
+		FLASH_LOG(Parser, Warning, "Lambda has inconsistent return types; using first deduced type ", type_to_string(*deduced_type));
+	}
+
 	return deduced_type;
 }
 
@@ -1178,7 +1184,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
 		sig.return_type = deduced_return->type();
 	} else {
-		// Fallback when no return statements are present or deduction fails (preserves prior default)
+		// Fallback when no return statements are present or deduction fails; preserves prior default-to-int decay for captureless lambdas
 		sig.return_type = Type::Int;
 	}
 
