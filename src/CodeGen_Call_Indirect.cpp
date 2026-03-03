@@ -852,7 +852,16 @@
 			vcall_op.result.value = ret_var;
 			vcall_op.object_type = object_type.type();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
-			vcall_op.object = StringTable::getOrInternStringHandle(object_name);
+			if (object_name.empty()) {
+				// Object is a temporary expression result - evaluate it to get a TempVar
+				std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+					throw InternalError("Virtual call on expression: did not produce a TempVar");
+				}
+				vcall_op.object = std::get<TempVar>(obj_result[2]);
+			} else {
+				vcall_op.object = StringTable::getOrInternStringHandle(object_name);
+			}
 			vcall_op.vtable_index = vtable_index;
 			// Set is_pointer_access based on whether the object is accessed through a pointer (ptr->method)
 			// or through a reference (ref.method()). References are implemented as pointers internally,
@@ -1120,7 +1129,31 @@
 			// This is critical for empty structs (size 0) which still need a valid address
 			IrValue this_arg_value;
 			bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
-			if (object_is_pointer_like) {
+			if (object_name.empty()) {
+				// Object is a temporary expression result (e.g., getContainer().method())
+				// Evaluate the expression to get a TempVar, then take its address for the this pointer
+				std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+					throw InternalError("Member function call on expression: did not produce a TempVar");
+				}
+				TempVar obj_temp = std::get<TempVar>(obj_result[2]);
+				
+				if (object_is_pointer_like) {
+					// Temporary is already a pointer/reference - pass through directly
+					this_arg_value = IrValue(obj_temp);
+				} else {
+					// Temporary is a value - take its address
+					TempVar this_addr = var_counter.next();
+					AddressOfOp addr_op;
+					addr_op.result = this_addr;
+					addr_op.operand.type = object_type.type();
+					addr_op.operand.size_in_bits = static_cast<int>(object_type.size_in_bits());
+					addr_op.operand.pointer_depth = static_cast<int>(object_type.pointer_depth());
+					addr_op.operand.value = obj_temp;
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
+					this_arg_value = IrValue(this_addr);
+				}
+			} else if (object_is_pointer_like) {
 				// For pointer/reference objects, pass through directly
 				this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
 			} else {
