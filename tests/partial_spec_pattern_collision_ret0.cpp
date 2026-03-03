@@ -90,6 +90,78 @@ struct _pattern<T*> {
     int tag() { return 60; }
 };
 
+// ============================================================
+// 5. Friend access via base template name → exercises
+//    checkFriendClassAccess step 4 (registry-based lookup).
+//    The friend declaration names "Accessor" (the base template),
+//    so the partial specialization pattern struct
+//    (e.g., Accessor$pattern_TP) must recover "Accessor" via the
+//    registry to match the friend entry.
+// ============================================================
+template<typename T>
+struct Accessor;
+
+class Vault {
+    int code;
+    // Grant friend access to the *base template name* "Accessor".
+    // Partial specialisations must recover this name via the registry.
+    friend class Accessor;
+public:
+    Vault(int c) : code(c) {}
+};
+
+template<typename T>
+struct Accessor {
+    T data;
+    int crack(Vault& v) { return v.code; }
+};
+
+// Partial specialisation for pointers – internal pattern name is
+// Accessor$pattern_TP, which must resolve to "Accessor" to match
+// the friend declaration.
+template<typename T>
+struct Accessor<T*> {
+    T* data;
+    int crack(Vault& v) { return v.code + 100; }
+};
+
+// Partial specialisation for references
+template<typename T>
+struct Accessor<T&> {
+    T& data;
+    int crack(Vault& v) { return v.code + 200; }
+};
+
+// ============================================================
+// 6. Member struct template partial spec with friend access.
+//    Exercises the qualified-base-name path in step 4
+//    (base name is "Host::Probe", already qualified → skip
+//     namespace-prefix prepend).
+// ============================================================
+struct Host {
+    template<typename T>
+    struct Probe;
+
+    class Safe {
+        int pin;
+        friend class Probe;
+    public:
+        Safe(int p) : pin(p) {}
+    };
+
+    template<typename T>
+    struct Probe {
+        T val;
+        int open(Safe& s) { return s.pin; }
+    };
+
+    template<typename T>
+    struct Probe<T*> {
+        T* val;
+        int open(Safe& s) { return s.pin + 1000; }
+    };
+};
+
 int main() {
     int result = 0;
 
@@ -104,7 +176,7 @@ int main() {
     if (b.get() != 2) result |= 2;
     if (c.get() != 3) result |= 4;
 
-    // --- Test 2: friend access through partial spec ---
+    // --- Test 2: friend access through partial spec (specific instantiation friends) ---
     Secret secret{42};
     Container<int> ci{7};
     if (ci.read_secret(secret) != 42) result |= 8;
@@ -125,6 +197,27 @@ int main() {
 
     _pattern<int*> p2{&x};
     if (p2.tag() != 60) result |= 256;
+
+    // --- Test 5: friend via base template name (step 4 registry lookup) ---
+    Vault vault{77};
+
+    Accessor<int> a5{5};
+    if (a5.crack(vault) != 77) result |= 512;        // primary template
+
+    Accessor<int*> a5p{&x};
+    if (a5p.crack(vault) != 177) result |= 1024;     // pointer partial spec: 77 + 100
+
+    Accessor<int&> a5r{x};
+    if (a5r.crack(vault) != 277) result |= 2048;     // reference partial spec: 77 + 200
+
+    // --- Test 6: member struct partial spec with friend access ---
+    Host::Safe safe{500};
+
+    Host::Probe<int> p6{3};
+    if (p6.open(safe) != 500) result |= 4096;        // primary member template
+
+    Host::Probe<int*> p6p{&x};
+    if (p6p.open(safe) != 1500) result |= 8192;      // pointer member partial spec: 500 + 1000
 
     // All bits clear → return 0
     return result;
