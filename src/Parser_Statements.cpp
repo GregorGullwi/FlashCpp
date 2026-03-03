@@ -1610,7 +1610,18 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// C++ aggregate brace elision for array members:
 			// Allow flat initialization like `S s = {1,2,3,4,5,6};` where first members are arrays.
 			// Values are consumed recursively for the current array member before moving to next member.
-			if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok) {
+			// Note: brace elision for arrays of aggregate (struct) element types is not yet supported.
+			// For struct-element arrays, the user must provide nested braces (e.g., {{1,2},{3,4}}).
+			// This avoids incorrectly consuming too few flat initializers when each element requires
+			// multiple scalar sub-initializers.
+			bool element_is_aggregate = false;
+			if (target_member.type_index < gTypeInfo.size()) {
+				const TypeInfo& elem_info = gTypeInfo[target_member.type_index];
+				if (elem_info.struct_info_ && !elem_info.struct_info_->members.empty()) {
+					element_is_aggregate = true;
+				}
+			}
+			if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok && !element_is_aggregate) {
 				auto [nested_init_list_node, nested_init_list_ref] = create_node_ref(InitializerListNode());
 				size_t element_limit = std::accumulate(
 					target_member.array_dimensions.begin(),
