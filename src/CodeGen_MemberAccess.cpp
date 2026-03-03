@@ -1138,13 +1138,13 @@
 			}
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (const auto& ti : gTypeInfo) {
-				if (ti.type_ == Type::Struct && ti.getStructInfo()) {
+				if ((ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
 					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_ << ")\n";
 				}
 			}
 			std::cerr << "  Available types in gTypesByName:\n";
 			for (const auto& [name, ti] : gTypesByName) {
-				if (ti->type_ == Type::Struct) {
+				if (ti->type_ == Type::Struct || ti->type_ == Type::UserDefined) {
 					std::cerr << "    - " << name << " (type_index=" << ti->type_index_ << ")\n";
 				}
 			}

@@ -1168,7 +1168,7 @@ private:
 			const DeclarationNode& this_decl = this_symbol->as<DeclarationNode>();
 			const TypeSpecifierNode& this_type = this_decl.type_node().as<TypeSpecifierNode>();
 
-			if (this_type.type() == Type::Struct && this_type.type_index() < gTypeInfo.size()) {
+			if ((this_type.type() == Type::Struct || this_type.type() == Type::UserDefined) && this_type.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[this_type.type_index()];
 				return type_info.getStructInfo();
 			}
