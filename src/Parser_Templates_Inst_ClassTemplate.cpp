@@ -3301,23 +3301,62 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		} else if (substituted_array_size.has_value()) {
 			// Fallback for arrays where resolve_array_dimensions couldn't resolve
 			// (e.g., literal array sizes that aren't template-parameter-dependent)
-			size_t array_size = 1;
-			const ASTNode& size_node = *substituted_array_size;
-			if (size_node.is<ExpressionNode>()) {
-				const ExpressionNode& expr = size_node.as<ExpressionNode>();
-				if (std::holds_alternative<NumericLiteralNode>(expr)) {
-					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
-					const auto& val = lit.value();
-					if (std::holds_alternative<unsigned long long>(val)) {
-						array_size = static_cast<size_t>(std::get<unsigned long long>(val));
+			// Process ALL array dimensions from the declaration, not just the first.
+			// decl.array_dimensions() stores each dimension expression (e.g., for int arr[2][3]
+			// it stores two expressions). We evaluate each one and collect the results.
+			size_t total_elements = 1;
+			bool all_dims_resolved = true;
+			for (const auto& dim_expr : decl.array_dimensions()) {
+				if (dim_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr = dim_expr.as<ExpressionNode>();
+					if (std::holds_alternative<NumericLiteralNode>(expr)) {
+						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+						const auto& val = lit.value();
+						if (std::holds_alternative<unsigned long long>(val)) {
+							size_t dim_size = static_cast<size_t>(std::get<unsigned long long>(val));
+							if (dim_size > 0) {
+								resolved_array_dimensions.push_back(dim_size);
+								total_elements *= dim_size;
+								continue;
+							}
+						}
 					}
 				}
+				// If we couldn't evaluate a dimension, try ConstExpr evaluator
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+				if (eval_result.success() && eval_result.as_int() > 0) {
+					size_t dim_size = static_cast<size_t>(eval_result.as_int());
+					resolved_array_dimensions.push_back(dim_size);
+					total_elements *= dim_size;
+				} else {
+					all_dims_resolved = false;
+					break;
+				}
 			}
-			if (array_size > 0) {
+			// If no dimensions were found from array_dimensions(), fall back to substituted_array_size
+			if (resolved_array_dimensions.empty() && all_dims_resolved) {
+				size_t array_size = 1;
+				const ASTNode& size_node = *substituted_array_size;
+				if (size_node.is<ExpressionNode>()) {
+					const ExpressionNode& expr = size_node.as<ExpressionNode>();
+					if (std::holds_alternative<NumericLiteralNode>(expr)) {
+						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+						const auto& val = lit.value();
+						if (std::holds_alternative<unsigned long long>(val)) {
+							array_size = static_cast<size_t>(std::get<unsigned long long>(val));
+						}
+					}
+				}
+				if (array_size > 0) {
+					resolved_array_dimensions.push_back(array_size);
+					total_elements = array_size;
+				}
+			}
+			if (!resolved_array_dimensions.empty()) {
 				is_array_member = true;
-				resolved_array_dimensions.push_back(array_size);
 			}
-			member_size = (get_type_size_bits(member_type) / 8) * array_size;
+			member_size = (get_type_size_bits(member_type) / 8) * total_elements;
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
