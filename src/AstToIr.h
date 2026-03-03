@@ -863,7 +863,14 @@ private:
 
 		int element_size_bits = 0;
 		if (member.type_index < gTypeInfo.size()) {
-			element_size_bits = static_cast<int>(gTypeInfo[member.type_index].type_size_ * 8);
+			const TypeInfo& elem_type_info = gTypeInfo[member.type_index];
+			if (elem_type_info.struct_info_) {
+				// Struct types store type_size_ in bytes
+				element_size_bits = static_cast<int>(elem_type_info.type_size_ * 8);
+			} else if (elem_type_info.type_size_ > 0) {
+				// Non-struct types (enums, typedefs, etc.) store type_size_ in bits
+				element_size_bits = static_cast<int>(elem_type_info.type_size_);
+			}
 		}
 		if (element_size_bits <= 0) {
 			element_size_bits = static_cast<int>((member.size * 8) / element_count);
