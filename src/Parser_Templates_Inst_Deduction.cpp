@@ -750,6 +750,74 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	std::vector<TemplateArgument> template_args;
 	std::vector<Type> deduced_type_args;  // For types extracted from instantiated names
 
+	// Pre-deduction pass: build a map from template parameter names to deduced arguments
+	// by matching function parameter types against call argument types.
+	// This handles cases like: template<typename T, int N> int f(Array<T, N>& a)
+	// where T and N should be deduced from the struct's template args.
+	std::unordered_map<StringHandle, TemplateArgument, StringHash, StringEqual> param_name_to_arg;
+	{
+		// Build set of template parameter names for O(1) lookup
+		std::unordered_set<StringHandle, StringHash, StringEqual> tparam_name_set;
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				tparam_name_set.insert(StringTable::getOrInternStringHandle(
+					tparam_node.as<TemplateParameterNode>().name()));
+			}
+		}
+
+		const auto& func_params = func_decl.parameter_nodes();
+		for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+			if (!func_params[i].is<DeclarationNode>()) continue;
+			const TypeSpecifierNode& fp_type = func_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& ca_type = arg_types[i];
+
+			// If both the function parameter and the call argument are struct template
+			// instantiations of the same base template, match their template args pairwise
+			// to deduce any template parameters that appear as dependent entries.
+			TypeIndex fp_idx = fp_type.type_index();
+			TypeIndex ca_idx = ca_type.type_index();
+			if (fp_idx > 0 && fp_idx < gTypeInfo.size() &&
+			    ca_idx > 0 && ca_idx < gTypeInfo.size()) {
+				const TypeInfo& fp_info = gTypeInfo[fp_idx];
+				const TypeInfo& ca_info = gTypeInfo[ca_idx];
+				if (fp_info.isTemplateInstantiation() && ca_info.isTemplateInstantiation() &&
+				    fp_info.baseTemplateName() == ca_info.baseTemplateName()) {
+					const auto& fp_targs = fp_info.templateArgs();
+					const auto& ca_targs = ca_info.templateArgs();
+					for (size_t j = 0; j < fp_targs.size() && j < ca_targs.size(); ++j) {
+						const auto& p = fp_targs[j];
+						const auto& c = ca_targs[j];
+						if (!p.dependent_name.isValid()) continue;
+						if (!tparam_name_set.count(p.dependent_name)) continue;
+						if (!c.is_value) {
+							// Type argument
+							param_name_to_arg.emplace(p.dependent_name,
+								TemplateArgument::makeType(c.base_type, c.type_index));
+							FLASH_LOG_FORMAT(Templates, Debug,
+								"[depth={}]: Pre-deduced type param '{}' = type {}",
+								recursion_depth,
+								StringTable::getStringView(p.dependent_name),
+								static_cast<int>(c.base_type));
+						} else {
+							// Concrete argument is a value (c.is_value==true); deduce a non-type param.
+							// We check c.is_value (the concrete arg) rather than p.is_value (the
+							// placeholder), because dependent non-type params are stored as
+							// is_value==false in the placeholder even though they carry an integer value
+							// at instantiation time.
+							param_name_to_arg.emplace(p.dependent_name,
+								TemplateArgument::makeValue(c.intValue(), c.base_type));
+							FLASH_LOG_FORMAT(Templates, Debug,
+								"[depth={}]: Pre-deduced non-type param '{}' = {}",
+								recursion_depth,
+								StringTable::getStringView(p.dependent_name),
+								c.intValue());
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Deduce template parameters in order from function arguments
 	// For template<typename T, typename U> T func(T a, U b):
 	//   - T is deduced from first argument
@@ -830,8 +898,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				
 				// Note: If no arguments remain, the pack is empty (which is valid)
 			} else {
-				// Non-variadic type parameter
-				if (!deduced_type_args.empty()) {
+				// Non-variadic type parameter — check pre-deduction map first
+				StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
+				auto map_it = param_name_to_arg.find(param_handle);
+				if (map_it != param_name_to_arg.end()) {
+					template_args.push_back(map_it->second);
+				} else if (!deduced_type_args.empty()) {
 					Type deduced_type = deduced_type_args[0];
 					template_args.push_back(TemplateArgument::makeType(deduced_type));
 					deduced_type_args.erase(deduced_type_args.begin());
@@ -847,8 +919,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				}
 			}
 		} else {
-			// Non-type parameter - check if it has a default value
-			if (param.has_default()) {
+			// Non-type parameter — check pre-deduction map first
+			StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
+			auto map_it = param_name_to_arg.find(param_handle);
+			if (map_it != param_name_to_arg.end()) {
+				template_args.push_back(map_it->second);
+			} else if (param.has_default()) {
 				// Use the default value for non-type parameters
 				// The default value is an expression that will be evaluated during instantiation
 				// For now, we skip it in deduction and let the instantiation phase use the default
@@ -856,11 +932,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					recursion_depth, param.name());
 				// Don't add anything to template_args - the instantiation will use the default
 				continue;
-			}
-			// No default value and can't deduce - fail
-			FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
+			} else {
+				// No default value and can't deduce - fail
+				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
 
-			return std::nullopt;
+				return std::nullopt;
+			}
 		}
 	}
 
@@ -931,8 +1008,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				}
 			}
 			template_args_as_type_args.push_back(type_arg);
+		} else if (arg.kind == TemplateArgument::Kind::Value) {
+			// Non-type (value) argument: include in template_args_as_type_args so that
+			// body re-parsing can register the non-type parameter substitution.
+			TemplateTypeArg val_arg;
+			val_arg.is_value = true;
+			val_arg.value = arg.int_value;
+			val_arg.base_type = arg.value_type;
+			template_args_as_type_args.push_back(val_arg);
 		}
-		// Note: Value arguments aren't used in type substitution
 	}
 
 	// Check for explicit specialization before instantiating the primary template.
@@ -1712,9 +1796,26 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
+		// Set current_template_param_names_ so the expression parser can find
+		// template parameters (e.g., N in "return N") as TemplateParameterReferenceNode
+		// rather than looking them up as regular identifiers (which would fail for
+		// non-type params that have no entry in the symbol table).
+		// NOTE: try_instantiate_template_explicit does the same setup; keeping both in
+		// sync is exactly the kind of maintenance burden described in
+		// docs/REFACTORING_PROPOSAL_2026-03-03.md — extracting a shared helper would
+		// prevent this class of divergence bug.
+		std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& pn : param_names) {
+			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+		}
+
 		// Parse the function body
 		auto block_result = parse_block();
-		
+
+		// Restore template param names
+		current_template_param_names_ = std::move(saved_template_param_names);
+
 		// Restore the template parameter substitutions
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
 
