@@ -1298,7 +1298,7 @@ private:
 			if (!resolveMemberAccessType(nested_access, nested_struct_info, nested_member)) {
 				return false;
 			}
-			if (!nested_member || nested_member->type != Type::Struct) {
+			if (!nested_member || (nested_member->type != Type::Struct && nested_member->type != Type::UserDefined)) {
 				return false;
 			}
 			// Get the type info for the nested member's struct type
@@ -1323,7 +1323,7 @@ private:
 		}
 		
 		// The base type should now be a struct type
-		if (base_type.type() != Type::Struct) {
+		if (base_type.type() != Type::Struct && base_type.type() != Type::UserDefined) {
 			return false;
 		}
 		

@@ -336,7 +336,7 @@
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
 				// We resolved the member access - now check if it's a struct type
-				if (resolved_member && resolved_member->type == Type::Struct) {
+				if (resolved_member && (resolved_member->type == Type::Struct || resolved_member->type == Type::UserDefined)) {
 					// Get the struct info for the member's type
 					if (resolved_member->type_index < gTypeInfo.size()) {
 						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index];
