@@ -817,8 +817,7 @@ public:
 	// Register mapping from instantiated name to pattern name (for partial specializations)
 	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name, StringHandle base_template_name) {
 		instantiation_to_pattern_[instantiated_name] = pattern_name;
-		pattern_struct_names_.insert(pattern_name);
-		pattern_to_base_name_[pattern_name] = base_template_name;
+		registerPatternStructName(pattern_name, base_template_name);
 	}
 
 	

@@ -1294,13 +1294,17 @@ private:
 				// Also try with namespace prefix from the accessing name
 				// e.g., pattern "std::__use_cache$pattern_P" has base "__use_cache",
 				// but the friend entry might be "std::__use_cache"
+				// Only prepend namespace if the base name is not already qualified
+				// (member struct patterns store fully qualified names like "ParentStruct::List")
 				std::string_view base_sv = StringTable::getStringView(*base_opt);
-				auto last_scope = acc_name.rfind("::");
-				if (last_scope != std::string_view::npos) {
-					std::string_view ns_prefix = acc_name.substr(0, last_scope + 2);
-					StringBuilder qualified_base;
-					std::string_view qualified = qualified_base.append(ns_prefix).append(base_sv).preview();
-					if (member_owner_struct->isFriendClass(qualified)) return true;
+				if (base_sv.find("::") == std::string_view::npos) {
+					auto last_scope = acc_name.rfind("::");
+					if (last_scope != std::string_view::npos) {
+						std::string_view ns_prefix = acc_name.substr(0, last_scope + 2);
+						StringBuilder qualified_base;
+						std::string_view qualified = qualified_base.append(ns_prefix).append(base_sv).preview();
+						if (member_owner_struct->isFriendClass(qualified)) return true;
+					}
 				}
 			}
 		}
