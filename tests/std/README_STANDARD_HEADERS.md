@@ -6,23 +6,23 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~122ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~187ms |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~121ms |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~191ms |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~10ms |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~22ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~22ms |
 | `<numbers>` | N/A | ✅ Compiled | ~194ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~15ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~277ms. ratio_equal works; ratio_less needs default parameter evaluation |
-| `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~598ms |
+| `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~630ms |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~275ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~367ms |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~218ms |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~264ms |
 | `<string_view>` | `test_std_string_view.cpp` | ✅ Compiled | ~1223ms |
-| `<string>` | `test_std_string.cpp` | ✅ Compiled | ~2131ms |
+| `<string>` | `test_std_string.cpp` | ✅ Compiled | ~2118ms |
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | Aggregate brace initialization not supported for template types (`std::array<int,5> arr = {1,2,3,4,5}`) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ✅ Compiled | ~1404ms |
+| `<algorithm>` | `test_std_algorithm.cpp` | ✅ Compiled | ~1421ms |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~941ms |
 | `<tuple>` | `test_std_tuple.cpp` | ✅ Compiled | ~904ms |
 | `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | member '_M_start' not found in struct '_Vector_impl' (base class member access) |
@@ -35,9 +35,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
 | `<set>` | `test_std_set.cpp` | ✅ Compiled | ~1566ms |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Ambiguous call to `__to_unsigned_like` |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | Access control violation in codegen |
-| `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | Access control violation in codegen |
-| `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | struct type info not found |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | char_traits member functions (`eq`, `eq_int_type`) not found during deferred body codegen |
+| `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions (`eq`, `eq_int_type`) not found during deferred body codegen |
+| `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions (`eq`, `eq_int_type`) not found during deferred body codegen |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates); previously parse error on brace-init |
 | `<atomic>` | `test_std_atomic.cpp` | ✅ Compiled | ~1091ms |
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~32ms |
@@ -99,7 +99,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-### Summary (2026-03-01, updated)
+### Summary (2026-03-03, updated)
 
 **Total headers tested:** 96
 **Compiling successfully (parse + codegen):** 65 (68%)
@@ -113,7 +113,7 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 1. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
-2. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because FlashCpp treats `{}` as constructor lookup rather than aggregate initialization. Affects: `<array>`.
+2. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because the struct member `_M_elems` (from `typename __array_traits<_Tp,_Nm>::_Type`) is not resolved as an array type, so brace-elision doesn't apply. Affects: `<array>`.
 
 3. **Forward type references in class bodies**: Member type aliases declared later in a class body are not visible in constructor bodies parsed earlier (e.g., `__diff_type` used in `__boyer_moore_array_base` constructor before `using __diff_type = _Tp;`). In C++, all member declarations are visible throughout the class body. Affects: `<functional>`.
 
@@ -123,7 +123,36 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 6. **Stack overflow during deep template instantiation**: Headers like `<memory>`, `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<memory>`, `<barrier>`, `<chrono>`.
 
-7. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). The parser correctly identifies base classes, but the code generator doesn't properly traverse the base class hierarchy for member lookup. Affects: `<vector>`, `<list>`, `<map>`, `<iostream>`, `<sstream>`, `<fstream>`.
+7. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). The parser correctly identifies base classes, but the code generator doesn't properly traverse the base class hierarchy for member lookup. Affects: `<vector>`, `<list>`, `<map>`.
+
+8. **Static sibling member function calls in template deferred bodies**: In deferred template member function bodies, calls to other member functions of the same class (e.g., `char_traits::find` calling `char_traits::eq`) fail because the sibling functions are not registered in the codegen symbol table context. Affects: `<iostream>`, `<sstream>`, `<fstream>`.
+
+### TODO: Friend class access control — move to TypeIndex-based resolution
+
+The current friend class implementation stores `StringHandle` names and matches them via string comparisons (with `$hash` / `_pattern` stripping). This is a semantic deviation from the C++ standard: friend declarations should resolve to specific *entities* (types), not string names. The current approach has two known approximations:
+
+1. **Unqualified name collision**: A top-level `Foo` and `ns::Foo` could theoretically both match a friend entry stored as `"Foo"`, though this doesn't occur in practice with standard library headers.
+2. **String manipulation fragility**: Access checks rely on stripping internal naming suffixes (`$hash`, `_pattern_P`, etc.) which couples the access checker to the template instantiation naming scheme.
+
+**The fully correct approach** (per [class.friend]/2 and [temp.friend]):
+
+1. **Add `TypeIndex type_index_` to `StructTypeInfo`** — set during `TypeInfo::setStructInfo()`. Currently getting from `StructTypeInfo*` → `TypeIndex` requires a linear scan of `gTypeInfo` or a `gTypesByName` lookup.
+
+2. **Store `TypeIndex` in friend entries instead of `StringHandle`** — at `addFriendClass` time, try `gTypesByName` lookup (both unqualified and namespace-qualified). If found, store the `TypeIndex`. If not found (friend class not yet declared — common for forward-referenced friends), store the `StringHandle` + namespace context for deferred resolution.
+
+3. **Add a deferred resolution pass** — after all types in the translation unit are parsed, resolve remaining string-based friend entries to `TypeIndex` values via `gTypesByName`.
+
+4. **Simplify `checkFriendClassAccess`** — compare `TypeIndex` values (O(1) integer comparison). For template instantiations, also check the primary template's `TypeIndex`. No string manipulation needed.
+
+**Incremental path**: Try eager `TypeIndex` resolution at registration time, fall back to `StringHandle` for forward-reference cases. Check `TypeIndex` first in the access checker, then fall through to string matching for unresolved entries. This gets correctness for most cases without requiring the deferred resolution pass upfront.
+
+### Recent Fixes (2026-03-03)
+
+1. **Template friend class declarations now register correctly**: `template<typename T> friend struct Foo;` declarations are parsed by `parse_template_friend_declaration` into `FriendDeclarationNode(FriendKind::TemplateClass, ...)`. Previously these were NOT registered into `StructTypeInfo::friend_classes_` — the `FriendKind::TemplateClass` case was missing from the registration switch in `parse_struct_definition`, and the result from `parse_member_template_or_function` was silently dropped. Now both the `template` keyword branch in `parse_struct_definition` and the `parse_friend_declaration` path handle `FriendKind::TemplateClass` registrations. This fixed the `__use_cache` access control violation that was the primary blocker for `<iostream>`, `<sstream>`, and `<fstream>`. Regression test: `tests/test_friend_template_class_ret0.cpp`.
+
+2. **`isFriendClass` handles template instantiation names**: The `isFriendClass` method in `StructTypeInfo` now also strips FlashCpp's internal `_pattern_` suffix and `$hash` suffixes from the checking name before looking up in `friend_classes_`. This ensures that any instantiated template (e.g., `__use_cache$hash`) is recognized as a friend when the base template name (`__use_cache`) was declared as a friend.
+
+3. **`checkMemberAccess` / `checkMemberFunctionAccess` try unqualified names**: When the accessing struct's name is namespace-qualified (e.g., `std::__use_cache_pattern_`), the access check now also tries the unqualified tail of the name (e.g., `__use_cache_pattern_`) for friend class matching.
 
 ### Recent Fixes (2026-03-01, session 3)
 

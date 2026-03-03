@@ -1518,6 +1518,12 @@ ParseResult Parser::parse_template_declaration() {
 						if (template_result.is_error()) {
 							return template_result;
 						}
+						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
+						if (auto result_node = template_result.node()) {
+							if (result_node->is<FriendDeclarationNode>()) {
+								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info.get());
+							}
+						}
 						continue;
 					} else if (peek() == "static"_tok) {
 						// Handle static members: static const int size = 10;
@@ -1575,6 +1581,12 @@ ParseResult Parser::parse_template_declaration() {
 						auto friend_result = parse_friend_declaration();
 						if (friend_result.is_error()) {
 							return friend_result;
+						}
+
+						// Register friend in AST and StructTypeInfo
+						if (auto friend_node = friend_result.node()) {
+							struct_ref.add_friend(*friend_node);
+							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info.get());
 						}
 						continue;
 					}
@@ -2944,11 +2956,30 @@ ParseResult Parser::parse_template_declaration() {
 							return alias_result;
 						}
 						continue;
+					} else if (peek() == "friend"_tok) {
+						// Handle friend declarations inside partial specialization body
+						auto friend_result = parse_friend_declaration();
+						if (friend_result.is_error()) {
+							return friend_result;
+						}
+
+						// Register friend in AST and StructTypeInfo
+						if (auto friend_node = friend_result.node()) {
+							struct_ref.add_friend(*friend_node);
+							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info.get());
+						}
+						continue;
 					} else if (peek() == "template"_tok) {
 						// Handle member function template or member template alias
 						auto template_result = parse_member_template_or_function(struct_ref, current_access);
 						if (template_result.is_error()) {
 							return template_result;
+						}
+						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
+						if (auto result_node = template_result.node()) {
+							if (result_node->is<FriendDeclarationNode>()) {
+								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info.get());
+							}
 						}
 						continue;
 					} else if (peek() == "static_assert"_tok) {
