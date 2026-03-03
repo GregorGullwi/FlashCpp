@@ -1302,7 +1302,7 @@ private:
 					if (last_scope != std::string_view::npos) {
 						std::string_view ns_prefix = acc_name.substr(0, last_scope + 2);
 						StringBuilder qualified_base;
-						std::string_view qualified = qualified_base.append(ns_prefix).append(base_sv).preview();
+						std::string_view qualified = qualified_base.append(ns_prefix).append(base_sv).commit();
 						if (member_owner_struct->isFriendClass(qualified)) return true;
 					}
 				}

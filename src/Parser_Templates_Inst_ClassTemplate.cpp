@@ -1853,16 +1853,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Debug, "Re-parsing deferred function body from template body position");
 					
 					FlashCpp::TemplateParameterScope template_scope;
-					std::vector<std::string_view> param_names;
-					param_names.reserve(template_params.size());
-					for (const auto& tparam_node : template_params) {
-						if (tparam_node.is<TemplateParameterNode>()) {
-							param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
-						}
-					}
-					
-					for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-						std::string_view param_name = param_names[i];
+					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+						if (!template_params[i].is<TemplateParameterNode>()) continue;
+						std::string_view param_name = template_params[i].as<TemplateParameterNode>().name();
 						Type concrete_type = template_args[i].base_type;
 						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
 						type_info.reference_qualifier_ = template_args[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
