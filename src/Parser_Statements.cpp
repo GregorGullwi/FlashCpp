@@ -893,6 +893,55 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 			ReferenceQualifier original_ref_qual = type_specifier.reference_qualifier();
 			CVQualifier original_cv_qual = type_specifier.cv_qualifier();
 			
+			auto try_deduce_lambda_plus_fp = [this](const ASTNode& init) -> std::optional<TypeSpecifierNode> {
+				const UnaryOperatorNode* unop_ptr = nullptr;
+				if (init.is<UnaryOperatorNode>()) {
+					unop_ptr = &init.as<UnaryOperatorNode>();
+				} else if (init.is<ExpressionNode>() && std::holds_alternative<UnaryOperatorNode>(init.as<ExpressionNode>())) {
+					unop_ptr = &std::get<UnaryOperatorNode>(init.as<ExpressionNode>());
+				} else {
+					return std::nullopt;
+				}
+				if (unop_ptr->op() != "+") {
+					return std::nullopt;
+				}
+				const auto& unop = *unop_ptr;
+				const ASTNode& operand_node = unop.get_operand();
+				const LambdaExpressionNode* lambda_ptr = nullptr;
+				if (operand_node.is<LambdaExpressionNode>()) {
+					lambda_ptr = &operand_node.as<LambdaExpressionNode>();
+				} else if (operand_node.is<ExpressionNode>()) {
+					const ExpressionNode& op_expr = operand_node.as<ExpressionNode>();
+					if (std::holds_alternative<LambdaExpressionNode>(op_expr)) {
+						lambda_ptr = &std::get<LambdaExpressionNode>(op_expr);
+					}
+				}
+				if (!lambda_ptr || !lambda_ptr->captures().empty()) {
+					return std::nullopt;
+				}
+
+				return build_function_pointer_type_from_lambda(*lambda_ptr);
+			};
+
+			FLASH_LOG(Parser, Debug, "Auto initializer is_expr=", initializer->is<ExpressionNode>());
+			if (initializer->is<ExpressionNode>()) {
+				const ExpressionNode& expr = initializer->as<ExpressionNode>();
+				FLASH_LOG(Parser, Debug, "Initializer holds UnaryOperatorNode=", std::holds_alternative<UnaryOperatorNode>(expr));
+				if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+					FLASH_LOG(Parser, Debug, "Unary op token=", std::get<UnaryOperatorNode>(expr).op());
+				}
+			}
+
+			if (auto lambda_fp = try_deduce_lambda_plus_fp(*initializer)) {
+				type_specifier = *lambda_fp;
+				type_specifier.set_reference_qualifier(original_ref_qual);
+				if (original_cv_qual != CVQualifier::None) {
+					type_specifier.set_cv_qualifier(original_cv_qual);
+				}
+				FLASH_LOG(Parser, Debug, "Deduced auto lambda+ type: FunctionPointer size=64");
+				return initializer;
+			}
+
 			// Get the full type specifier from the initializer expression
 			auto deduced_type_spec_opt = get_expression_type(*initializer);
 			if (deduced_type_spec_opt.has_value()) {

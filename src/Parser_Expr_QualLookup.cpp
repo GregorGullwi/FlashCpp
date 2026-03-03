@@ -1,3 +1,5 @@
+#include "LambdaHelpers.h"
+
 ParseResult Parser::parse_qualified_identifier() {
 	// This method parses qualified identifiers like std::print or ns1::ns2::func
 	// It should be called when we've already seen an identifier followed by ::
@@ -1089,13 +1091,153 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
-    // First check if it's a template parameter using the new method
-    if (parsing_template_body_ && !current_template_param_names_.empty()) {
-        return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
-    }
+	// First check if it's a template parameter using the new method
+	if (parsing_template_body_ && !current_template_param_names_.empty()) {
+		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+	}
 
-    // Otherwise, do normal symbol lookup
-    return gSymbolTable.lookup(identifier);
+	// Otherwise, do normal symbol lookup
+	return gSymbolTable.lookup(identifier);
+}
+
+std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaExpressionNode& lambda) {
+	if (lambda.return_type().has_value() && lambda.return_type()->is<TypeSpecifierNode>()) {
+		return lambda.return_type()->as<TypeSpecifierNode>();
+	}
+
+	std::optional<TypeSpecifierNode> deduced_type;
+	bool has_incompatible_return = false;
+	std::optional<Token> first_incompatible_return_token;
+
+	auto recordReturnType = [&](const ASTNode& expr, const Token& return_token) {
+		auto type_opt = get_expression_type(expr);
+		if (type_opt.has_value()) {
+			if (!deduced_type.has_value()) {
+				deduced_type = *type_opt;
+			} else if (!are_types_compatible(*deduced_type, *type_opt)) {
+				has_incompatible_return = true;
+				if (!first_incompatible_return_token.has_value()) {
+					first_incompatible_return_token = return_token;
+				}
+			}
+		}
+	};
+
+	auto traverse_returns = [&](const ASTNode& node, const auto& recurse_fn) -> void {
+		if (node.is<ReturnStatementNode>()) {
+			const auto& ret = node.as<ReturnStatementNode>();
+			if (ret.expression().has_value()) {
+				recordReturnType(*ret.expression(), ret.return_token());
+			}
+		} else if (node.is<BlockNode>()) {
+			const auto& block = node.as<BlockNode>();
+			block.get_statements().visit([&](const ASTNode& stmt) {
+				recurse_fn(stmt, recurse_fn);
+			});
+		} else if (node.is<IfStatementNode>()) {
+			const auto& if_stmt = node.as<IfStatementNode>();
+			recurse_fn(if_stmt.get_then_statement(), recurse_fn);
+			if (if_stmt.get_else_statement().has_value()) {
+				recurse_fn(*if_stmt.get_else_statement(), recurse_fn);
+			}
+		} else if (node.is<ForStatementNode>()) {
+			const auto& for_stmt = node.as<ForStatementNode>();
+			recurse_fn(for_stmt.get_body_statement(), recurse_fn);
+		} else if (node.is<WhileStatementNode>()) {
+			const auto& while_stmt = node.as<WhileStatementNode>();
+			recurse_fn(while_stmt.get_body_statement(), recurse_fn);
+		} else if (node.is<DoWhileStatementNode>()) {
+			const auto& do_while = node.as<DoWhileStatementNode>();
+			recurse_fn(do_while.get_body_statement(), recurse_fn);
+		} else if (node.is<SwitchStatementNode>()) {
+			const auto& switch_stmt = node.as<SwitchStatementNode>();
+			recurse_fn(switch_stmt.get_body(), recurse_fn);
+		} else if (node.is<TryStatementNode>()) {
+			const auto& try_stmt = node.as<TryStatementNode>();
+			recurse_fn(try_stmt.try_block(), recurse_fn);
+			for (const auto& catch_clause : try_stmt.catch_clauses()) {
+				if (catch_clause.is<CatchClauseNode>()) {
+					recurse_fn(catch_clause.as<CatchClauseNode>().body(), recurse_fn);
+				}
+			}
+		} else if (node.is<RangedForStatementNode>()) {
+			const auto& ranged_for = node.as<RangedForStatementNode>();
+			recurse_fn(ranged_for.get_body_statement(), recurse_fn);
+		} else if (node.is<CaseLabelNode>()) {
+			const auto& case_node = node.as<CaseLabelNode>();
+			if (case_node.has_statement()) {
+				recurse_fn(*case_node.get_statement(), recurse_fn);
+			}
+		} else if (node.is<DefaultLabelNode>()) {
+			const auto& default_node = node.as<DefaultLabelNode>();
+			if (default_node.has_statement()) {
+				recurse_fn(*default_node.get_statement(), recurse_fn);
+			}
+		}
+	};
+
+	const ASTNode& body = lambda.body();
+	if (body.is<BlockNode>()) {
+		body.as<BlockNode>().get_statements().visit([&](const ASTNode& stmt) {
+			traverse_returns(stmt, traverse_returns);
+		});
+	} else {
+		recordReturnType(body, lambda.lambda_token());
+	}
+
+	if (has_incompatible_return && deduced_type.has_value()) {
+		FLASH_LOG(Parser, Warning, "Lambda at ", lambda.lambda_token().line(), ":", lambda.lambda_token().column(),
+			" has inconsistent return types; using first deduced type ", type_to_string(*deduced_type),
+			first_incompatible_return_token.has_value() ? ", first conflicting return at " : "",
+			first_incompatible_return_token.has_value() ? std::to_string(first_incompatible_return_token->line()) : "",
+			first_incompatible_return_token.has_value() ? ":" : "",
+			first_incompatible_return_token.has_value() ? std::to_string(first_incompatible_return_token->column()) : "");
+	}
+
+	return deduced_type;
+}
+
+std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda) {
+	if (!lambda.captures().empty()) {
+		return std::nullopt;
+	}
+
+	FunctionSignature sig;
+	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
+		sig.return_type = deduced_return->type();
+	} else {
+		// No return statements found => void return type per C++20 §7.5.5.1
+		sig.return_type = Type::Void;
+	}
+
+	for (const auto& param : lambda.parameters()) {
+		if (param.is<DeclarationNode>()) {
+			const auto& param_decl = param.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			sig.parameter_types.push_back(param_type.type());
+		}
+	}
+
+	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token());
+	fp_type.set_function_signature(sig);
+	return fp_type;
+}
+
+std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct(const StructTypeInfo& struct_info, const Token& source_token) {
+	auto sig_opt = getFunctionSignatureFromLambdaStruct(struct_info);
+	if (!sig_opt.has_value()) {
+		return std::nullopt;
+	}
+
+	FunctionSignature sig;
+	sig.return_type = sig_opt->return_type.type();
+	for (const auto& param_type : sig_opt->param_types) {
+		sig.parameter_types.push_back(param_type.type());
+	}
+
+	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, source_token);
+	fp_type.set_function_signature(sig);
+	return fp_type;
 }
 
 // Helper to extract type from an expression for overload resolution
@@ -1246,6 +1388,58 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			return std::nullopt;
 		}
 
+		// Unary plus on a captureless lambda decays to function pointer type
+		if (op == "+") {
+			const ASTNode& operand_node = unary.get_operand();
+			if (operand_node.is<LambdaExpressionNode>()) {
+				const auto& lambda = operand_node.as<LambdaExpressionNode>();
+				if (auto fp_type = build_function_pointer_type_from_lambda(lambda)) {
+					FLASH_LOG(Parser, Debug, "Unary + lambda decay (direct node) to function pointer");
+					return *fp_type;
+				}
+			} else if (operand_node.is<ExpressionNode>() && std::holds_alternative<LambdaExpressionNode>(operand_node.as<ExpressionNode>())) {
+				const auto& lambda = std::get<LambdaExpressionNode>(operand_node.as<ExpressionNode>());
+				if (auto fp_type = build_function_pointer_type_from_lambda(lambda)) {
+					FLASH_LOG(Parser, Debug, "Unary + lambda decay (expr variant) to function pointer");
+					return *fp_type;
+				}
+			} else if (operand_node.is<IdentifierNode>() || (operand_node.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(operand_node.as<ExpressionNode>()))) {
+				const IdentifierNode& ident = operand_node.is<IdentifierNode>()
+					? operand_node.as<IdentifierNode>()
+					: std::get<IdentifierNode>(operand_node.as<ExpressionNode>());
+				auto symbol = lookup_symbol(ident.nameHandle());
+				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+					const auto& decl = symbol->as<DeclarationNode>();
+					const LambdaExpressionNode* lambda_ptr = nullptr;
+					if (decl.has_default_value()) {
+						const ASTNode& init = decl.default_value();
+						if (init.is<LambdaExpressionNode>()) {
+							lambda_ptr = &init.as<LambdaExpressionNode>();
+						} else if (init.is<ExpressionNode>() && std::holds_alternative<LambdaExpressionNode>(init.as<ExpressionNode>())) {
+							lambda_ptr = &std::get<LambdaExpressionNode>(init.as<ExpressionNode>());
+						}
+					}
+					if (!lambda_ptr) {
+						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+						if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info && isLambdaClosureStruct(*struct_info)) {
+								if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, decl.identifier_token())) {
+									return *fp_type;
+								}
+							}
+						}
+					}
+					if (lambda_ptr) {
+						if (auto fp_type = build_function_pointer_type_from_lambda(*lambda_ptr)) {
+							return *fp_type;
+						}
+					}
+				}
+			}
+		}
+
 		TypeSpecifierNode operand_type = *operand_type_opt;
 
 		// Handle dereference operator: *ptr -> removes one level of pointer/reference
@@ -1267,6 +1461,17 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			TypeSpecifierNode result = operand_type;
 			result.add_pointer_level();
 			return result;
+		}
+
+		// Fallback: treat unary + on captureless lambda objects as decay to function pointer using struct info
+		if (op == "+" && operand_type.type() == Type::Struct && operand_type.type_index() < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[operand_type.type_index()];
+			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (struct_info && isLambdaClosureStruct(*struct_info)) {
+				if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, operand_type.token())) {
+					return *fp_type;
+				}
+			}
 		}
 
 		// For other unary operators (+, -, !, ~, ++, --), return the operand type
@@ -1635,6 +1840,16 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 			const SwitchStatementNode& switch_stmt = node.as<SwitchStatementNode>();
 			if (switch_stmt.get_body().has_value()) {
 				find_return_statements(switch_stmt.get_body());
+			}
+		} else if (node.is<CaseLabelNode>()) {
+			const CaseLabelNode& case_node = node.as<CaseLabelNode>();
+			if (case_node.has_statement()) {
+				find_return_statements(*case_node.get_statement());
+			}
+		} else if (node.is<DefaultLabelNode>()) {
+			const DefaultLabelNode& default_node = node.as<DefaultLabelNode>();
+			if (default_node.has_statement()) {
+				find_return_statements(*default_node.get_statement());
 			}
 		}
 		// Add more statement types as needed

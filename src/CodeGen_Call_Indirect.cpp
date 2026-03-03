@@ -65,16 +65,17 @@
 				call_op.result = ret_var;
 				
 				// Build TypeSpecifierNode for return type (needed for mangling)
-				TypeSpecifierNode return_type_node(Type::Int, 0, 32, memberFunctionCallNode.called_from());
+				// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
+				TypeSpecifierNode return_type_node(Type::Void, 0, 0, memberFunctionCallNode.called_from());
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
 					call_op.return_type = ret_type.type();
 					call_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
 				} else {
-					// Default to int if no explicit return type
-					call_op.return_type = Type::Int;
-					call_op.return_size_in_bits = 32;
+					// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
+					call_op.return_type = Type::Void;
+					call_op.return_size_in_bits = 0;
 				}
 				
 				// Build TypeSpecifierNodes for parameters (needed for mangling)

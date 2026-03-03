@@ -1,4 +1,5 @@
 #include "CodeGen.h"
+#include "LambdaHelpers.h"
 
 	std::vector<IrOperand> AstToIr::generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
@@ -357,6 +358,38 @@
 		
 		// Unsupported expression type
 		return std::nullopt;
+	}
+
+	std::optional<std::vector<IrOperand>> AstToIr::decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token) {
+		auto sig_opt = getFunctionSignatureFromLambdaStruct(struct_info);
+		if (!sig_opt.has_value()) {
+			return std::nullopt;
+		}
+
+		const auto& sig = *sig_opt;
+
+		std::string_view invoke_name = StringBuilder()
+			.append(StringTable::getStringView(struct_info.getName()))
+			.append("_invoke")
+			.commit();
+
+		std::string_view mangled = generateMangledNameForCall(
+			invoke_name,
+			sig.return_type,
+			sig.param_types,
+			false,
+			""
+		);
+
+		TempVar func_addr_var = var_counter.next();
+		FunctionAddressOp op;
+		op.result.type = Type::FunctionPointer;
+		op.result.size_in_bits = 64;
+		op.result.value = func_addr_var;
+		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
+		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
+		return std::vector<IrOperand>{ Type::FunctionPointer, 64, func_addr_var, 0ULL };
 	}
 
 	std::vector<IrOperand> AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
@@ -1034,24 +1067,53 @@
 		}
 
 		// Special case: unary plus on lambda triggers decay to function pointer
-		// Check if operand is a lambda expression before visiting it
+		// Handle both lambda literals and identifiers bound to captureless lambdas
 		if (unaryOperatorNode.op() == "+" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			const LambdaExpressionNode* lambda_ptr = nullptr;
+			const StructTypeInfo* lambda_struct_info = nullptr;
+
 			if (std::holds_alternative<LambdaExpressionNode>(operandExpr)) {
-				const LambdaExpressionNode& lambda = std::get<LambdaExpressionNode>(operandExpr);
-				
-				// For non-capturing lambdas, unary plus triggers conversion to function pointer
-				// This returns the address of the lambda's __invoke static function
-				if (lambda.captures().empty()) {
-					// Generate the lambda functions (operator(), __invoke, etc.)
-					generateLambdaExpressionIr(lambda);
-					
-					// Return the address of the __invoke function
-					TempVar func_addr_var = generateLambdaInvokeFunctionAddress(lambda);
-					return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
+				lambda_ptr = &std::get<LambdaExpressionNode>(operandExpr);
+			} else if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
+				auto symbol = lookupSymbol(ident.nameHandle());
+				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+					const auto& decl = symbol->as<DeclarationNode>();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					// If the variable's type is the closure struct for a lambda, derive invoke signature from struct info
+					if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (struct_info && isLambdaClosureStruct(*struct_info)) {
+							lambda_struct_info = struct_info;
+							FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus on lambda identifier '{}' -> using struct info", StringTable::getStringView(type_info.name()));
+						}
+					}
+					// Fallback: if struct info path didn't find a captureless closure,
+					// try extracting the lambda AST node from the initializer.
+					if (!lambda_struct_info && !lambda_ptr && decl.has_default_value()) {
+						const ASTNode& init = decl.default_value();
+						if (init.is<LambdaExpressionNode>()) {
+							lambda_ptr = &init.as<LambdaExpressionNode>();
+						} else if (init.is<ExpressionNode>() && std::holds_alternative<LambdaExpressionNode>(init.as<ExpressionNode>())) {
+							lambda_ptr = &std::get<LambdaExpressionNode>(init.as<ExpressionNode>());
+						}
+					}
 				}
-				// For capturing lambdas, fall through to normal handling
-				// (they cannot decay to function pointers)
+			}
+
+			if (lambda_ptr && lambda_ptr->captures().empty()) {
+				// Generate the lambda functions (operator(), __invoke, etc.)
+				generateLambdaExpressionIr(*lambda_ptr);
+
+				// Return the address of the __invoke function
+				TempVar func_addr_var = generateLambdaInvokeFunctionAddress(*lambda_ptr);
+				return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
+			} else if (lambda_struct_info) {
+				if (auto fp_operands = decayLambdaStructToFunctionPointer(*lambda_struct_info, unaryOperatorNode.get_token())) {
+					return *fp_operands;
+				}
 			}
 		}
 
@@ -1100,6 +1162,35 @@
 		// Get the type of the operand
 		Type operandType = std::get<Type>(operandIrOperands[0]);
 		[[maybe_unused]] int operandSize = std::get<int>(operandIrOperands[1]);
+
+		// Fallback: if operand is a captureless lambda closure object, decay to function pointer using struct info
+		if (unaryOperatorNode.op() == "+" && operandType == Type::Struct) {
+			size_t struct_type_index = 0;
+			if (operandIrOperands.size() >= 4) {
+				if (std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
+					struct_type_index = static_cast<size_t>(std::get<unsigned long long>(operandIrOperands[3]));
+				}
+			}
+			if (struct_type_index == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+				const ExpressionNode& op_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(op_expr)) {
+					auto sym = lookupSymbol(std::get<IdentifierNode>(op_expr).nameHandle());
+					if (sym.has_value() && sym->is<DeclarationNode>()) {
+						struct_type_index = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>().type_index();
+					}
+				}
+			}
+			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[struct_type_index];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info && isLambdaClosureStruct(*struct_info)) {
+					FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus decay via struct info: type_index={}, name={}", struct_type_index, StringTable::getStringView(type_info.name()));
+					if (auto fp_operands = decayLambdaStructToFunctionPointer(*struct_info, unaryOperatorNode.get_token())) {
+						return *fp_operands;
+					}
+				}
+			}
+		}
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
@@ -1370,4 +1461,3 @@
 		// Return the result
 		return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };
 	}
-

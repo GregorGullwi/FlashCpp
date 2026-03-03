@@ -974,19 +974,15 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			}
 
 			if (auto operand_node = operand_result.node()) {
-				// Special handling for unary + on lambda: decay to function pointer
+				// Validation for unary + on lambda: only captureless lambdas can decay to function pointers
 				if (op == "+" && operand_node->is<LambdaExpressionNode>()) {
 					const auto& lambda = operand_node->as<LambdaExpressionNode>();
 
-					// Only captureless lambdas can decay to function pointers
 					if (!lambda.captures().empty()) {
 						return ParseResult::error("Cannot convert lambda with captures to function pointer", operator_token);
 					}
-
-					// For now, just return the lambda itself
-					// The code generator will handle the conversion to function pointer
-					// TODO: Create a proper function pointer type node
-					return ParseResult::success(*operand_node);
+					// Fall through to create a UnaryOperatorNode so downstream stages can
+					// treat unary + on lambdas as a function-pointer conversion.
 				}
 
 				auto unary_op = emplace_node<ExpressionNode>(
@@ -1092,4 +1088,3 @@ static std::string_view normalize_trait_name(std::string_view name) {
 static bool is_known_type_trait_name(std::string_view name) {
 	return trait_map.contains(normalize_trait_name(name));
 }
-

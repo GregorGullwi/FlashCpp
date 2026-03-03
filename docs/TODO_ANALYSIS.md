@@ -196,9 +196,12 @@ When a pack-expansion argument contains a non-trivial expression (e.g., `f(g(arg
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Expr_PrimaryUnary.cpp` | 998 | ✅ Valid |
+| `src/Parser_Expr_PrimaryUnary.cpp` | 977 | ✅ Fixed |
+| `src/Parser_Expr_QualLookup.cpp` | 1243 | ✅ Fixed |
+| `src/Parser_Statements.cpp` | 888 | ✅ Fixed |
+| `src/CodeGen_Expr_Conversions.cpp` | 1036 | ✅ Fixed |
 
-When a captureless lambda is cast with `+lambda` or an explicit `static_cast` to a function pointer, the parser currently returns the lambda node unchanged and relies on the code generator to handle the conversion. No `TypeSpecifierNode` with `Type::FunctionPointer` is created. This means type-checking of the resulting expression is incomplete; the type of the cast expression should be the function pointer type matching the lambda's `operator()`.
+~~When a captureless lambda is cast with `+lambda` or an explicit `static_cast` to a function pointer, the parser currently returns the lambda node unchanged and relies on the code generator to handle the conversion. No `TypeSpecifierNode` with `Type::FunctionPointer` is created. This means type-checking of the resulting expression is incomplete; the type of the cast expression should be the function pointer type matching the lambda's `operator()`.~~ **Fixed**: Unary `+` on a captureless lambda now produces a `Type::FunctionPointer` `TypeSpecifierNode` for both literals and identifiers (including `auto` deduced variables). The function signature is mirrored from the lambda’s `operator()`, and codegen decays stored closure objects to the `__invoke` address when passed around. Captureful lambdas still error. Test: `tests/test_lambda_plus_function_pointer_ret42.cpp`.
 
 ---
 
@@ -366,7 +369,7 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 | Phase labels (stale) | 2 | ✅ Already fixed |
 | Complex pack expansion | 1 | ✅ Valid |
 | Placement new multiple args | 1 | ✅ Fixed |
-| Lambda-to-function-pointer type | 1 | ✅ Valid |
+| Lambda-to-function-pointer type | 1 | ✅ Fixed |
 | Copy constructor type_index check | 1 | ✅ Fixed (also fixed `isOwnTypeIndex()` for template instantiations) |
 | `pointer_depth` in address-of | 7 | 🔍 Needs investigation |
 | Template template parameter defaults | 1 | ✅ Fixed |
@@ -380,9 +383,9 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 | **Total** | **49** | |
 
 **Stale**: 0 items  
-**Fixed**: 35+ entries (all previous fixes plus: constexpr this->member assignment, constexpr `arr[0].member` evaluation, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits, and structured substitutor template-arg handling)  
+**Fixed**: 35+ entries (all previous fixes plus: constexpr this->member assignment, constexpr `arr[0].member` evaluation, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits, lambda-to-function-pointer decay typing and structured substitutor template-arg handling)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 9 items (complex constexpr patterns, pack expansion, lambda-to-funcptr type, array member length, Type::Pointer enum, template deduction non-type params)
+**Genuinely unimplemented**: 8 items (complex constexpr patterns, pack expansion, array member length, Type::Pointer enum, template deduction non-type params)
 
 ## Existing issues encountered while implementing
 
