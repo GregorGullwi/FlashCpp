@@ -1674,8 +1674,10 @@
 								
 								// For converting constructors in copy initialization, check if constructor is explicit
 								if (is_converting_ctor && type_info.struct_info_) {
-									// Find a constructor that takes the initializer type as single parameter
-									const ConstructorDeclarationNode* converting_ctor = nullptr;
+									// Find converting constructors that take the initializer type as single parameter.
+									// Scan all candidates: only error when every match is explicit.
+									bool found_matching_ctor = false;
+									bool found_non_explicit_ctor = false;
 									for (const auto& func : type_info.struct_info_->member_functions) {
 										if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 											const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
@@ -1691,8 +1693,12 @@
 													// Match if types are compatible (exact match or implicit conversion)
 													bool param_matches = false;
 													if (param_type.type() == init_type) {
-														if (init_type != Type::Struct || param_type.type_index() == init_type_index) {
-															param_matches = true;
+														param_matches = true;
+														// For class types, require exact type match, not just Type::Struct kind.
+														if ((init_type == Type::Struct || init_type == Type::UserDefined) &&
+															(init_type_index == 0 || param_type.type_index() == 0 ||
+															param_type.type_index() != init_type_index)) {
+															param_matches = false;
 														}
 													}
 													
@@ -1708,8 +1714,11 @@
 														}
 														
 														if (all_have_defaults) {
-															converting_ctor = &ctor_node;
-															break;
+															found_matching_ctor = true;
+															if (!ctor_node.is_explicit()) {
+																found_non_explicit_ctor = true;
+																break; // Optimization: a valid non-explicit ctor is found.
+															}
 														}
 													}
 												}
@@ -1717,8 +1726,8 @@
 										}
 									}
 									
-									// If found a converting constructor and it's explicit, emit error
-									if (converting_ctor && converting_ctor->is_explicit()) {
+									// Emit error only when every matching converting constructor is explicit.
+									if (found_matching_ctor && !found_non_explicit_ctor) {
 										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '", 
 											StringTable::getStringView(type_info.name()), "'");
 										FLASH_LOG(General, Error, "  Use direct initialization: ", 
