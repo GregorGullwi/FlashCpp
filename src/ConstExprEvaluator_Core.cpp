@@ -1084,6 +1084,8 @@ EvalResult Evaluator::evaluate_callable_object(
 
 		const FunctionDeclarationNode* call_operator = nullptr;
 		// Known limitation: overload selection currently matches by arity only.
+		// If multiple same-arity operator() overloads exist, we reject as ambiguous.
+		bool ambiguous = false;
 		for (const auto& member_func : struct_info->member_functions) {
 			if (member_func.is_constructor || member_func.is_destructor) {
 				continue;
@@ -1099,8 +1101,15 @@ EvalResult Evaluator::evaluate_callable_object(
 			if (candidate.parameter_nodes().size() != arguments.size()) {
 				continue;
 			}
+			if (call_operator) {
+				ambiguous = true;
+				break;
+			}
 			call_operator = &candidate;
-			break;
+		}
+
+		if (ambiguous) {
+			return EvalResult::error("Ambiguous operator() overload: multiple candidates with same arity");
 		}
 
 		if (!call_operator) {

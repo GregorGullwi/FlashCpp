@@ -395,4 +395,13 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 - Constructor matching in constexpr array-member extraction currently uses parameter-count filtering with ambiguity rejection. When multiple same-count overloads remain viable, evaluation falls back to a generic "No matching constructor found for constexpr array element" error instead of emitting a dedicated ambiguity diagnostic.
 - Existing test `tests/test_integral_constant_pattern_ret42.cpp` still emits pre-existing codegen diagnostics (`Parser returned size_bits=0` and repeated `handleLValueCompoundAssignment: FAIL`) despite producing the correct runtime result.
 - `constinit` evaluation for brace-initialized callable objects (e.g., `constexpr Add add{}; constinit int x = add(1,2);`) still fails through `evaluate_member_function_call()` with `Member function calls require struct/class objects`; constructor-call initialized functors are now supported.
-- Callable-object constexpr evaluation in `evaluate_callable_object()` currently picks `operator()` candidates by parameter count only and still enforces a single-return-statement body shape, so overloaded same-arity call operators and more complex constexpr bodies remain unsupported.
+- Callable-object constexpr evaluation in `evaluate_callable_object()` currently picks `operator()` candidates by parameter count only and still enforces a single-return-statement body shape. When multiple same-arity `operator()` overloads exist (e.g., `operator()(int, int)` and `operator()(double, double)`), the evaluator now rejects the call as ambiguous rather than silently picking the wrong overload. Implementing type-based overload resolution would allow these cases to work correctly. Example that currently fails:
+  ```cpp
+  struct Dispatch {
+      constexpr Dispatch() {}
+      constexpr int operator()(double a, double b) const { return 0; }
+      constexpr int operator()(int a, int b) const { return a + b; }
+  };
+  constexpr Dispatch d;
+  constinit int x = d(40, 2); // Error: ambiguous operator() overload
+  ```
