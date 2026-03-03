@@ -1913,9 +1913,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					if (!block_result.is_error() && block_result.node().has_value()) {
 						// Substitute template parameters in the parsed body
+						// Build param order from template_params (not unordered_map) to preserve declaration order
 						std::vector<std::string_view> template_param_order;
-						for (const auto& [pname, _] : deduced_args) {
-							template_param_order.push_back(pname);
+						for (const auto& tp : template_params) {
+							if (tp.is<TemplateParameterNode>()) {
+								std::string_view pname = tp.as<TemplateParameterNode>().name();
+								if (deduced_args.count(pname))
+									template_param_order.push_back(pname);
+							}
 						}
 						ExpressionSubstitutor substitutor(deduced_args, *this, template_param_order);
 						ASTNode substituted_body = substitutor.substitute(*block_result.node());
