@@ -1155,34 +1155,28 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	TypeIndex type_index = type_specifier.type_index();
 	if (type_index >= gTypeInfo.size() ||
 		(type_index < gTypeInfo.size() && !gTypeInfo[type_index].struct_info_)) {
-		// In template bodies, dependent types may not have struct_info_ yet.
+		// Dependent/unresolved types may not have struct_info_ yet.
 		// Parse as a generic initializer list (comma-separated expressions).
-		if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
-			while (true) {
+		while (true) {
+			if (peek() == "}"_tok) break;
+			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			if (init_expr_result.is_error()) return init_expr_result;
+			if (init_expr_result.node().has_value()) {
+				init_list_ref.add_initializer(*init_expr_result.node());
+			} else {
+				return ParseResult::error("Expected initializer expression", current_token_);
+			}
+			if (peek() == ","_tok) {
+				advance();
 				if (peek() == "}"_tok) break;
-				ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
-				if (init_expr_result.is_error()) return init_expr_result;
-				if (init_expr_result.node().has_value()) {
-					init_list_ref.add_initializer(*init_expr_result.node());
-				} else {
-					return ParseResult::error("Expected initializer expression", current_token_);
-				}
-				if (peek() == ","_tok) {
-					advance();
-					if (peek() == "}"_tok) break;
-				} else {
-					break;
-				}
+			} else {
+				break;
 			}
-			if (!consume("}"_tok)) {
-				return ParseResult::error("Expected '}' to close brace initializer", current_token_);
-			}
-			return ParseResult::success(init_list_node);
 		}
-		if (type_index >= gTypeInfo.size()) {
-			return ParseResult::error("Invalid struct type index", current_token_);
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
-		return ParseResult::error("Type is not a struct", current_token_);
+		return ParseResult::success(init_list_node);
 	}
 
 	const TypeInfo& type_info = gTypeInfo[type_index];
@@ -1603,12 +1597,48 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			FLASH_LOG(Parser, Debug, "Parsing positional initializer for member index: ", member_index);
 
+			const StructMember& target_member = struct_info.members[member_index];
+
+			// C++ aggregate brace elision for array members:
+			// Allow flat initialization like `S s = {1,2,3,4,5,6};` where first members are arrays.
+			// Values are consumed recursively for the current array member before moving to next member.
+			if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok) {
+				auto [nested_init_list_node, nested_init_list_ref] = create_node_ref(InitializerListNode());
+				size_t element_limit = target_member.array_dimensions[0];
+				size_t element_count = 0;
+
+				while (element_count < element_limit && peek() != "}"_tok) {
+					ParseResult nested_expr_result = parse_expression(2, ExpressionContext::Normal);
+					if (nested_expr_result.is_error()) {
+						return nested_expr_result;
+					}
+					if (!nested_expr_result.node().has_value()) {
+						return ParseResult::error("Expected initializer expression", current_token_);
+					}
+
+					nested_init_list_ref.add_initializer(*nested_expr_result.node());
+					element_count++;
+
+					if (peek() == ","_tok) {
+						advance();
+						if (peek() == "}"_tok) {
+							break;
+						}
+					} else {
+						break;
+					}
+				}
+
+				init_list_ref.add_initializer(nested_init_list_node);
+				member_index++;
+				continue;
+			}
+
 			// Check if the next token is a brace - if so, we need to parse it as a nested brace initializer
 			ParseResult init_expr_result;
 			if (peek() == "{"_tok) {
 				FLASH_LOG(Parser, Debug, "Detected nested brace initializer for positional member at index: ", member_index);
 				// Create a type specifier for the member's type to properly parse the nested brace initializer
-				const StructMember& target_member = struct_info.members[member_index];
 				if (target_member.type_index > 0 && target_member.type_index < gTypeInfo.size()) {
 					const TypeInfo& member_type_info = gTypeInfo[target_member.type_index];
 					auto [member_type_node, member_type_ref] = emplace_node_ref<TypeSpecifierNode>(
