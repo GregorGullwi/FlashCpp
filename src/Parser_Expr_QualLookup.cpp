@@ -1107,7 +1107,7 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 	bool has_incompatible_return = false;
 	std::optional<Token> first_incompatible_return_token;
 
-	auto record_return_type = [&](const ASTNode& expr, const Token& return_token) {
+	auto validate_and_record_return_type = [&](const ASTNode& expr, const Token& return_token) {
 		auto type_opt = get_expression_type(expr);
 		if (type_opt.has_value()) {
 			if (!deduced_type.has_value()) {
@@ -1121,44 +1121,44 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 		}
 	};
 
-	auto traverse_returns = [&](const ASTNode& node, const auto& recurse) -> void {
+	auto traverse_returns = [&](const ASTNode& node, const auto& traverse_recursively) -> void {
 		if (node.is<ReturnStatementNode>()) {
 			const auto& ret = node.as<ReturnStatementNode>();
 			if (ret.expression().has_value()) {
-				record_return_type(*ret.expression(), ret.return_token());
+				validate_and_record_return_type(*ret.expression(), ret.return_token());
 			}
 		} else if (node.is<BlockNode>()) {
 			const auto& block = node.as<BlockNode>();
 			block.get_statements().visit([&](const ASTNode& stmt) {
-				recurse(stmt, recurse);
+				traverse_recursively(stmt, traverse_recursively);
 			});
 		} else if (node.is<IfStatementNode>()) {
 			const auto& if_stmt = node.as<IfStatementNode>();
 			if (if_stmt.get_then_statement().has_value()) {
-				recurse(if_stmt.get_then_statement(), recurse);
+				traverse_recursively(if_stmt.get_then_statement(), traverse_recursively);
 			}
 			if (if_stmt.get_else_statement().has_value()) {
-				recurse(*if_stmt.get_else_statement(), recurse);
+				traverse_recursively(*if_stmt.get_else_statement(), traverse_recursively);
 			}
 		} else if (node.is<ForStatementNode>()) {
 			const auto& for_stmt = node.as<ForStatementNode>();
 			if (for_stmt.get_body_statement().has_value()) {
-				recurse(for_stmt.get_body_statement(), recurse);
+				traverse_recursively(for_stmt.get_body_statement(), traverse_recursively);
 			}
 		} else if (node.is<WhileStatementNode>()) {
 			const auto& while_stmt = node.as<WhileStatementNode>();
 			if (while_stmt.get_body_statement().has_value()) {
-				recurse(while_stmt.get_body_statement(), recurse);
+				traverse_recursively(while_stmt.get_body_statement(), traverse_recursively);
 			}
 		} else if (node.is<DoWhileStatementNode>()) {
 			const auto& do_while = node.as<DoWhileStatementNode>();
 			if (do_while.get_body_statement().has_value()) {
-				recurse(do_while.get_body_statement(), recurse);
+				traverse_recursively(do_while.get_body_statement(), traverse_recursively);
 			}
 		} else if (node.is<SwitchStatementNode>()) {
 			const auto& switch_stmt = node.as<SwitchStatementNode>();
 			if (switch_stmt.get_body().has_value()) {
-				recurse(switch_stmt.get_body(), recurse);
+				traverse_recursively(switch_stmt.get_body(), traverse_recursively);
 			}
 		}
 	};
@@ -1169,7 +1169,7 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 			traverse_returns(stmt, traverse_returns);
 		});
 	} else {
-		record_return_type(body, lambda.lambda_token());
+		validate_and_record_return_type(body, lambda.lambda_token());
 	}
 
 	if (has_incompatible_return && deduced_type.has_value()) {
@@ -1193,8 +1193,9 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
 		sig.return_type = deduced_return->type();
 	} else {
-		// Fallback when no return statements are present or deduction fails; preserves prior default-to-int decay
-		// for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void). Documented in docs/KNOWN_ISSUES.md.
+		// Fallback (only for unary-plus decay to function pointer) when no return statements are present or deduction fails;
+		// preserves prior default-to-int decay for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void).
+		// Documented in docs/KNOWN_ISSUES.md.
 		sig.return_type = Type::Int;
 	}
 
