@@ -1596,6 +1596,38 @@ ParseResult Parser::parse_template_declaration() {
 						if (friend_result.is_error()) {
 							return friend_result;
 						}
+
+						// Register friend in AST and StructTypeInfo (mirrors parse_struct_definition)
+						if (auto friend_node = friend_result.node()) {
+							struct_ref.add_friend(*friend_node);
+
+							const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
+							if (friend_decl.kind() == FriendKind::Class || friend_decl.kind() == FriendKind::TemplateClass) {
+								StringHandle friend_class_name_handle = friend_decl.name();
+								if (friend_class_name_handle.isValid()) {
+									struct_info->addFriendClass(friend_class_name_handle);
+									std::string_view friend_sv = StringTable::getStringView(friend_class_name_handle);
+									if (friend_sv.find("::") == std::string_view::npos) {
+										NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
+										std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+										if (!ns_name.empty()) {
+											StringHandle qualified_friend = StringTable::getOrInternStringHandle(
+												StringBuilder().append(ns_name).append("::").append(friend_sv).commit());
+											struct_info->addFriendClass(qualified_friend);
+										}
+									}
+								}
+							} else if (friend_decl.kind() == FriendKind::Function) {
+								StringHandle friend_func_name_handle = friend_decl.name();
+								struct_info->addFriendFunction(friend_func_name_handle);
+							} else if (friend_decl.kind() == FriendKind::MemberFunction) {
+								StringHandle friend_class_name_handle = friend_decl.class_name();
+								StringHandle friend_func_name_handle = friend_decl.name();
+								struct_info->addFriendMemberFunction(
+									friend_class_name_handle,
+									friend_func_name_handle);
+							}
+						}
 						continue;
 					}
 				}
@@ -2962,6 +2994,45 @@ ParseResult Parser::parse_template_declaration() {
 						auto alias_result = parse_member_type_alias("typedef", &struct_ref, current_access);
 						if (alias_result.is_error()) {
 							return alias_result;
+						}
+						continue;
+					} else if (peek() == "friend"_tok) {
+						// Handle friend declarations inside partial specialization body
+						auto friend_result = parse_friend_declaration();
+						if (friend_result.is_error()) {
+							return friend_result;
+						}
+
+						// Register friend in AST and StructTypeInfo (mirrors parse_struct_definition)
+						if (auto friend_node = friend_result.node()) {
+							struct_ref.add_friend(*friend_node);
+
+							const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
+							if (friend_decl.kind() == FriendKind::Class || friend_decl.kind() == FriendKind::TemplateClass) {
+								StringHandle friend_class_name_handle = friend_decl.name();
+								if (friend_class_name_handle.isValid()) {
+									struct_info->addFriendClass(friend_class_name_handle);
+									std::string_view friend_sv = StringTable::getStringView(friend_class_name_handle);
+									if (friend_sv.find("::") == std::string_view::npos) {
+										NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
+										std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+										if (!ns_name.empty()) {
+											StringHandle qualified_friend = StringTable::getOrInternStringHandle(
+												StringBuilder().append(ns_name).append("::").append(friend_sv).commit());
+											struct_info->addFriendClass(qualified_friend);
+										}
+									}
+								}
+							} else if (friend_decl.kind() == FriendKind::Function) {
+								StringHandle friend_func_name_handle = friend_decl.name();
+								struct_info->addFriendFunction(friend_func_name_handle);
+							} else if (friend_decl.kind() == FriendKind::MemberFunction) {
+								StringHandle friend_class_name_handle = friend_decl.class_name();
+								StringHandle friend_func_name_handle = friend_decl.name();
+								struct_info->addFriendMemberFunction(
+									friend_class_name_handle,
+									friend_func_name_handle);
+							}
 						}
 						continue;
 					} else if (peek() == "template"_tok) {
