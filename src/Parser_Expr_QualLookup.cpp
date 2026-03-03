@@ -1193,12 +1193,8 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
 		sig.return_type = deduced_return->type();
 	} else {
-		FLASH_LOG(Parser, Warning, "Unary + lambda decay defaulting return type to int at ",
-			lambda.lambda_token().line(), ":", lambda.lambda_token().column(),
-			" (no deducible return expressions)");
-		// Fallback for unary-plus decay when no returns are deducible; keeps legacy int return for captureless lambdas.
-		// This deviates from standard void deduction and is documented in docs/KNOWN_ISSUES.md.
-		sig.return_type = Type::Int;
+		// No return statements found => void return type per C++20 §7.5.5.1
+		sig.return_type = Type::Void;
 	}
 
 	for (const auto& param : lambda.parameters()) {

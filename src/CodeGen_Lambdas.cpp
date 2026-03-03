@@ -82,8 +82,9 @@
 		}
 
 		// Determine return type
-		info.return_type = Type::Int;  // Default to int
-		info.return_size = 32;
+		// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
+		info.return_type = Type::Void;
+		info.return_size = 0;
 		info.return_type_index = 0;
 		info.returns_reference = false;
 		if (lambda.return_type().has_value()) {

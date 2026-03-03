@@ -1961,9 +1961,9 @@ private:
 			.commit();
 		
 		// Compute the mangled name for the __invoke function
-		// Lambda return type defaults to int if not specified
-		Type return_type = Type::Int;
-		int return_size = 32;
+		// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
+		Type return_type = Type::Void;
+		int return_size = 0;
 		if (lambda.return_type().has_value()) {
 			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
 			return_type = ret_type_node.type();
