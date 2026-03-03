@@ -227,11 +227,15 @@
 					}
 				});
 
+				// Capture return type info before moving call_op (use-after-move is UB)
+				Type lambda_return_type = call_op.return_type;
+				int lambda_return_size = call_op.return_size_in_bits;
+
 				// Add the function call instruction with typed payload
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 
 				// Return the result with actual return type from lambda
-				return { call_op.return_type, call_op.return_size_in_bits, ret_var, 0ULL };
+				return { lambda_return_type, lambda_return_size, ret_var, 0ULL };
 			}
 			// For capturing lambdas, fall through to the regular member function call path
 			// The closure object was already created by generateLambdaExpressionIr
