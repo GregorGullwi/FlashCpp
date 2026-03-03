@@ -227,11 +227,15 @@
 					}
 				});
 
+				// Capture return type info before moving call_op (use-after-move is UB)
+				Type lambda_return_type = call_op.return_type;
+				int lambda_return_size = call_op.return_size_in_bits;
+
 				// Add the function call instruction with typed payload
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 
 				// Return the result with actual return type from lambda
-				return { call_op.return_type, call_op.return_size_in_bits, ret_var, 0ULL };
+				return { lambda_return_type, lambda_return_size, ret_var, 0ULL };
 			}
 			// For capturing lambdas, fall through to the regular member function call path
 			// The closure object was already created by generateLambdaExpressionIr
@@ -318,6 +322,28 @@
 							}
 						}
 					}
+				}
+			}
+		} else if (std::holds_alternative<FunctionCallNode>(object_expr)) {
+			// Handle function call returning a struct (e.g., getContainer().callback(args))
+			const FunctionCallNode& func_call = std::get<FunctionCallNode>(object_expr);
+			const DeclarationNode& decl = func_call.function_declaration();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
+				if (ret_type.type() == Type::Struct || ret_type.type() == Type::UserDefined) {
+					object_type = ret_type;
+					// object_name remains empty; expression will be evaluated when needed
+				}
+			}
+		} else if (std::holds_alternative<MemberFunctionCallNode>(object_expr)) {
+			// Handle member function call returning a struct (e.g., obj.getInner().callback(args))
+			const MemberFunctionCallNode& mem_call = std::get<MemberFunctionCallNode>(object_expr);
+			const DeclarationNode& decl = mem_call.function_declaration().decl_node();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
+				if (ret_type.type() == Type::Struct || ret_type.type() == Type::UserDefined) {
+					object_type = ret_type;
+					// object_name remains empty; expression will be evaluated when needed
 				}
 			}
 		} else if (std::holds_alternative<MemberAccessNode>(object_expr)) {
@@ -535,80 +561,85 @@
 				struct_info = declaring_struct;
 				
 				// If not found as member function, check if it's a function pointer data member
+				// Use findMemberRecursive to also search base classes for inherited function pointer members
 				if (!called_member_func) {
-					for (const auto& member : struct_info->members) {
-						if (member.getName() == func_name_handle && member.type == Type::FunctionPointer) {
-							// This is a call through a function pointer member!
-							// Generate an indirect call instead of a member function call
-							
-							TempVar ret_var = var_counter.next();
-							std::vector<IrOperand> func_ptr_call_operands;
-							func_ptr_call_operands.emplace_back(ret_var);
-							
-							// Get the function pointer member
-							// We need to generate member access to get the pointer value
-							TempVar func_ptr_temp = var_counter.next();
-							
-							// Generate member access IR to load the function pointer
-							MemberLoadOp member_load;
-							member_load.result.value = func_ptr_temp;
-							member_load.result.type = member.type;
-							member_load.result.size_in_bits = static_cast<int>(member.size * 8);  // Convert bytes to bits
-							
-							// Add object operand
-							if (object_name.empty()) {
-								// Use temp var
-								// TODO: Need to handle object expression properly
-								throw InternalError("Function pointer member call on expression not yet supported");
-							} else {
-								member_load.object = StringTable::getOrInternStringHandle(object_name);
-							}
-							
-							member_load.member_name = StringTable::getOrInternStringHandle(func_name);  // Member name
-							member_load.offset = static_cast<int>(member.offset);  // Member offset
-							member_load.is_reference = member.is_reference();
-							member_load.is_rvalue_reference = member.is_rvalue_reference();
-							member_load.struct_type_info = nullptr;
+					auto fp_member = struct_info->findMemberRecursive(func_name_handle);
+					if (fp_member.has_value() && fp_member->type == Type::FunctionPointer) {
+						const auto& member = *fp_member;
+						// This is a call through a function pointer member!
+						// Generate an indirect call instead of a member function call
 
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-							
-							// Now add the indirect call with the function pointer temp var
-							irOperands.emplace_back(func_ptr_temp);
-							
-							// Add arguments
-							std::vector<TypedValue> arguments;
-							memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-								auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-								// Extract type, size, and value from the expression result
-								Type arg_type = std::get<Type>(argumentIrOperands[0]);
-								int arg_size = std::get<int>(argumentIrOperands[1]);
-								IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
-									using T = std::decay_t<decltype(arg)>;
-									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-												std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-										return arg;
-									} else {
-										return 0ULL;
-									}
-								}, argumentIrOperands[2]);
-								arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
-							});
-						
-							IndirectCallOp op{
-								.result = ret_var,
-								.function_pointer = func_ptr_temp,
-								.arguments = std::move(arguments)
-							};
-							ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
-							
-							// Use the function pointer's stored return type
-							if (!member.function_signature) {
-								throw InternalError("Function pointer member missing function_signature for indirect call return type");
+						TempVar ret_var = var_counter.next();
+						std::vector<IrOperand> func_ptr_call_operands;
+						func_ptr_call_operands.emplace_back(ret_var);
+
+						// Get the function pointer member
+						// We need to generate member access to get the pointer value
+						TempVar func_ptr_temp = var_counter.next();
+
+						// Generate member access IR to load the function pointer
+						MemberLoadOp member_load;
+						member_load.result.value = func_ptr_temp;
+						member_load.result.type = member.type;
+						member_load.result.size_in_bits = static_cast<int>(member.size * 8);  // Convert bytes to bits
+
+						// Add object operand
+						if (object_name.empty()) {
+							// Object is not a named variable - evaluate the expression to get a TempVar
+							// visitExpressionNode returns {Type, size_in_bits, value, ...} (at least 3 elements)
+							std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+							if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+								throw InternalError("Function pointer member call: expression did not produce a TempVar");
 							}
-							Type ret_type = member.function_signature->return_type;
-							int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
-							return { ret_type, ret_size, ret_var, 0ULL };
+							member_load.object = std::get<TempVar>(obj_result[2]);
+						} else {
+							member_load.object = StringTable::getOrInternStringHandle(object_name);
 						}
+
+						member_load.member_name = StringTable::getOrInternStringHandle(func_name);  // Member name
+						member_load.offset = static_cast<int>(member.offset);  // Member offset
+						member_load.is_reference = member.is_reference();
+						member_load.is_rvalue_reference = member.is_rvalue_reference();
+						member_load.struct_type_info = nullptr;  // Not used downstream; consistent with all other MemberLoadOp sites
+
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+
+						// Now add the indirect call with the function pointer temp var
+						irOperands.emplace_back(func_ptr_temp);
+
+						// Add arguments
+						std::vector<TypedValue> arguments;
+						memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+							auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+							// Extract type, size, and value from the expression result
+							Type arg_type = std::get<Type>(argumentIrOperands[0]);
+							int arg_size = std::get<int>(argumentIrOperands[1]);
+							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
+								using T = std::decay_t<decltype(arg)>;
+								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+											std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+									return arg;
+								} else {
+									return 0ULL;
+								}
+							}, argumentIrOperands[2]);
+							arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
+						});
+
+						IndirectCallOp op{
+							.result = ret_var,
+							.function_pointer = func_ptr_temp,
+							.arguments = std::move(arguments)
+						};
+						ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
+
+						// Use the function pointer's stored return type
+						if (!member.function_signature) {
+							throw InternalError("Function pointer member missing function_signature for indirect call return type");
+						}
+						Type ret_type = member.function_signature->return_type;
+						int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+						return { ret_type, ret_size, ret_var, 0ULL };
 					}
 				}
 			}
@@ -826,7 +857,16 @@
 			vcall_op.result.value = ret_var;
 			vcall_op.object_type = object_type.type();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
-			vcall_op.object = StringTable::getOrInternStringHandle(object_name);
+			if (object_name.empty()) {
+				// Object is a temporary expression result - evaluate it to get a TempVar
+				std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+					throw InternalError("Virtual call on expression: did not produce a TempVar");
+				}
+				vcall_op.object = std::get<TempVar>(obj_result[2]);
+			} else {
+				vcall_op.object = StringTable::getOrInternStringHandle(object_name);
+			}
 			vcall_op.vtable_index = vtable_index;
 			// Set is_pointer_access based on whether the object is accessed through a pointer (ptr->method)
 			// or through a reference (ref.method()). References are implemented as pointers internally,
@@ -1094,7 +1134,31 @@
 			// This is critical for empty structs (size 0) which still need a valid address
 			IrValue this_arg_value;
 			bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
-			if (object_is_pointer_like) {
+			if (object_name.empty()) {
+				// Object is a temporary expression result (e.g., getContainer().method())
+				// Evaluate the expression to get a TempVar, then take its address for the this pointer
+				std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+					throw InternalError("Member function call on expression: did not produce a TempVar");
+				}
+				TempVar obj_temp = std::get<TempVar>(obj_result[2]);
+				
+				if (object_is_pointer_like) {
+					// Temporary is already a pointer/reference - pass through directly
+					this_arg_value = IrValue(obj_temp);
+				} else {
+					// Temporary is a value - take its address
+					TempVar this_addr = var_counter.next();
+					AddressOfOp addr_op;
+					addr_op.result = this_addr;
+					addr_op.operand.type = object_type.type();
+					addr_op.operand.size_in_bits = static_cast<int>(object_type.size_in_bits());
+					addr_op.operand.pointer_depth = static_cast<int>(object_type.pointer_depth());
+					addr_op.operand.value = obj_temp;
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
+					this_arg_value = IrValue(this_addr);
+				}
+			} else if (object_is_pointer_like) {
 				// For pointer/reference objects, pass through directly
 				this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
 			} else {
