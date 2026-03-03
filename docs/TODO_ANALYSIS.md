@@ -109,12 +109,12 @@ while (peek() != "{"_tok) { advance(); }   // base class info lost
 | `src/Parser_Decl_FunctionOrVar.cpp` | 1005 | ✅ Valid |
 | `src/ConstExprEvaluator_Members.cpp` | 202 | ✅ Fixed |
 | `src/ConstExprEvaluator_Members.cpp` | 1473 | ✅ Fixed |
-| `src/ConstExprEvaluator_Core.cpp` | 1050 | ✅ Already works (direct call) |
+| `src/ConstExprEvaluator_Core.cpp` | 1050 | ✅ Fixed |
 
 - **FunctionOrVar.cpp:1005** – `constexpr` variables whose initializers are `InitializerListNode`s, casts, or other complex expressions bypass evaluation entirely. A full implementation would recursively evaluate those forms.
 - ~~**Members.cpp:202** – Inside a constexpr member function, accesses of the form `this->x` (stored as `MemberAccessNode`) fall through to the non-mutable evaluator, which cannot modify the `bindings` map.~~ **Fixed**: The assignment branch in `evaluate_expression_with_bindings` now handles `MemberAccessNode` LHS (`this->x = value`) by extracting the member name and updating `bindings[member_name]`. Read access already worked via the const evaluator. Test: `tests/test_constexpr_this_member_ret42.cpp`.
 - ~~**Members.cpp:1473** – Array subscript followed by member access (`arr[0].member`) in a constexpr context returns an error.~~ **Fixed**: Implemented `evaluate_array_subscript_member_access()` for constexpr identifier-based arrays initialized with initializer lists of struct constructor calls. The evaluator now resolves the indexed element, extracts the requested member via constructor/member-initializer bindings, and returns the constant value. Test: `tests/test_constexpr_array_subscript_member_ret42.cpp`.
-- **Core.cpp:1050** – Calling `operator()` on a user-defined functor **passed as a template argument** in a constexpr context reaches the `evaluate_callable_object` code path, which immediately returns an error for `ConstructorCallNode` initializers. This blocks constexpr comparators like `std::less` / `std::greater` when passed as non-type template parameters. (Direct `constexpr Functor f; f(a,b)` calls already work via the member function call path.)
+- ~~**Core.cpp:1050** – Calling `operator()` on a user-defined functor **passed as a template argument** in a constexpr context reaches the `evaluate_callable_object` code path, which immediately returns an error for `ConstructorCallNode` initializers. This blocks constexpr comparators like `std::less` / `std::greater` when passed as non-type template parameters.~~ **Fixed**: `evaluate_callable_object()` now resolves `operator()` from `StructTypeInfo` (`OverloadableOperator::Call`), materializes member bindings from the constexpr object's constructor/member initializers, and evaluates the operator body with argument bindings. Test: `tests/test_constexpr_functor_call_ret42.cpp`.
 
 ---
 
@@ -362,7 +362,7 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 | Member struct template base classes | 2 | ✅ Fixed |
 | Declarator parsing gaps | 2 | ✅ Fixed (both verified working) |
 | Specifier propagation to struct decl | 1 | ✅ Fixed |
-| Constexpr evaluation gaps | 4 | ⚠️ 2 ✅ Fixed (`this->member`, `arr[0].member`), 2 ✅ Valid |
+| Constexpr evaluation gaps | 4 | ⚠️ 3 ✅ Fixed (`this->member`, `arr[0].member`, callable functor `operator()`), 1 ✅ Valid |
 | Overload resolution | 3 | ✅ Fixed (all working) |
 | Missing return diagnostic | 1 | ✅ Fixed |
 | Template deduction non-type params | 1 | ✅ Valid |
@@ -385,7 +385,7 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 **Stale**: 0 items  
 **Fixed**: 35+ entries (all previous fixes plus: constexpr this->member assignment, constexpr `arr[0].member` evaluation, trivially copyable/trivial recursive base check, member struct template base classes ×2, placement new multi-arg storage, implicit copy/move ctor filtering for type traits, lambda-to-function-pointer decay typing and structured substitutor template-arg handling)  
 **Needs investigation before fixing**: 8 items (pointer_depth sites + `main` guard)  
-**Genuinely unimplemented**: 8 items (complex constexpr patterns, pack expansion, array member length, Type::Pointer enum, template deduction non-type params)
+**Genuinely unimplemented**: 7 items (complex constexpr patterns, pack expansion, array member length, Type::Pointer enum, template deduction non-type params)
 
 ## Existing issues encountered while implementing
 
@@ -394,3 +394,4 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 - With overloaded constructors sharing parameter count (e.g., `constexpr Item(double)`, `constexpr Item(char)`, and non-constexpr `Item(int)`), `constexpr` extraction through `arr[index].member` can still be reported as non-constant for globals in current codegen/evaluator integration (observed in `tests/test_constexpr_array_subscript_member_ret42.cpp` as warning on global `extracted`).
 - Constructor matching in constexpr array-member extraction currently uses parameter-count filtering with ambiguity rejection. When multiple same-count overloads remain viable, evaluation falls back to a generic "No matching constructor found for constexpr array element" error instead of emitting a dedicated ambiguity diagnostic.
 - Existing test `tests/test_integral_constant_pattern_ret42.cpp` still emits pre-existing codegen diagnostics (`Parser returned size_bits=0` and repeated `handleLValueCompoundAssignment: FAIL`) despite producing the correct runtime result.
+- `constinit` evaluation for brace-initialized callable objects (e.g., `constexpr Add add{}; constinit int x = add(1,2);`) still fails through `evaluate_member_function_call()` with `Member function calls require struct/class objects`; constructor-call initialized functors are now supported.

@@ -1048,8 +1048,121 @@ EvalResult Evaluator::evaluate_callable_object(
 	// Check for ConstructorCallNode (user-defined functor)
 	const auto& initializer = var_decl.initializer();
 	if (initializer.has_value() && initializer->is<ConstructorCallNode>()) {
-		// TODO: Look up operator() in the struct and call it
-		return EvalResult::error("User-defined functor constexpr calls not yet implemented");
+		const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
+		const ASTNode& type_node = ctor_call.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Callable object constructor has invalid type");
+		}
+
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
+		if (!struct_info) {
+			return EvalResult::error("Callable object is not a struct/class type");
+		}
+
+		const FunctionDeclarationNode* call_operator = nullptr;
+		for (const auto& member_func : struct_info->member_functions) {
+			if (member_func.is_constructor || member_func.is_destructor) {
+				continue;
+			}
+			if (member_func.operator_kind != OverloadableOperator::Call) {
+				continue;
+			}
+			if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (candidate.parameter_nodes().size() != arguments.size()) {
+				continue;
+			}
+			call_operator = &candidate;
+			break;
+		}
+
+		if (!call_operator) {
+			return EvalResult::error("Callable object has no matching operator()");
+		}
+
+		if (!call_operator->is_constexpr() && context.storage_duration != ConstExpr::StorageDuration::Static) {
+			return EvalResult::error("Callable object operator() in constant expression must be constexpr");
+		}
+
+		const auto& definition = call_operator->get_definition();
+		if (!definition.has_value()) {
+			return EvalResult::error("Callable object operator() has no body");
+		}
+
+		// Build object member bindings from constructor/member initializers.
+		std::unordered_map<std::string_view, EvalResult> member_bindings;
+		const auto& ctor_args = ctor_call.arguments();
+		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+		if (!matching_ctor) {
+			return EvalResult::error("No matching constructor found for callable object");
+		}
+
+		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+		const auto& ctor_params = matching_ctor->parameter_nodes();
+		for (size_t i = 0; i < ctor_params.size() && i < ctor_args.size(); ++i) {
+			if (!ctor_params[i].is<DeclarationNode>()) {
+				continue;
+			}
+			const DeclarationNode& param_decl = ctor_params[i].as<DeclarationNode>();
+			auto arg_result = evaluate(ctor_args[i], context);
+			if (!arg_result.success()) {
+				return arg_result;
+			}
+			ctor_param_bindings[param_decl.identifier_token().value()] = arg_result;
+		}
+
+		for (const auto& mem_init : matching_ctor->member_initializers()) {
+			auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
+			if (!member_result.success()) {
+				return member_result;
+			}
+			member_bindings[mem_init.member_name] = member_result;
+		}
+		for (const auto& member : struct_info->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			if (member_bindings.find(member_name) != member_bindings.end() || !member.default_initializer.has_value()) {
+				continue;
+			}
+			auto default_result = evaluate(member.default_initializer.value(), context);
+			if (default_result.success()) {
+				member_bindings[member_name] = default_result;
+			}
+		}
+
+		const auto& parameters = call_operator->parameter_nodes();
+		for (size_t i = 0; i < arguments.size(); ++i) {
+			if (!parameters[i].is<DeclarationNode>()) {
+				return EvalResult::error("Invalid parameter node in callable object operator()");
+			}
+			const DeclarationNode& param_decl = parameters[i].as<DeclarationNode>();
+			auto arg_result = evaluate(arguments[i], context);
+			if (!arg_result.success()) {
+				return arg_result;
+			}
+			member_bindings[param_decl.identifier_token().value()] = arg_result;
+		}
+
+		context.current_depth++;
+		const ASTNode& body_node = definition.value();
+		if (!body_node.is<BlockNode>()) {
+			context.current_depth--;
+			return EvalResult::error("Callable object operator() body is not a block");
+		}
+
+		const BlockNode& body = body_node.as<BlockNode>();
+		const auto& statements = body.get_statements();
+		if (statements.size() != 1) {
+			context.current_depth--;
+			return EvalResult::error("Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
+		}
+
+		auto result = evaluate_statement_with_bindings(statements[0], member_bindings, context);
+		context.current_depth--;
+		return result;
 	}
 	
 	return EvalResult::error("Object is not callable in constant expression");
