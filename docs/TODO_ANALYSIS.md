@@ -370,7 +370,7 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
 | **Total** | **49** | |
 
 **Stale**: 0 items  
-**Fixed**: 39+ entries (all previous fixes plus: array member element-size using `array_dimensions`, `VariableDeclarationNode` lookup for member array subscript, type_index propagation from struct member arrays, `main` line-mapping guard removed)  
+**Fixed**: 40+ entries (all previous fixes plus: array member element-size using `array_dimensions`, `VariableDeclarationNode` lookup for member array subscript, type_index propagation from struct member arrays, `main` line-mapping guard removed, function-pointer member call on expression result)  
 **Verified (no change needed)**: 8 items (pointer_depth sites — `handleAddressOf()` does not read the field)  
 **Genuinely unimplemented**: 4 items (complex constexpr patterns, complex pack expansion, Type::Pointer enum, template deduction non-type params)
 
@@ -393,4 +393,4 @@ Test added: `tests/test_template_builtin_arg_ret42.cpp`.
   constinit int x = d(40, 2); // Error: ambiguous operator() overload
   ```
 
-- **New (2026-03-03)** `src/CodeGen_Call_Indirect.cpp:561`: Function-pointer member call on a temporary expression result is not yet supported. Code like `getContainer().fp_member(args)` where `getContainer()` returns a struct by value and `fp_member` is a function-pointer member reaches a `throw InternalError("Function pointer member call on expression not yet supported")`. The fix would generate a MemberLoadOp from the TempVar holding the expression result instead of requiring a named variable.
+- ~~**New (2026-03-03)** `src/CodeGen_Call_Indirect.cpp:561`: Function-pointer member call on a temporary expression result is not yet supported.~~ **Fixed (2026-03-03)**: Added object-type resolution for `FunctionCallNode` and `MemberFunctionCallNode` objects returning structs (e.g., `getContainer().callback(40, 2)` where `getContainer()` returns a struct containing a function pointer member). When `object_name` is empty (non-named-variable object), the expression is now evaluated via `visitExpressionNode` to get a `TempVar`, which is used as the base for the `MemberLoadOp`. Test: `tests/test_fp_member_call_on_expr_ret42.cpp`.

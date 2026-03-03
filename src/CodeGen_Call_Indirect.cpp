@@ -320,6 +320,28 @@
 					}
 				}
 			}
+		} else if (std::holds_alternative<FunctionCallNode>(object_expr)) {
+			// Handle function call returning a struct (e.g., getContainer().callback(args))
+			const FunctionCallNode& func_call = std::get<FunctionCallNode>(object_expr);
+			const DeclarationNode& decl = func_call.function_declaration();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
+				if (ret_type.type() == Type::Struct || ret_type.type() == Type::UserDefined) {
+					object_type = ret_type;
+					// object_name remains empty; expression will be evaluated when needed
+				}
+			}
+		} else if (std::holds_alternative<MemberFunctionCallNode>(object_expr)) {
+			// Handle member function call returning a struct (e.g., obj.getInner().callback(args))
+			const MemberFunctionCallNode& mem_call = std::get<MemberFunctionCallNode>(object_expr);
+			const DeclarationNode& decl = mem_call.function_declaration().decl_node();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
+				if (ret_type.type() == Type::Struct || ret_type.type() == Type::UserDefined) {
+					object_type = ret_type;
+					// object_name remains empty; expression will be evaluated when needed
+				}
+			}
 		} else if (std::holds_alternative<MemberAccessNode>(object_expr)) {
 			// Handle member access for function pointer calls
 			// This handles both simple cases like "this->callback" and nested cases like "o.inner.callback"
@@ -557,9 +579,13 @@
 							
 							// Add object operand
 							if (object_name.empty()) {
-								// Use temp var
-								// TODO: Need to handle object expression properly
-								throw InternalError("Function pointer member call on expression not yet supported");
+								// Object is not a named variable - evaluate the expression to get a TempVar
+								// visitExpressionNode returns {Type, size_in_bits, value, ...} (at least 3 elements)
+								std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+								if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+									throw InternalError("Function pointer member call: expression did not produce a TempVar");
+								}
+								member_load.object = std::get<TempVar>(obj_result[2]);
 							} else {
 								member_load.object = StringTable::getOrInternStringHandle(object_name);
 							}
