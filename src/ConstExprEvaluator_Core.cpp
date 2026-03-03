@@ -1048,8 +1048,196 @@ EvalResult Evaluator::evaluate_callable_object(
 	// Check for ConstructorCallNode (user-defined functor)
 	const auto& initializer = var_decl.initializer();
 	if (initializer.has_value() && initializer->is<ConstructorCallNode>()) {
-		// TODO: Look up operator() in the struct and call it
-		return EvalResult::error("User-defined functor constexpr calls not yet implemented");
+		auto bindArgumentValues = [&](const auto& params,
+		                              const auto& args,
+		                              std::unordered_map<std::string_view, EvalResult>& bindings,
+		                              std::string_view errorMessage,
+		                              bool skipInvalidParams) -> EvalResult {
+			for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
+				if (!params[i].template is<DeclarationNode>()) {
+					if (skipInvalidParams) {
+						continue;
+					}
+					return EvalResult::error(std::string(errorMessage));
+				}
+				const DeclarationNode& param_decl = params[i].template as<DeclarationNode>();
+				auto arg_result = evaluate(args[i], context);
+				if (!arg_result.success()) {
+					return arg_result;
+				}
+				bindings[param_decl.identifier_token().value()] = arg_result;
+			}
+			return EvalResult::from_bool(true);
+		};
+
+		const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
+		const ASTNode& type_node = ctor_call.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Callable object constructor has invalid type");
+		}
+
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
+		if (!struct_info) {
+			return EvalResult::error("Callable object is not a struct/class type");
+		}
+
+		const FunctionDeclarationNode* call_operator = nullptr;
+		// Known limitation: overload selection currently matches by arity only.
+		// If multiple same-arity operator() overloads exist, we reject as ambiguous.
+		bool ambiguous = false;
+		for (const auto& member_func : struct_info->member_functions) {
+			if (member_func.is_constructor || member_func.is_destructor) {
+				continue;
+			}
+			if (member_func.operator_kind != OverloadableOperator::Call) {
+				continue;
+			}
+			if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (candidate.parameter_nodes().size() != arguments.size()) {
+				continue;
+			}
+			if (call_operator) {
+				ambiguous = true;
+				break;
+			}
+			call_operator = &candidate;
+		}
+
+		if (ambiguous) {
+			return EvalResult::error("Ambiguous operator() overload: multiple candidates with same arity");
+		}
+
+		if (!call_operator) {
+			return EvalResult::error("Callable object has no matching operator()");
+		}
+
+		if (!call_operator->is_constexpr()) {
+			return EvalResult::error("Callable object operator() in constant expression must be constexpr");
+		}
+
+		const auto& definition = call_operator->get_definition();
+		if (!definition.has_value()) {
+			return EvalResult::error("Callable object operator() has no body");
+		}
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
+		}
+
+		// Build object member bindings from constructor/member initializers.
+		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
+		const auto& ctor_args = ctor_call.arguments();
+		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+		if (!matching_ctor) {
+			return EvalResult::error("No matching constructor found for callable object");
+		}
+
+		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+		const auto& ctor_params = matching_ctor->parameter_nodes();
+		auto ctor_bind_result = bindArgumentValues(
+			ctor_params,
+			ctor_args,
+			ctor_param_bindings,
+			"Invalid parameter node in callable object constructor",
+			true);
+		if (!ctor_bind_result.success()) {
+			return ctor_bind_result;
+		}
+
+		for (const auto& mem_init : matching_ctor->member_initializers()) {
+			auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
+			if (!member_result.success()) {
+				return member_result;
+			}
+			evaluation_bindings[mem_init.member_name] = member_result;
+		}
+		for (const auto& member : struct_info->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			if (evaluation_bindings.find(member_name) != evaluation_bindings.end() || !member.default_initializer.has_value()) {
+				continue;
+			}
+			auto default_result = evaluate(member.default_initializer.value(), context);
+			if (!default_result.success()) {
+				return default_result;
+			}
+			evaluation_bindings[member_name] = default_result;
+		}
+
+		// Evaluate constructor body statements (e.g., member assignments like `m_val = x;`).
+		// The member initializer list is processed above; this handles the constructor body
+		// which may contain additional assignments or logic that modifies member state.
+		const auto& ctor_definition = matching_ctor->get_definition();
+		if (ctor_definition.has_value() && ctor_definition->is<BlockNode>()) {
+			const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
+			const auto& ctor_statements = ctor_body.get_statements();
+
+			// Merge constructor parameter bindings into evaluation_bindings so
+			// that body statements like `m_val = x;` can resolve parameter names.
+			// Parameters shadow members with the same name (correct C++ semantics).
+			std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = evaluation_bindings;
+			for (const auto& [name, val] : ctor_param_bindings) {
+				ctor_body_bindings[name] = val;
+			}
+
+			for (const auto& ctor_stmt : ctor_statements) {
+				auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
+				if (stmt_result.success()) {
+					// A return statement in a constructor body is unusual but valid
+					// (e.g., early return in constexpr constructor). Stop processing.
+					break;
+				}
+				if (!stmt_result.success() && stmt_result.error_message != "Statement executed (not a return)") {
+					return stmt_result;
+				}
+			}
+
+			// Copy back any member bindings that were modified by the constructor body.
+			// We only copy names that correspond to struct members (not constructor params).
+			for (const auto& member : struct_info->members) {
+				std::string_view member_name = StringTable::getStringView(member.getName());
+				auto it = ctor_body_bindings.find(member_name);
+				if (it != ctor_body_bindings.end()) {
+					evaluation_bindings[member_name] = it->second;
+				}
+			}
+		}
+
+		const auto& parameters = call_operator->parameter_nodes();
+		auto call_bind_result = bindArgumentValues(
+			parameters,
+			arguments,
+			evaluation_bindings,
+			"Invalid parameter node in callable object operator()",
+			false);
+		if (!call_bind_result.success()) {
+			return call_bind_result;
+		}
+
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
+		}
+		context.current_depth++;
+		const ASTNode& body_node = definition.value();
+		if (!body_node.is<BlockNode>()) {
+			context.current_depth--;
+			return EvalResult::error("Callable object operator() body is not a block");
+		}
+
+		const BlockNode& body = body_node.as<BlockNode>();
+		const auto& statements = body.get_statements();
+		// Known limitation: only simple single-return constexpr operator() bodies are handled here.
+		if (statements.size() != 1) {
+			context.current_depth--;
+			return EvalResult::error("Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
+		}
+
+		auto result = evaluate_statement_with_bindings(statements[0], evaluation_bindings, context);
+		context.current_depth--;
+		return result;
 	}
 	
 	return EvalResult::error("Object is not callable in constant expression");
@@ -2088,7 +2276,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	if (stmt_node.is<ExpressionNode>()) {
 		// Evaluate the expression (which may have side effects like assignments)
 		auto result = evaluate_expression_with_bindings(stmt_node, bindings, context);
-		// Expression statements don't return values to the caller
+		// Propagate evaluation errors (e.g., failed assignment RHS).
+		// Successful results are discarded — expression statements don't produce
+		// return values for the caller; only the side effects (bindings mutations) matter.
+		if (!result.success()) {
+			return result;
+		}
 		return EvalResult::error("Statement executed (not a return)");
 	}
 	
