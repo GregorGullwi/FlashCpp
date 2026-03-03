@@ -1106,7 +1106,7 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 	std::optional<TypeSpecifierNode> deduced_type;
 	bool has_incompatible_return = false;
 
-	auto consider_expr = [&](const ASTNode& expr) {
+	auto record_return_type = [&](const ASTNode& expr) {
 		auto type_opt = get_expression_type(expr);
 		if (type_opt.has_value()) {
 			if (!deduced_type.has_value()) {
@@ -1117,11 +1117,11 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 		}
 	};
 
-	auto walk = [&](const ASTNode& node, const auto& self) -> void {
+	auto traverse_returns = [&](const ASTNode& node, const auto& self) -> void {
 		if (node.is<ReturnStatementNode>()) {
 			const auto& ret = node.as<ReturnStatementNode>();
 			if (ret.expression().has_value()) {
-				consider_expr(*ret.expression());
+				record_return_type(*ret.expression());
 			}
 		} else if (node.is<BlockNode>()) {
 			const auto& block = node.as<BlockNode>();
@@ -1162,10 +1162,10 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 	const ASTNode& body = lambda.body();
 	if (body.is<BlockNode>()) {
 		body.as<BlockNode>().get_statements().visit([&](const ASTNode& stmt) {
-			walk(stmt, walk);
+			traverse_returns(stmt, traverse_returns);
 		});
 	} else {
-		consider_expr(body);
+		record_return_type(body);
 	}
 
 	if (has_incompatible_return && deduced_type.has_value()) {
@@ -1186,7 +1186,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 		sig.return_type = deduced_return->type();
 	} else {
 		// Fallback when no return statements are present or deduction fails; preserves prior default-to-int decay
-		// for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void)
+		// for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void). TODO: document this deviation in KNOWN_ISSUES.
 		sig.return_type = Type::Int;
 	}
 
