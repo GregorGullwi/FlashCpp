@@ -1163,6 +1163,16 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 		} else if (node.is<RangedForStatementNode>()) {
 			const auto& ranged_for = node.as<RangedForStatementNode>();
 			recurse_fn(ranged_for.get_body_statement(), recurse_fn);
+		} else if (node.is<CaseLabelNode>()) {
+			const auto& case_node = node.as<CaseLabelNode>();
+			if (case_node.has_statement()) {
+				recurse_fn(*case_node.get_statement(), recurse_fn);
+			}
+		} else if (node.is<DefaultLabelNode>()) {
+			const auto& default_node = node.as<DefaultLabelNode>();
+			if (default_node.has_statement()) {
+				recurse_fn(*default_node.get_statement(), recurse_fn);
+			}
 		}
 	};
 
@@ -1830,6 +1840,16 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 			const SwitchStatementNode& switch_stmt = node.as<SwitchStatementNode>();
 			if (switch_stmt.get_body().has_value()) {
 				find_return_statements(switch_stmt.get_body());
+			}
+		} else if (node.is<CaseLabelNode>()) {
+			const CaseLabelNode& case_node = node.as<CaseLabelNode>();
+			if (case_node.has_statement()) {
+				find_return_statements(*case_node.get_statement());
+			}
+		} else if (node.is<DefaultLabelNode>()) {
+			const DefaultLabelNode& default_node = node.as<DefaultLabelNode>();
+			if (default_node.has_statement()) {
+				find_return_statements(*default_node.get_statement());
 			}
 		}
 		// Add more statement types as needed
