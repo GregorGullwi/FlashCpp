@@ -40,5 +40,6 @@ int main() {
 		a.arr[2] == 3 &&
 		a.tail == 7 &&
 		m.arr[1][2] == 6 &&
-		m.tail == 9) ? 0 : 1;
+		m.tail == 9 &&
+		tooFew.arr[0] == 0) ? 0 : 1;
 }
