@@ -755,6 +755,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// This handles cases like: template<typename T, int N> int f(Array<T, N>& a)
 	// where T and N should be deduced from the struct's template args.
 	std::unordered_map<StringHandle, TemplateArgument, StringHash, StringEqual> param_name_to_arg;
+	// Tracks which function-argument slot indices were consumed by the pre-deduction pass
+	// so the main loop can skip past them when doing direct arg consumption.
+	std::unordered_set<size_t> pre_deduced_arg_indices;
 	{
 		// Build set of template parameter names for O(1) lookup
 		std::unordered_set<StringHandle, StringHash, StringEqual> tparam_name_set;
@@ -784,6 +787,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				    fp_info.baseTemplateName() == ca_info.baseTemplateName()) {
 					const auto& fp_targs = fp_info.templateArgs();
 					const auto& ca_targs = ca_info.templateArgs();
+					bool slot_produced_deduction = false;
 					for (size_t j = 0; j < fp_targs.size() && j < ca_targs.size(); ++j) {
 						const auto& p = fp_targs[j];
 						const auto& c = ca_targs[j];
@@ -799,6 +803,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 									recursion_depth, StringTable::getStringView(p.dependent_name));
 								return std::nullopt;
 							}
+							slot_produced_deduction = true;
 							FLASH_LOG_FORMAT(Templates, Debug,
 								"[depth={}]: Pre-deduced type param '{}' = type {}",
 								recursion_depth,
@@ -818,6 +823,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 									recursion_depth, StringTable::getStringView(p.dependent_name));
 								return std::nullopt;
 							}
+							slot_produced_deduction = true;
 							FLASH_LOG_FORMAT(Templates, Debug,
 								"[depth={}]: Pre-deduced non-type param '{}' = {}",
 								recursion_depth,
@@ -825,6 +831,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 								c.intValue());
 						}
 					}
+					if (slot_produced_deduction)
+						pre_deduced_arg_indices.insert(i);
 				}
 			}
 		}
@@ -840,6 +848,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		if (param.kind() == TemplateParameterKind::Template) {
 			// Template template parameter - deduce from argument type
+			// Skip any arg slots fully consumed by the pre-deduction pass
+			while (arg_index < arg_types.size() && pre_deduced_arg_indices.count(arg_index))
+				arg_index++;
 			if (arg_index < arg_types.size()) {
 				const TypeSpecifierNode& arg_type = arg_types[arg_index];
 				
@@ -901,8 +912,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		} else if (param.kind() == TemplateParameterKind::Type) {
 			// Type parameter - check if it's variadic (parameter pack)
 			if (param.is_variadic()) {
-				// Deduce all remaining argument types for this parameter pack
+				// Deduce all remaining argument types for this parameter pack,
+				// skipping any slots already consumed by the pre-deduction pass.
 				while (arg_index < arg_types.size()) {
+					if (pre_deduced_arg_indices.count(arg_index)) {
+						arg_index++;
+						continue;
+					}
 					// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
 					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
 					arg_index++;
@@ -919,15 +935,20 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					Type deduced_type = deduced_type_args[0];
 					template_args.push_back(TemplateArgument::makeType(deduced_type));
 					deduced_type_args.erase(deduced_type_args.begin());
-				} else if (arg_index < arg_types.size()) {
-					// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
-					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
-					arg_index++;
 				} else {
-					// Not enough arguments to deduce all template parameters
-					// Fall back to first argument for remaining parameters
-					// Store full TypeSpecifierNode to preserve reference info
-					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[0]));
+					// Skip any arg slots fully consumed by the pre-deduction pass
+					while (arg_index < arg_types.size() && pre_deduced_arg_indices.count(arg_index))
+						arg_index++;
+					if (arg_index < arg_types.size()) {
+						// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
+						template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
+						arg_index++;
+					} else {
+						// Not enough arguments to deduce all template parameters
+						// Fall back to first argument for remaining parameters
+						// Store full TypeSpecifierNode to preserve reference info
+						template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[0]));
+					}
 				}
 			}
 		} else {
