@@ -1031,55 +1031,6 @@ private:
 			return false;
 		}
 
-		// Helper: check if two structs are the same class, including template instantiations.
-		// Template instantiations use a '$hash' suffix (e.g., basic_string_view$291eceb35e7234a9)
-		// that must be stripped for comparison with the base template.
-		// Template instantiation names may lack namespace prefix (e.g., "basic_string_view$hash"
-		// vs "std::basic_string_view"), so we compare the unqualified class name only when
-		// one name is a namespace-qualified version of the other.
-		auto isSameClassOrInstantiation = [](const StructTypeInfo* a, const StructTypeInfo* b) -> bool {
-			if (a == b) return true;
-			if (!a || !b) return false;
-			std::string_view name_a = StringTable::getStringView(a->getName());
-			std::string_view name_b = StringTable::getStringView(b->getName());
-			if (name_a == name_b) return true;
-			// Strip '$hash' suffix only
-			auto stripHash = [](std::string_view name) -> std::string_view {
-				std::string_view base = extractBaseTemplateName(name);
-				if (!base.empty()) {
-					// Preserve namespace qualification: find the base template name
-					// in the original and return everything up to where it starts
-					auto pos = name.find(base);
-					if (pos != std::string_view::npos) {
-						return name.substr(0, pos + base.size());
-					}
-					return base;
-				}
-				return name;
-			};
-			std::string_view base_a = stripHash(name_a);
-			std::string_view base_b = stripHash(name_b);
-			if (base_a.empty() || base_b.empty()) return false;
-			if (base_a == base_b) return true;
-			// Handle asymmetric namespace qualification:
-			// "basic_string_view" should match "std::basic_string_view" but
-			// "ns1::Foo" should NOT match "ns2::Foo"
-			// Check if the shorter name matches the unqualified part of the longer name
-			auto getUnqualified = [](std::string_view name) -> std::string_view {
-				auto ns_pos = name.rfind("::");
-				if (ns_pos != std::string_view::npos) {
-					return name.substr(ns_pos + 2);
-				}
-				return name;
-			};
-			// Only allow match when one has no namespace and the other does
-			bool a_has_ns = base_a.find("::") != std::string_view::npos;
-			bool b_has_ns = base_b.find("::") != std::string_view::npos;
-			if (a_has_ns == b_has_ns) return false; // both qualified or both unqualified - already compared
-			std::string_view unqual_a = getUnqualified(base_a);
-			std::string_view unqual_b = getUnqualified(base_b);
-			return unqual_a == unqual_b;
-		};
 
 		// Private members are only accessible from:
 		// 1. The same class (or a template instantiation of the same class)
@@ -1112,6 +1063,45 @@ private:
 		}
 
 		return false;
+	}
+
+	// Helper: check if two structs are the same class, including template instantiations.
+	// Template instantiations use a '$hash' suffix (e.g., basic_string_view$291eceb35e7234a9)
+	// that must be stripped for comparison with the base template.
+	bool isSameClassOrInstantiation(const StructTypeInfo* a, const StructTypeInfo* b) const {
+		if (a == b) return true;
+		if (!a || !b) return false;
+		std::string_view name_a = StringTable::getStringView(a->getName());
+		std::string_view name_b = StringTable::getStringView(b->getName());
+		if (name_a == name_b) return true;
+		auto stripHash = [](std::string_view name) -> std::string_view {
+			std::string_view base = extractBaseTemplateName(name);
+			if (!base.empty()) {
+				auto dollar_pos = name.find('$');
+				auto search_region = (dollar_pos != std::string_view::npos) ? name.substr(0, dollar_pos) : name;
+				auto pos = search_region.rfind(base);
+				if (pos != std::string_view::npos) {
+					return name.substr(0, pos + base.size());
+				}
+				return base;
+			}
+			return name;
+		};
+		std::string_view base_a = stripHash(name_a);
+		std::string_view base_b = stripHash(name_b);
+		if (base_a.empty() || base_b.empty()) return false;
+		if (base_a == base_b) return true;
+		auto getUnqualified = [](std::string_view name) -> std::string_view {
+			auto ns_pos = name.rfind("::");
+			if (ns_pos != std::string_view::npos) {
+				return name.substr(ns_pos + 2);
+			}
+			return name;
+		};
+		bool a_has_ns = base_a.find("::") != std::string_view::npos;
+		bool b_has_ns = base_b.find("::") != std::string_view::npos;
+		if (a_has_ns == b_has_ns) return false;
+		return getUnqualified(base_a) == getUnqualified(base_b);
 	}
 
 	// Helper to check if accessing_struct is nested within member_owner_struct
@@ -1178,7 +1168,7 @@ private:
 			const DeclarationNode& this_decl = this_symbol->as<DeclarationNode>();
 			const TypeSpecifierNode& this_type = this_decl.type_node().as<TypeSpecifierNode>();
 
-			if (this_type.type() == Type::Struct && this_type.type_index() < gTypeInfo.size()) {
+			if ((this_type.type() == Type::Struct || this_type.type() == Type::UserDefined) && this_type.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[this_type.type_index()];
 				return type_info.getStructInfo();
 			}
@@ -1227,10 +1217,10 @@ private:
 		}
 
 		// Private member functions are only accessible from:
-		// 1. The same class
+		// 1. The same class (or a template instantiation of the same class)
 		// 2. Nested classes within the same class
 		if (member_func->access == AccessSpecifier::Private) {
-			if (accessing_struct == member_owner_struct) {
+			if (isSameClassOrInstantiation(accessing_struct, member_owner_struct)) {
 				return true;
 			}
 			// Check if accessing_struct is nested within member_owner_struct
@@ -1238,12 +1228,12 @@ private:
 		}
 
 		// Protected member functions are accessible from:
-		// 1. The same class
+		// 1. The same class (or a template instantiation of the same class)
 		// 2. Derived classes
 		// 3. Nested classes within the same class (C++ allows nested classes to access protected)
 		if (member_func->access == AccessSpecifier::Protected) {
-			// Same class
-			if (accessing_struct == member_owner_struct) {
+			// Same class or template instantiation
+			if (isSameClassOrInstantiation(accessing_struct, member_owner_struct)) {
 				return true;
 			}
 
@@ -1308,7 +1298,7 @@ private:
 			if (!resolveMemberAccessType(nested_access, nested_struct_info, nested_member)) {
 				return false;
 			}
-			if (!nested_member || nested_member->type != Type::Struct) {
+			if (!nested_member || (nested_member->type != Type::Struct && nested_member->type != Type::UserDefined)) {
 				return false;
 			}
 			// Get the type info for the nested member's struct type
@@ -1333,7 +1323,7 @@ private:
 		}
 		
 		// The base type should now be a struct type
-		if (base_type.type() != Type::Struct) {
+		if (base_type.type() != Type::Struct && base_type.type() != Type::UserDefined) {
 			return false;
 		}
 		

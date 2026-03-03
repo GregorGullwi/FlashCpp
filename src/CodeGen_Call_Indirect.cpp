@@ -336,7 +336,7 @@
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
 				// We resolved the member access - now check if it's a struct type
-				if (resolved_member && resolved_member->type == Type::Struct) {
+				if (resolved_member && (resolved_member->type == Type::Struct || resolved_member->type == Type::UserDefined)) {
 					// Get the struct info for the member's type
 					if (resolved_member->type_index < gTypeInfo.size()) {
 						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index];
@@ -433,7 +433,7 @@
 							}
 							
 							// Now base_type_spec should be the struct type
-							if (base_type_spec.type() == Type::Struct) {
+							if (base_type_spec.type() == Type::Struct || base_type_spec.type() == Type::UserDefined) {
 								object_type = base_type_spec;
 								object_name = base_name;  // Use the base name for the call
 							}
@@ -456,7 +456,8 @@
 		
 		// Verify this is a struct type BEFORE checking other cases
 		// If object_type is not a struct, this might be a misparsed namespace-qualified function call
-		if (object_type.type() != Type::Struct) {
+		// Note: Template instantiations may be registered as Type::UserDefined but carry full struct info
+		if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
 			// The object is not a struct - this might be a namespace identifier or other non-struct type
 			// Treat this as a regular function call instead of a member function call
 			return convertMemberCallToFunctionCall(memberFunctionCallNode);
