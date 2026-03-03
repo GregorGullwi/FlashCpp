@@ -4994,7 +4994,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				
 				// Add member function to struct
-				member_struct_ref.add_member_function(member_func_node, current_access);
+				member_struct_ref.add_member_function(member_func_node, current_access,
+					func_specs.is_virtual, func_specs.is_pure_virtual(),
+					func_specs.is_override, func_specs.is_final,
+					member_quals.cv_qualifier);
 			} else if (peek() == ":"_tok) {
 				// Bitfield data member
 				std::optional<size_t> bitfield_width;
@@ -5367,7 +5370,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 			
 			// Add member function to struct
-			member_struct_ref.add_member_function(member_func_node, current_access);
+			member_struct_ref.add_member_function(member_func_node, current_access,
+				func_specs.is_virtual, func_specs.is_pure_virtual(),
+				func_specs.is_override, func_specs.is_final,
+				member_quals.cv_qualifier);
 		} else if (peek() == ":"_tok) {
 			// Bitfield data member
 			std::optional<size_t> bitfield_width;

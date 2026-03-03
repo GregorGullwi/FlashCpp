@@ -1829,7 +1829,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// The template will be instantiated on demand when called
 				instantiated_struct_ref.add_member_function(
 					mem_func.function_declaration,
-					mem_func.access
+					mem_func.access,
+					mem_func.is_virtual, mem_func.is_pure_virtual,
+					mem_func.is_override, mem_func.is_final,
+					mem_func.cv_qualifier
 				);
 			} else {
 				FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
@@ -1937,7 +1940,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				instantiated_struct_ref.add_member_function(
 					new_func_node,
-					mem_func.access
+					mem_func.access,
+					mem_func.is_virtual, mem_func.is_pure_virtual,
+					mem_func.is_override, mem_func.is_final,
+					mem_func.cv_qualifier
 				);
 			}
 		}
