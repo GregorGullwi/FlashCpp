@@ -127,6 +127,25 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 8. **Static sibling member function calls in template deferred bodies**: In deferred template member function bodies, calls to other member functions of the same class (e.g., `char_traits::find` calling `char_traits::eq`) fail because the sibling functions are not registered in the codegen symbol table context. Affects: `<iostream>`, `<sstream>`, `<fstream>`.
 
+### TODO: Friend class access control — move to TypeIndex-based resolution
+
+The current friend class implementation stores `StringHandle` names and matches them via string comparisons (with `$hash` / `_pattern` stripping). This is a semantic deviation from the C++ standard: friend declarations should resolve to specific *entities* (types), not string names. The current approach has two known approximations:
+
+1. **Unqualified name collision**: A top-level `Foo` and `ns::Foo` could theoretically both match a friend entry stored as `"Foo"`, though this doesn't occur in practice with standard library headers.
+2. **String manipulation fragility**: Access checks rely on stripping internal naming suffixes (`$hash`, `_pattern_P`, etc.) which couples the access checker to the template instantiation naming scheme.
+
+**The fully correct approach** (per [class.friend]/2 and [temp.friend]):
+
+1. **Add `TypeIndex type_index_` to `StructTypeInfo`** — set during `TypeInfo::setStructInfo()`. Currently getting from `StructTypeInfo*` → `TypeIndex` requires a linear scan of `gTypeInfo` or a `gTypesByName` lookup.
+
+2. **Store `TypeIndex` in friend entries instead of `StringHandle`** — at `addFriendClass` time, try `gTypesByName` lookup (both unqualified and namespace-qualified). If found, store the `TypeIndex`. If not found (friend class not yet declared — common for forward-referenced friends), store the `StringHandle` + namespace context for deferred resolution.
+
+3. **Add a deferred resolution pass** — after all types in the translation unit are parsed, resolve remaining string-based friend entries to `TypeIndex` values via `gTypesByName`.
+
+4. **Simplify `checkFriendClassAccess`** — compare `TypeIndex` values (O(1) integer comparison). For template instantiations, also check the primary template's `TypeIndex`. No string manipulation needed.
+
+**Incremental path**: Try eager `TypeIndex` resolution at registration time, fall back to `StringHandle` for forward-reference cases. Check `TypeIndex` first in the access checker, then fall through to string matching for unresolved entries. This gets correctness for most cases without requiring the deferred resolution pass upfront.
+
 ### Recent Fixes (2026-03-03)
 
 1. **Template friend class declarations now register correctly**: `template<typename T> friend struct Foo;` declarations are parsed by `parse_template_friend_declaration` into `FriendDeclarationNode(FriendKind::TemplateClass, ...)`. Previously these were NOT registered into `StructTypeInfo::friend_classes_` — the `FriendKind::TemplateClass` case was missing from the registration switch in `parse_struct_definition`, and the result from `parse_member_template_or_function` was silently dropped. Now both the `template` keyword branch in `parse_struct_definition` and the `parse_friend_declaration` path handle `FriendKind::TemplateClass` registrations. This fixed the `__use_cache` access control violation that was the primary blocker for `<iostream>`, `<sstream>`, and `<fstream>`. Regression test: `tests/test_friend_template_class_ret0.cpp`.

@@ -1240,70 +1240,47 @@ private:
 
 	// Helper: check if accessing_struct is a declared friend class of member_owner_struct.
 	//
-	// Friend declarations are stored under the name as written in source, which is
-	// typically unqualified (e.g. "__use_cache" rather than "std::__use_cache").  At
-	// codegen time the accessing struct carries its full internal name, which may be:
-	//   • namespace-qualified  – "std::__use_cache_pattern_"
+	// Friend declarations are stored both under the source-level name (typically
+	// unqualified, e.g. "__use_cache") AND the namespace-qualified form (e.g.
+	// "std::__use_cache") — the parser registers both at addFriendClass time.
+	//
+	// At codegen time the accessing struct carries its full internal name, which
+	// may be:
+	//   • namespace-qualified  – "std::__use_cache"
 	//   • a $hash instantiation – "std::__use_cache$00a6ac8c5dbe3409"
-	//   • a _pattern_ struct   – "__use_cache_pattern_P"  (pointer specialisation)
+	//   • a _pattern_ struct   – "std::__use_cache_pattern_P"
 	//
 	// The helper therefore tries, in order:
-	//   1. The full accessing name (qualified and unqualified).
+	//   1. Exact match on the full accessing name.
 	//   2. The registered base-template name from TypeInfo (strips $hash).
 	//   3. A manual $-strip (fallback for instantiations not yet in TypeInfo).
 	//   4. For partial-specialisation pattern structs (identified via the registry):
-	//      strip the "_pattern" separator to recover the base template name.
-	//
-	// Note: unqualified matching can grant access to a class with the same simple name
-	// in a different namespace.  This is an acceptable approximation in FlashCpp because
-	// friend declarations in standard-library headers never have that ambiguity in
-	// practice.
+	//      strip the "_pattern" separator to recover the base template name,
+	//      preserving the namespace prefix for correct matching.
 	bool checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
 	                             const StructTypeInfo* accessing_struct) const {
 		if (!accessing_struct) return false;
 
 		// Fast path: exact StringHandle match avoids string_view ↔ StringHandle round-trip.
-		// This is the most common case (non-template, same-namespace friend).
+		// This covers the most common case: non-template, same-namespace friend, or
+		// fully-qualified name matching the qualified friend entry stored by the parser.
 		StringHandle acc_handle = accessing_struct->getName();
 		if (member_owner_struct->isFriendClass(acc_handle)) return true;
 
 		std::string_view acc_name = StringTable::getStringView(acc_handle);
 
-		// Try isFriendClass for both the given name and its unqualified tail.
-		// Friend declarations are stored as the name that appeared in source, which is
-		// usually unqualified (e.g. "__use_cache"), while the accessing struct's name
-		// may include a namespace prefix (e.g. "std::__use_cache_pattern_").
-		auto tryQualAndUnqual = [&](std::string_view name) -> bool {
-			if (name.empty()) return false;
-			if (member_owner_struct->isFriendClass(name)) return true;
-			auto ns_pos = name.rfind("::");
-			if (ns_pos != std::string_view::npos) {
-				std::string_view unqual = name.substr(ns_pos + 2);
-				if (!unqual.empty() && member_owner_struct->isFriendClass(unqual)) return true;
-			}
-			return false;
-		};
-
-		// 1. Unqualified tail of the exact name (the handle check above already
-		//    covered the qualified form, so only the namespace-stripped fallback remains).
-		{
-			auto ns_pos = acc_name.rfind("::");
-			if (ns_pos != std::string_view::npos) {
-				std::string_view unqual = acc_name.substr(ns_pos + 2);
-				if (!unqual.empty() && member_owner_struct->isFriendClass(unqual)) return true;
-			}
-		}
-
 		// 2. Registered base-template name from TypeInfo ($hash instantiations).
+		//    e.g. "std::__use_cache$00a6ac8c" → "std::__use_cache"
 		std::string_view base = extractBaseTemplateName(acc_name);
 		if (!base.empty() && base != acc_name) {
-			if (tryQualAndUnqual(base)) return true;
+			if (member_owner_struct->isFriendClass(base)) return true;
 		}
 
 		// 3. Fallback: manually strip at '$' for names not yet recorded in TypeInfo.
 		auto dollar_pos = acc_name.find('$');
 		if (dollar_pos != std::string_view::npos) {
-			if (tryQualAndUnqual(acc_name.substr(0, dollar_pos))) return true;
+			std::string_view stripped = acc_name.substr(0, dollar_pos);
+			if (member_owner_struct->isFriendClass(stripped)) return true;
 		}
 
 		// 4. Partial-specialisation pattern structs.
@@ -1311,17 +1288,13 @@ private:
 		//    where "_pattern" is the fixed separator (see Parser_Templates_Class.cpp).
 		//    Use the registry for O(1) detection, then locate "_pattern" to recover
 		//    the base template name (handles all encodings: _P, _R, _RR, _C, …).
+		//    We preserve the namespace prefix (if any) so that "std::__use_cache_pattern_P"
+		//    becomes "std::__use_cache", matching the qualified friend entry.
 		if (gTemplateRegistry.isPatternStructName(accessing_struct->getName())) {
-			// Operate on the local (unqualified) part of the name.
-			std::string_view local = acc_name;
-			auto ns_pos = acc_name.rfind("::");
-			if (ns_pos != std::string_view::npos)
-				local = acc_name.substr(ns_pos + 2);
-
-			auto pat_pos = local.rfind("_pattern");
+			auto pat_pos = acc_name.rfind("_pattern");
 			if (pat_pos != std::string_view::npos) {
-				std::string_view base_from_pattern = local.substr(0, pat_pos);
-				if (tryQualAndUnqual(base_from_pattern)) return true;
+				std::string_view base_from_pattern = acc_name.substr(0, pat_pos);
+				if (member_owner_struct->isFriendClass(base_from_pattern)) return true;
 			}
 		}
 
