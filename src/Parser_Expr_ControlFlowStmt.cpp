@@ -1327,7 +1327,7 @@ ParseResult Parser::parse_lambda_expression() {
     // Generate operator() member function for the lambda
     // This allows lambda() calls to work
     // Determine return type
-    TypeSpecifierNode return_type_spec(Type::Int, TypeQualifier::None, 32);
+    TypeSpecifierNode return_type_spec(Type::Void, TypeQualifier::None, 0);
     if (return_type.has_value()) {
         return_type_spec = return_type->as<TypeSpecifierNode>();
     }
@@ -1747,4 +1747,3 @@ ParseResult Parser::parse_switch_statement() {
 
     return ParseResult::error("Invalid switch statement construction", current_token_);
 }
-

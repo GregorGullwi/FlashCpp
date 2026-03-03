@@ -1136,32 +1136,22 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 			});
 		} else if (node.is<IfStatementNode>()) {
 			const auto& if_stmt = node.as<IfStatementNode>();
-			if (if_stmt.get_then_statement().has_value()) {
-				recurse_fn(if_stmt.get_then_statement(), recurse_fn);
-			}
+			recurse_fn(if_stmt.get_then_statement(), recurse_fn);
 			if (if_stmt.get_else_statement().has_value()) {
 				recurse_fn(*if_stmt.get_else_statement(), recurse_fn);
 			}
 		} else if (node.is<ForStatementNode>()) {
 			const auto& for_stmt = node.as<ForStatementNode>();
-			if (for_stmt.get_body_statement().has_value()) {
-				recurse_fn(for_stmt.get_body_statement(), recurse_fn);
-			}
+			recurse_fn(for_stmt.get_body_statement(), recurse_fn);
 		} else if (node.is<WhileStatementNode>()) {
 			const auto& while_stmt = node.as<WhileStatementNode>();
-			if (while_stmt.get_body_statement().has_value()) {
-				recurse_fn(while_stmt.get_body_statement(), recurse_fn);
-			}
+			recurse_fn(while_stmt.get_body_statement(), recurse_fn);
 		} else if (node.is<DoWhileStatementNode>()) {
 			const auto& do_while = node.as<DoWhileStatementNode>();
-			if (do_while.get_body_statement().has_value()) {
-				recurse_fn(do_while.get_body_statement(), recurse_fn);
-			}
+			recurse_fn(do_while.get_body_statement(), recurse_fn);
 		} else if (node.is<SwitchStatementNode>()) {
 			const auto& switch_stmt = node.as<SwitchStatementNode>();
-			if (switch_stmt.get_body().has_value()) {
-				recurse_fn(switch_stmt.get_body(), recurse_fn);
-			}
+			recurse_fn(switch_stmt.get_body(), recurse_fn);
 		} else if (node.is<TryStatementNode>()) {
 			const auto& try_stmt = node.as<TryStatementNode>();
 			recurse_fn(try_stmt.try_block(), recurse_fn);
