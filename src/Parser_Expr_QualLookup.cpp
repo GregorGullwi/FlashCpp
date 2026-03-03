@@ -1089,10 +1089,10 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
-    // First check if it's a template parameter using the new method
-    if (parsing_template_body_ && !current_template_param_names_.empty()) {
-        return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
-    }
+	// First check if it's a template parameter using the new method
+	if (parsing_template_body_ && !current_template_param_names_.empty()) {
+		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+	}
 
 	// Otherwise, do normal symbol lookup
 	return gSymbolTable.lookup(identifier);
@@ -1185,7 +1185,8 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
 		sig.return_type = deduced_return->type();
 	} else {
-		// Fallback when no return statements are present or deduction fails; preserves prior default-to-int decay for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void)
+		// Fallback when no return statements are present or deduction fails; preserves prior default-to-int decay
+		// for captureless lambdas (legacy behavior; standard lambdas without returns would deduce void)
 		sig.return_type = Type::Int;
 	}
 
