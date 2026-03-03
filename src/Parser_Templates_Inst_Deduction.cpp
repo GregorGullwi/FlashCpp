@@ -791,8 +791,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						if (!tparam_name_set.count(p.dependent_name)) continue;
 						if (!c.is_value) {
 							// Type argument
-							param_name_to_arg.emplace(p.dependent_name,
-								TemplateArgument::makeType(c.base_type, c.type_index));
+							TemplateArgument new_arg = TemplateArgument::makeType(c.base_type, c.type_index);
+							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
+							if (!inserted && !(it->second == new_arg)) {
+								FLASH_LOG_FORMAT(Templates, Error,
+									"[depth={}]: Conflicting deduction for type param '{}'",
+									recursion_depth, StringTable::getStringView(p.dependent_name));
+								return std::nullopt;
+							}
 							FLASH_LOG_FORMAT(Templates, Debug,
 								"[depth={}]: Pre-deduced type param '{}' = type {}",
 								recursion_depth,
@@ -804,8 +810,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// placeholder), because dependent non-type params are stored as
 							// is_value==false in the placeholder even though they carry an integer value
 							// at instantiation time.
-							param_name_to_arg.emplace(p.dependent_name,
-								TemplateArgument::makeValue(c.intValue(), c.base_type));
+							TemplateArgument new_arg = TemplateArgument::makeValue(c.intValue(), c.base_type);
+							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
+							if (!inserted && !(it->second == new_arg)) {
+								FLASH_LOG_FORMAT(Templates, Error,
+									"[depth={}]: Conflicting deduction for non-type param '{}'",
+									recursion_depth, StringTable::getStringView(p.dependent_name));
+								return std::nullopt;
+							}
 							FLASH_LOG_FORMAT(Templates, Debug,
 								"[depth={}]: Pre-deduced non-type param '{}' = {}",
 								recursion_depth,
@@ -1714,6 +1726,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
 			std::string_view param_name = param_names[i];
+			// Value (non-type) params must NOT be registered as TypeInfo: their type_value
+			// is Type::Invalid (makeValue leaves it unset), which would poison gTypesByName
+			// with an Invalid-type entry for the parameter name (e.g. "N").  They are
+			// already handled via template_param_substitutions_ below.
+			if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
 			Type concrete_type = template_args[i].type_value;
 
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
