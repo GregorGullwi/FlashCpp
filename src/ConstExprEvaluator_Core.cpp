@@ -1061,6 +1061,7 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 
 		const FunctionDeclarationNode* call_operator = nullptr;
+		// Known limitation: overload selection currently matches by arity only.
 		for (const auto& member_func : struct_info->member_functions) {
 			if (member_func.is_constructor || member_func.is_destructor) {
 				continue;
@@ -1084,7 +1085,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Callable object has no matching operator()");
 		}
 
-		if (!call_operator->is_constexpr() && context.storage_duration != ConstExpr::StorageDuration::Static) {
+		if (!call_operator->is_constexpr()) {
 			return EvalResult::error("Callable object operator() in constant expression must be constexpr");
 		}
 
@@ -1094,7 +1095,7 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 
 		// Build object member bindings from constructor/member initializers.
-		std::unordered_map<std::string_view, EvalResult> member_bindings;
+		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
 		const auto& ctor_args = ctor_call.arguments();
 		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
 		if (!matching_ctor) {
@@ -1120,16 +1121,16 @@ EvalResult Evaluator::evaluate_callable_object(
 			if (!member_result.success()) {
 				return member_result;
 			}
-			member_bindings[mem_init.member_name] = member_result;
+			evaluation_bindings[mem_init.member_name] = member_result;
 		}
 		for (const auto& member : struct_info->members) {
 			std::string_view member_name = StringTable::getStringView(member.getName());
-			if (member_bindings.find(member_name) != member_bindings.end() || !member.default_initializer.has_value()) {
+			if (evaluation_bindings.find(member_name) != evaluation_bindings.end() || !member.default_initializer.has_value()) {
 				continue;
 			}
 			auto default_result = evaluate(member.default_initializer.value(), context);
 			if (default_result.success()) {
-				member_bindings[member_name] = default_result;
+				evaluation_bindings[member_name] = default_result;
 			}
 		}
 
@@ -1143,7 +1144,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			if (!arg_result.success()) {
 				return arg_result;
 			}
-			member_bindings[param_decl.identifier_token().value()] = arg_result;
+			evaluation_bindings[param_decl.identifier_token().value()] = arg_result;
 		}
 
 		context.current_depth++;
@@ -1155,12 +1156,13 @@ EvalResult Evaluator::evaluate_callable_object(
 
 		const BlockNode& body = body_node.as<BlockNode>();
 		const auto& statements = body.get_statements();
+		// Known limitation: only simple single-return constexpr operator() bodies are handled here.
 		if (statements.size() != 1) {
 			context.current_depth--;
 			return EvalResult::error("Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
 		}
 
-		auto result = evaluate_statement_with_bindings(statements[0], member_bindings, context);
+		auto result = evaluate_statement_with_bindings(statements[0], evaluation_bindings, context);
 		context.current_depth--;
 		return result;
 	}
