@@ -1893,6 +1893,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 						std::vector<std::string_view> template_param_order;
 						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+							if (!template_params[i].is<TemplateParameterNode>()) continue;
 							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 							param_map[tparam.name()] = template_args[i];
 							template_param_order.push_back(tparam.name());
