@@ -842,7 +842,177 @@ private:
 		return false;
 	}
 
+	// Recursively zero-initialize all scalar leaf members of a struct.
+	// For sub-members that are themselves structs (> 64 bits), recurse instead of
+	// emitting a single MemberStore with 0ULL (which would only zero the first 8 bytes).
+	void emitRecursiveZeroFill(
+		const StructTypeInfo& struct_info,
+		StringHandle base_object,
+		int base_offset,
+		const Token& token)
+	{
+		for (const StructMember& sub_member : struct_info.members) {
+			bool is_nested_struct = (sub_member.type == Type::Struct || sub_member.type == Type::UserDefined)
+				&& sub_member.type_index < gTypeInfo.size()
+				&& gTypeInfo[sub_member.type_index].struct_info_
+				&& (sub_member.size * 8) > 64;
+
+			if (is_nested_struct) {
+				emitRecursiveZeroFill(
+					*gTypeInfo[sub_member.type_index].struct_info_,
+					base_object,
+					base_offset + static_cast<int>(sub_member.offset),
+					token);
+			} else {
+				MemberStoreOp member_store;
+				member_store.value.type = sub_member.type;
+				member_store.value.size_in_bits = static_cast<int>(sub_member.size * 8);
+				member_store.value.value = 0ULL;
+				member_store.object = base_object;
+				member_store.member_name = sub_member.getName();
+				member_store.offset = base_offset + static_cast<int>(sub_member.offset);
+				member_store.is_reference = sub_member.is_reference();
+				member_store.is_rvalue_reference = sub_member.is_rvalue_reference();
+				member_store.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+			}
+		}
+	}
+
 	// Implementation of recursive nested member store generation
+	bool tryEmitArrayMemberStores(
+	const StructMember& member,
+	const InitializerListNode& init_list,
+	StringHandle base_object,
+	int base_offset,
+	const Token& token)
+	{
+		if (!member.is_array || member.array_dimensions.empty()) {
+			return false;
+		}
+
+		size_t element_count = 1;
+		for (size_t dim : member.array_dimensions) {
+			element_count *= dim;
+		}
+		if (element_count == 0) {
+			return false;
+		}
+
+		int element_size_bits = 0;
+		if (member.type_index < gTypeInfo.size()) {
+			const TypeInfo& elem_type_info = gTypeInfo[member.type_index];
+			if (elem_type_info.struct_info_) {
+				// Struct types store type_size_ in bytes
+				element_size_bits = static_cast<int>(elem_type_info.type_size_ * 8);
+			} else if (elem_type_info.type_size_ > 0) {
+				// Non-struct types (enums, typedefs, etc.) store type_size_ in bits
+				element_size_bits = static_cast<int>(elem_type_info.type_size_);
+			}
+		}
+		if (element_size_bits <= 0) {
+			element_size_bits = static_cast<int>((member.size * 8) / element_count);
+		}
+
+		auto count_expressions = [&](const auto& self, const InitializerListNode& list) -> size_t {
+			size_t count = 0;
+			for (const ASTNode& node : list.initializers()) {
+				if (node.is<ExpressionNode>()) {
+					count++;
+				} else if (node.is<InitializerListNode>()) {
+					count += self(self, node.as<InitializerListNode>());
+				}
+			}
+			return count;
+		};
+
+		const size_t first_dimension_limit = member.array_dimensions[0];
+		size_t nested_subarray_count = 0;
+		const size_t subarray_limit = member.array_dimensions.size() > 1
+			? (element_count / first_dimension_limit)
+			: element_count;
+		for (const ASTNode& node : init_list.initializers()) {
+			if (node.is<InitializerListNode>()) {
+				nested_subarray_count++;
+				if (nested_subarray_count > first_dimension_limit) {
+					throw CompileError("Too many initializers for array");
+				}
+				if (member.array_dimensions.size() > 1 &&
+					count_expressions(count_expressions, node.as<InitializerListNode>()) > subarray_limit) {
+					throw CompileError("Too many initializers for array subobject");
+				}
+			}
+		}
+
+		std::vector<const ExpressionNode*> flat_initializers;
+		auto collect_initializers = [&](const auto& self, const InitializerListNode& list) -> void {
+			for (const ASTNode& node : list.initializers()) {
+				if (node.is<ExpressionNode>()) {
+					flat_initializers.push_back(&node.as<ExpressionNode>());
+				} else if (node.is<InitializerListNode>()) {
+					self(self, node.as<InitializerListNode>());
+				}
+			}
+		};
+		collect_initializers(collect_initializers, init_list);
+		if (flat_initializers.size() > element_count) {
+			throw CompileError("Too many initializers for array");
+		}
+
+		const size_t emit_count = std::min(element_count, flat_initializers.size());
+		for (size_t i = 0; i < emit_count; ++i) {
+			auto init_operands = visitExpressionNode(*flat_initializers[i]);
+			if (init_operands.size() < 3) {
+				throw InternalError("Invalid array member initializer operands");
+			}
+
+			emitArrayStore(
+				member.type,
+				element_size_bits,
+				base_object,
+				TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+				toTypedValue(init_operands),
+				base_offset + static_cast<int>(member.offset),
+				false,
+				token
+			);
+		}
+
+		// Zero-fill trailing uninitialized elements.
+		// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
+		// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
+		const bool is_struct_element = (member.type == Type::Struct || member.type == Type::UserDefined)
+			&& member.type_index < gTypeInfo.size()
+			&& gTypeInfo[member.type_index].struct_info_
+			&& element_size_bits > 64;
+
+		for (size_t i = emit_count; i < element_count; ++i) {
+			if (is_struct_element) {
+				// Recursively zero each sub-member of the struct element.
+				int element_byte_offset = base_offset
+					+ static_cast<int>(member.offset)
+					+ static_cast<int>(i) * (element_size_bits / 8);
+
+				emitRecursiveZeroFill(*gTypeInfo[member.type_index].struct_info_,
+					base_object, element_byte_offset, token);
+			} else {
+				TypedValue zero_value{member.type, element_size_bits, 0ULL};
+				emitArrayStore(
+					member.type,
+					element_size_bits,
+					base_object,
+					TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+					zero_value,
+					base_offset + static_cast<int>(member.offset),
+					false,
+					token
+				);
+			}
+		}
+
+		return true;
+	}
+
 	void generateNestedMemberStores(
 	const StructTypeInfo& struct_info,
 	const InitializerListNode& init_list,
@@ -890,6 +1060,10 @@ private:
 			if (init_expr.is<InitializerListNode>()) {
 				// Nested brace initializer - check if member is a struct
 				const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+
+				if (tryEmitArrayMemberStores(member, nested_init_list, base_object, base_offset, token)) {
+					continue;
+				}
 
 				if (member.type_index < gTypeInfo.size()) {
 					const TypeInfo& member_type_info = gTypeInfo[member.type_index];

@@ -278,6 +278,34 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	};
 
+	auto resolve_array_dimensions = [&](
+		const DeclarationNode& decl,
+		const std::vector<ASTNode>& params,
+		const std::vector<TemplateTypeArg>& args) -> std::vector<size_t> {
+		std::vector<size_t> resolved_dims;
+		if (!decl.is_array()) {
+			return resolved_dims;
+		}
+		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
+		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
+		for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
+			if (!params[pi].is<TemplateParameterNode>()) continue;
+			const auto& tparam = params[pi].as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::NonType && args[pi].is_value) {
+				nontype_sub_map[tparam.name()] = args[pi].value;
+			}
+		}
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		for (const auto& dim_expr : decl.array_dimensions()) {
+			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map);
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
+			if (eval_result.success() && eval_result.as_int() > 0) {
+				resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
+			}
+		}
+		return resolved_dims;
+	};
+
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -991,6 +1019,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto [member_type, member_type_index] = substitute_template_parameter(
 				type_spec, template_params, template_args);
 			size_t ptr_depth = type_spec.pointer_depth();
+			std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args);
+			bool is_array_member = !resolved_array_dimensions.empty();
 			
 			// Calculate member size accounting for pointer depth
 			size_t member_size;
@@ -1013,6 +1043,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			} else {
 				member_size = get_type_size_bits(member_type) / 8;
+			}
+			for (size_t dim_size : resolved_array_dimensions) {
+				member_size *= dim_size;
 			}
 			// Calculate member alignment
 			// For pointers and references, use 8-byte alignment (pointer alignment on x64)
@@ -1055,8 +1088,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_default_initializer,
 				ref_qual,
 				ref_qual != ReferenceQualifier::None ? get_type_size_bits(member_type) : 0,
-				false,
-				{},
+				is_array_member,
+				std::move(resolved_array_dimensions),
 				static_cast<int>(ptr_depth),
 				resolve_bitfield_width(member_decl, template_params, template_args),
 				type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
@@ -3257,22 +3290,111 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
 
 		// Calculate member size - for arrays, multiply element size by array size
+		std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args_to_use);
+		bool is_array_member = !resolved_array_dimensions.empty();
 		size_t member_size;
-		if (substituted_array_size.has_value()) {
-			// Extract the array size value
-			size_t array_size = 1;
-			const ASTNode& size_node = *substituted_array_size;
-			if (size_node.is<ExpressionNode>()) {
-				const ExpressionNode& expr = size_node.as<ExpressionNode>();
-				if (std::holds_alternative<NumericLiteralNode>(expr)) {
-					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
-					const auto& val = lit.value();
-					if (std::holds_alternative<unsigned long long>(val)) {
-						array_size = static_cast<size_t>(std::get<unsigned long long>(val));
+		if (is_array_member) {
+			// Compute per-element size, looking up struct sizes from gTypeInfo
+			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				member_size = 8;  // Pointers and references are 64-bit on x64
+			} else if (member_type == Type::Struct && member_type_index != 0) {
+				const TypeInfo* member_struct_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == member_type_index) {
+						member_struct_info = &ti;
+						break;
 					}
 				}
+				if (member_struct_info && member_struct_info->getStructInfo()) {
+					member_size = member_struct_info->getStructInfo()->total_size;
+				} else {
+					member_size = get_type_size_bits(member_type) / 8;
+				}
+			} else {
+				member_size = get_type_size_bits(member_type) / 8;
 			}
-			member_size = (get_type_size_bits(member_type) / 8) * array_size;
+			for (size_t dim_size : resolved_array_dimensions) {
+				member_size *= dim_size;
+			}
+		} else if (substituted_array_size.has_value()) {
+			// Fallback for arrays where resolve_array_dimensions couldn't resolve
+			// (e.g., literal array sizes that aren't template-parameter-dependent)
+			// Process ALL array dimensions from the declaration, not just the first.
+			// decl.array_dimensions() stores each dimension expression (e.g., for int arr[2][3]
+			// it stores two expressions). We evaluate each one and collect the results.
+			size_t total_elements = 1;
+			bool all_dims_resolved = true;
+			for (const auto& dim_expr : decl.array_dimensions()) {
+				if (dim_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr = dim_expr.as<ExpressionNode>();
+					if (std::holds_alternative<NumericLiteralNode>(expr)) {
+						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+						const auto& val = lit.value();
+						if (std::holds_alternative<unsigned long long>(val)) {
+							size_t dim_size = static_cast<size_t>(std::get<unsigned long long>(val));
+							if (dim_size > 0) {
+								resolved_array_dimensions.push_back(dim_size);
+								total_elements *= dim_size;
+								continue;
+							}
+						}
+					}
+				}
+				// If we couldn't evaluate a dimension, try ConstExpr evaluator
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+				if (eval_result.success() && eval_result.as_int() > 0) {
+					size_t dim_size = static_cast<size_t>(eval_result.as_int());
+					resolved_array_dimensions.push_back(dim_size);
+					total_elements *= dim_size;
+				} else {
+					all_dims_resolved = false;
+					break;
+				}
+			}
+			// If no dimensions were found from array_dimensions(), fall back to substituted_array_size
+			if (resolved_array_dimensions.empty() && all_dims_resolved) {
+				size_t array_size = 1;
+				const ASTNode& size_node = *substituted_array_size;
+				if (size_node.is<ExpressionNode>()) {
+					const ExpressionNode& expr = size_node.as<ExpressionNode>();
+					if (std::holds_alternative<NumericLiteralNode>(expr)) {
+						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+						const auto& val = lit.value();
+						if (std::holds_alternative<unsigned long long>(val)) {
+							array_size = static_cast<size_t>(std::get<unsigned long long>(val));
+						}
+					}
+				}
+				if (array_size > 0) {
+					resolved_array_dimensions.push_back(array_size);
+					total_elements = array_size;
+				}
+			}
+			if (!resolved_array_dimensions.empty()) {
+				is_array_member = true;
+			}
+			// Compute per-element size, looking up struct sizes from gTypeInfo
+			size_t element_size;
+			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				element_size = 8;
+			} else if (member_type == Type::Struct && member_type_index != 0) {
+				const TypeInfo* member_struct_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == member_type_index) {
+						member_struct_info = &ti;
+						break;
+					}
+				}
+				if (member_struct_info && member_struct_info->getStructInfo()) {
+					element_size = member_struct_info->getStructInfo()->total_size;
+				} else {
+					element_size = get_type_size_bits(member_type) / 8;
+				}
+			} else {
+				element_size = get_type_size_bits(member_type) / 8;
+			}
+			member_size = element_size * total_elements;
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
@@ -3347,8 +3469,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_default_initializer,
 			ref_qual,
 			referenced_size_bits,
-			false,
-			{},
+			is_array_member,
+			std::move(resolved_array_dimensions),
 			static_cast<int>(type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, template_params, template_args_to_use),
 			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt

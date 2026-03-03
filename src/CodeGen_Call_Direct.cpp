@@ -719,6 +719,11 @@
 				int arg_size = std::get<int>(argumentIrOperands[1]);
 				Type param_base_type = param_type->type();
 				
+				TypeIndex arg_type_index = 0;
+				if (argumentIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(argumentIrOperands[3])) {
+					arg_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(argumentIrOperands[3]));
+				}
+
 				// Check if argument type doesn't match parameter type and parameter expects struct
 				// This handles implicit conversions via converting constructors
 				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
@@ -730,7 +735,8 @@
 						
 						// Look for a converting constructor that takes the argument type
 						if (target_struct_info) {
-							const ConstructorDeclarationNode* converting_ctor = nullptr;
+							bool found_matching_ctor = false;
+							bool found_non_explicit_ctor = false;
 							for (const auto& func : target_struct_info->member_functions) {
 								if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 									const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
@@ -746,6 +752,12 @@
 											bool param_matches = false;
 											if (ctor_param_type.type() == arg_type) {
 												param_matches = true;
+												// For class types, require exact type match, not just Type::Struct kind.
+												if ((arg_type == Type::Struct || arg_type == Type::UserDefined) &&
+													(arg_type_index == 0 || ctor_param_type.type_index() == 0 ||
+													ctor_param_type.type_index() != arg_type_index)) {
+													param_matches = false;
+												}
 											}
 											
 											if (param_matches) {
@@ -760,8 +772,11 @@
 												}
 												
 												if (all_have_defaults) {
-													converting_ctor = &ctor_node;
-													break;
+													found_matching_ctor = true;
+													if (!ctor_node.is_explicit()) {
+														found_non_explicit_ctor = true; // Optimization: a valid non-explicit ctor is found.
+														break;
+													}
 												}
 											}
 										}
@@ -769,8 +784,8 @@
 								}
 							}
 							
-							// If found a converting constructor and it's explicit, emit error
-							if (converting_ctor && converting_ctor->is_explicit()) {
+							// Emit error only when every matching converting constructor is explicit.
+							if (found_matching_ctor && !found_non_explicit_ctor) {
 								FLASH_LOG(General, Error, "Cannot use implicit conversion with explicit constructor for type '",
 									StringTable::getStringView(target_type_info.name()), "'");
 								FLASH_LOG(General, Error, "  In function call at argument ", arg_index);
@@ -784,11 +799,6 @@
 				
 				// Check if argument is struct type and parameter expects different type
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
-					TypeIndex arg_type_index = 0;
-					if (argumentIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(argumentIrOperands[3])) {
-						arg_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(argumentIrOperands[3]));
-					}
-					
 					if (arg_type_index > 0 && arg_type_index < gTypeInfo.size()) {
 						const TypeInfo& source_type_info = gTypeInfo[arg_type_index];
 						const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
@@ -1196,4 +1206,3 @@
 			: 0ULL;
 		return { return_type.type(), result_size, ret_var, type_index_result };
 	}
-
