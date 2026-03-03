@@ -1262,7 +1262,12 @@ private:
 	                             const StructTypeInfo* accessing_struct) const {
 		if (!accessing_struct) return false;
 
-		std::string_view acc_name = StringTable::getStringView(accessing_struct->getName());
+		// Fast path: exact StringHandle match avoids string_view ↔ StringHandle round-trip.
+		// This is the most common case (non-template, same-namespace friend).
+		StringHandle acc_handle = accessing_struct->getName();
+		if (member_owner_struct->isFriendClass(acc_handle)) return true;
+
+		std::string_view acc_name = StringTable::getStringView(acc_handle);
 
 		// Try isFriendClass for both the given name and its unqualified tail.
 		// Friend declarations are stored as the name that appeared in source, which is
@@ -1279,8 +1284,15 @@ private:
 			return false;
 		};
 
-		// 1. Exact name (qualified and unqualified).
-		if (tryQualAndUnqual(acc_name)) return true;
+		// 1. Unqualified tail of the exact name (the handle check above already
+		//    covered the qualified form, so only the namespace-stripped fallback remains).
+		{
+			auto ns_pos = acc_name.rfind("::");
+			if (ns_pos != std::string_view::npos) {
+				std::string_view unqual = acc_name.substr(ns_pos + 2);
+				if (!unqual.empty() && member_owner_struct->isFriendClass(unqual)) return true;
+			}
+		}
 
 		// 2. Registered base-template name from TypeInfo ($hash instantiations).
 		std::string_view base = extractBaseTemplateName(acc_name);
