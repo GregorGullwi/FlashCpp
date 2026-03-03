@@ -680,6 +680,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (template_result.is_error()) {
 					return template_result;
 				}
+				// Register template friend classes (e.g., template<typename T> friend struct Foo;)
+				if (auto result_node = template_result.node()) {
+					if (result_node->is<FriendDeclarationNode>()) {
+						const auto& friend_decl = result_node->as<FriendDeclarationNode>();
+						if (friend_decl.kind() == FriendKind::TemplateClass && friend_decl.name().isValid()) {
+							struct_info->addFriendClass(friend_decl.name());
+						}
+					}
+				}
 				continue;
 			}
 
@@ -1298,9 +1307,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Add to StructTypeInfo
 				const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
-				if (friend_decl.kind() == FriendKind::Class) {
+				if (friend_decl.kind() == FriendKind::Class || friend_decl.kind() == FriendKind::TemplateClass) {
 					StringHandle friend_class_name_handle = friend_decl.name();
-					struct_info->addFriendClass(friend_class_name_handle);
+					if (friend_class_name_handle.isValid())
+						struct_info->addFriendClass(friend_class_name_handle);
 				} else if (friend_decl.kind() == FriendKind::Function) {
 					StringHandle friend_func_name_handle = friend_decl.name();
 					struct_info->addFriendFunction(friend_func_name_handle);

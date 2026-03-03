@@ -1196,9 +1196,19 @@ private:
 			return true;
 		}
 
-		// Check if accessing class is a friend class of the member owner
-		if (accessing_struct && member_owner_struct->isFriendClass(accessing_struct->getName())) {
-			return true;
+		// Check if accessing class is a friend class of the member owner.
+		// isFriendClass already handles template instantiation names (_pattern_, $hash).
+		if (accessing_struct) {
+			std::string_view acc_name = StringTable::getStringView(accessing_struct->getName());
+			if (member_owner_struct->isFriendClass(acc_name))
+				return true;
+			// Also try the unqualified name when the accessing struct is namespace-qualified
+			// (e.g., std::__use_cache_pattern_ -> __use_cache_pattern_ -> __use_cache)
+			auto ns_pos = acc_name.rfind("::");
+			if (ns_pos != std::string_view::npos) {
+				if (member_owner_struct->isFriendClass(acc_name.substr(ns_pos + 2)))
+					return true;
+			}
 		}
 
 		// If we're not in a member function context, only public members are accessible
@@ -1381,9 +1391,17 @@ private:
 			return true;
 		}
 
-		// Check if accessing class is a friend class of the member owner
-		if (accessing_struct && member_owner_struct->isFriendClass(accessing_struct->getName())) {
-			return true;
+		// Check if accessing class is a friend class of the member owner.
+		// isFriendClass already handles template instantiation names (_pattern_, $hash).
+		if (accessing_struct) {
+			std::string_view acc_name = StringTable::getStringView(accessing_struct->getName());
+			if (member_owner_struct->isFriendClass(acc_name))
+				return true;
+			auto ns_pos = acc_name.rfind("::");
+			if (ns_pos != std::string_view::npos) {
+				if (member_owner_struct->isFriendClass(acc_name.substr(ns_pos + 2)))
+					return true;
+			}
 		}
 
 		// If we're not in a member function context, only public functions are accessible

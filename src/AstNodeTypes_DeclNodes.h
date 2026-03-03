@@ -419,12 +419,27 @@ struct StructTypeInfo {
 
 	bool isFriendClass(std::string_view class_name) const {
 		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
-		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name_handle) != friend_classes_.end();
+		if (std::find(friend_classes_.begin(), friend_classes_.end(), class_name_handle) != friend_classes_.end())
+			return true;
+		// Also check base template name: strip FlashCpp-internal suffixes (_pattern_, $hash) for template instantiations.
+		// This allows a 'friend class Foo' declaration to match 'Foo_pattern_' (uninstantiated template pattern)
+		// and 'Foo$hash' (instantiated template) when checking access control at code generation time.
+		auto tryBase = [&](std::string_view base) -> bool {
+			if (base.empty() || base == class_name) return false;
+			StringHandle h = StringTable::getOrInternStringHandle(base);
+			return std::find(friend_classes_.begin(), friend_classes_.end(), h) != friend_classes_.end();
+		};
+		if (class_name.ends_with("_pattern_"))
+			if (tryBase(class_name.substr(0, class_name.size() - std::string_view("_pattern_").size()))) return true;
+		auto dollar = class_name.find('$');
+		if (dollar != std::string_view::npos)
+			if (tryBase(class_name.substr(0, dollar))) return true;
+		return false;
 	}
 
 	// StringHandle overload for isFriendClass - Phase 7A
 	bool isFriendClass(StringHandle class_name) const {
-		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name) != friend_classes_.end();
+		return isFriendClass(StringTable::getStringView(class_name));
 	}
 
 	bool isFriendMemberFunction(std::string_view class_name, std::string_view func_name) const {
