@@ -792,6 +792,7 @@ private:
             const std::vector<ASTNode>& template_params,
             const std::vector<TemplateArgument>& template_args);
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
+        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateArgument>& template_args, bool force_eager = false);  // Thin shim (task 5B)
         std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
         std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template
         ASTNode substitute_template_params_in_expression(
@@ -817,6 +818,7 @@ private:
         std::optional<std::pair<Type, TypeIndex>> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);  // Phase 3: Evaluate lazy type alias on-demand
         std::optional<TypeIndex> instantiateLazyNestedType(StringHandle parent_class_name, StringHandle nested_type_name);  // Phase 4: Instantiate lazy nested type on-demand
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
+        std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateArgument>& template_args);  // Thin shim (task 5B)
         std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
         
         // Template name extraction helpers - extract base template names from mangled/instantiated names
@@ -1134,6 +1136,12 @@ public:  // Public methods for template instantiation
             const TypeSpecifierNode& original_type,
             const std::vector<ASTNode>& template_params,
             const std::vector<TemplateTypeArg>& template_args
+        );
+        // Thin shim: accepts TemplateArgument vector (task 5B).
+        std::pair<Type, TypeIndex> substitute_template_parameter(
+            const TypeSpecifierNode& original_type,
+            const std::vector<ASTNode>& template_params,
+            const std::vector<TemplateArgument>& template_args
         );
        
         // Lookup symbol with template parameter checking

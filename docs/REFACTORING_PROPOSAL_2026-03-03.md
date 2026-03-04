@@ -1,7 +1,7 @@
 # Refactoring Proposal: Template Argument & Instantiation Pipeline
 
 **Date**: 2026-03-03  
-**Status**: Partially implemented — see implementation notes below
+**Status**: All actionable tasks complete — only task 7 (high-risk type unification) remains deferred for a separate PR
 
 ---
 
@@ -24,8 +24,8 @@
 | 10 | ✅ Done | **Task 3 continuation (round 2) — 2 remaining unconditional save/restore sites**: (a) `Parser_Templates_Lazy.cpp:152` (`bool saved_parsing_template_body = parsing_template_body_; parsing_template_body_ = false;`) → `ScopedState guard_ptb(parsing_template_body_)` + set to false; restore line removed. (b) `Parser_Templates_Inst_ClassTemplate.cpp:4275–4280` (4-field unconditional block: `saved_template_body`, `saved_template_class`, `saved_param_names`, `saved_delayed_bodies`) → 4 `ScopedState` guards (`guard_template_body`, `guard_template_class`, `guard_param_names`, `guard_delayed_bodies`); 4 manual restore lines + stale comment eliminated. |
 | 11 | ✅ Done | **Task 3 continuation (round 3) — last conditional save/restore site in `Class.cpp:2378`**: Extended `ScopedState` with a two-parameter constructor `ScopedState(T& field, bool active)` — when `active=false` the field is left untouched and the destructor is a no-op; `std::optional<T>` used for `saved_state_` (no default `T{}` constructed when inactive, `bool active_` member eliminated). Converted the `!delayed.template_param_names.empty()` conditional save/restore of `current_template_param_names_` and `parsing_template_body_` in `Class.cpp` to `ScopedState(field, has_template_params)`. |
 | 12 | ✅ Done | **StringHandle migration for `param_names` and `TemplateParamSubstitution::param_name`**: (a) Changed all `param_names` build loops in `Deduction.cpp`, `MemberFunc.cpp`, `Lazy.cpp`, `ClassTemplate.cpp` from `vector<string_view>` to `vector<StringHandle>` using `nameHandle()` instead of `name()`. (b) Updated `registerTypeParamsInScope` (TemplateTypeArg + TemplateArgument overloads), `registerOuterBindingInScope` (uses `outer_binding.param_names[i]` directly), `populateTemplateParamSubstitutions` overload 1, and `Parser.h` declaration to use `StringHandle`. Removed all `getOrInternStringHandle(name)` / `getStringView(handle)` round-trips at these sites. (c) Changed `TemplateParamSubstitution::param_name` from `string_view` to `StringHandle`; updated the 4 assignment sites in `Deduction.cpp` and `ClassTemplate.cpp` to use `nameHandle()`; updated the 2 comparison sites in `Substitution.cpp` (`dep_name`/`type_name` variables now `StringHandle`). (d) Added `ScopedState` for `current_function_` in `reparse_template_function_body`. (e) Removed 6 redundant `.clear()` calls after `ScopedState` construction (gemini-code-assist review). |
-| 5B | ⏳ Deferred | Fully eliminate `template_args_as_type_args` by widening downstream helper signatures — medium risk; best after 5A is merged |
-| 7  | ⏳ Deferred | Unify `TemplateArgument` / `TemplateTypeArg` — high risk; separate PR after 1–3 land |
+| 5B | ✅ Done | **Eliminate `template_args_as_type_args` from `try_instantiate_single_template`**: (a) Added `TemplateArgument::toString()` method (delegates to `toTemplateTypeArg(*this).toString()`). (b) Moved `buildTemplateTypeArgVector` from `static` in `Parser_Templates_Inst_Deduction.cpp` to `inline` in `TemplateRegistry_Pattern.h` (alongside `toTemplateTypeArg`). (c) Added thin shim overloads accepting `vector<TemplateArgument>` for: `TemplateRegistry::lookupSpecialization` (Registry.h), `evaluateConstraint` (Lazy.cpp), `Parser::substitute_template_parameter` (QualLookup.cpp + Parser.h), `Parser::try_instantiate_class_template` (ClassTemplate.cpp + Parser.h), `Parser::get_instantiated_class_name` (Substitution.cpp + Parser.h). `registerTypeParamsInScope` already had a `TemplateArgument` overload. (d) Updated all 17 references to `template_args_as_type_args` in `try_instantiate_single_template` to use `template_args` directly. The intermediate vector is eliminated; each downstream function now converts internally via `buildTemplateTypeArgVector` when needed. |
+| 7  | ⏳ Deferred | Unify `TemplateArgument` / `TemplateTypeArg` — high risk; separate PR. Preconditions (tasks 1–3) are now met. |
 
 ---
 
@@ -440,21 +440,54 @@ noise of `std::visit` at every use site.
 
 ## Priority order
 
-| # | Change | Effort | Risk | Benefit |
-|---|--------|--------|------|---------|
-| 4A | Inline skip at 3 remaining sites | XS | Very low | Fixes latent Invalid-type bug |
-| 4B | Promote `registerTypeParamsInScope` to shared | S | Low | Eliminates the duplication that caused the bug |
-| 6 | Consolidate `toTemplateTypeArg` | XS | Very low | Removes duplicate conversion |
-| 1 | Extract `reparse_template_function_body()` | S | Low | Eliminates body-parse divergence class |
-| 3 | `ScopedTemplateParamNames` RAII guard | M | Low | Removes ~50 manual save/restore sites |
-| 2 | Extract `registerTemplateParamsAsTypeInfo()` | M | Medium | Removes ~12 loop duplicates |
-| 5 | Eliminate `template_args_as_type_args` | M | Medium | Single authoritative arg vector |
-| 7 | Unify `TemplateArgument` / `TemplateTypeArg` | L | High | One type, no conversions |
+| # | Change | Effort | Risk | Benefit | Status |
+|---|--------|--------|------|---------|--------|
+| 4A | Inline skip at 3 remaining sites | XS | Very low | Fixes latent Invalid-type bug | ✅ Done |
+| 4B | Promote `registerTypeParamsInScope` to shared | S | Low | Eliminates the duplication that caused the bug | ✅ Done |
+| 6 | Consolidate `toTemplateTypeArg` | XS | Very low | Removes duplicate conversion | ✅ Done |
+| 1 | Extract `reparse_template_function_body()` | S | Low | Eliminates body-parse divergence class | ✅ Done |
+| 3 | `ScopedTemplateParamNames` RAII guard | M | Low | Removes ~50 manual save/restore sites | ✅ Done |
+| 2 | Extract `registerTemplateParamsAsTypeInfo()` | M | Medium | Removes ~12 loop duplicates | ✅ Done |
+| 5 | Eliminate `template_args_as_type_args` | M | Medium | Single authoritative arg vector | ✅ Done |
+| 7 | Unify `TemplateArgument` / `TemplateTypeArg` | L | High | One type, no conversions | ⏳ Deferred |
 
-Items 4A and 6 can be done in isolation with no risk.  Item 4B subsumes 4A and feeds
-naturally into proposal 2.  Items 1 and 3 are the highest value for effort (each
-eliminates a whole *class* of future divergence bugs).  Items 2, 5, and 7 are
-longer-horizon work best tackled after 1 and 3 land.
+All items except task 7 are complete.  Task 7 (unifying `TemplateArgument` and
+`TemplateTypeArg`) is deferred to a separate PR due to its high risk and wide
+scope (~200 occurrences across the codebase).  Its preconditions (tasks 1–3) are
+now met, and the thin shim overloads added in task 5B provide a clean migration
+path: each shim can be replaced with native `TemplateArgument` support incrementally.
+
+### Known issue: `resolve_dependent_member_alias` passes full function template args to class template instantiation
+
+**Status**: ⏳ Investigate — pre-existing (not introduced by task 5B)
+
+In `try_instantiate_single_template`, the `resolve_dependent_member_alias` lambda
+(~line 1447) passes the function template's full `template_args` vector to
+`try_instantiate_class_template` and `get_instantiated_class_name` when attempting
+to instantiate a base class template (lines 1518-1520).  This is correct when the
+function template and the base class template share the same parameters (the common
+case for patterns like `template<typename T> typename Helper<T>::type foo(T x)`),
+but would be wrong when they differ.
+
+**Example that would be incorrect** (not yet tested):
+```cpp
+template<typename T>
+struct Helper { using type = T; };
+
+// Two template params, but Helper only uses the second
+template<typename T, typename U>
+typename Helper<U>::type foo(T x, U y) { return y; }
+
+int main() { return foo(3.14, 0); }
+```
+Here `template_args = [double, int]` but `Helper` expects one arg (`[int]`).
+The full `[double, int]` vector gets passed to `try_instantiate_class_template("Helper", ...)`.
+
+**Action items**:
+1. Write a test exercising this pattern and verify whether it passes or fails.
+2. If it fails, fix `resolve_dependent_member_alias` to extract only the args
+   relevant to the base class template (e.g. by matching the substituted
+   `base_part` string against the class template's parameter list).
 
 ---
 

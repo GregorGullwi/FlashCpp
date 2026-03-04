@@ -681,6 +681,11 @@ public:
 		}
 		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args);
 	}
+
+	// Thin shim: look up specialization using TemplateArgument vector (task 5B).
+	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateArgument>& template_args) const {
+		return lookupSpecialization(template_name, buildTemplateTypeArgVector(template_args));
+	}
 	
 	// Find a matching specialization pattern (StringHandle overload)
 	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name, 
