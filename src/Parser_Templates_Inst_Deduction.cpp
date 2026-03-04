@@ -70,6 +70,109 @@ static void registerTypeParamsInScope(
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// reparse_template_function_body
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared helper: re-parse a template function body with concrete argument
+// substitution and set the result as new_func_ref's definition.
+//
+// Called by both try_instantiate_template_explicit (preserve_ref_qualifier=true)
+// and try_instantiate_single_template (preserve_ref_qualifier=false) *after*
+// cycle detection has passed.  Pack-parameter state management and cycle
+// detection remain the responsibility of the callers because they differ
+// between the two paths.
+void Parser::reparse_template_function_body(
+	FunctionDeclarationNode& new_func_ref,
+	const FunctionDeclarationNode& func_decl,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateArgument>& template_args,
+	bool preserve_ref_qualifier)
+{
+	// Collect parameter names and register TypeInfo entries for type params.
+	FlashCpp::TemplateParameterScope template_scope;
+	std::vector<std::string_view> param_names;
+	param_names.reserve(template_params.size());
+	for (const auto& tparam_node : template_params) {
+		if (tparam_node.is<TemplateParameterNode>()) {
+			param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+		}
+	}
+	// preserve_ref_qualifier=true for the explicit path (user-written T=int& must be
+	// reflected in TypeInfo); false for the deduced path.
+	registerTypeParamsInScope(param_names, template_args, template_scope, preserve_ref_qualifier);
+
+	// Save lexer position and function context.
+	SaveHandle current_pos = save_token_position();
+	const FunctionDeclarationNode* saved_current_function = current_function_;
+
+	// Restore lexer to the template body start.
+	restore_lexer_position_only(func_decl.template_body_position());
+
+	// Enter function scope, set current function, register parameters.
+	gSymbolTable.enter_scope(ScopeType::Function);
+	current_function_ = &new_func_ref;
+	for (const auto& param : new_func_ref.parameter_nodes()) {
+		if (param.is<DeclarationNode>()) {
+			gSymbolTable.insert(param.as<DeclarationNode>().identifier_token().value(), param);
+		}
+	}
+
+	// Populate template_param_substitutions_ so the body parser can resolve
+	// non-type params (e.g., "return N;") and type params used in variable
+	// template instantiations inside the body.
+	std::vector<TemplateParamSubstitution> saved_subst = std::move(template_param_substitutions_);
+	template_param_substitutions_.clear();
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) continue;
+		const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+		const TemplateArgument& arg = template_args[i];
+		TemplateParamSubstitution subst;
+		subst.param_name = tparam.name();
+		if (arg.kind == TemplateArgument::Kind::Value) {
+			subst.is_value_param = true;
+			subst.value = arg.int_value;
+			subst.value_type = arg.value_type;
+			FLASH_LOG(Templates, Debug, "Registered non-type template parameter '",
+			          tparam.name(), "' with value ", arg.int_value, " for function template body");
+		} else if (arg.kind == TemplateArgument::Kind::Type) {
+			subst.is_value_param = false;
+			subst.is_type_param = true;
+			// toTemplateTypeArg handles both modern (type_specifier present) and legacy paths,
+			// correctly extracting ref_qualifier, pointer_depth, cv_qualifier, etc.
+			subst.substituted_type = toTemplateTypeArg(arg);
+			FLASH_LOG(Templates, Debug, "Registered type template parameter '",
+			          tparam.name(), "' with type ", subst.substituted_type.toString(), " for function template body");
+		} else {
+			continue;  // Kind::Template — skip (template-template params need no substitution)
+		}
+		template_param_substitutions_.push_back(subst);
+	}
+
+	// Parse the body, substitute template parameters, then install as definition.
+	{
+		FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& pn : param_names) {
+			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+		}
+
+		auto block_result = parse_block();
+		if (!block_result.is_error() && block_result.node().has_value()) {
+			new_func_ref.set_definition(
+				substituteTemplateParameters(*block_result.node(), template_params, template_args));
+		}
+	}  // current_template_param_names_ restored here by ScopedState
+
+	// Restore substitutions and scope.
+	template_param_substitutions_ = std::move(saved_subst);
+	current_function_ = nullptr;
+	gSymbolTable.exit_scope();
+	restore_lexer_position_only(current_pos);
+	discard_saved_token(current_pos);
+	current_function_ = saved_current_function;
+	// template_scope RAII guard removes TypeInfo entries automatically.
+}
+
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
@@ -443,79 +546,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Handle the function body
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
-		// Re-parse the function body with template parameters substituted
-		
-		// Temporarily add the concrete types to the type system with template parameter names
-		// Using RAII scope guard (Phase 6) for automatic cleanup
-		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<std::string_view> param_names;
-		param_names.reserve(template_params.size());
-		for (const auto& tparam_node : template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
-			}
-		}
-		
-		// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
-		// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
-		registerTypeParamsInScope(param_names, template_args, template_scope, /*preserve_ref_qualifier=*/true);
-
-		// Save current position
-		SaveHandle current_pos = save_token_position();
-		
-		// Save current parsing context (will be overwritten during template body parsing)
-		const FunctionDeclarationNode* saved_current_function = current_function_;
-
-		// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
-		restore_lexer_position_only(func_decl.template_body_position());
-
-		// Set up parsing context for the function
-		gSymbolTable.enter_scope(ScopeType::Function);
-		current_function_ = &new_func_ref;
-
-		// Add parameters to symbol table
-		for (const auto& param : new_func_ref.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& param_decl = param.as<DeclarationNode>();
-				gSymbolTable.insert(param_decl.identifier_token().value(), param);
-			}
-		}
-
-		// Set up template parameter substitutions for type parameters
-		// This enables variable templates inside the function body to work correctly:
-		// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
-		std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
-		template_param_substitutions_.clear();
-		for (size_t i = 0; i < template_params.size() && i < explicit_types.size(); ++i) {
-			if (!template_params[i].is<TemplateParameterNode>()) continue;
-			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-			const TemplateTypeArg& arg = explicit_types[i];
-			
-			if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
-				// Non-type parameter - store value for substitution
-				TemplateParamSubstitution subst;
-				subst.param_name = param.name();
-				subst.is_value_param = true;
-				subst.value = arg.value;
-				subst.value_type = arg.base_type;
-				template_param_substitutions_.push_back(subst);
-				
-				FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
-				          param.name(), "' with value ", arg.value, " for function template body");
-			} else if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
-				// Type parameter - store type for substitution
-				TemplateParamSubstitution subst;
-				subst.param_name = param.name();
-				subst.is_value_param = false;
-				subst.is_type_param = true;
-				subst.substituted_type = arg;
-				template_param_substitutions_.push_back(subst);
-				
-				FLASH_LOG(Templates, Debug, "Registered type template parameter '", 
-				          param.name(), "' with type ", arg.toString(), " for function template body");
-			}
-		}
-
 		// Cycle detection: if this exact instantiation (same mangled name = same template
 		// arguments) is already being parsed on this thread, return early to break the cycle.
 		// Using the mangled name instead of the original template declaration pointer ensures
@@ -526,11 +556,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (body_parse_in_progress.count(cycle_key)) {
 			// Already parsing this body — skip body to break the cycle.
 			FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", mangled_name, "'), skipping body");
-			template_param_substitutions_ = std::move(saved_template_param_substitutions);
-			current_function_ = saved_current_function;
-			gSymbolTable.exit_scope();
-			restore_lexer_position_only(current_pos);
-			discard_saved_token(current_pos);
 			return std::nullopt;
 		}
 		body_parse_in_progress.insert(cycle_key);
@@ -540,39 +565,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			~BodyParseGuard() { set.erase(key); }
 		} body_guard{body_parse_in_progress, cycle_key};
 
-		// Set current_template_param_names_ so the expression parser can find
-		// non-type template parameters (e.g., N in "x * N") via template_param_substitutions_
-		{
-			FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
-			current_template_param_names_.clear();
-			for (const auto& pn : param_names) {
-				current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
-			}
-
-			// Parse the function body
-			auto block_result = parse_block();
-
-			if (!block_result.is_error() && block_result.node().has_value()) {
-				new_func_ref.set_definition(
-					substituteTemplateParameters(*block_result.node(), template_params, template_args));
-			}
-		} // current_template_param_names_ restored here
-
-		// Restore the template parameter substitutions
-		template_param_substitutions_ = std::move(saved_template_param_substitutions);
-		
-		// Clean up context
-		current_function_ = nullptr;
-		gSymbolTable.exit_scope();
-
-		// Restore original position (lexer only - keep AST nodes we created)
-		restore_lexer_position_only(current_pos);
-		discard_saved_token(current_pos);
-		
-		// Restore parsing context
-		current_function_ = saved_current_function;
-
-		// template_scope RAII guard automatically removes temporary type infos
+		// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
+		// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
+		reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
+		                               /*preserve_ref_qualifier=*/true);
 	} else {
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 		auto orig_body = func_decl.get_definition();
@@ -1790,46 +1786,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			~BodyReparseGuard() { set.erase(key); }
 		} body_reparse_guard{body_reparse_in_progress, cycle_key};
 
-		// Re-parse the function body with template parameters substituted
-		const std::vector<ASTNode>& func_template_params = template_func.template_parameters();
-		
-		// Temporarily add the concrete types to the type system with template parameter names
-		// Using RAII scope guard (Phase 6) for automatic cleanup
-		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<std::string_view> param_names;
-		for (const auto& tparam_node : func_template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
-			}
-		}
-		
-		registerTypeParamsInScope(param_names, template_args, template_scope);
-
-		// Save current position
-		SaveHandle current_pos = save_token_position();
-		
-		// Save current parsing context (will be overwritten during template body parsing)
-		const FunctionDeclarationNode* saved_current_function = current_function_;
-
-		// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
-		restore_lexer_position_only(func_decl.template_body_position());
-
-		// Set up parsing context for the function
-		gSymbolTable.enter_scope(ScopeType::Function);
-		current_function_ = &new_func_ref;
-
-		// Add parameters to symbol table
-		for (const auto& param : new_func_ref.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& param_decl = param.as<DeclarationNode>();
-				gSymbolTable.insert(param_decl.identifier_token().value(), param);
-			}
-		}
-
-		// Set up pack parameter info for pack expansion during body re-parsing
+		// Set up pack parameter info for pack expansion during body re-parsing.
 		// Pack expansion in function calls (rest...) uses pack_param_info_ to expand
 		// the pack name to rest_0, rest_1, etc. without adding the original name to scope
-		// (adding to scope would break fold expressions which need the name unresolved)
+		// (adding to scope would break fold expressions which need the name unresolved).
 		bool saved_has_parameter_packs = has_parameter_packs_;
 		auto saved_pack_param_info = std::move(pack_param_info_);
 		if (!saved_pack_param_info.empty()) {
@@ -1837,102 +1797,16 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			pack_param_info_ = saved_pack_param_info;
 		}
 
-		// Set up template parameter substitutions for type parameters
-		// This enables variable templates inside the function body to work correctly:
-		// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
-		std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
-		template_param_substitutions_.clear();
-		for (size_t i = 0; i < func_template_params.size() && i < template_args.size(); ++i) {
-			if (!func_template_params[i].is<TemplateParameterNode>()) continue;
-			const TemplateParameterNode& param = func_template_params[i].as<TemplateParameterNode>();
-			const TemplateArgument& arg = template_args[i];
-			
-			if (arg.kind == TemplateArgument::Kind::Value) {
-				// Non-type parameter - store value for substitution
-				TemplateParamSubstitution subst;
-				subst.param_name = param.name();
-				subst.is_value_param = true;
-				subst.value = arg.int_value;
-				subst.value_type = arg.value_type;
-				template_param_substitutions_.push_back(subst);
-				
-				FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
-				          param.name(), "' with value ", arg.int_value, " for function template body (deduced)");
-			} else if (arg.kind == TemplateArgument::Kind::Type) {
-				// Type parameter - convert TemplateArgument to TemplateTypeArg
-				TemplateParamSubstitution subst;
-				subst.param_name = param.name();
-				subst.is_value_param = false;
-				subst.is_type_param = true;
-				// Build TemplateTypeArg from TemplateArgument
-				subst.substituted_type.base_type = arg.type_value;
-				subst.substituted_type.type_index = arg.type_index;
-				subst.substituted_type.is_value = false;
-				subst.substituted_type.is_dependent = false;  // These are concrete types
-				if (arg.type_specifier.has_value()) {
-					subst.substituted_type.ref_qualifier = arg.type_specifier->reference_qualifier();
-					subst.substituted_type.pointer_depth = arg.type_specifier->pointer_levels().size();
-				}
-				template_param_substitutions_.push_back(subst);
-				
-				FLASH_LOG(Templates, Debug, "Registered type template parameter '", 
-				          param.name(), "' with type ", subst.substituted_type.toString(), " for function template body (deduced)");
-			}
-		}
+		// Re-parse body, register types, substitute parameters — shared with explicit path.
+		// preserve_ref_qualifier=false: deduced args carry call-site lvalue-ness which must
+		// NOT be propagated to TypeInfo (see registerTypeParamsInScope comment).
+		const std::vector<ASTNode>& func_template_params = template_func.template_parameters();
+		reparse_template_function_body(new_func_ref, func_decl, func_template_params, template_args,
+		                               /*preserve_ref_qualifier=*/false);
 
-		// Set current_template_param_names_ so the expression parser can find
-		// template parameters (e.g., N in "return N") as TemplateParameterReferenceNode
-		// rather than looking them up as regular identifiers (which would fail for
-		// non-type params that have no entry in the symbol table).
-		// NOTE: try_instantiate_template_explicit does the same setup; keeping both in
-		// sync is exactly the kind of maintenance burden described in
-		// docs/REFACTORING_PROPOSAL_2026-03-03.md — extracting a shared helper would
-		// prevent this class of divergence bug.
-		{
-			FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
-			current_template_param_names_.clear();
-			for (const auto& pn : param_names) {
-				current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
-			}
-
-			// Parse the function body
-			auto block_result = parse_block();
-
-			if (!block_result.is_error() && block_result.node().has_value()) {
-				// After parsing, we need to substitute template parameters in the body
-				// This is essential for features like fold expressions that need AST transformation
-				// Note: pack_param_info_ is still active here so PackExpansionExprNode expansion works
-				// template_args already holds the canonical TemplateArgument vector with correct
-				// kind, type_value, type_index, int_value, and value_type — pass it directly.
-				ASTNode substituted_body = substituteTemplateParameters(
-					*block_result.node(),
-					template_params,
-					template_args
-				);
-			
-				new_func_ref.set_definition(substituted_body);
-			}
-		} // current_template_param_names_ restored here
-
-		// Restore the template parameter substitutions
-		template_param_substitutions_ = std::move(saved_template_param_substitutions);
-
-		// Restore pack parameter info (after substitution so PackExpansionExprNode can use it)
+		// Restore pack parameter info (after substitution so PackExpansionExprNode can use it).
 		has_parameter_packs_ = saved_has_parameter_packs;
 		pack_param_info_ = std::move(saved_outer_pack_param_info);
-		
-		// Clean up context
-		current_function_ = nullptr;
-		gSymbolTable.exit_scope();
-
-		// Restore original position (lexer only - keep AST nodes we created)
-		restore_lexer_position_only(current_pos);
-		discard_saved_token(current_pos);
-		
-		// Restore parsing context
-		current_function_ = saved_current_function;
-
-		// template_scope RAII guard automatically removes temporary type infos
 	} else {
 		// Fallback: copy the function body pointer directly (old behavior)
 		auto orig_body = func_decl.get_definition();

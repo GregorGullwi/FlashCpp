@@ -768,6 +768,17 @@ private:
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
         std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);  // Helper: Try to instantiate a specific template node (for SFINAE)
         std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count = SIZE_MAX);  // NEW: Instantiate with explicit args
+        // Shared helper: re-parse a template function body with concrete argument substitution.
+        // Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
+        // try_instantiate_single_template (preserve_ref_qualifier=false, default) after cycle
+        // detection has already passed.  Sets new_func_ref's definition.
+        // Pack-parameter state and cycle detection remain in the callers.
+        void reparse_template_function_body(
+            FunctionDeclarationNode& new_func_ref,
+            const FunctionDeclarationNode& func_decl,
+            const std::vector<ASTNode>& template_params,
+            const std::vector<TemplateArgument>& template_args,
+            bool preserve_ref_qualifier = false);
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
         std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
         std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template
