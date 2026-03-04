@@ -1,3 +1,8 @@
+// Thin shim: get_instantiated_class_name using TemplateArgument vector (task 5B).
+std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateArgument>& template_args) {
+	return get_instantiated_class_name(template_name, buildTemplateTypeArgVector(template_args));
+}
+
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		template_name = template_name.substr(last_colon + 2);

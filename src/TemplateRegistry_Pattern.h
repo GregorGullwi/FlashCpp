@@ -76,6 +76,10 @@ struct TemplateArgument {
 		return h;
 	}
 	
+	// String representation for logging and diagnostics.
+	// Defined out-of-line after toTemplateTypeArg (which it delegates to).
+	inline std::string toString() const;
+
 	// Equality operator (needed for InstantiationQueue)
 	bool operator==(const TemplateArgument& other) const {
 		if (kind != other.kind) return false;
@@ -197,6 +201,34 @@ inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 	}
 	// Other kinds remain zero-initialised.
 	
+	return result;
+}
+
+// TemplateArgument::toString — delegates to the TemplateTypeArg string representation.
+inline std::string TemplateArgument::toString() const {
+	return toTemplateTypeArg(*this).toString();
+}
+
+// Convert a TemplateArgument vector to TemplateTypeArg format for downstream
+// helpers (lookupSpecialization, substitute_template_parameter, etc.).
+// Uses the canonical toTemplateTypeArg() for Type and Value cases; for
+// Kind::Template it additionally performs the gTypesByName lookup to populate
+// the type_index field (needed by constraint evaluation and substitution).
+inline std::vector<TemplateTypeArg> buildTemplateTypeArgVector(
+	const std::vector<TemplateArgument>& template_args)
+{
+	std::vector<TemplateTypeArg> result;
+	result.reserve(template_args.size());
+	for (const auto& arg : template_args) {
+		TemplateTypeArg type_arg = toTemplateTypeArg(arg);
+		if (arg.kind == TemplateArgument::Kind::Template) {
+			auto type_it = gTypesByName.find(arg.template_name);
+			if (type_it != gTypesByName.end()) {
+				type_arg.type_index = type_it->second->type_index_;
+			}
+		}
+		result.push_back(type_arg);
+	}
 	return result;
 }
 

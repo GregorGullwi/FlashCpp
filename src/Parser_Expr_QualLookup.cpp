@@ -1119,6 +1119,15 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 	return {result_type, result_type_index};
 }
 
+// Thin shim: substitute_template_parameter using TemplateArgument vector (task 5B).
+std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
+	const TypeSpecifierNode& original_type,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateArgument>& template_args
+) {
+	return substitute_template_parameter(original_type, template_params, buildTemplateTypeArgVector(template_args));
+}
+
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
 	// First check if it's a template parameter using the new method

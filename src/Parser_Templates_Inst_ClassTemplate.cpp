@@ -1,3 +1,8 @@
+// Thin shim: try_instantiate_class_template using TemplateArgument vector (task 5B).
+std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateArgument>& template_args, bool force_eager) {
+	return try_instantiate_class_template(template_name, buildTemplateTypeArgVector(template_args), force_eager);
+}
+
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
