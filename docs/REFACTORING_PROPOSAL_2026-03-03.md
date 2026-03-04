@@ -467,6 +467,9 @@ longer-horizon work best tackled after 1 and 3 land.
 - [x] **Task 3 (incremental continuation)**: applied `FlashCpp::ScopedState<T>` to lazy member function body reparse state in `src/Parser_Templates_Lazy.cpp` for:
   - `template_param_substitutions_`
   - `current_template_param_names_`
+- [x] **Task 3 (incremental continuation)**: applied `FlashCpp::ScopedState<T>` to member-function-template body reparse state in `src/Parser_Templates_Inst_MemberFunc.cpp` for:
+  - `template_param_substitutions_`
+  - `current_template_param_names_`
 - [ ] Tasks 1, 2, 3, 5, 7 remain as planned follow-up work.
 
 ---
