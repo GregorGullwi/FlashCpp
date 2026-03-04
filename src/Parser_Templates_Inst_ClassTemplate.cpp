@@ -4854,7 +4854,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Substitute template parameters in the function body
 				if (body_to_substitute.has_value()) {
-					// Convert TemplateTypeArg vector to TemplateTypeArg vector
+					// Build template argument vector for registration
 					std::vector<TemplateTypeArg> converted_template_args;
 					for (const auto& ttype_arg : template_args_to_use) {
 						if (ttype_arg.is_value) {
@@ -5097,7 +5097,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// EAGER INSTANTIATION PATH (original code)
 			if (ctor_decl.get_definition().has_value()) {
-				// Convert TemplateTypeArg vector to TemplateTypeArg vector
+				// Build template argument vector for registration
 				std::vector<TemplateTypeArg> converted_template_args;
 				for (const auto& ttype_arg : template_args_to_use) {
 					if (ttype_arg.is_value) {
@@ -5227,7 +5227,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// EAGER INSTANTIATION PATH (original code)
 			if (dtor_decl.get_definition().has_value()) {
-				// Convert TemplateTypeArg vector to TemplateTypeArg vector
+				// Build template argument vector for registration
 				std::vector<TemplateTypeArg> converted_template_args;
 				for (const auto& ttype_arg : template_args_to_use) {
 					if (ttype_arg.is_value) {

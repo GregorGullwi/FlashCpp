@@ -183,6 +183,7 @@ struct TemplateTypeArg {
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
+	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
 	TemplateTypeArg()
 		: base_type(Type::Invalid)

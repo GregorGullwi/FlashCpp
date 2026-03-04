@@ -49,7 +49,7 @@ ASTNode Parser::substituteTemplateParameters(
 						break;  // Leave unsubstituted
 					}
 
-					if ((!arg.is_value && !arg.is_template_template_arg)) {
+					if (arg.isTypeArgument()) {
 						// Create an identifier node for the concrete type
 						Token type_token(Token::Type::Identifier, get_type_name(arg.base_type),
 						                tparam_ref.token().line(), tparam_ref.token().column(),
@@ -90,7 +90,7 @@ ASTNode Parser::substituteTemplateParameters(
 						break;  // Leave unsubstituted
 					}
 					
-					if ((!arg.is_value && !arg.is_template_template_arg)) {
+					if (arg.isTypeArgument()) {
 						// Create an identifier node for the concrete type
 						Token type_token(Token::Type::Identifier, get_type_name(arg.base_type), 0, 0, 0);
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
@@ -147,7 +147,7 @@ ASTNode Parser::substituteTemplateParameters(
 								if (tparam.name() == arg_type_name) {
 									// Substitute with the concrete type
 									const TemplateTypeArg& concrete_arg = template_args[p];
-									if ((!concrete_arg.is_value && !concrete_arg.is_template_template_arg)) {
+									if (concrete_arg.isTypeArgument()) {
 										arg.base_type = concrete_arg.base_type;
 										arg.type_index = concrete_arg.type_index;
 										arg.is_dependent = false;
@@ -222,7 +222,7 @@ ASTNode Parser::substituteTemplateParameters(
 				std::vector<TemplateTypeArg> inst_args;
 				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 					const TemplateTypeArg& arg = template_args[i];
-					if ((!arg.is_value && !arg.is_template_template_arg)) {
+					if (arg.isTypeArgument()) {
 						TemplateTypeArg type_arg;
 						type_arg.base_type = arg.base_type;
 						type_arg.type_index = arg.type_index;
@@ -763,7 +763,7 @@ ASTNode Parser::substituteTemplateParameters(
 							if (tparam.name() == type_name) {
 								const TemplateTypeArg& arg = template_args[i];
 								
-								if ((!arg.is_value && !arg.is_template_template_arg)) {
+								if (arg.isTypeArgument()) {
 									// Get the size of the concrete type in bytes
 									size_t type_size = get_type_size_bits(arg.base_type) / 8;
 									
@@ -858,7 +858,7 @@ ASTNode Parser::substituteTemplateParameters(
 			// Check if this type name matches a template parameter
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.name() == type_name && !template_args[i].is_value && !template_args[i].is_template_template_arg) {
+				if (tparam.name() == type_name && template_args[i].isTypeArgument()) {
 					// Substitute with concrete type
 					return emplace_node<TypeSpecifierNode>(
 						template_args[i].base_type,
