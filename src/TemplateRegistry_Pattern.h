@@ -50,16 +50,17 @@ struct TemplateArgument {
 	}
 	
 	// Hash for use in maps (needed for InstantiationQueue)
+	//
+	// IMPORTANT: only hash fields that are ALWAYS compared in operator==.
+	// operator== only compares type_specifier qualifiers when BOTH operands
+	// carry a type_specifier.  If we mixed those qualifiers into the hash,
+	// two equal objects (one via makeType, one via makeTypeSpecifier) could
+	// hash differently, violating the hash/equality contract and breaking
+	// unordered container lookups.
 	size_t hash() const {
 		size_t h = std::hash<int>{}(static_cast<int>(kind));
 		h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
 		h ^= std::hash<TypeIndex>{}(type_index) << 2;
-		if (kind == Kind::Type && type_specifier.has_value()) {
-			const auto& ts = *type_specifier;
-			h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ts.cv_qualifier())) + 0x9e3779b9 + (h << 6) + (h >> 2);
-			h ^= std::hash<size_t>{}(ts.pointer_depth()) + 0x9e3779b9 + (h << 6) + (h >> 2);
-			h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ts.reference_qualifier())) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		}
 		h ^= std::hash<int64_t>{}(int_value) << 3;
 		return h;
 	}
