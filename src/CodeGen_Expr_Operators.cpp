@@ -2882,6 +2882,26 @@ std::string_view op) {
 	// to get the current value into a temp var
 	TempVar current_value_temp = var_counter.next();
 	
+	// Map compound assignment operator to the corresponding IR opcode (defined once, used by all branches)
+	static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
+		{"+=", IrOpcode::Add},
+		{"-=", IrOpcode::Subtract},
+		{"*=", IrOpcode::Multiply},
+		{"/=", IrOpcode::Divide},
+		{"%=", IrOpcode::Modulo},
+		{"&=", IrOpcode::BitwiseAnd},
+		{"|=", IrOpcode::BitwiseOr},
+		{"^=", IrOpcode::BitwiseXor},
+		{"<<=", IrOpcode::ShiftLeft},
+		{">>=", IrOpcode::ShiftRight}
+	};
+	auto op_it = compound_op_map.find(op);
+	if (op_it == compound_op_map.end()) {
+		FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
+		return false;
+	}
+	IrOpcode operation_opcode = op_it->second;
+	
 	// Generate a Load instruction based on the lvalue kind
 	// Support both Member kind and Indirect kind (for dereferenced pointers like &y in lambda captures)
 	if (lv_info.kind == LValueInfo::Kind::Indirect) {
@@ -2910,26 +2930,6 @@ std::string_view op) {
 		
 		// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
 		TempVar result_temp = var_counter.next();
-		
-		static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
-			{"+=", IrOpcode::Add},
-			{"-=", IrOpcode::Subtract},
-			{"*=", IrOpcode::Multiply},
-			{"/=", IrOpcode::Divide},
-			{"%=", IrOpcode::Modulo},
-			{"&=", IrOpcode::BitwiseAnd},
-			{"|=", IrOpcode::BitwiseOr},
-			{"^=", IrOpcode::BitwiseXor},
-			{"<<=", IrOpcode::ShiftLeft},
-			{">>=", IrOpcode::ShiftRight}
-		};
-		
-		auto op_it = compound_op_map.find(op);
-		if (op_it == compound_op_map.end()) {
-			FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
-			return false;
-		}
-		IrOpcode operation_opcode = op_it->second;
 		
 		// Create the binary operation
 		BinaryOp bin_op;
@@ -2998,27 +2998,6 @@ std::string_view op) {
 		// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
 		TempVar result_temp = var_counter.next();
 		
-		// Map compound assignment operator to the corresponding operation
-		static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
-			{"+=", IrOpcode::Add},
-			{"-=", IrOpcode::Subtract},
-			{"*=", IrOpcode::Multiply},
-			{"/=", IrOpcode::Divide},
-			{"%=", IrOpcode::Modulo},
-			{"&=", IrOpcode::BitwiseAnd},
-			{"|=", IrOpcode::BitwiseOr},
-			{"^=", IrOpcode::BitwiseXor},
-			{"<<=", IrOpcode::ShiftLeft},
-			{">>=", IrOpcode::ShiftRight}
-		};
-		
-		auto op_it = compound_op_map.find(op);
-		if (op_it == compound_op_map.end()) {
-			FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
-			return false;
-		}
-		IrOpcode operation_opcode = op_it->second;
-		
 		// Create the binary operation
 		BinaryOp bin_op;
 		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
@@ -3059,25 +3038,6 @@ std::string_view op) {
 		StringHandle global_name = std::get<StringHandle>(lv_info.base);
 		FLASH_LOG(Codegen, Debug, "     Global compound assignment op=", op);
 
-		// Map compound assignment operator to the corresponding operation
-		static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
-			{"+=", IrOpcode::Add},
-			{"-=", IrOpcode::Subtract},
-			{"*=", IrOpcode::Multiply},
-			{"/=", IrOpcode::Divide},
-			{"%=", IrOpcode::Modulo},
-			{"&=", IrOpcode::BitwiseAnd},
-			{"|=", IrOpcode::BitwiseOr},
-			{"^=", IrOpcode::BitwiseXor},
-			{"<<=", IrOpcode::ShiftLeft},
-			{">>=", IrOpcode::ShiftRight}
-		};
-		auto op_it = compound_op_map.find(op);
-		if (op_it == compound_op_map.end()) {
-			FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
-			return false;
-		}
-
 		// lhs_temp already holds the loaded value (from GlobalLoad in LHS evaluation)
 		TempVar result_temp = var_counter.next();
 		BinaryOp bin_op;
@@ -3086,7 +3046,7 @@ std::string_view op) {
 		bin_op.lhs.value = lhs_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
 		bin_op.result = result_temp;
-		ir_.addInstruction(IrInstruction(op_it->second, std::move(bin_op), token));
+		ir_.addInstruction(IrInstruction(operation_opcode, std::move(bin_op), token));
 
 		// Store result back to global
 		std::vector<IrOperand> store_operands;
@@ -3157,27 +3117,6 @@ std::string_view op) {
 	
 	// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
 	TempVar result_temp = var_counter.next();
-	
-	// Map compound assignment operator to the corresponding operation
-	static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
-		{"+=", IrOpcode::Add},
-		{"-=", IrOpcode::Subtract},
-		{"*=", IrOpcode::Multiply},
-		{"/=", IrOpcode::Divide},
-		{"%=", IrOpcode::Modulo},
-		{"&=", IrOpcode::BitwiseAnd},
-		{"|=", IrOpcode::BitwiseOr},
-		{"^=", IrOpcode::BitwiseXor},
-		{"<<=", IrOpcode::ShiftLeft},
-		{">>=", IrOpcode::ShiftRight}
-	};
-	
-	auto op_it = compound_op_map.find(op);
-	if (op_it == compound_op_map.end()) {
-		FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
-		return false;
-	}
-	IrOpcode operation_opcode = op_it->second;
 	
 	// Create the binary operation
 	BinaryOp bin_op;
