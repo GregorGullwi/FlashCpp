@@ -1,229 +1,122 @@
 # Template Substitution Migration Plan
 
-## Overview
+## Status: Substantially Complete
 
-This document outlines the plan to migrate template instantiation logic from `Parser.cpp` to `TemplateInstantiationHelper.h`. The migration is currently marked as "high risk" due to the deep integration with Parser state.
+The migration described in this document has been carried out. This file is retained as a historical record and to document the final architecture.
 
-## Current State
+---
 
-### Parser Methods to Migrate
+## What Was Done
 
-Three primary methods handle template instantiation in `Parser.cpp`:
+### TemplateArgument → TemplateTypeArg Merge (Complete)
 
-1. **`try_instantiate_class_template()`** (~500 lines)
-   - Handles class/struct template instantiation
-   - Creates instantiated types in `gTypesByName` and `gTypeInfo`
-   - Processes base classes, member variables, member functions
-   - Handles partial and full specializations
+The codebase previously had two parallel template-argument types:
 
-2. **`try_instantiate_function_template()`** (~300 lines)
-   - Handles function template instantiation
-   - Creates instantiated functions in the function tables
-   - Handles overload resolution with template argument deduction
+| Old type | Role |
+|----------|------|
+| `TemplateArgument` | Lightweight type+index+value triple used in some paths |
+| `TemplateTypeArg` | Rich type used in the main instantiation path |
 
-3. **`try_instantiate_variable_template()`** (~150 lines)
-   - Handles variable template instantiation
-   - Creates instantiated variables in the symbol tables
+Both are now **unified into `TemplateTypeArg`** (`src/TemplateRegistry_Types.h`). `TemplateArgument` no longer exists as a standalone struct. The lightweight triple lives on as `TemplateArgumentValue` for the few contexts that need it.
 
-### Dependencies on Parser State
+`TemplateTypeArg` covers every template argument kind:
+- Type parameters (`typename T`) — `base_type`, `type_index`, qualifiers, `pointer_depth`, ...
+- Non-type parameters (`int N`) — `is_value == true`, `value`, `value_type`
+- Variadic packs (`typename... Args`) — `is_pack == true`
+- Dependent names (un-substituted params) — `is_dependent`, `dependent_name`
+- Template template parameters (`template<typename> class C`) — `is_template_template_arg`, `template_name_handle`
+- Member pointers — `member_pointer_kind`
 
-The instantiation methods depend on these Parser-internal systems:
+All instantiation methods in `src/Parser.h` now accept `const std::vector<TemplateTypeArg>&`.
 
-1. **Token Stream**
-   - Re-parsing template bodies requires access to saved token positions
-   - `saved_token_position_` and `current_position_` are used to rewind
+### Template Instantiation Split Out of Parser.cpp (Complete)
 
-2. **Symbol Tables**
-   - `scope_stack_` for nested scope resolution
-   - `variable_declarations_` for variable lookup
-   - `function_declarations_` for function lookup
+The three monolithic methods originally in `Parser.cpp` now live in dedicated files:
 
-3. **Type System**
-   - `gTypesByName` and `gTypeInfo` (global, accessible)
-   - `type_specifier_stack_` for nested type resolution
+| File | Contents | Lines |
+|------|----------|-------|
+| `src/Parser_Templates_Inst_ClassTemplate.cpp` | `try_instantiate_class_template`, `instantiate_full_specialization`, `instantiate_and_register_base_template` | ~6270 |
+| `src/Parser_Templates_Inst_Deduction.cpp` | Template argument deduction, `populateTemplateParamSubstitutions` | ~1914 |
+| `src/Parser_Templates_Inst_MemberFunc.cpp` | Member function template instantiation | ~532 |
+| `src/Parser_Templates_Inst_Substitution.cpp` | Expression substitutor, `substitute_template_parameter` | ~1032 |
+| `src/Parser_Templates_Instantiation.cpp` | Unity-build stub | 4 |
 
-4. **Template System**
-   - `template_arguments_` stack for nested instantiations
-   - `template_parameters_` for parameter lookup
-   - Recursion guards to prevent infinite instantiation
+Additional template-related files:
 
-## Risk Assessment
+| File | Contents |
+|------|----------|
+| `src/Parser_Templates_Params.cpp` | Template parameter list parsing, template template params |
+| `src/Parser_Templates_Function.cpp` | Function template declaration |
+| `src/Parser_Templates_Class.cpp` | Class template declaration |
+| `src/Parser_Templates_Variable.cpp` | Variable template declaration |
+| `src/Parser_Templates_Concepts.cpp` | Concept checking / `evaluateConstraint` |
+| `src/Parser_Templates_Lazy.cpp` | Lazy (deferred) template body storage |
+| `src/Parser_Templates_MemberOutOfLine.cpp` | Out-of-line member template definitions |
+| `src/Parser_Templates_Decls.cpp` | Template declaration helpers |
+| `src/Parser_Templates_Substitution.cpp` | Substitution pass |
+| `src/Parser_Templates.cpp` | Top-level dispatch |
 
-### Why Migration is High Risk
+### Helper Infrastructure (Complete)
 
-1. **900+ Passing Tests**: Current implementation passes extensive test suite
-2. **Deep Parser Integration**: Methods read/write Parser-private state
-3. **Complex Control Flow**: Many early returns, error paths, recursive calls
-4. **Subtle Semantics**: C++ template instantiation has many corner cases
+**`src/TemplateInstantiationHelper.h`** — shared utilities used by `ExpressionSubstitutor` and `ConstExpr::Evaluator`:
+- `deduceTemplateArgsFromCall()` — extracts args from constructor call patterns (`__type_identity<int>{}`)
+- `deduceTemplateArgsFromParamTypes()` — deduces args by matching parameter vs. argument types
+- `tryInstantiateTemplateFunction()` / `tryInstantiateWithErrorInfo()` — tries qualified then simple name
+- `isTemplateTemplateParameter()` — detects template template patterns
+- `buildTemplateParamMap()` — builds `unordered_map<string_view, TemplateTypeArg>` from a param/arg pair
 
-### What Could Go Wrong
+**`src/TemplateRegistry_Pattern.h`** — specialization matching and lookup:
+- `toTemplateTypeArg()` — converts `TypeInfo::TemplateArgInfo` to `TemplateTypeArg`
+- Thin shim overloads: `lookupSpecialization`, `evaluateConstraint`, `substitute_template_parameter`, `try_instantiate_class_template`, `get_instantiated_class_name`
 
-- Breaking template argument deduction
-- Breaking partial specialization matching
-- Breaking SFINAE behavior
-- Breaking nested template instantiation
-- Breaking default template arguments
-- Performance regression from additional indirection
+**`src/TemplateRegistry_Registry.h`**, **`src/TemplateRegistry_Lazy.cpp`** — lazy instantiation registry with specialization caching.
 
-## Investigation Plan
+### Template Parameter Scoping (Complete)
 
-### Phase A: Code Analysis (Low Risk)
-
-1. **Map Dependencies**
-   - List all Parser member variables accessed by each instantiation method
-   - Categorize as: required (must pass), optional (can compute), removable
-
-2. **Identify Extraction Candidates**
-   - Pure functions that don't access Parser state
-   - Functions that only access global state (gTypeInfo, etc.)
-   - Functions that could accept Parser state as parameters
-
-3. **Document Test Coverage**
-   - Map each instantiation code path to test files that cover it
-   - Identify gaps in test coverage
-
-### Phase B: Extract Helper Functions (Medium Risk)
-
-Extract pure functions first (no Parser state dependency):
-
-1. **`substitute_type_in_node()`** - Already in TemplateInstantiationHelper
-2. **`build_substituted_type_name()`** - String manipulation only
-3. **`check_template_constraints()`** - Concept checking logic
-4. **`match_partial_specialization()`** - Pattern matching logic
-
-### Phase C: Create Interface Layer (Low Risk)
-
-Pass `Parser&` directly to instantiation functions - no virtual functions needed:
+Template parameters no longer pollute `gTypeInfo`. Each instantiation operates through:
 
 ```cpp
-// TemplateInstantiationHelper.h
-TypeIndex instantiateClassTemplate(Parser& parser, const ASTNode& template_decl, 
-                                    const std::vector<TemplateTypeArg>& args);
-TypeIndex instantiateFunctionTemplate(Parser& parser, const std::string& name,
-                                     const std::vector<TemplateTypeArg>& args);
-TypeIndex instantiateVariableTemplate(Parser& parser, const std::string& name,
-                                      const std::vector<TemplateTypeArg>& args);
-
-// Parser.cpp - thin wrappers
-TypeIndex Parser::try_instantiate_class_template(/* args */) {
-    return ::instantiateClassTemplate(*this, /* args */);
-}
+// src/Parser.h
+struct TemplateParamSubstitution {
+    StringHandle param_name;
+    bool is_value_param;
+    int64_t value;
+    Type value_type;
+    bool is_type_param = false;
+    TemplateTypeArg substituted_type;
+};
+InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
+InlineVector<StringHandle, 4> current_template_param_names_;
 ```
 
-### Phase D: Incremental Migration (High Risk)
+`ScopedState` RAII guards (`src/ParserScopeGuards.h`) save and restore these vectors across nested instantiations, so concurrent recursive instantiations are safe and parameter names from different templates never collide.
 
-Migrate one method at a time:
+---
 
-1. **Variable Templates First** (smallest, simplest)
-   - ~150 lines
-   - Fewer dependencies
-   - Lower risk of breaking other features
+## Original Plan vs. Outcome
 
-2. **Function Templates Second**
-   - ~300 lines
-   - More complex due to overloading
-   - Well-tested via STL-like tests
+| Original Phase | Outcome |
+|---------------|---------|
+| A — Dependency analysis | Completed implicitly during refactoring |
+| B — Extract pure helpers | Done: `TemplateInstantiationHelper.h`, `TemplateRegistry_Pattern.h` |
+| C — Pass `Parser&` interface | Done: all helpers receive `Parser&` |
+| D1 — Variable template migration | Done: `try_instantiate_variable_template` in dedicated file |
+| D2 — Function template migration | Done: `try_instantiate_template_explicit` and deduction in dedicated files |
+| D3 — Class template migration | Done: `Parser_Templates_Inst_ClassTemplate.cpp` |
 
-3. **Class Templates Last** (largest, most complex)
-   - ~500 lines
-   - Most Parser dependencies
-   - Highest risk
+The original plan proposed `TypeIndex instantiateClassTemplate(Parser& parser, ...)` free functions. The actual implementation keeps the methods on `Parser` but moves the bodies to separate translation units compiled via the unity build (`src/FlashCppUnity.h`). This achieves the same separation without introducing indirection.
 
-## Detailed Task Breakdown
+---
 
-### Task 1: Dependency Analysis (2-4 hours)
+## Success Criteria — Verified
 
-```
-For each Parser method involved in template instantiation:
-1. List all `this->` member variable accesses
-2. List all global variable accesses (gTypeInfo, etc.)
-3. List all helper method calls
-4. Create dependency graph
-```
+- ✅ All 1259+ tests pass (as of 2026-03-04)
+- ✅ `TemplateArgument` type removed; single `TemplateTypeArg` throughout
+- ✅ Template instantiation code extracted from monolithic `Parser.cpp`
+- ✅ Shared helpers in `TemplateInstantiationHelper.h` eliminate duplication
+- ✅ Template parameter scoping clean — no `gTypeInfo` pollution
 
-**Output**: `docs/TEMPLATE_INSTANTIATION_DEPENDENCIES.md`
+---
 
-### Task 2: Extract Pure Functions (4-8 hours)
-
-Functions to extract (no Parser state):
-
-```cpp
-// Already extracted:
-buildTemplateParamMap()
-buildTemplateArgumentsFromTypeArgs()
-generateInstantiatedNameFromArgs()
-
-// To extract:
-matchPartialSpecialization(template_params, args, specialization_pattern)
-checkTemplateConstraints(template_params, args, constraints)
-substituteTypeInExpression(expr, param_to_arg_map)
-```
-
-### Task 3: Function Signatures (1-2 hours)
-
-Design function signatures in `TemplateInstantiationHelper.h`:
-- Pass `Parser&` as first parameter
-- Identify all Parser member accesses needed
-- Keep Parser methods as thin wrappers
-
-### Task 4: Variable Template Migration (4-8 hours)
-
-1. Extract `instantiate_variable_template()` core logic
-2. Keep Parser method as thin wrapper
-3. Test with all variable template tests
-4. Measure performance impact
-
-### Task 5: Function Template Migration (8-16 hours)
-
-1. Extract `instantiate_function_template()` core logic
-2. Handle template argument deduction complexity
-3. Test with all function template tests
-
-### Task 6: Class Template Migration (16-32 hours)
-
-1. Extract `instantiate_class_template()` core logic
-2. Handle member instantiation recursion
-3. Handle base class instantiation
-4. Test with all class template tests
-
-## Success Criteria
-
-1. **All 900+ tests pass** after migration
-2. **No performance regression** (measure compile times)
-3. **Cleaner separation** between parsing and instantiation
-4. **Better testability** of instantiation logic in isolation
-
-## Rollback Plan
-
-Each phase should be a separate commit/PR:
-1. If tests fail after extraction, revert that commit
-2. Keep Parser methods as fallback during migration
-3. Use feature flag to switch between old/new implementation
-
-## Timeline Estimate
-
-| Phase | Estimated Time | Risk Level |
-|-------|----------------|------------|
-| A: Analysis | 2-4 hours | Low |
-| B: Extract Helpers | 4-8 hours | Medium |
-| C: Function Signatures | 1-2 hours | Low |
-| D1: Variable Templates | 4-8 hours | Low |
-| D2: Function Templates | 8-16 hours | Low |
-| D3: Class Templates | 16-32 hours | Medium |
-| **Total** | **35-70 hours** | - |
-
-## Recommendation
-
-Given the simplified approach using `Parser&` directly:
-
-1. **Start with Phase A (Analysis)** - Safe, provides valuable information
-2. **Continue with Phase B (Extract Helpers)** - Low risk, immediate benefit
-3. **Proceed with Phase C & D** - Risk reduced by eliminating virtual function overhead
-
-Using `Parser&` directly instead of virtual functions:
-- Zero runtime overhead
-- Simpler code structure
-- No interface indirection
-- Parser methods become thin wrappers
-
-The migration can proceed more confidently given the reduced complexity.
+*Document originally created: 2025 (migration plan)*
+*Updated: 2026-03-04 — reflects completed migration and TemplateArgument→TemplateTypeArg merge*
