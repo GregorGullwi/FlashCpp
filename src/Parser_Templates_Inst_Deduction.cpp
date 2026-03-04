@@ -1,3 +1,38 @@
+// Helper: register type-kind template parameters as TypeInfo / gTypesByName entries so
+// that body re-parsing can resolve their names.  Kind::Value (non-type) parameters are
+// intentionally skipped: makeValue() leaves type_value uninitialized, which would
+// poison gTypesByName with an Invalid/garbage-type entry for the param name (e.g. "N").
+// Those params are already handled via template_param_substitutions_.
+//
+// preserve_ref_qualifier: pass true for the explicit-instantiation path where the
+//   type_specifier reference qualifier was set from the user-written explicit arg
+//   (e.g. f<int&> → T registered as int&).  Pass false for the deduction path where
+//   the type_specifier comes from the call-site argument expression's lvalue-ness,
+//   which must NOT be propagated to TypeInfo (otherwise "T tmp = a;" in a swap body
+//   would declare tmp as int& instead of int, breaking the copy).
+static void registerTypeParamsInScope(
+	const std::vector<std::string_view>& param_names,
+	const std::vector<TemplateArgument>& template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	bool preserve_ref_qualifier = false
+) {
+	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+		if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
+		std::string_view param_name = param_names[i];
+		Type concrete_type = template_args[i].type_value;
+		auto& type_info = gTypeInfo.emplace_back(
+			StringTable::getOrInternStringHandle(param_name),
+			concrete_type, gTypeInfo.size(),
+			getTypeSizeFromTemplateArgument(template_args[i]));
+		if (preserve_ref_qualifier && template_args[i].type_specifier.has_value()) {
+			const auto& ts = *template_args[i].type_specifier;
+			type_info.reference_qualifier_ = ts.reference_qualifier();
+		}
+		gTypesByName.emplace(type_info.name(), &type_info);
+		scope.addParameter(&type_info);
+	}
+}
+
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
@@ -261,6 +296,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) continue;
 			const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+			// Value (non-type) params must NOT be registered as TypeInfo: makeValue()
+			// leaves type_value uninitialized which would poison gTypesByName.
+			if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
 			Type concrete_type = template_args[i].type_value;
 			auto& type_info = gTypeInfo.emplace_back(
 				StringTable::getOrInternStringHandle(tparam.name()),
@@ -397,22 +435,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 		
-		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			Type concrete_type = template_args[i].type_value;
-
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
-			
-			// Preserve reference qualifiers from template arguments
-			// This ensures that when T=int&, the type T is properly marked as a reference
-			if (template_args[i].type_specifier.has_value()) {
-				const auto& ts = *template_args[i].type_specifier;
-				type_info.reference_qualifier_ = ts.reference_qualifier();
-			}
-			
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
-		}
+		// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
+		// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
+		registerTypeParamsInScope(param_names, template_args, template_scope, /*preserve_ref_qualifier=*/true);
 
 		// Save current position
 		SaveHandle current_pos = save_token_position();
@@ -1770,19 +1795,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 		
-		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			// Value (non-type) params must NOT be registered as TypeInfo: their type_value
-			// is Type::Invalid (makeValue leaves it unset), which would poison gTypesByName
-			// with an Invalid-type entry for the parameter name (e.g. "N").  They are
-			// already handled via template_param_substitutions_ below.
-			if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
-			Type concrete_type = template_args[i].type_value;
-
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
-		}
+		registerTypeParamsInScope(param_names, template_args, template_scope);
 
 		// Save current position
 		SaveHandle current_pos = save_token_position();
