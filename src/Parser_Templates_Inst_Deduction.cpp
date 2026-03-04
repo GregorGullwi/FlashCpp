@@ -43,10 +43,16 @@ static void registerTypeParamsInScope(
 // as Kind::Value in the TemplateArgument overload: makeValue() leaves base_type as the
 // value-type (e.g. Type::Int for int N), so registering it as a TypeInfo entry would
 // erroneously add a type named "N" to gTypesByName and confuse subsequent type lookups.
+//
+// preserve_ref_qualifier: pass true for paths where the TemplateTypeArg ref_qualifier was
+//   set from user-written explicit args or class-template instantiation args (e.g., T
+//   bound to int& from a class<int&> instantiation).  Pass false for deduction paths
+//   where lvalue-ness of the call-site argument must NOT propagate to the TypeInfo entry.
 static void registerTypeParamsInScope(
 	const std::vector<std::string_view>& param_names,
 	const std::vector<TemplateTypeArg>& type_args,
-	FlashCpp::TemplateParameterScope& scope
+	FlashCpp::TemplateParameterScope& scope,
+	bool preserve_ref_qualifier = false
 ) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
@@ -64,6 +70,11 @@ static void registerTypeParamsInScope(
 			} else {
 				type_info.type_size_ = 0;
 			}
+		}
+		if (preserve_ref_qualifier) {
+			type_info.reference_qualifier_ = arg.is_rvalue_reference()
+				? ReferenceQualifier::RValueReference
+				: (arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
 		}
 		gTypesByName.emplace(type_info.name(), &type_info);
 		scope.addParameter(&type_info);

@@ -4823,19 +4823,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					
-					for (size_t i = 0; i < param_names.size() && i < template_args_to_use.size(); ++i) {
-						std::string_view param_name = param_names[i];
-						Type concrete_type = template_args_to_use[i].base_type;
-
-						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
-						
-						// Copy reference qualifiers from template arg
-						type_info.reference_qualifier_ = template_args_to_use[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
-							: (template_args_to_use[i].is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-						
-						gTypesByName.emplace(type_info.name(), &type_info);
-						template_scope.addParameter(&type_info);
-					}
+					registerTypeParamsInScope(param_names, template_args_to_use, template_scope, true);
 
 					// Save current position and parsing context
 					SaveHandle current_pos = save_token_position();
