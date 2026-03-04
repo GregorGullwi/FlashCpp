@@ -3,6 +3,9 @@
 // intentionally skipped: makeValue() leaves type_value uninitialized, which would
 // poison gTypesByName with an Invalid/garbage-type entry for the param name (e.g. "N").
 // Those params are already handled via template_param_substitutions_.
+// Kind::Template (template-template) parameters are also skipped: makeTemplate() only
+// sets template_name, leaving type_value indeterminate, so registering them would
+// create a garbage TypeInfo entry.
 //
 // preserve_ref_qualifier: pass true for the explicit-instantiation path where the
 //   type_specifier reference qualifier was set from the user-written explicit arg
@@ -18,6 +21,7 @@ static void registerTypeParamsInScope(
 ) {
 	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
 		if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
+		if (template_args[i].kind == TemplateArgument::Kind::Template) continue;  // template-template params don't represent concrete types
 		std::string_view param_name = param_names[i];
 		Type concrete_type = template_args[i].type_value;
 		auto& type_info = gTypeInfo.emplace_back(
