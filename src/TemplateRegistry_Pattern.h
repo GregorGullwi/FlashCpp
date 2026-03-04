@@ -241,6 +241,34 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 }
 
 /**
+ * Convert TypeInfo::TemplateArgInfo to TemplateTypeArg
+ *
+ * Provides a single canonical conversion from the TypeInfo-embedded metadata
+ * form to TemplateTypeArg.  Supersedes the local static helper that previously
+ * lived in ExpressionSubstitutor.cpp.
+ *
+ * @param arg The TypeInfo::TemplateArgInfo to convert
+ * @return TemplateTypeArg with all available type information populated
+ */
+inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
+	TemplateTypeArg ta;
+	ta.base_type = arg.base_type;
+	ta.type_index = arg.type_index;
+	ta.is_value = arg.is_value;
+	ta.cv_qualifier = arg.cv_qualifier;
+	ta.ref_qualifier = arg.ref_qualifier;
+	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
+	ta.is_array = arg.is_array;
+	ta.array_size = arg.array_size;
+	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+	ta.dependent_name = arg.dependent_name;
+	if (arg.is_value) {
+		ta.value = arg.intValue();
+	}
+	return ta;
+}
+
+/**
  * Create a TemplateInstantiationKey from template name and TemplateArgument vector.
  * Overload of makeInstantiationKey(StringHandle, const std::vector<TemplateTypeArg>&)
  * that accepts TemplateArgument (the parser-level representation) instead of TemplateTypeArg.

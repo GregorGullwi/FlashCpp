@@ -314,8 +314,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	if (func_decl.has_trailing_return_type_position()) {
 		bool prev_sfinae_context = in_sfinae_context_;
 		bool prev_parsing_template_body = parsing_template_body_;
-		auto prev_template_param_names = std::move(current_template_param_names_);
-		auto prev_sfinae_type_map = std::move(sfinae_type_map_);
+		FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
+		FlashCpp::ScopedState<decltype(sfinae_type_map_)> guard_sfinae_map(sfinae_type_map_);
 		in_sfinae_context_ = true;
 		parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
 		current_template_param_names_.clear();  // No dependent names during SFINAE
@@ -353,8 +353,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		restore_lexer_position_only(sfinae_pos);
 		in_sfinae_context_ = prev_sfinae_context;
 		parsing_template_body_ = prev_parsing_template_body;
-		current_template_param_names_ = std::move(prev_template_param_names);
-		sfinae_type_map_ = std::move(prev_sfinae_type_map);
+		// guard_param_names and guard_sfinae_map restore their fields automatically
 
 		if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
@@ -543,23 +542,24 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 		// Set current_template_param_names_ so the expression parser can find
 		// non-type template parameters (e.g., N in "x * N") via template_param_substitutions_
-		std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
-		current_template_param_names_.clear();
-		for (const auto& pn : param_names) {
-			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
-		}
+		{
+			FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
+			current_template_param_names_.clear();
+			for (const auto& pn : param_names) {
+				current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+			}
 
-		// Parse the function body
-		auto block_result = parse_block();
-		
-		// Restore the template parameter substitutions and param names
-		current_template_param_names_ = std::move(saved_template_param_names);
+			// Parse the function body
+			auto block_result = parse_block();
+
+			if (!block_result.is_error() && block_result.node().has_value()) {
+				new_func_ref.set_definition(
+					substituteTemplateParameters(*block_result.node(), template_params, template_args));
+			}
+		} // current_template_param_names_ restored here
+
+		// Restore the template parameter substitutions
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
-		
-		if (!block_result.is_error() && block_result.node().has_value()) {
-			new_func_ref.set_definition(
-				substituteTemplateParameters(*block_result.node(), template_params, template_args));
-		}
 		
 		// Clean up context
 		current_function_ = nullptr;
@@ -1888,35 +1888,34 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// sync is exactly the kind of maintenance burden described in
 		// docs/REFACTORING_PROPOSAL_2026-03-03.md — extracting a shared helper would
 		// prevent this class of divergence bug.
-		std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
-		current_template_param_names_.clear();
-		for (const auto& pn : param_names) {
-			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
-		}
+		{
+			FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
+			current_template_param_names_.clear();
+			for (const auto& pn : param_names) {
+				current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+			}
 
-		// Parse the function body
-		auto block_result = parse_block();
+			// Parse the function body
+			auto block_result = parse_block();
 
-		// Restore template param names
-		current_template_param_names_ = std::move(saved_template_param_names);
+			if (!block_result.is_error() && block_result.node().has_value()) {
+				// After parsing, we need to substitute template parameters in the body
+				// This is essential for features like fold expressions that need AST transformation
+				// Note: pack_param_info_ is still active here so PackExpansionExprNode expansion works
+				// template_args already holds the canonical TemplateArgument vector with correct
+				// kind, type_value, type_index, int_value, and value_type — pass it directly.
+				ASTNode substituted_body = substituteTemplateParameters(
+					*block_result.node(),
+					template_params,
+					template_args
+				);
+			
+				new_func_ref.set_definition(substituted_body);
+			}
+		} // current_template_param_names_ restored here
 
 		// Restore the template parameter substitutions
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
-
-		if (!block_result.is_error() && block_result.node().has_value()) {
-			// After parsing, we need to substitute template parameters in the body
-			// This is essential for features like fold expressions that need AST transformation
-			// Note: pack_param_info_ is still active here so PackExpansionExprNode expansion works
-			// template_args already holds the canonical TemplateArgument vector with correct
-			// kind, type_value, type_index, int_value, and value_type — pass it directly.
-			ASTNode substituted_body = substituteTemplateParameters(
-				*block_result.node(),
-				template_params,
-				template_args
-			);
-		
-			new_func_ref.set_definition(substituted_body);
-		}
 
 		// Restore pack parameter info (after substitution so PackExpansionExprNode can use it)
 		has_parameter_packs_ = saved_has_parameter_packs;
