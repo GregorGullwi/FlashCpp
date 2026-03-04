@@ -349,12 +349,12 @@ struct OutOfLineMemberFunction {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., <typename T>)
 	ASTNode function_node;                  // FunctionDeclarationNode
 	SaveHandle body_start;                  // Handle to saved position of function body for re-parsing
-	std::vector<StringHandle> template_param_names;  // Names of template parameters
+	InlineVector<StringHandle, 4> template_param_names;  // Names of template parameters
 	// For nested templates (member function templates of class templates):
 	// template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
 	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
 	std::vector<ASTNode> inner_template_params;
-	std::vector<StringHandle> inner_template_param_names;
+	InlineVector<StringHandle, 4> inner_template_param_names;
 	// Function specifiers from out-of-line definition (= default, = delete)
 	bool is_defaulted = false;
 	bool is_deleted = false;
@@ -364,8 +364,8 @@ struct OutOfLineMemberFunction {
 // Stored when a TemplateFunctionDeclarationNode is copied during class template instantiation.
 // Used during inner template instantiation to resolve outer template params (e.g., T→int).
 struct OuterTemplateBinding {
-	std::vector<StringHandle> param_names;  // Outer param names (e.g., ["T"])
-	std::vector<TemplateTypeArg> param_args;  // Concrete types (e.g., [int])
+	InlineVector<StringHandle, 4> param_names;  // Outer param names (e.g., ["T"])
+	InlineVector<TemplateTypeArg, 4> param_args;  // Concrete types (e.g., [int])
 };
 
 // Out-of-line template static member variable definition
@@ -374,7 +374,7 @@ struct OutOfLineMemberVariable {
 	StringHandle member_name;               // Name of the static member variable
 	ASTNode type_node;                          // Type of the variable (TypeSpecifierNode)
 	std::optional<ASTNode> initializer;         // Initializer expression
-	std::vector<StringHandle> template_param_names;  // Names of template parameters
+	InlineVector<StringHandle, 4> template_param_names;  // Names of template parameters
 };
 
 // Out-of-line template nested class definition
@@ -385,7 +385,7 @@ struct OutOfLineNestedClass {
 	std::vector<ASTNode> template_params;           // Outer template parameters (e.g., <typename T>)
 	StringHandle nested_class_name;                 // Name of the nested class (e.g., "Inner")
 	SaveHandle body_start;                          // Saved position at the struct/class keyword for re-parsing via parse_struct_declaration()
-	std::vector<StringHandle> template_param_names; // Names of template parameters
+	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
 	bool is_class = false;                          // true if 'class', false if 'struct'
 	std::vector<TemplateTypeArg> specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
 };

@@ -82,8 +82,8 @@ public:
 	}
 
 	// Register template parameter names for a template
-	void registerTemplateParameters(StringHandle key, const std::vector<StringHandle>& param_names) {
-		template_parameters_[key] = std::vector<StringHandle>(param_names.begin(), param_names.end());
+	void registerTemplateParameters(StringHandle key, const InlineVector<StringHandle, 4>& param_names) {
+		template_parameters_[key] = InlineVector<StringHandle, 4>(param_names);
 	}
 
 	// Register an alias template: template<typename T> using Ptr = T*;
@@ -231,7 +231,7 @@ public:
 	}
 
 	// Get template parameter names for a template
-	std::vector<StringHandle> getTemplateParameters(StringHandle name) const {
+	InlineVector<StringHandle, 4> getTemplateParameters(StringHandle name) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = template_parameters_.find(name);
 		if (it != template_parameters_.end()) {
@@ -858,7 +858,7 @@ private:
 	std::unordered_map<StringHandle, std::vector<ASTNode>, StringHandleHash, std::equal_to<>> templates_;
 
 	// Map from template name to template parameter names (StringHandle key for fast lookup)
-	std::unordered_map<StringHandle, std::vector<StringHandle>, StringHandleHash, std::equal_to<>> template_parameters_;
+	std::unordered_map<StringHandle, InlineVector<StringHandle, 4>, StringHandleHash, std::equal_to<>> template_parameters_;
 
 	// Map from alias template name to TemplateAliasNode (StringHandle key for fast lookup)
 	std::unordered_map<StringHandle, ASTNode, StringHandleHash, std::equal_to<>> alias_templates_;

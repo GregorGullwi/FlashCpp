@@ -180,7 +180,7 @@ ParseResult Parser::parse_template_declaration() {
 	// Add template parameters to the type system temporarily using RAII scope guard (Phase 6)
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<StringHandle> template_param_names;
+	InlineVector<StringHandle, 4> template_param_names;
 	bool has_packs = false;  // Track if any parameter is a pack
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
@@ -267,7 +267,7 @@ ParseResult Parser::parse_template_declaration() {
 			advance(); // consume '>'
 
 			// Extract inner template parameter names
-			std::vector<StringHandle> inner_template_param_names;
+			InlineVector<StringHandle, 4> inner_template_param_names;
 			for (const auto& param : inner_template_params) {
 				if (param.is<TemplateParameterNode>()) {
 					inner_template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
@@ -3835,7 +3835,7 @@ if (struct_type_info.getStructInfo()) {
 		}
 
 		// Set template parameter context for current_template_param_names_
-		std::vector<StringHandle> template_param_names_for_body;
+		InlineVector<StringHandle, 4> template_param_names_for_body;
 		for (const auto& param : template_params) {
 			if (param.is<TemplateParameterNode>()) {
 				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();

@@ -36,7 +36,7 @@ struct DeferredTemplateMemberBody {
 	bool is_constructor;                  // Special handling for constructors
 	bool is_destructor;                   // Special handling for destructors
 	bool is_const_method;                 // True if this is a const member function
-	std::vector<StringHandle> template_param_names; // Template parameter names (copied, not views)
+	InlineVector<StringHandle, 4> template_param_names; // Template parameter names (copied, not views)
 };
 
 // Forward declarations

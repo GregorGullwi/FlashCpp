@@ -986,7 +986,7 @@ bool Parser::parse_static_member_function(
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
-	const std::vector<StringHandle>& current_template_param_names
+	const InlineVector<StringHandle, 4>& current_template_param_names
 ) {
 	// Check if this is a function (has '(')
 	if (peek() != "("_tok) {
@@ -1155,7 +1155,7 @@ ParseResult Parser::parse_static_member_block(
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
-	const std::vector<StringHandle>& current_template_param_names,
+	const InlineVector<StringHandle, 4>& current_template_param_names,
 	bool use_struct_type_info
 ) {
 	// consume "static" already done by caller

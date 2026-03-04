@@ -14,7 +14,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Parse template parameter list
 	std::vector<ASTNode> template_params;
-	std::vector<StringHandle> template_param_names;
+	InlineVector<StringHandle, 4> template_param_names;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {

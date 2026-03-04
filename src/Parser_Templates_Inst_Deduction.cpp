@@ -14,7 +14,7 @@
 //   which must NOT be propagated to TypeInfo (otherwise "T tmp = a;" in a swap body
 //   would declare tmp as int& instead of int, breaking the copy).
 static void registerTypeParamsInScope(
-	const std::vector<StringHandle>& param_names,
+	const InlineVector<StringHandle, 4>& param_names,
 	const std::vector<TemplateArgument>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier = false
@@ -48,7 +48,7 @@ static void registerTypeParamsInScope(
 //   bound to int& from a class<int&> instantiation).  Pass false for deduction paths
 //   where lvalue-ness of the call-site argument must NOT propagate to the TypeInfo entry.
 static void registerTypeParamsInScope(
-	const std::vector<StringHandle>& param_names,
+	const InlineVector<StringHandle, 4>& param_names,
 	const std::vector<TemplateTypeArg>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier = false
@@ -153,8 +153,8 @@ static void registerOuterBindingInScope(
 //             !is<TemplateParameterNode>() guard internally.
 // ─────────────────────────────────────────────────────────────────────────────
 void Parser::populateTemplateParamSubstitutions(
-	std::vector<TemplateParamSubstitution>& subs,
-	const std::vector<StringHandle>& param_names,
+	InlineVector<TemplateParamSubstitution, 4>& subs,
+	const InlineVector<StringHandle, 4>& param_names,
 	const std::vector<TemplateTypeArg>& type_args
 ) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
@@ -176,7 +176,7 @@ void Parser::populateTemplateParamSubstitutions(
 }
 
 void Parser::populateTemplateParamSubstitutions(
-	std::vector<TemplateParamSubstitution>& subs,
+	InlineVector<TemplateParamSubstitution, 4>& subs,
 	const std::vector<ASTNode>& template_params,
 	const std::vector<TemplateArgument>& template_args
 ) {
@@ -217,7 +217,7 @@ void Parser::reparse_template_function_body(
 {
 	// Collect parameter names and register TypeInfo entries for type params.
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<StringHandle> param_names;
+	InlineVector<StringHandle, 4> param_names;
 	param_names.reserve(template_params.size());
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
@@ -1334,7 +1334,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Add template parameters to the type system temporarily
 		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<StringHandle> param_names;
+		InlineVector<StringHandle, 4> param_names;
 		for (const auto& tparam_node : template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
 				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());

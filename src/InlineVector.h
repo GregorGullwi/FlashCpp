@@ -32,6 +32,38 @@ class InlineVector {
 public:
 	InlineVector() = default;
 	
+	// Construct from std::vector (enables seamless migration)
+	InlineVector(const std::vector<T>& vec) {
+		for (const auto& item : vec) {
+			push_back(item);
+		}
+	}
+	
+	// Move-construct from std::vector
+	InlineVector(std::vector<T>&& vec) {
+		for (auto& item : vec) {
+			push_back(std::move(item));
+		}
+	}
+	
+	// Assignment from std::vector
+	InlineVector& operator=(const std::vector<T>& vec) {
+		clear();
+		for (const auto& item : vec) {
+			push_back(item);
+		}
+		return *this;
+	}
+	
+	// Move-assignment from std::vector
+	InlineVector& operator=(std::vector<T>&& vec) {
+		clear();
+		for (auto& item : vec) {
+			push_back(std::move(item));
+		}
+		return *this;
+	}
+	
 	// Copy constructor
 	InlineVector(const InlineVector& other) 
 		: inline_count_(other.inline_count_), overflow_(other.overflow_) {
@@ -181,8 +213,19 @@ public:
 		iterator_impl& operator--() { --idx_; return *this; }
 		iterator_impl operator--(int) { iterator_impl tmp = *this; --idx_; return tmp; }
 		
+		iterator_impl operator+(difference_type n) const { return iterator_impl(vec_, idx_ + n); }
+		iterator_impl operator-(difference_type n) const { return iterator_impl(vec_, idx_ - n); }
+		difference_type operator-(const iterator_impl& other) const { return static_cast<difference_type>(idx_) - static_cast<difference_type>(other.idx_); }
+		iterator_impl& operator+=(difference_type n) { idx_ += n; return *this; }
+		iterator_impl& operator-=(difference_type n) { idx_ -= n; return *this; }
+		reference operator[](difference_type n) const { return (*vec_)[idx_ + n]; }
+		
 		bool operator==(const iterator_impl& other) const { return vec_ == other.vec_ && idx_ == other.idx_; }
 		bool operator!=(const iterator_impl& other) const { return vec_ != other.vec_ || idx_ != other.idx_; }
+		bool operator<(const iterator_impl& other) const { return idx_ < other.idx_; }
+		bool operator>(const iterator_impl& other) const { return idx_ > other.idx_; }
+		bool operator<=(const iterator_impl& other) const { return idx_ <= other.idx_; }
+		bool operator>=(const iterator_impl& other) const { return idx_ >= other.idx_; }
 		
 	private:
 		vec_type vec_;

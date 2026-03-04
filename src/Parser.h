@@ -405,7 +405,7 @@ private:
                 bool is_destructor;                      // Special handling for destructors
                 ConstructorDeclarationNode* ctor_node;   // For constructors (nullptr for regular functions)
                 DestructorDeclarationNode* dtor_node;    // For destructors (nullptr for regular functions)
-                std::vector<StringHandle> template_param_names; // For template member functions
+                InlineVector<StringHandle, 4> template_param_names; // For template member functions
                 bool is_member_function_template = false; // True when this is a member function template (template<T> void f())
                                                           // as opposed to a regular member of a template class
         };
@@ -430,7 +430,7 @@ private:
 		bool parsing_template_class_ = false;
 		// Track when an inline namespace declaration was prefixed with 'inline'
 		bool pending_inline_namespace_ = false;
-		std::vector<StringHandle> current_template_param_names_;  // Names of current template parameters - from Token storage
+		InlineVector<StringHandle, 4> current_template_param_names_;  // Names of current template parameters - from Token storage
 
         // Template parameter substitution for deferred template body parsing
         // Maps template parameter names to their substituted values (for non-type AND type parameters)
@@ -443,7 +443,7 @@ private:
             bool is_type_param = false;
             TemplateTypeArg substituted_type;  // The concrete type for type parameters
         };
-        std::vector<TemplateParamSubstitution> template_param_substitutions_;
+        InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 
         // Track if we're parsing a template body (for template parameter reference recognition)
         bool parsing_template_body_ = false;
@@ -784,11 +784,11 @@ private:
         // Overload 1: TemplateTypeArg source (lazy body-reparse path).
         // Overload 2: TemplateArgument source (member-func body-reparse path).
         void populateTemplateParamSubstitutions(
-            std::vector<TemplateParamSubstitution>& subs,
-            const std::vector<StringHandle>& param_names,
+            InlineVector<TemplateParamSubstitution, 4>& subs,
+            const InlineVector<StringHandle, 4>& param_names,
             const std::vector<TemplateTypeArg>& type_args);
         void populateTemplateParamSubstitutions(
-            std::vector<TemplateParamSubstitution>& subs,
+            InlineVector<TemplateParamSubstitution, 4>& subs,
             const std::vector<ASTNode>& template_params,
             const std::vector<TemplateArgument>& template_args);
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
@@ -831,7 +831,7 @@ private:
             const std::vector<TemplateTypeArg>& args,
             const std::vector<ASTNode>& params);  // Substitute non-type template parameter in initializer
         
-        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<StringHandle>& template_param_names, const std::vector<ASTNode>& inner_template_params = {}, const std::vector<StringHandle>& inner_template_param_names = {});  // NEW: Parse out-of-line template member function
+        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const std::vector<ASTNode>& inner_template_params = {}, const InlineVector<StringHandle, 4>& inner_template_param_names = {});  // NEW: Parse out-of-line template member function
         bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
         bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
                 const std::vector<TypeSpecifierNode>& argument_types,
@@ -1033,7 +1033,7 @@ public:  // Public methods for template instantiation
             StructDeclarationNode& struct_ref,
             StructTypeInfo* struct_info,
             AccessSpecifier current_access,
-            const std::vector<StringHandle>& current_template_param_names
+            const InlineVector<StringHandle, 4>& current_template_param_names
         );
         
         // Helper to parse entire static member block (data or function) - reduces code duplication
@@ -1042,7 +1042,7 @@ public:  // Public methods for template instantiation
             StructDeclarationNode& struct_ref,
             StructTypeInfo* struct_info,
             AccessSpecifier current_access,
-            const std::vector<StringHandle>& current_template_param_names,
+            const InlineVector<StringHandle, 4>& current_template_param_names,
             bool use_struct_type_info = false  // If true, use struct_type_info.getStructInfo() for data members
         );
         

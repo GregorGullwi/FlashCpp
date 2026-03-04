@@ -476,7 +476,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					skip_balanced_braces();
 					
 					// Extract template parameter names for use during delayed body parsing
-					std::vector<StringHandle> template_param_name_handles;
+					InlineVector<StringHandle, 4> template_param_name_handles;
 					for (const auto& param : template_params) {
 						if (param.is<TemplateParameterNode>()) {
 							template_param_name_handles.push_back(param.as<TemplateParameterNode>().nameHandle());

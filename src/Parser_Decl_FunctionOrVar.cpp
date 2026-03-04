@@ -752,7 +752,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				// Create synthetic template parameters for each auto parameter
 				// Each auto becomes a unique template type parameter: _T0, _T1, etc.
 				std::vector<ASTNode> template_params;
-				std::vector<StringHandle> template_param_names;
+				InlineVector<StringHandle, 4> template_param_names;
 				
 				for (size_t i = 0; i < auto_params.size(); ++i) {
 					// Generate synthetic parameter name like "_T0", "_T1", etc.
