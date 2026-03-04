@@ -240,20 +240,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 			// Add outer template params (from enclosing class template, e.g. T→int)
 			const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
-			if (outer_binding) {
-				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-					std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
-					Type outer_concrete_type = outer_binding->param_args[i].base_type;
-					uint32_t outer_size = (outer_binding->param_args[i].type_index != 0 && outer_binding->param_args[i].type_index < gTypeInfo.size())
-						? gTypeInfo[outer_binding->param_args[i].type_index].type_size_
-						: get_type_size_bits(outer_concrete_type);
-					auto& outer_type_info = gTypeInfo.emplace_back(
-						StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
-					gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
-					sfinae_scope.addParameter(&outer_type_info);
-					sfinae_type_map_[outer_type_info.name()] = outer_binding->param_args[i].type_index;
-				}
-			}
+			if (outer_binding)
+				registerOuterBindingInScope(*outer_binding, sfinae_scope, &sfinae_type_map_);
 
 			auto return_type_result = parse_type_specifier();
 			gSymbolTable.exit_scope();
@@ -416,17 +404,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
 	if (outer_binding) {
-		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-			std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
-			Type outer_concrete_type = outer_binding->param_args[i].base_type;
-			uint32_t outer_size = (outer_binding->param_args[i].type_index != 0 && outer_binding->param_args[i].type_index < gTypeInfo.size())
-				? gTypeInfo[outer_binding->param_args[i].type_index].type_size_
-				: get_type_size_bits(outer_concrete_type);
-			auto& outer_type_info = gTypeInfo.emplace_back(
-				StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
-			gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
-			template_scope.addParameter(&outer_type_info);
-		}
+		registerOuterBindingInScope(*outer_binding, template_scope);
 		FLASH_LOG(Templates, Debug, "Added ", outer_binding->param_names.size(), " outer template param bindings for body parsing");
 	}
 

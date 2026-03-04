@@ -113,6 +113,36 @@ static void registerTypeParamsInScope(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// registerOuterBindingInScope
+// ─────────────────────────────────────────────────────────────────────────────
+// Register the outer-class template parameter bindings (e.g., T→int carried by
+// OuterTemplateBinding) into gTypesByName and the given TemplateParameterScope.
+// Optionally also populates sfinae_map for the SFINAE trailing-return path.
+// Called from both the body-reparse and SFINAE paths of
+// try_instantiate_member_function_template_explicit / _core.
+// ─────────────────────────────────────────────────────────────────────────────
+static void registerOuterBindingInScope(
+	const OuterTemplateBinding& outer_binding,
+	FlashCpp::TemplateParameterScope& scope,
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr
+) {
+	for (size_t i = 0; i < outer_binding.param_names.size() && i < outer_binding.param_args.size(); ++i) {
+		std::string_view param_name = StringTable::getStringView(outer_binding.param_names[i]);
+		const TemplateTypeArg& arg = outer_binding.param_args[i];
+		Type concrete_type = arg.base_type;
+		uint32_t size = (arg.type_index != 0 && arg.type_index < gTypeInfo.size())
+			? gTypeInfo[arg.type_index].type_size_
+			: get_type_size_bits(concrete_type);
+		auto& type_info = gTypeInfo.emplace_back(
+			StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), size);
+		gTypesByName.emplace(type_info.name(), &type_info);
+		scope.addParameter(&type_info);
+		if (sfinae_map)
+			(*sfinae_map)[type_info.name()] = arg.type_index;
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // buildTemplateTypeArgVector
 // ─────────────────────────────────────────────────────────────────────────────
 // Convert a TemplateArgument vector to TemplateTypeArg format for downstream
