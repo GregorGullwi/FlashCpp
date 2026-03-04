@@ -463,7 +463,106 @@ public:
 	}
 
 
-#include "ObjFileWriter_Symbols.h"
-#include "ObjFileWriter_Debug.h"
-#include "ObjFileWriter_EH.h"
-#include "ObjFileWriter_RTTI.h"
+	// --- Method declarations (ObjFileWriter_Symbols.cpp) ---
+	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
+	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None);
+	void add_data(std::span<const uint8_t> data, SectionType section_type);
+	void add_data(std::span<const char> data, SectionType section_type);
+	void add_relocation(uint64_t offset, std::string_view symbol_name);
+	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type);
+	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, int64_t addend = -4);
+	void add_data_relocation(std::string_view var_name, std::string_view target_name);
+	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset);
+	void add_xdata_relocation(uint32_t xdata_offset, std::string_view handler_name);
+	void add_rdata_relocation(uint32_t rdata_offset, std::string_view symbol_name, uint32_t relocation_type = IMAGE_REL_AMD64_ADDR32NB);
+	std::string mangleTypeName(const std::string& type_name) const;
+	std::pair<std::string, std::string> getMsvcTypeDescriptorInfo(const std::string& type_name) const;
+	std::string get_or_create_exception_throw_info(const std::string& type_name, size_t type_size = 0, bool is_simple_type = false);
+	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type);
+	void add_source_file(const std::string& filename);
+	void set_current_function_for_debug(const std::string& name, uint32_t file_id);
+	void add_line_mapping(uint32_t code_offset, uint32_t line_number);
+	void add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags, const std::vector<CodeView::VariableLocation>& locations);
+	void add_function_parameter(const std::string& name, uint32_t type_index, int32_t stack_offset);
+	void update_function_length(const std::string_view manged_name, uint32_t code_length);
+	void set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size);
+	void finalize_current_function();
+
+	// --- Helper structs (ObjFileWriter_Debug.cpp) ---
+	struct UnwindCodeResult {
+		std::vector<uint8_t> codes;
+		uint8_t prolog_size;
+		uint8_t frame_reg_and_offset;
+		uint8_t count_of_codes;
+		uint32_t effective_frame_size;
+	};
+
+	struct ScopeTableReloc {
+		uint32_t begin_offset;
+		uint32_t end_offset;
+		uint32_t handler_offset;
+		uint32_t jump_offset;
+		bool needs_handler_reloc;
+		bool needs_jump_reloc;
+	};
+
+	struct PendingPdataEntry {
+		uint32_t begin_rva;
+		uint32_t end_rva;
+		uint32_t unwind_rva;
+	};
+
+	// --- Method declarations (ObjFileWriter_Debug.cpp) ---
+	static void patch_xdata_u32(std::vector<char>& xdata, uint32_t offset, uint32_t value);
+	static void appendLE_xdata(std::vector<char>& buf, uint32_t value);
+	UnwindCodeResult build_unwind_codes(bool is_cpp, uint32_t stack_frame_size);
+
+	// --- Method declarations (ObjFileWriter_EH.cpp) ---
+	void build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start, const std::vector<SehTryBlockInfo>& seh_try_blocks, std::vector<ScopeTableReloc>& scope_relocs);
+	void ensure_type_descriptor(const std::string& type_name);
+	void build_cpp_exception_metadata(std::vector<char>& xdata, uint32_t xdata_offset, uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, uint32_t effective_frame_size, uint32_t stack_frame_size, uint32_t cpp_funcinfo_rva_field_offset, bool has_cpp_funcinfo_rva_field, uint32_t& cpp_funcinfo_local_offset_out, std::vector<uint32_t>& cpp_xdata_rva_field_offsets, std::vector<uint32_t>& cpp_text_rva_field_offsets);
+	void emit_exception_relocations(uint32_t xdata_offset, uint32_t handler_rva_offset, bool is_seh, bool is_cpp, const std::vector<ScopeTableReloc>& scope_relocs, const std::vector<uint32_t>& cpp_xdata_rva_field_offsets, const std::vector<uint32_t>& cpp_text_rva_field_offsets);
+	void build_pdata_entries(uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, bool is_cpp, uint32_t xdata_offset, const UnwindCodeResult& unwind_info, uint32_t cpp_funcinfo_local_offset);
+
+	// --- Method declarations (ObjFileWriter_RTTI.cpp) ---
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}, uint32_t stack_frame_size = 0);
+	void finalize_debug_info();
+	std::string_view add_string_literal(std::string_view str_content);
+	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data);
+	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr);
+	std::string get_or_create_builtin_throwinfo(Type type);
+	uint32_t get_or_create_symbol_index(const std::string& symbol_name);
+
+protected:
+	COFFI::coffi coffi_;
+	std::unordered_map<SectionType, std::string> sectiontype_to_name;
+	std::unordered_map<SectionType, int32_t> sectiontype_to_index;
+	CodeView::DebugInfoBuilder debug_builder_;
+
+	// Pending function info for exception handling
+	struct PendingFunctionInfo {
+		std::string name;
+		uint32_t offset;
+		uint32_t length;
+	};
+	std::vector<PendingFunctionInfo> pending_functions_;
+
+	// Track functions that already have exception info to avoid duplicates
+	std::vector<std::string> added_exception_functions_;
+
+	// Track type descriptors that have been created to avoid duplicates across functions
+	std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>> type_descriptor_offsets_;
+
+	// Track generated throw-info symbols by type name
+	std::unordered_map<std::string, std::string, ObjectFileCommon::StringViewHash, std::equal_to<>> throw_info_symbols_;
+
+	// Cache for symbol name → file index lookups
+	std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>> symbol_index_cache_;
+
+	// Counter for generating unique string literal symbols
+	uint64_t string_literal_counter_ = 0;
+	
+	// Thread-local reusable buffer for string literal processing
+	inline static thread_local std::string string_literal_buffer_;
+};

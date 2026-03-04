@@ -45,6 +45,12 @@
 #include "Log.h"
 #include "ObjFileWriter.h"
 #include "NameMangling.h"
+
+// ObjFileWriter method definitions (for unity build)
+#include "ObjFileWriter_Symbols.cpp"
+#include "ObjFileWriter_Debug.cpp"
+#include "ObjFileWriter_EH.cpp"
+#include "ObjFileWriter_RTTI.cpp"
 #include "TemplateProfilingStats.h"
 #include "AstNodeTypes.h"
 #include "NamespaceRegistry.h"
