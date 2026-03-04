@@ -442,22 +442,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	}
 
 	// Handle the function body
-	// Helper: substitute template parameters in a function body node
-	auto substituteBodyWithArgs = [&](const ASTNode& body) -> ASTNode {
-		std::vector<TemplateArgument> converted_template_args;
-		converted_template_args.reserve(template_args.size());
-		for (const auto& arg : template_args) {
-			if (arg.kind == TemplateArgument::Kind::Type) {
-				converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
-			} else if (arg.kind == TemplateArgument::Kind::Value) {
-				converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
-			} else {
-				converted_template_args.push_back(arg);
-			}
-		}
-		return substituteTemplateParameters(body, template_params, converted_template_args);
-	};
-
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
 		// Re-parse the function body with template parameters substituted
@@ -573,7 +557,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
-			new_func_ref.set_definition(substituteBodyWithArgs(*block_result.node()));
+			new_func_ref.set_definition(
+				substituteTemplateParameters(*block_result.node(), template_params, template_args));
 		}
 		
 		// Clean up context
@@ -592,7 +577,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
-			new_func_ref.set_definition(substituteBodyWithArgs(*orig_body));
+			new_func_ref.set_definition(
+				substituteTemplateParameters(*orig_body, template_params, template_args));
 		}
 	}
 
@@ -1914,20 +1900,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// After parsing, we need to substitute template parameters in the body
 			// This is essential for features like fold expressions that need AST transformation
 			// Note: pack_param_info_ is still active here so PackExpansionExprNode expansion works
-			// Convert template_args to TemplateArgument format for substitution
-			std::vector<TemplateArgument> converted_template_args;
-			for (const auto& arg : template_args) {
-				if (arg.kind == TemplateArgument::Kind::Type) {
-					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
-				} else if (arg.kind == TemplateArgument::Kind::Value) {
-					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
-				}
-			}
-		
+			// template_args already holds the canonical TemplateArgument vector with correct
+			// kind, type_value, type_index, int_value, and value_type — pass it directly.
 			ASTNode substituted_body = substituteTemplateParameters(
 				*block_result.node(),
 				template_params,
-				converted_template_args
+				template_args
 			);
 		
 			new_func_ref.set_definition(substituted_body);
