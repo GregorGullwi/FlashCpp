@@ -2373,9 +2373,10 @@ ParseResult Parser::parse_template_declaration() {
 				});
 
 				// Set up template parameter names if this is a template member
-				std::vector<StringHandle> saved_param_names;
-				if (!delayed.template_param_names.empty()) {
-					saved_param_names = std::move(current_template_param_names_);
+				const bool has_template_params = !delayed.template_param_names.empty();
+				FlashCpp::ScopedState guard_delay_param_names(current_template_param_names_, has_template_params);
+				FlashCpp::ScopedState guard_delay_ptb(parsing_template_body_, has_template_params);
+				if (has_template_params) {
 					current_template_param_names_ = delayed.template_param_names;
 					parsing_template_body_ = true;
 				}
@@ -2400,12 +2401,6 @@ ParseResult Parser::parse_template_declaration() {
 
 				// Parse the function body
 				auto block_result = parse_block();
-
-				// Restore template parameter names
-				if (!delayed.template_param_names.empty()) {
-					current_template_param_names_ = std::move(saved_param_names);
-					parsing_template_body_ = false;
-				}
 
 				if (block_result.is_error()) {
 					member_function_context_stack_.pop_back();

@@ -785,7 +785,7 @@ private:
         // Overload 2: TemplateArgument source (member-func body-reparse path).
         void populateTemplateParamSubstitutions(
             std::vector<TemplateParamSubstitution>& subs,
-            const std::vector<std::string_view>& param_names,
+            const std::vector<StringHandle>& param_names,
             const std::vector<TemplateTypeArg>& type_args);
         void populateTemplateParamSubstitutions(
             std::vector<TemplateParamSubstitution>& subs,

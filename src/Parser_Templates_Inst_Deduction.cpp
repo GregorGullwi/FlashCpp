@@ -14,7 +14,7 @@
 //   which must NOT be propagated to TypeInfo (otherwise "T tmp = a;" in a swap body
 //   would declare tmp as int& instead of int, breaking the copy).
 static void registerTypeParamsInScope(
-	const std::vector<std::string_view>& param_names,
+	const std::vector<StringHandle>& param_names,
 	const std::vector<TemplateArgument>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier = false
@@ -22,10 +22,9 @@ static void registerTypeParamsInScope(
 	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
 		if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
 		if (template_args[i].kind == TemplateArgument::Kind::Template) continue;  // template-template params don't represent concrete types
-		std::string_view param_name = param_names[i];
 		Type concrete_type = template_args[i].type_value;
 		auto& type_info = gTypeInfo.emplace_back(
-			StringTable::getOrInternStringHandle(param_name),
+			param_names[i],
 			concrete_type, gTypeInfo.size(),
 			getTypeSizeFromTemplateArgument(template_args[i]));
 		if (preserve_ref_qualifier && template_args[i].type_specifier.has_value()) {
@@ -49,7 +48,7 @@ static void registerTypeParamsInScope(
 //   bound to int& from a class<int&> instantiation).  Pass false for deduction paths
 //   where lvalue-ness of the call-site argument must NOT propagate to the TypeInfo entry.
 static void registerTypeParamsInScope(
-	const std::vector<std::string_view>& param_names,
+	const std::vector<StringHandle>& param_names,
 	const std::vector<TemplateTypeArg>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier = false
@@ -58,9 +57,8 @@ static void registerTypeParamsInScope(
 		const TemplateTypeArg& arg = type_args[i];
 		if (arg.is_value) continue;  // Non-type (value) params must NOT be registered as TypeInfo
 		if (arg.is_template_template_arg) continue;  // Template-template params don't represent concrete types
-		std::string_view param_name = param_names[i];
 		auto& type_info = gTypeInfo.emplace_back(
-			StringTable::getOrInternStringHandle(param_name),
+			param_names[i],
 			arg.base_type, gTypeInfo.size(), 0);
 		if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
 			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
@@ -99,10 +97,9 @@ static void registerTypeParamsInScope(
 		if (!template_param_nodes[i].is<TemplateParameterNode>()) continue;
 		if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
 		if (template_args[i].kind == TemplateArgument::Kind::Template) continue;
-		std::string_view param_name = template_param_nodes[i].as<TemplateParameterNode>().name();
 		Type concrete_type = template_args[i].type_value;
 		auto& type_info = gTypeInfo.emplace_back(
-			StringTable::getOrInternStringHandle(param_name),
+			template_param_nodes[i].as<TemplateParameterNode>().nameHandle(),
 			concrete_type, gTypeInfo.size(),
 			getTypeSizeFromTemplateArgument(template_args[i]));
 		gTypesByName.emplace(type_info.name(), &type_info);
@@ -127,14 +124,13 @@ static void registerOuterBindingInScope(
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr
 ) {
 	for (size_t i = 0; i < outer_binding.param_names.size() && i < outer_binding.param_args.size(); ++i) {
-		std::string_view param_name = StringTable::getStringView(outer_binding.param_names[i]);
 		const TemplateTypeArg& arg = outer_binding.param_args[i];
 		Type concrete_type = arg.base_type;
 		uint32_t size = (arg.type_index != 0 && arg.type_index < gTypeInfo.size())
 			? gTypeInfo[arg.type_index].type_size_
 			: get_type_size_bits(concrete_type);
 		auto& type_info = gTypeInfo.emplace_back(
-			StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), size);
+			outer_binding.param_names[i], concrete_type, gTypeInfo.size(), size);
 		gTypesByName.emplace(type_info.name(), &type_info);
 		scope.addParameter(&type_info);
 		if (sfinae_map)
@@ -158,14 +154,14 @@ static void registerOuterBindingInScope(
 // ─────────────────────────────────────────────────────────────────────────────
 void Parser::populateTemplateParamSubstitutions(
 	std::vector<TemplateParamSubstitution>& subs,
-	const std::vector<std::string_view>& param_names,
+	const std::vector<StringHandle>& param_names,
 	const std::vector<TemplateTypeArg>& type_args
 ) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
 		if (arg.is_template_template_arg) continue;
 		TemplateParamSubstitution subst;
-		subst.param_name = param_names[i];
+		subst.param_name = StringTable::getStringView(param_names[i]);
 		if (arg.is_value) {
 			subst.is_value_param = true;
 			subst.value = arg.value;
@@ -250,11 +246,11 @@ void Parser::reparse_template_function_body(
 {
 	// Collect parameter names and register TypeInfo entries for type params.
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<std::string_view> param_names;
+	std::vector<StringHandle> param_names;
 	param_names.reserve(template_params.size());
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
-			param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
 		}
 	}
 	// preserve_ref_qualifier=true for the explicit path (user-written T=int& must be
@@ -263,7 +259,7 @@ void Parser::reparse_template_function_body(
 
 	// Save lexer position and function context.
 	SaveHandle current_pos = save_token_position();
-	const FunctionDeclarationNode* saved_current_function = current_function_;
+	FlashCpp::ScopedState guard_current_func(current_function_);
 
 	// Restore lexer to the template body start.
 	restore_lexer_position_only(func_decl.template_body_position());
@@ -282,15 +278,13 @@ void Parser::reparse_template_function_body(
 	// template instantiations inside the body.
 	{
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		template_param_substitutions_.clear();
 		populateTemplateParamSubstitutions(template_param_substitutions_, template_params, template_args);
 
 		// Parse the body, substitute template parameters, then install as definition.
 		{
 			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-			current_template_param_names_.clear();
 			for (const auto& pn : param_names) {
-				current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+				current_template_param_names_.push_back(pn);
 			}
 
 			auto block_result = parse_block();
@@ -306,7 +300,6 @@ void Parser::reparse_template_function_body(
 	gSymbolTable.exit_scope();
 	restore_lexer_position_only(current_pos);
 	discard_saved_token(current_pos);
-	current_function_ = saved_current_function;
 	// template_scope RAII guard removes TypeInfo entries automatically.
 }
 
@@ -1363,10 +1356,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Add template parameters to the type system temporarily
 		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<std::string_view> param_names;
+		std::vector<StringHandle> param_names;
 		for (const auto& tparam_node : template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
 			}
 		}
 		

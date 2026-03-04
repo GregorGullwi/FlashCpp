@@ -132,11 +132,11 @@ if (param_decl.has_default_value()) {
 		
 		// Set up template parameter types in the type system for body parsing
 		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<std::string_view> param_names;
+		std::vector<StringHandle> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
 			}
 		}
 		
@@ -171,15 +171,13 @@ if (param_decl.has_default_value()) {
 		// are resolved during parse_block() just as in try_instantiate_single_template.
 		{
 			FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-			template_param_substitutions_.clear();
 			populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
 
 			// Parse the function body
 			{
 				FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-				current_template_param_names_.clear();
 				for (const auto& pn : param_names) {
-					current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+					current_template_param_names_.push_back(pn);
 				}
 
 				auto block_result = parse_block();

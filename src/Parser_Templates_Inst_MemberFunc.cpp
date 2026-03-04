@@ -391,10 +391,10 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Temporarily add the concrete types to the type system with template parameter names
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<std::string_view> param_names;
+	std::vector<StringHandle> param_names;
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
-			param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
 		}
 	}
 	
@@ -485,15 +485,13 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// try_instantiate_template_explicit for free function templates.
 	{
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		template_param_substitutions_.clear();
 		populateTemplateParamSubstitutions(template_param_substitutions_, template_params, template_args);
 
 		// Parse the function body
 		{
 			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-			current_template_param_names_.clear();
 			for (const auto& pn : param_names) {
-				current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+				current_template_param_names_.push_back(pn);
 			}
 
 			auto block_result = parse_block();

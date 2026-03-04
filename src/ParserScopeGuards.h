@@ -285,17 +285,28 @@ private:
 template<typename T>
 class ScopedState {
 public:
+	// Unconditional save/restore (the common case).
 	explicit ScopedState(T& field)
-		: field_ref_(field), saved_state_(std::move(field)) {}
+		: field_ref_(field), saved_state_(std::move(field)), active_(true) {}
 
-	~ScopedState() { field_ref_ = std::move(saved_state_); }
+	// Conditional save/restore: when active==false the field is left untouched
+	// and the destructor is a no-op.  Useful for patterns like:
+	//   ScopedState guard(field, !vec.empty());
+	//   if (!vec.empty()) field = new_value;
+	explicit ScopedState(T& field, bool active)
+		: field_ref_(field)
+		, saved_state_(active ? std::move(field) : T{})
+		, active_(active) {}
+
+	~ScopedState() { if (active_) field_ref_ = std::move(saved_state_); }
 
 	ScopedState(const ScopedState&) = delete;
 	ScopedState& operator=(const ScopedState&) = delete;
 
 private:
-	T&  field_ref_;
-	T   saved_state_;
+	T&   field_ref_;
+	T    saved_state_;
+	bool active_;
 };
 
 } // namespace FlashCpp

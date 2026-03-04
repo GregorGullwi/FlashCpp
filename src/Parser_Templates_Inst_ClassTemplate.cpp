@@ -4807,11 +4807,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Set up template parameter types in the type system for body parsing
 					FlashCpp::TemplateParameterScope template_scope;
-					std::vector<std::string_view> param_names;
+					std::vector<StringHandle> param_names;
 					param_names.reserve(template_params.size());
 					for (const auto& tparam_node : template_params) {
 						if (tparam_node.is<TemplateParameterNode>()) {
-							param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+							param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
 						}
 					}
 					
