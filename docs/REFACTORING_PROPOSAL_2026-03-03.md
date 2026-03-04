@@ -464,6 +464,9 @@ longer-horizon work best tackled after 1 and 3 land.
   - `current_template_param_names_`
   - `parsing_template_body_`
 - [x] **Task 3 (incremental continuation)**: applied `FlashCpp::ScopedState<std::vector<StringHandle>>` in `parse_template_parameter_list` (`src/Parser_Templates_Params.cpp`) to remove repeated manual restore branches for `current_template_param_names_` in nested/error paths.
+- [x] **Task 3 (incremental continuation)**: applied `FlashCpp::ScopedState<T>` to lazy member function body reparse state in `src/Parser_Templates_Lazy.cpp` for:
+  - `template_param_substitutions_`
+  - `current_template_param_names_`
 - [ ] Tasks 1, 2, 3, 5, 7 remain as planned follow-up work.
 
 ---
