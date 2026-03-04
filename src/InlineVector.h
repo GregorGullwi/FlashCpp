@@ -228,6 +228,7 @@ public:
 		iterator_impl operator--(int) { iterator_impl tmp = *this; --idx_; return tmp; }
 		
 		iterator_impl operator+(difference_type n) const { return iterator_impl(vec_, idx_ + n); }
+		friend iterator_impl operator+(difference_type n, const iterator_impl& it) { return iterator_impl(it.vec_, it.idx_ + n); }
 		iterator_impl operator-(difference_type n) const { return iterator_impl(vec_, idx_ - n); }
 		difference_type operator-(const iterator_impl& other) const { return static_cast<difference_type>(idx_) - static_cast<difference_type>(other.idx_); }
 		iterator_impl& operator+=(difference_type n) { idx_ += n; return *this; }
