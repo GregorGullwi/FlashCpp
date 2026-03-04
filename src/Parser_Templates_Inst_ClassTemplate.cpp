@@ -6125,7 +6125,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
 					// Non-type parameter - store value for substitution
 					TemplateParamSubstitution subst;
-					subst.param_name = param.name();
+					subst.param_name = param.nameHandle();
 					subst.is_value_param = true;
 					subst.value = arg.value;
 					subst.value_type = arg.base_type;
@@ -6138,7 +6138,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// This enables variable templates inside function templates to work correctly:
 					// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
 					TemplateParamSubstitution subst;
-					subst.param_name = param.name();
+					subst.param_name = param.nameHandle();
 					subst.is_value_param = false;
 					subst.is_type_param = true;
 					subst.substituted_type = arg;

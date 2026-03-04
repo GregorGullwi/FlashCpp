@@ -161,7 +161,7 @@ void Parser::populateTemplateParamSubstitutions(
 		const TemplateTypeArg& arg = type_args[i];
 		if (arg.is_template_template_arg) continue;
 		TemplateParamSubstitution subst;
-		subst.param_name = StringTable::getStringView(param_names[i]);
+		subst.param_name = param_names[i];
 		if (arg.is_value) {
 			subst.is_value_param = true;
 			subst.value = arg.value;
@@ -185,7 +185,7 @@ void Parser::populateTemplateParamSubstitutions(
 		const TemplateArgument& arg = template_args[i];
 		if (arg.kind == TemplateArgument::Kind::Template) continue;
 		TemplateParamSubstitution subst;
-		subst.param_name = template_params[i].as<TemplateParameterNode>().name();
+		subst.param_name = template_params[i].as<TemplateParameterNode>().nameHandle();
 		if (arg.kind == TemplateArgument::Kind::Value) {
 			subst.is_value_param = true;
 			subst.value = arg.int_value;
@@ -259,7 +259,7 @@ void Parser::reparse_template_function_body(
 
 	// Save lexer position and function context.
 	SaveHandle current_pos = save_token_position();
-	FlashCpp::ScopedState guard_current_func(current_function_);
+	FlashCpp::ScopedState guard_current_function(current_function_);
 
 	// Restore lexer to the template body start.
 	restore_lexer_position_only(func_decl.template_body_position());

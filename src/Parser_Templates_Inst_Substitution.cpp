@@ -401,7 +401,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		TemplateTypeArg arg = original_arg;
 		if (arg.is_dependent && arg.dependent_name.isValid()) {
 			// Try to resolve dependent arg using template_param_substitutions_
-			std::string_view dep_name = arg.dependent_name.view();
+			StringHandle dep_name = arg.dependent_name;
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.is_type_param && subst.param_name == dep_name && !subst.substituted_type.is_dependent) {
 					FLASH_LOG(Templates, Debug, "Resolving dependent template parameter '", dep_name, 
@@ -413,7 +413,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		}
 		if (!arg.is_dependent && (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
 		    arg.type_index < gTypeInfo.size()) {
-			std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+			StringHandle type_name = gTypeInfo[arg.type_index].name();
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
 					FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
