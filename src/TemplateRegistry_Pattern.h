@@ -51,12 +51,13 @@ struct TemplateArgument {
 	
 	// Hash for use in maps (needed for InstantiationQueue)
 	//
-	// IMPORTANT: only hash fields that are ALWAYS compared in operator==.
-	// operator== only compares type_specifier qualifiers when BOTH operands
-	// carry a type_specifier.  If we mixed those qualifiers into the hash,
-	// two equal objects (one via makeType, one via makeTypeSpecifier) could
-	// hash differently, violating the hash/equality contract and breaking
-	// unordered container lookups.
+	// IMPORTANT: hash only the fields shared by ALL Kind::Type objects.
+	// operator== treats a missing type_specifier as "default qualifiers"
+	// (CVQualifier::None, pointer_depth 0, etc.), so makeType(Int) equals
+	// makeTypeSpecifier(Int, no_qualifiers).  Including qualifiers in the
+	// hash would break that case (same equality, different hash).
+	// Hash collisions from qualifier differences are acceptable — they
+	// only cause bucket collisions, not correctness issues.
 	size_t hash() const {
 		size_t h = std::hash<int>{}(static_cast<int>(kind));
 		h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
@@ -69,29 +70,40 @@ struct TemplateArgument {
 	bool operator==(const TemplateArgument& other) const {
 		if (kind != other.kind) return false;
 		switch (kind) {
-			case Kind::Type:
+			case Kind::Type: {
 				if (type_value != other.type_value || type_index != other.type_index)
 					return false;
-				// When both sides carry full type info, compare qualifiers
-				// so that e.g. const int* and int* are correctly distinguished.
-				if (type_specifier.has_value() && other.type_specifier.has_value()) {
+				// Compare qualifiers (CV, pointer depth, reference, array).
+				// A missing type_specifier (created via makeType) implicitly means
+				// "no qualifiers" — CVQualifier::None, pointer_depth 0, etc.
+				bool a_has = type_specifier.has_value();
+				bool b_has = other.type_specifier.has_value();
+				if (!a_has && !b_has)
+					return true;  // both bare — no qualifiers to compare
+				if (a_has && b_has) {
+					// Both present — full qualifier comparison
 					const auto& a = *type_specifier;
 					const auto& b = *other.type_specifier;
 					if (a.cv_qualifier() != b.cv_qualifier()) return false;
 					if (a.pointer_depth() != b.pointer_depth()) return false;
 					if (a.reference_qualifier() != b.reference_qualifier()) return false;
 					if (a.is_array() != b.is_array()) return false;
-					// Compare per-level pointer CV qualifiers
-					if (a.pointer_depth() == b.pointer_depth()) {
-						const auto& a_levels = a.pointer_levels();
-						const auto& b_levels = b.pointer_levels();
-						for (size_t i = 0; i < a_levels.size(); ++i) {
-							if (a_levels[i].cv_qualifier != b_levels[i].cv_qualifier)
-								return false;
-						}
+					const auto& a_levels = a.pointer_levels();
+					const auto& b_levels = b.pointer_levels();
+					for (size_t i = 0; i < a_levels.size(); ++i) {
+						if (a_levels[i].cv_qualifier != b_levels[i].cv_qualifier)
+							return false;
 					}
+					return true;
 				}
-				return true;
+				// Exactly one side has type_specifier — it must have all-default qualifiers
+				// to be equal to the bare makeType() side.
+				const auto& ts = a_has ? *type_specifier : *other.type_specifier;
+				return ts.cv_qualifier() == CVQualifier::None
+					&& ts.pointer_depth() == 0
+					&& ts.reference_qualifier() == ReferenceQualifier::None
+					&& !ts.is_array();
+			}
 			case Kind::Value:
 				return int_value == other.int_value && value_type == other.value_type;
 			case Kind::Template:
