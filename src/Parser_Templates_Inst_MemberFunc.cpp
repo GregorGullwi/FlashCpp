@@ -220,8 +220,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		if (func_decl.has_trailing_return_type_position()) {
 			bool prev_sfinae_context = in_sfinae_context_;
 			bool prev_parsing_template_body = parsing_template_body_;
-			FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
-			FlashCpp::ScopedState<decltype(sfinae_type_map_)> guard_sfinae_map(sfinae_type_map_);
+			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 			in_sfinae_context_ = true;
 			parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
 			current_template_param_names_.clear();  // No dependent names during SFINAE
@@ -483,50 +483,31 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// parameters (e.g., N in "return N;") are resolved during parse_block().
 	// This mirrors the setup performed by try_instantiate_single_template and
 	// try_instantiate_template_explicit for free function templates.
-	std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
-	template_param_substitutions_.clear();
-	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-		if (!template_params[i].is<TemplateParameterNode>()) continue;
-		const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-		const TemplateArgument& arg = template_args[i];
-		TemplateParamSubstitution subst;
-		subst.param_name = tparam.name();
-		if (arg.kind == TemplateArgument::Kind::Value) {
-			subst.is_value_param = true;
-			subst.value = arg.int_value;
-			subst.value_type = arg.value_type;
-		} else if (arg.kind == TemplateArgument::Kind::Type) {
-			subst.is_value_param = false;
-			subst.is_type_param = true;
-			subst.substituted_type = toTemplateTypeArg(arg);
-		} else {
-			continue;
-		}
-		template_param_substitutions_.push_back(subst);
-	}
-
-	// Parse the function body
 	{
-		FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
-		current_template_param_names_.clear();
-		for (const auto& pn : param_names) {
-			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
-		}
+		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+		template_param_substitutions_.clear();
+		populateTemplateParamSubstitutions(template_param_substitutions_, template_params, template_args);
 
-		auto block_result = parse_block();
-		if (!block_result.is_error() && block_result.node().has_value()) {
-			// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
-			ASTNode substituted_body = substituteTemplateParameters(
-				*block_result.node(),
-				template_params,
-				template_args
-			);
-			new_func_ref.set_definition(substituted_body);
-		}
-	} // current_template_param_names_ restored here
+		// Parse the function body
+		{
+			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			current_template_param_names_.clear();
+			for (const auto& pn : param_names) {
+				current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+			}
 
-	// Restore template parameter substitutions
-	template_param_substitutions_ = std::move(saved_template_param_substitutions);
+			auto block_result = parse_block();
+			if (!block_result.is_error() && block_result.node().has_value()) {
+				// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
+				ASTNode substituted_body = substituteTemplateParameters(
+					*block_result.node(),
+					template_params,
+					template_args
+				);
+				new_func_ref.set_definition(substituted_body);
+			}
+		} // current_template_param_names_ restored here
+	} // template_param_substitutions_ restored here
 
 	// Clean up context
 	current_function_ = nullptr;

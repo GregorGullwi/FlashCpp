@@ -779,6 +779,18 @@ private:
             const std::vector<ASTNode>& template_params,
             const std::vector<TemplateArgument>& template_args,
             bool preserve_ref_qualifier = false);
+        // Populate template_param_substitutions_ from parallel (name, arg) pairs for
+        // body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
+        // Overload 1: TemplateTypeArg source (lazy body-reparse path).
+        // Overload 2: TemplateArgument source (member-func body-reparse path).
+        void populateTemplateParamSubstitutions(
+            std::vector<TemplateParamSubstitution>& subs,
+            const std::vector<std::string_view>& param_names,
+            const std::vector<TemplateTypeArg>& type_args);
+        void populateTemplateParamSubstitutions(
+            std::vector<TemplateParamSubstitution>& subs,
+            const std::vector<ASTNode>& template_params,
+            const std::vector<TemplateArgument>& template_args);
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
         std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
         std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template

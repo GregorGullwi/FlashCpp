@@ -169,41 +169,26 @@ if (param_decl.has_default_value()) {
 
 		// Set up template parameter substitutions so non-type params (e.g., int N)
 		// are resolved during parse_block() just as in try_instantiate_single_template.
-		std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
-		template_param_substitutions_.clear();
-		for (size_t i = 0; i < param_names.size() && i < lazy_info.template_args.size(); ++i) {
-			const TemplateTypeArg& arg = lazy_info.template_args[i];
-			TemplateParamSubstitution subst;
-			subst.param_name = param_names[i];
-			if (arg.is_value) {
-				subst.is_value_param = true;
-				subst.value = arg.value;
-				subst.value_type = arg.base_type;
-			} else {
-				subst.is_value_param = false;
-				subst.is_type_param = true;
-				subst.substituted_type = arg;
-			}
-			template_param_substitutions_.push_back(subst);
-		}
-
-		// Parse the function body
 		{
-			FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
-			current_template_param_names_.clear();
-			for (const auto& pn : param_names) {
-				current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
-			}
+			FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+			template_param_substitutions_.clear();
+			populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
 
-			auto block_result = parse_block();
+			// Parse the function body
+			{
+				FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+				current_template_param_names_.clear();
+				for (const auto& pn : param_names) {
+					current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+				}
 
-			if (!block_result.is_error() && block_result.node().has_value()) {
-				body_to_substitute = block_result.node();
-			}
-		} // current_template_param_names_ restored here
+				auto block_result = parse_block();
 
-		// Restore template parameter substitutions
-		template_param_substitutions_ = std::move(saved_template_param_substitutions);
+				if (!block_result.is_error() && block_result.node().has_value()) {
+					body_to_substitute = block_result.node();
+				}
+			} // current_template_param_names_ restored here
+		} // template_param_substitutions_ restored here
 		
 		// Clean up context
 		parsing_template_body_ = saved_parsing_template_body;
