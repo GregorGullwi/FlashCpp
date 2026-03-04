@@ -252,9 +252,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Set up template parameter names for the body parsing phase
 	// This is needed for decltype expressions and other template-dependent constructs
-	// Save current template param names and restore after body parsing
-	std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
-	current_template_param_names_.clear();
+	FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
@@ -271,7 +269,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		// Parse the constraint expression
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
-			current_template_param_names_ = std::move(saved_template_param_names);
 			return constraint_result;
 		}
 		
@@ -377,7 +374,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				FlashCpp::ParsedParameterList params;
 				auto param_result = parse_parameter_list(params);
 				if (param_result.is_error()) {
-					current_template_param_names_ = std::move(saved_template_param_names);
 					return param_result;
 				}
 				
@@ -418,7 +414,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					// Parse each initializer
 					do {
 						if (!peek().is_identifier()) {
-							current_template_param_names_ = std::move(saved_template_param_names);
 							return ParseResult::error("Expected member name in initializer list", peek_info());
 						}
 						
@@ -433,7 +428,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						bool is_paren = peek() == "("_tok;
 						bool is_brace = peek() == "{"_tok;
 						if (!is_paren && !is_brace) {
-							current_template_param_names_ = std::move(saved_template_param_names);
 							return ParseResult::error("Expected '(' or '{' after initializer name", peek_info());
 						}
 						
@@ -459,14 +453,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						advance();
 						// Don't add deleted constructors
 						if (!consume(";"_tok)) {
-							current_template_param_names_ = std::move(saved_template_param_names);
 							return ParseResult::error("Expected ';' after '= delete'", peek_info());
 						}
-						current_template_param_names_ = std::move(saved_template_param_names);
 						return saved_position.success();
 					}
 					if (!consume(";"_tok)) {
-						current_template_param_names_ = std::move(saved_template_param_names);
 						return ParseResult::error("Expected ';' after '= default' or '= delete'", peek_info());
 					}
 				} else if (peek() == "{"_tok) {
@@ -512,15 +503,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						true   // is_member_function_template
 					});
 				} else if (!consume(";"_tok)) {
-					current_template_param_names_ = std::move(saved_template_param_names);
 					return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", peek_info());
 				}
 				
 				// Add constructor to struct
 				struct_node.add_constructor(ctor_node, access);
-				
-				// Restore template param names
-				current_template_param_names_ = std::move(saved_template_param_names);
 				
 				return saved_position.success();
 			}
@@ -588,7 +575,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						FlashCpp::ParsedParameterList params;
 						auto param_result = parse_parameter_list(params);
 						if (param_result.is_error()) {
-							current_template_param_names_ = std::move(saved_template_param_names);
 							return param_result;
 						}
 
@@ -644,7 +630,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 						gTemplateRegistry.registerTemplate(StringTable::getOrInternStringHandle(operator_name), template_func_node);
 
-						current_template_param_names_ = std::move(saved_template_param_names);
 						return saved_position.success();
 					}
 				}
@@ -662,9 +647,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	// Use shared helper to parse function declaration body (Phase 6)
 	ASTNode template_func_node;
 	auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
-	
-	// Restore template param names
-	current_template_param_names_ = std::move(saved_template_param_names);
 	
 	if (body_result.is_error()) {
 		return body_result;  // template_scope automatically cleans up
