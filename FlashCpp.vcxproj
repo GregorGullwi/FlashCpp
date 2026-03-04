@@ -199,6 +199,14 @@
     <ClInclude Include="src\CodeGen_Expressions.cpp" />
     <ClInclude Include="src\CodeGen_Functions.cpp" />
     <ClInclude Include="src\CodeGen_Lambdas.cpp" />
+    <ClInclude Include="src\CodeGen_Helpers.cpp" />
+    <ClInclude Include="src\CodeGen_Visitors_TypeInit.cpp" />
+    <ClInclude Include="src\CodeGen_Visitors_Decl.cpp" />
+    <ClInclude Include="src\CodeGen_Expr_Conversions.cpp" />
+    <ClInclude Include="src\CodeGen_Expr_Operators.cpp" />
+    <ClInclude Include="src\CodeGen_MemberAccess.cpp" />
+    <ClInclude Include="src\CodeGen_Call_Indirect.cpp" />
+    <ClInclude Include="src\CodeGen_Stmt_TryCatchSeh.cpp" />
     <!-- ConstExprEvaluator split files -->
     <ClInclude Include="src\ConstExprEvaluator_Core.cpp" />
     <ClInclude Include="src\ConstExprEvaluator_Members.cpp" />
