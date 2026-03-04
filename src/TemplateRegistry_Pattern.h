@@ -54,6 +54,12 @@ struct TemplateArgument {
 		size_t h = std::hash<int>{}(static_cast<int>(kind));
 		h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
 		h ^= std::hash<TypeIndex>{}(type_index) << 2;
+		if (kind == Kind::Type && type_specifier.has_value()) {
+			const auto& ts = *type_specifier;
+			h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ts.cv_qualifier())) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<size_t>{}(ts.pointer_depth()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ts.reference_qualifier())) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		h ^= std::hash<int64_t>{}(int_value) << 3;
 		return h;
 	}
@@ -63,7 +69,28 @@ struct TemplateArgument {
 		if (kind != other.kind) return false;
 		switch (kind) {
 			case Kind::Type:
-				return type_value == other.type_value && type_index == other.type_index;
+				if (type_value != other.type_value || type_index != other.type_index)
+					return false;
+				// When both sides carry full type info, compare qualifiers
+				// so that e.g. const int* and int* are correctly distinguished.
+				if (type_specifier.has_value() && other.type_specifier.has_value()) {
+					const auto& a = *type_specifier;
+					const auto& b = *other.type_specifier;
+					if (a.cv_qualifier() != b.cv_qualifier()) return false;
+					if (a.pointer_depth() != b.pointer_depth()) return false;
+					if (a.reference_qualifier() != b.reference_qualifier()) return false;
+					if (a.is_array() != b.is_array()) return false;
+					// Compare per-level pointer CV qualifiers
+					if (a.pointer_depth() == b.pointer_depth()) {
+						const auto& a_levels = a.pointer_levels();
+						const auto& b_levels = b.pointer_levels();
+						for (size_t i = 0; i < a_levels.size(); ++i) {
+							if (a_levels[i].cv_qualifier != b_levels[i].cv_qualifier)
+								return false;
+						}
+					}
+				}
+				return true;
 			case Kind::Value:
 				return int_value == other.int_value && value_type == other.value_type;
 			case Kind::Template:
