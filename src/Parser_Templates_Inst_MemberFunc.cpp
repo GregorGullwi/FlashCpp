@@ -516,17 +516,54 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
-	// Parse the function body
-	auto block_result = parse_block();
-	if (!block_result.is_error() && block_result.node().has_value()) {
-		// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
-		ASTNode substituted_body = substituteTemplateParameters(
-			*block_result.node(),
-			template_params,
-			template_args
-		);
-		new_func_ref.set_definition(substituted_body);
+	// Set up template parameter substitutions for body parsing so that non-type
+	// parameters (e.g., N in "return N;") are resolved during parse_block().
+	// This mirrors the setup performed by try_instantiate_single_template and
+	// try_instantiate_template_explicit for free function templates.
+	std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
+	template_param_substitutions_.clear();
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) continue;
+		const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+		const TemplateArgument& arg = template_args[i];
+		TemplateParamSubstitution subst;
+		subst.param_name = tparam.name();
+		if (arg.kind == TemplateArgument::Kind::Value) {
+			subst.is_value_param = true;
+			subst.value = arg.int_value;
+			subst.value_type = arg.value_type;
+		} else if (arg.kind == TemplateArgument::Kind::Type) {
+			subst.is_value_param = false;
+			subst.is_type_param = true;
+			subst.substituted_type = toTemplateTypeArg(arg);
+		} else {
+			continue;
+		}
+		template_param_substitutions_.push_back(subst);
 	}
+
+	// Parse the function body
+	{
+		FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& pn : param_names) {
+			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+		}
+
+		auto block_result = parse_block();
+		if (!block_result.is_error() && block_result.node().has_value()) {
+			// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
+			ASTNode substituted_body = substituteTemplateParameters(
+				*block_result.node(),
+				template_params,
+				template_args
+			);
+			new_func_ref.set_definition(substituted_body);
+		}
+	} // current_template_param_names_ restored here
+
+	// Restore template parameter substitutions
+	template_param_substitutions_ = std::move(saved_template_param_substitutions);
 
 	// Clean up context
 	current_function_ = nullptr;

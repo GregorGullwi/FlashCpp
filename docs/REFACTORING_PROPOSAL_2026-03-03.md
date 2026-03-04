@@ -1,7 +1,23 @@
 # Refactoring Proposal: Template Argument & Instantiation Pipeline
 
 **Date**: 2026-03-03  
-**Status**: Proposal — not yet scheduled
+**Status**: Partially implemented — see implementation notes below
+
+---
+
+## Implementation notes (2026-03-04)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| 4A | ✅ Done | Inline skip guards added to all 3 vulnerable sites |
+| 4B | ✅ Done | Site 1 (MemberFunc body reparse) replaced with `registerTypeParamsInScope()` call |
+| 6  | ✅ Done | `toTemplateTypeArg(TypeInfo::TemplateArgInfo)` added to `TemplateRegistry_Pattern.h`; local static removed from `ExpressionSubstitutor.cpp` |
+| 3  | ✅ Done | `ScopedState<T>` RAII guard added to `ParserScopeGuards.h`; applied to `current_template_param_names_` and `sfinae_type_map_` save/restore in `Parser_Templates_Inst_Deduction.cpp` |
+| Fix | ✅ Done | Member-function-template non-type body reparse: populated `template_param_substitutions_` and `current_template_param_names_` in `instantiate_member_function_template_core` (MemberFunc.cpp) and the lazy re-parse branch (Lazy.cpp). Test: `tests/member_func_template_nontype_ret0.cpp` |
+| 1  | ⏳ Deferred | Extract `reparse_template_function_body()` — valid but the two blocks differ in pack-info handling and cycle-detection key types; best done after the two paths are already covered by tests |
+| 2  | ⏳ Deferred | Extract `registerTemplateParamsAsTypeInfo()` — medium risk; depends on moving `getTypeSizeFromTemplateArgument` out of `Parser_Core.cpp` |
+| 5  | ⏳ Deferred | Eliminate `template_args_as_type_args` — medium risk; best tackled after tasks 1 and 3 are merged |
+| 7  | ⏳ Deferred | Unify `TemplateArgument` / `TemplateTypeArg` — high risk; separate PR after 1–3 land |
 
 ---
 
