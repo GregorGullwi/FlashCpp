@@ -1,12 +1,11 @@
 ParseResult Parser::parse_template_parameter_list(std::vector<ASTNode>& out_params) {
 	// Save the current template parameter names so we can restore them later.
 	// This allows nested template declarations to have their own parameter scope.
-	std::vector<StringHandle> saved_template_param_names = current_template_param_names_;
+	FlashCpp::ScopedState<std::vector<StringHandle>> template_param_names_state(current_template_param_names_);
 	
 	// Parse first parameter
 	auto param_result = parse_template_parameter();
 	if (param_result.is_error()) {
-		current_template_param_names_ = std::move(saved_template_param_names);
 		return param_result;
 	}
 
@@ -29,7 +28,6 @@ ParseResult Parser::parse_template_parameter_list(std::vector<ASTNode>& out_para
 
 		param_result = parse_template_parameter();
 		if (param_result.is_error()) {
-			current_template_param_names_ = std::move(saved_template_param_names);
 			return param_result;
 		}
 
@@ -44,11 +42,6 @@ ParseResult Parser::parse_template_parameter_list(std::vector<ASTNode>& out_para
 			}
 		}
 	}
-
-	// Restore the original template parameter names.
-	// The caller (parse_template_declaration) will set current_template_param_names_
-	// to the full list of parameters for the body parsing phase.
-	current_template_param_names_ = std::move(saved_template_param_names);
 
 	return ParseResult::success();
 }

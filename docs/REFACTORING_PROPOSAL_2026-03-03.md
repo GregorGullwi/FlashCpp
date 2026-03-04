@@ -463,6 +463,7 @@ longer-horizon work best tackled after 1 and 3 land.
 - [x] **Task 3 (incremental start)**: added `FlashCpp::ScopedState<T>` RAII guard and applied it in `parse_member_template_alias` to remove repeated manual restore paths for:
   - `current_template_param_names_`
   - `parsing_template_body_`
+- [x] **Task 3 (incremental continuation)**: applied `FlashCpp::ScopedState<std::vector<StringHandle>>` in `parse_template_parameter_list` (`src/Parser_Templates_Params.cpp`) to remove repeated manual restore branches for `current_template_param_names_` in nested/error paths.
 - [ ] Tasks 1, 2, 3, 5, 7 remain as planned follow-up work.
 
 ---
