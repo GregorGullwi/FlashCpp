@@ -33,8 +33,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
-	const std::vector<ASTNode>& template_params = template_func.template_parameters();
-	if (arg_types.empty()) {
+	const auto& template_params = template_func.template_parameters(); {
 		return std::nullopt;  // Can't deduce without arguments
 	}
 
@@ -199,7 +198,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 
 		const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
-		const std::vector<ASTNode>& template_params = template_func.template_parameters();
+		const auto& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
 		const auto& template_args = template_type_args;
@@ -269,7 +268,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const FlashCpp::TemplateInstantiationKey& key) {
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
-	const std::vector<ASTNode>& template_params = template_func.template_parameters();
+	const auto& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
 

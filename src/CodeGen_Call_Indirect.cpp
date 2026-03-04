@@ -723,7 +723,7 @@
 								template_func.requires_clause()->as<RequiresClauseNode>();
 							
 							// Get template parameter names for evaluation
-							std::vector<std::string_view> eval_param_names;
+							InlineVector<std::string_view, 4> eval_param_names;
 							for (const auto& tparam_node : template_func.template_parameters()) {
 								if (tparam_node.is<TemplateParameterNode>()) {
 									eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
@@ -731,7 +731,7 @@
 							}
 							
 							// Convert arg_types to TemplateTypeArg for evaluation
-							std::vector<TemplateTypeArg> type_args;
+							InlineVector<TemplateTypeArg, 4> type_args;
 							for (const auto& [arg_type, arg_type_index] : arg_types) {
 								TemplateTypeArg type_arg;
 								type_arg.base_type = arg_type;
@@ -773,7 +773,7 @@
 						}
 						
 						// Get template parameter names
-						std::vector<std::string_view> param_names;
+						InlineVector<std::string_view, 4> param_names;
 						for (const auto& tparam_node : template_func.template_parameters()) {
 							if (tparam_node.is<TemplateParameterNode>()) {
 								param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
@@ -928,7 +928,7 @@
 					// This is a member function template - use the mangled name
 					
 					// Deduce template arguments from call arguments
-					std::vector<TemplateTypeArg> template_args;
+					InlineVector<TemplateTypeArg, 4> template_args;
 					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 						if (!argument.is<ExpressionNode>()) return;
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();

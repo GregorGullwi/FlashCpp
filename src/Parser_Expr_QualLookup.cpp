@@ -813,8 +813,8 @@ ParseResult Parser::validate_and_add_base_class(
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
 std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
-	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateTypeArg>& template_args
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
 	Type result_type = original_type.type();
 	TypeIndex result_type_index = original_type.type_index();

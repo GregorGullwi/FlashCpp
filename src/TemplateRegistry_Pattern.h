@@ -31,14 +31,14 @@ inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
-	std::vector<ASTNode> template_params;  // Template parameters (e.g., <typename T>)
+	InlineVector<ASTNode, 4> template_params;  // Template parameters (e.g., <typename T>)
 	ASTNode function_node;                  // FunctionDeclarationNode
 	SaveHandle body_start;                  // Handle to saved position of function body for re-parsing
 	InlineVector<StringHandle, 4> template_param_names;  // Names of template parameters
 	// For nested templates (member function templates of class templates):
 	// template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
 	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
-	std::vector<ASTNode> inner_template_params;
+	InlineVector<ASTNode, 4> inner_template_params;
 	InlineVector<StringHandle, 4> inner_template_param_names;
 	// Function specifiers from out-of-line definition (= default, = delete)
 	bool is_defaulted = false;
@@ -55,7 +55,7 @@ struct OuterTemplateBinding {
 
 // Out-of-line template static member variable definition
 struct OutOfLineMemberVariable {
-	std::vector<ASTNode> template_params;       // Template parameters (e.g., <typename T>)
+	InlineVector<ASTNode, 4> template_params;       // Template parameters (e.g., <typename T>)
 	StringHandle member_name;               // Name of the static member variable
 	ASTNode type_node;                          // Type of the variable (TypeSpecifierNode)
 	std::optional<ASTNode> initializer;         // Initializer expression

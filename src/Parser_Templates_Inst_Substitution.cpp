@@ -90,7 +90,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 		auto primary_template_opt = gTemplateRegistry.lookupTemplate(base_class_name);
 		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
 			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
-			const std::vector<ASTNode>& primary_params = primary_template.template_parameters();
+			const auto& primary_params = primary_template.template_parameters();
 			
 			// Fill in defaults for missing arguments
 			std::vector<TemplateTypeArg> filled_args = template_args;
@@ -540,7 +540,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	}
 	
 	// Perform template substitution
-	const std::vector<ASTNode>& template_params = var_template.template_parameters();
+	const auto& template_params = var_template.template_parameters();
 	if (resolved_args.size() != template_params.size()) {
 		FLASH_LOG(Templates, Error, "Template argument count mismatch: expected ", template_params.size(), 
 		          ", got ", resolved_args.size());

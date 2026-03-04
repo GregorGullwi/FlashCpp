@@ -339,7 +339,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		auto primary_template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
 			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
-			const std::vector<ASTNode>& primary_params = primary_template.template_parameters();
+			const auto& primary_params = primary_template.template_parameters();
 			
 			// Fill in defaults for missing arguments
 			for (size_t i = filled_args_for_pattern_match.size(); i < primary_params.size(); ++i) {
@@ -672,7 +672,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 		}
-		const std::vector<ASTNode>& template_params = pattern_template_params;
+		const auto& template_params = pattern_template_params;
 		
 		// Push class template pack info for specialization path
 		ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
@@ -2059,7 +2059,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	const TemplateClassDeclarationNode& template_class = template_node.as<TemplateClassDeclarationNode>();
-	const std::vector<ASTNode>& template_params = template_class.template_parameters();
+	const auto& template_params = template_class.template_parameters();
 	const StructDeclarationNode& class_decl = template_class.class_decl_node();
 
 	// Count non-variadic parameters

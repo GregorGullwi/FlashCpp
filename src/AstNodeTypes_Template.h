@@ -70,13 +70,13 @@ private:
 class TemplateFunctionDeclarationNode {
 public:
 	TemplateFunctionDeclarationNode() = delete;
-	TemplateFunctionDeclarationNode(std::vector<ASTNode> template_params, ASTNode function_decl, 
+	TemplateFunctionDeclarationNode(InlineVector<ASTNode, 4> template_params, ASTNode function_decl, 
 	                                std::optional<ASTNode> requires_clause = std::nullopt)
 		: template_parameters_(std::move(template_params)), 
 		  function_declaration_(function_decl),
 		  requires_clause_(requires_clause) {}
 
-	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	ASTNode function_declaration() const { return function_declaration_; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
@@ -90,7 +90,7 @@ public:
 	}
 
 private:
-	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
+	InlineVector<ASTNode, 4> template_parameters_;  // TemplateParameterNode instances
 	ASTNode function_declaration_;  // FunctionDeclarationNode
 	std::optional<ASTNode> requires_clause_;  // Optional RequiresClauseNode
 };
@@ -219,10 +219,10 @@ class VariableDeclarationNode;
 class TemplateVariableDeclarationNode {
 public:
 	TemplateVariableDeclarationNode() = delete;
-	TemplateVariableDeclarationNode(std::vector<ASTNode> template_params, ASTNode variable_decl)
+	TemplateVariableDeclarationNode(InlineVector<ASTNode, 4> template_params, ASTNode variable_decl)
 		: template_parameters_(std::move(template_params)), variable_declaration_(variable_decl) {}
 
-	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	ASTNode variable_declaration() const { return variable_declaration_; }
 
 	// Get the underlying VariableDeclarationNode
@@ -234,7 +234,7 @@ public:
 	}
 
 private:
-	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
+	InlineVector<ASTNode, 4> template_parameters_;  // TemplateParameterNode instances
 	ASTNode variable_declaration_;  // VariableDeclarationNode
 };
 
@@ -850,16 +850,16 @@ private:
 class TemplateClassDeclarationNode {
 public:
 	TemplateClassDeclarationNode() = delete;
-	TemplateClassDeclarationNode(std::vector<ASTNode> template_params, 
-								std::vector<std::string_view> param_names,
+	TemplateClassDeclarationNode(InlineVector<ASTNode, 4> template_params, 
+								InlineVector<std::string_view, 4> param_names,
 								ASTNode class_decl)
 		: template_parameters_(std::move(template_params))
 		, template_param_names_(std::move(param_names))
 		, class_declaration_(class_decl) {}
 
-	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
-	std::vector<ASTNode>& template_parameters() { return template_parameters_; }
-	const std::vector<std::string_view>& template_param_names() const { return template_param_names_; }
+	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
+	InlineVector<ASTNode, 4>& template_parameters() { return template_parameters_; }
+	const InlineVector<std::string_view, 4>& template_param_names() const { return template_param_names_; }
 	ASTNode class_declaration() const { return class_declaration_; }
 
 	// Get the underlying StructDeclarationNode
@@ -882,8 +882,8 @@ public:
 	}
 
 private:
-	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
-	std::vector<std::string_view> template_param_names_;  // Parameter names for lookup
+	InlineVector<ASTNode, 4> template_parameters_;  // TemplateParameterNode instances
+	InlineVector<std::string_view, 4> template_param_names_;  // Parameter names for lookup
 	ASTNode class_declaration_;  // StructDeclarationNode
 	std::vector<DeferredTemplateMemberBody> deferred_bodies_;  // Member function bodies to parse at instantiation
 

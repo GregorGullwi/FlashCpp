@@ -326,8 +326,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	if (lazy_info.needs_substitution && lazy_info.initializer.has_value() && 
 	    lazy_info.initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
-		const std::vector<ASTNode>& template_params = lazy_info.template_params;
-		const std::vector<TemplateTypeArg>& template_args = lazy_info.template_args;
+		const auto& template_params = lazy_info.template_params;
+		const auto& template_args = lazy_info.template_args;
 		
 		// Helper to calculate pack size for substitution
 		auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {

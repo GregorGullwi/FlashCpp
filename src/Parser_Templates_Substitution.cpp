@@ -1127,8 +1127,8 @@ static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 // then template parameters are substituted.
 bool Parser::expandPackExpansionArgs(
 	const PackExpansionExprNode& pack_expansion,
-	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateTypeArg>& template_args,
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
 	ChunkedVector<ASTNode>& out_args) {
 
 	const ASTNode& pattern = pack_expansion.pattern();

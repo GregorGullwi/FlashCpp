@@ -776,8 +776,8 @@ private:
         void reparse_template_function_body(
             FunctionDeclarationNode& new_func_ref,
             const FunctionDeclarationNode& func_decl,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateTypeArg>& template_args,
+            const InlineVector<ASTNode, 4>& template_params,
+            const InlineVector<TemplateTypeArg, 4>& template_args,
             bool preserve_ref_qualifier = false);
         // Populate template_param_substitutions_ from parallel (name, arg) pairs for
         // body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
@@ -849,7 +849,7 @@ public:  // Public methods for template instantiation
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,
-		const std::vector<std::string_view>& template_param_names,
+		const InlineVector<std::string_view, 4>& template_param_names,
 		const std::vector<Type>& concrete_types,
 		StringHandle struct_name,  // Optional: for member functions
 		TypeIndex struct_type_index = 0     // Optional: for member functions
@@ -938,8 +938,8 @@ public:  // Public methods for template instantiation
         // Returns true if expansion was performed, false otherwise
         bool expandPackExpansionArgs(
             const PackExpansionExprNode& pack_expansion,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateTypeArg>& template_args,
+            const InlineVector<ASTNode, 4>& template_params,
+            const InlineVector<TemplateTypeArg, 4>& template_args,
             ChunkedVector<ASTNode>& out_args);
 
         // Phase 3: Expression context tracking for template disambiguation
@@ -1132,8 +1132,8 @@ public:  // Public methods for template instantiation
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
         std::pair<Type, TypeIndex> substitute_template_parameter(
             const TypeSpecifierNode& original_type,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateTypeArg>& template_args
+            const InlineVector<ASTNode, 4>& template_params,
+            const InlineVector<TemplateTypeArg, 4>& template_args
         );
        
         // Lookup symbol with template parameter checking

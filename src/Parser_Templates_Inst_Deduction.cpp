@@ -173,8 +173,8 @@ void Parser::populateTemplateParamSubstitutions(
 void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
-	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateTypeArg>& template_args,
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier)
 {
 	// Collect parameter names and register TypeInfo entries for type params.
@@ -313,7 +313,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	}
 
 	// Build template argument list
-	std::vector<TemplateTypeArg> template_args;
+	InlineVector<TemplateTypeArg, 4> template_args;
 	size_t explicit_idx = 0;  // Track position in explicit_types
 	bool overload_mismatch = false;
 	for (size_t i = 0; i < template_params.size(); ++i) {
@@ -367,7 +367,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			template_func.requires_clause()->as<RequiresClauseNode>();
 		
 		// Get template parameter names for evaluation
-		std::vector<std::string_view> eval_param_names;
+		InlineVector<std::string_view, 4> eval_param_names;
 		for (const auto& tparam_node : template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
 				eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
@@ -375,7 +375,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 		
 		// Create a copy of explicit_types with template template arg flags properly set
-		std::vector<TemplateTypeArg> constraint_eval_args;
+		InlineVector<TemplateTypeArg, 4> constraint_eval_args;
 		size_t constraint_idx = 0;
 		for (size_t i = 0; i < template_params.size() && constraint_idx < explicit_types.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) continue;
@@ -451,8 +451,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					// Strip lvalue reference that deduction adds for lvalue arguments.
 					TemplateTypeArg concept_arg = explicit_types[arg_idx];
 					concept_arg.ref_qualifier = ReferenceQualifier::None;
-					std::vector<TemplateTypeArg> concept_args = { concept_arg };
-					std::vector<std::string_view> concept_param_names;
+					InlineVector<TemplateTypeArg, 4> concept_args;
+					concept_args.push_back(concept_arg);
+					InlineVector<std::string_view, 4> concept_param_names;
 					if (!concept_params.empty()) {
 						concept_param_names.push_back(concept_params[0].name());
 					}
@@ -838,7 +839,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Build template argument list
-	std::vector<TemplateTypeArg> template_args;
+	InlineVector<TemplateTypeArg, 4> template_args;
 	std::vector<Type> deduced_type_args;  // For types extracted from instantiated names
 
 	// Pre-deduction pass: build a map from template parameter names to deduced arguments
@@ -1185,8 +1186,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// type T is the parameter type without reference qualification.
 					TemplateTypeArg concept_arg = template_args[arg_idx];
 					concept_arg.ref_qualifier = ReferenceQualifier::None;
-					std::vector<TemplateTypeArg> concept_args = { concept_arg };
-					std::vector<std::string_view> concept_param_names;
+					InlineVector<TemplateTypeArg, 4> concept_args;
+					concept_args.push_back(concept_arg);
+					InlineVector<std::string_view, 4> concept_param_names;
 					if (!concept_params.empty()) {
 						concept_param_names.push_back(concept_params[0].name());
 					}
