@@ -33,6 +33,38 @@ static void registerTypeParamsInScope(
 	}
 }
 
+// Overload for TemplateTypeArg-based registration used in the declaration-reparse
+// paths (return-type and function-name re-parsing inside try_instantiate_single_template).
+// is_value entries (non-type params) are intentionally skipped for the same reason
+// as Kind::Value in the TemplateArgument overload: makeValue() leaves base_type as the
+// value-type (e.g. Type::Int for int N), so registering it as a TypeInfo entry would
+// erroneously add a type named "N" to gTypesByName and confuse subsequent type lookups.
+static void registerTypeParamsInScope(
+	const std::vector<std::string_view>& param_names,
+	const std::vector<TemplateTypeArg>& type_args,
+	FlashCpp::TemplateParameterScope& scope
+) {
+	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
+		const TemplateTypeArg& arg = type_args[i];
+		if (arg.is_value) continue;  // Non-type (value) params must NOT be registered as TypeInfo
+		std::string_view param_name = param_names[i];
+		auto& type_info = gTypeInfo.emplace_back(
+			StringTable::getOrInternStringHandle(param_name),
+			arg.base_type, gTypeInfo.size(), 0);
+		if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
+			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
+		} else {
+			if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+				type_info.type_size_ = gTypeInfo[arg.type_index].type_size_;
+			} else {
+				type_info.type_size_ = 0;
+			}
+		}
+		gTypesByName.emplace(type_info.name(), &type_info);
+		scope.addParameter(&type_info);
+	}
+}
+
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
@@ -1258,29 +1290,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 		
-		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			const TemplateTypeArg& arg = template_args_as_type_args[i];
-			
-			// Add this template parameter -> concrete type mapping
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0);	// Placeholder size
-			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
-			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
-			// instead of staying as UserDefined, which would cause toString() to return "?"
-			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
-			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
-				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
-			} else {
-				// For Struct, UserDefined, and other non-basic types, use type_index to get size
-				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-					type_info.type_size_ = gTypeInfo[arg.type_index].type_size_;
-				} else {
-					type_info.type_size_ = 0;  // Will be resolved later
-				}
-			}
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope.addParameter(&type_info);
-		}
+		registerTypeParamsInScope(param_names, template_args_as_type_args, template_scope);
 		
 		// Re-parse the return type with template parameters in scope
 		auto return_type_result = parse_type_specifier();
@@ -1346,25 +1356,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Add template parameters back
 		FlashCpp::TemplateParameterScope template_scope2;
-		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			const TemplateTypeArg& arg = template_args_as_type_args[i];
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0); // Placeholder size
-			// Set type_size_ so parse_type_specifier treats this as a typedef
-			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
-			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
-				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
-			} else {
-				// For Struct, UserDefined, and other non-basic types, use type_index to get size
-				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-					type_info.type_size_ = gTypeInfo[arg.type_index].type_size_;
-				} else {
-					type_info.type_size_ = 0;  // Will be resolved later
-				}
-			}
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope2.addParameter(&type_info);
-		}
+		registerTypeParamsInScope(param_names, template_args_as_type_args, template_scope2);
 		
 		auto type_and_name_result = parse_type_and_name();
 		restore_lexer_position_only(current_pos);
