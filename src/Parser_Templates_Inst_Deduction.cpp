@@ -335,6 +335,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			// Value (non-type) params must NOT be registered as TypeInfo: makeValue()
 			// leaves type_value uninitialized which would poison gTypesByName.
 			if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
+			if (template_args[i].kind == TemplateArgument::Kind::Template) continue;
 			Type concrete_type = template_args[i].type_value;
 			auto& type_info = gTypeInfo.emplace_back(
 				StringTable::getOrInternStringHandle(tparam.name()),
