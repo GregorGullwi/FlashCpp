@@ -440,7 +440,7 @@ longer-horizon work best tackled after 1 and 3 land.
 |---|---------------------|------|--------|
 | 1 | **Valid**. The two body re-parse blocks still exist and can drift. | Keep as a pure extraction after low-risk cleanup tasks. | Planned |
 | 2 | **Valid**. Registration loops are still duplicated across parser/template files. | Defer until shared helper shape (TemplateArgument/TemplateTypeArg overloads) is finalized. | Planned |
-| 3 | **Valid**. `current_template_param_names_` save/restore remains scattered. | Defer until proposal 1 lands so the highest-churn reparse paths are centralized first. | Planned |
+| 3 | **Valid**. `current_template_param_names_` save/restore remains scattered. | Incrementally replace manual save/restore with RAII state guards in low-risk parser-template entry points. | In Progress |
 | 4 | **Valid and actionable now**. Remaining member/lazy sites were still registering value/template args as `TypeInfo`. | Apply 4A guards immediately, then promote shared helper for cross-file reuse. | **Done (4A, 4B)** |
 | 5 | **Valid**. `template_args_as_type_args` is still a second vector in single-template instantiation. | Defer until helper signatures are widened to avoid a broad risky change. | Planned |
 | 6 | **Valid and actionable now**. Duplicate `toTemplateTypeArg` conversion existed in `ExpressionSubstitutor.cpp`. | Move conversion to canonical `TemplateTypeArg` API and delete local duplicate helper. | **Done** |
@@ -460,6 +460,9 @@ longer-horizon work best tackled after 1 and 3 land.
   - `src/Parser.h` (shared helper declarations)
   - `src/Parser_Templates_Inst_MemberFunc.cpp` (body/SFINAE registration now routed through helper)
   - `src/Parser_Templates_Lazy.cpp` (lazy registration now routed through helper with preserved ref qualifiers)
+- [x] **Task 3 (incremental start)**: added `FlashCpp::ScopedState<T>` RAII guard and applied it in `parse_member_template_alias` to remove repeated manual restore paths for:
+  - `current_template_param_names_`
+  - `parsing_template_body_`
 - [ ] Tasks 1, 2, 3, 5, 7 remain as planned follow-up work.
 
 ---

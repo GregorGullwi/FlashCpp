@@ -47,10 +47,8 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	}
 	
 	// Set template parameter context for parsing the requires clause
-	auto saved_template_param_names = current_template_param_names_;
-	current_template_param_names_ = template_param_names;
-	bool saved_parsing_template_body = parsing_template_body_;
-	parsing_template_body_ = true;
+	FlashCpp::ScopedState<std::vector<StringHandle>> scoped_template_param_names(current_template_param_names_, template_param_names);
+	FlashCpp::ScopedState<bool> scoped_parsing_template_body(parsing_template_body_, true);
 
 	// Handle optional requires clause
 	// Pattern: template<typename T> requires Constraint using Alias = T;
@@ -62,9 +60,6 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		// Parse the constraint expression
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
-			// Clean up template parameter context before returning
-			current_template_param_names_ = saved_template_param_names;
-			parsing_template_body_ = saved_parsing_template_body;
 			return constraint_result;
 		}
 		
@@ -79,15 +74,11 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Expect 'using' keyword
 	if (!consume("using"_tok)) {
-		current_template_param_names_ = saved_template_param_names;
-		parsing_template_body_ = saved_parsing_template_body;
 		return ParseResult::error("Expected 'using' keyword in member template alias", peek_info());
 	}
 
 	// Parse alias name
 	if (!peek().is_identifier()) {
-		current_template_param_names_ = saved_template_param_names;
-		parsing_template_body_ = saved_parsing_template_body;
 		return ParseResult::error("Expected alias name after 'using' in member template alias", current_token_);
 	}
 	Token alias_name_token = peek_info();
@@ -96,8 +87,6 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Expect '='
 	if (peek() != "="_tok) {
-		current_template_param_names_ = saved_template_param_names;
-		parsing_template_body_ = saved_parsing_template_body;
 		return ParseResult::error("Expected '=' after alias name in member template alias", current_token_);
 	}
 	advance(); // consume '='
@@ -105,8 +94,6 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	// Parse the target type
 	ParseResult type_result = parse_type_specifier();
 	if (type_result.is_error()) {
-		current_template_param_names_ = saved_template_param_names;
-		parsing_template_body_ = saved_parsing_template_body;
 		return type_result;
 	}
 
@@ -116,8 +103,6 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
-		current_template_param_names_ = saved_template_param_names;
-		parsing_template_body_ = saved_parsing_template_body;
 		return ParseResult::error("Expected ';' after member template alias declaration", current_token_);
 	}
 
@@ -136,10 +121,6 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", StringTable::getStringView(qualified_name));
 
-	// Restore template parameter context
-	current_template_param_names_ = saved_template_param_names;
-	parsing_template_body_ = saved_parsing_template_body;
-	
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
 	return saved_position.success();

@@ -9,6 +9,7 @@
 #include "ParserTypes.h"
 #include <vector>
 #include <string_view>
+#include <utility>
 
 // Forward declarations
 class Parser;
@@ -258,6 +259,32 @@ public:
 private:
 	TemplateParameterScope template_scope_;
 	FunctionScopeGuard function_scope_;
+};
+
+template<typename T>
+class ScopedState {
+public:
+	explicit ScopedState(T& target)
+		: target_(target), saved_(target) {}
+
+	ScopedState(T& target, T new_value)
+		: target_(target), saved_(target) {
+		target_ = std::move(new_value);
+	}
+
+	~ScopedState() noexcept {
+		target_ = std::move(saved_);
+	}
+
+	ScopedState(const ScopedState&) = delete;
+	ScopedState& operator=(const ScopedState&) = delete;
+
+	ScopedState(ScopedState&&) = delete;
+	ScopedState& operator=(ScopedState&&) = delete;
+
+private:
+	T& target_;
+	T saved_;
 };
 
 } // namespace FlashCpp
