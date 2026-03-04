@@ -855,8 +855,25 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						if (!p.dependent_name.isValid()) continue;
 						if (!tparam_name_set.count(p.dependent_name)) continue;
 						if (!c.is_value) {
-							// Type argument
-							TemplateArgument new_arg = TemplateArgument::makeType(c.base_type, c.type_index);
+							// Type argument — build a TypeSpecifierNode from the
+							// TemplateArgInfo so that pointer depth, CV qualifiers,
+							// and reference qualifiers are preserved through the
+							// entire pipeline (TemplateArgument → TemplateTypeArg →
+							// substitute_template_parameter / registerTypeParamsInScope).
+							TypeSpecifierNode synth_ts(
+								c.base_type, c.type_index,
+								get_type_size_bits(c.base_type),
+								Token(), c.cv_qualifier);
+							for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
+								CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
+									? c.pointer_cv_qualifiers[pd] : CVQualifier::None;
+								synth_ts.add_pointer_level(ptr_cv);
+							}
+							synth_ts.set_reference_qualifier(c.ref_qualifier);
+							if (c.is_array) {
+								synth_ts.set_array(true, c.array_size);
+							}
+							TemplateArgument new_arg = TemplateArgument::makeTypeSpecifier(synth_ts);
 							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
 							if (!inserted && !(it->second == new_arg)) {
 								FLASH_LOG_FORMAT(Templates, Error,
