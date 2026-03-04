@@ -627,6 +627,9 @@ if ($linkFailed.Count -gt 0) {
 if ($runtimeCrashes.Count -gt 0) {
 	$failureReasons += "Some tests crashed at runtime"
 }
+if ($returnMismatches.Count -gt 0) {
+	$failureReasons += "Some tests returned unexpected values"
+}
 
 if ($failureReasons.Count -gt 0) {
 	$exitCode = 1

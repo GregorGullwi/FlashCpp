@@ -1,3 +1,75 @@
+// Helper: register type-kind template parameters as TypeInfo / gTypesByName entries so
+// that body re-parsing can resolve their names.  Kind::Value (non-type) parameters are
+// intentionally skipped: makeValue() leaves type_value uninitialized, which would
+// poison gTypesByName with an Invalid/garbage-type entry for the param name (e.g. "N").
+// Those params are already handled via template_param_substitutions_.
+// Kind::Template (template-template) parameters are also skipped: makeTemplate() only
+// sets template_name, leaving type_value indeterminate, so registering them would
+// create a garbage TypeInfo entry.
+//
+// preserve_ref_qualifier: pass true for the explicit-instantiation path where the
+//   type_specifier reference qualifier was set from the user-written explicit arg
+//   (e.g. f<int&> → T registered as int&).  Pass false for the deduction path where
+//   the type_specifier comes from the call-site argument expression's lvalue-ness,
+//   which must NOT be propagated to TypeInfo (otherwise "T tmp = a;" in a swap body
+//   would declare tmp as int& instead of int, breaking the copy).
+static void registerTypeParamsInScope(
+	const std::vector<std::string_view>& param_names,
+	const std::vector<TemplateArgument>& template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	bool preserve_ref_qualifier = false
+) {
+	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+		if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
+		if (template_args[i].kind == TemplateArgument::Kind::Template) continue;  // template-template params don't represent concrete types
+		std::string_view param_name = param_names[i];
+		Type concrete_type = template_args[i].type_value;
+		auto& type_info = gTypeInfo.emplace_back(
+			StringTable::getOrInternStringHandle(param_name),
+			concrete_type, gTypeInfo.size(),
+			getTypeSizeFromTemplateArgument(template_args[i]));
+		if (preserve_ref_qualifier && template_args[i].type_specifier.has_value()) {
+			const auto& ts = *template_args[i].type_specifier;
+			type_info.reference_qualifier_ = ts.reference_qualifier();
+		}
+		gTypesByName.emplace(type_info.name(), &type_info);
+		scope.addParameter(&type_info);
+	}
+}
+
+// Overload for TemplateTypeArg-based registration used in the declaration-reparse
+// paths (return-type and function-name re-parsing inside try_instantiate_single_template).
+// is_value entries (non-type params) are intentionally skipped for the same reason
+// as Kind::Value in the TemplateArgument overload: makeValue() leaves base_type as the
+// value-type (e.g. Type::Int for int N), so registering it as a TypeInfo entry would
+// erroneously add a type named "N" to gTypesByName and confuse subsequent type lookups.
+static void registerTypeParamsInScope(
+	const std::vector<std::string_view>& param_names,
+	const std::vector<TemplateTypeArg>& type_args,
+	FlashCpp::TemplateParameterScope& scope
+) {
+	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
+		const TemplateTypeArg& arg = type_args[i];
+		if (arg.is_value) continue;  // Non-type (value) params must NOT be registered as TypeInfo
+		if (arg.is_template_template_arg) continue;  // Template-template params don't represent concrete types
+		std::string_view param_name = param_names[i];
+		auto& type_info = gTypeInfo.emplace_back(
+			StringTable::getOrInternStringHandle(param_name),
+			arg.base_type, gTypeInfo.size(), 0);
+		if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
+			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
+		} else {
+			if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+				type_info.type_size_ = gTypeInfo[arg.type_index].type_size_;
+			} else {
+				type_info.type_size_ = 0;
+			}
+		}
+		gTypesByName.emplace(type_info.name(), &type_info);
+		scope.addParameter(&type_info);
+	}
+}
+
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
@@ -261,6 +333,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) continue;
 			const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+			// Value (non-type) params must NOT be registered as TypeInfo: makeValue()
+			// leaves type_value uninitialized which would poison gTypesByName.
+			if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
+			if (template_args[i].kind == TemplateArgument::Kind::Template) continue;
 			Type concrete_type = template_args[i].type_value;
 			auto& type_info = gTypeInfo.emplace_back(
 				StringTable::getOrInternStringHandle(tparam.name()),
@@ -366,22 +442,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	}
 
 	// Handle the function body
-	// Helper: substitute template parameters in a function body node
-	auto substituteBodyWithArgs = [&](const ASTNode& body) -> ASTNode {
-		std::vector<TemplateArgument> converted_template_args;
-		converted_template_args.reserve(template_args.size());
-		for (const auto& arg : template_args) {
-			if (arg.kind == TemplateArgument::Kind::Type) {
-				converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
-			} else if (arg.kind == TemplateArgument::Kind::Value) {
-				converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
-			} else {
-				converted_template_args.push_back(arg);
-			}
-		}
-		return substituteTemplateParameters(body, template_params, converted_template_args);
-	};
-
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
 		// Re-parse the function body with template parameters substituted
@@ -397,22 +457,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 		
-		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			Type concrete_type = template_args[i].type_value;
-
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
-			
-			// Preserve reference qualifiers from template arguments
-			// This ensures that when T=int&, the type T is properly marked as a reference
-			if (template_args[i].type_specifier.has_value()) {
-				const auto& ts = *template_args[i].type_specifier;
-				type_info.reference_qualifier_ = ts.reference_qualifier();
-			}
-			
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
-		}
+		// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
+		// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
+		registerTypeParamsInScope(param_names, template_args, template_scope, /*preserve_ref_qualifier=*/true);
 
 		// Save current position
 		SaveHandle current_pos = save_token_position();
@@ -510,7 +557,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
 		
 		if (!block_result.is_error() && block_result.node().has_value()) {
-			new_func_ref.set_definition(substituteBodyWithArgs(*block_result.node()));
+			new_func_ref.set_definition(
+				substituteTemplateParameters(*block_result.node(), template_params, template_args));
 		}
 		
 		// Clean up context
@@ -529,7 +577,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
-			new_func_ref.set_definition(substituteBodyWithArgs(*orig_body));
+			new_func_ref.set_definition(
+				substituteTemplateParameters(*orig_body, template_params, template_args));
 		}
 	}
 
@@ -750,6 +799,111 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	std::vector<TemplateArgument> template_args;
 	std::vector<Type> deduced_type_args;  // For types extracted from instantiated names
 
+	// Pre-deduction pass: build a map from template parameter names to deduced arguments
+	// by matching function parameter types against call argument types.
+	// This handles cases like: template<typename T, int N> int f(Array<T, N>& a)
+	// where T and N should be deduced from the struct's template args.
+	std::unordered_map<StringHandle, TemplateArgument, StringHash, StringEqual> param_name_to_arg;
+	// Tracks which function-argument slot indices were consumed by the pre-deduction pass
+	// so the main loop can skip past them when doing direct arg consumption.
+	std::unordered_set<size_t> pre_deduced_arg_indices;
+	{
+		// Build set of template parameter names for O(1) lookup
+		std::unordered_set<StringHandle, StringHash, StringEqual> tparam_name_set;
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				tparam_name_set.insert(StringTable::getOrInternStringHandle(
+					tparam_node.as<TemplateParameterNode>().name()));
+			}
+		}
+
+		const auto& func_params = func_decl.parameter_nodes();
+		for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+			if (!func_params[i].is<DeclarationNode>()) continue;
+			const TypeSpecifierNode& fp_type = func_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& ca_type = arg_types[i];
+
+			// If both the function parameter and the call argument are struct template
+			// instantiations of the same base template, match their template args pairwise
+			// to deduce any template parameters that appear as dependent entries.
+			TypeIndex fp_idx = fp_type.type_index();
+			TypeIndex ca_idx = ca_type.type_index();
+			if (fp_idx > 0 && fp_idx < gTypeInfo.size() &&
+			    ca_idx > 0 && ca_idx < gTypeInfo.size()) {
+				const TypeInfo& fp_info = gTypeInfo[fp_idx];
+				const TypeInfo& ca_info = gTypeInfo[ca_idx];
+				if (fp_info.isTemplateInstantiation() && ca_info.isTemplateInstantiation() &&
+				    fp_info.baseTemplateName() == ca_info.baseTemplateName()) {
+					const auto& fp_targs = fp_info.templateArgs();
+					const auto& ca_targs = ca_info.templateArgs();
+					bool slot_produced_deduction = false;
+					for (size_t j = 0; j < fp_targs.size() && j < ca_targs.size(); ++j) {
+						const auto& p = fp_targs[j];
+						const auto& c = ca_targs[j];
+						if (!p.dependent_name.isValid()) continue;
+						if (!tparam_name_set.count(p.dependent_name)) continue;
+						if (!c.is_value) {
+							// Type argument — build a TypeSpecifierNode from the
+							// TemplateArgInfo so that pointer depth, CV qualifiers,
+							// and reference qualifiers are preserved through the
+							// entire pipeline (TemplateArgument → TemplateTypeArg →
+							// substitute_template_parameter / registerTypeParamsInScope).
+							TypeSpecifierNode synth_ts(
+								c.base_type, c.type_index,
+								get_type_size_bits(c.base_type),
+								Token(), c.cv_qualifier);
+							for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
+								CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
+									? c.pointer_cv_qualifiers[pd] : CVQualifier::None;
+								synth_ts.add_pointer_level(ptr_cv);
+							}
+							synth_ts.set_reference_qualifier(c.ref_qualifier);
+							if (c.is_array) {
+								synth_ts.set_array(true, c.array_size);
+							}
+							TemplateArgument new_arg = TemplateArgument::makeTypeSpecifier(synth_ts);
+							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
+							if (!inserted && !(it->second == new_arg)) {
+								FLASH_LOG_FORMAT(Templates, Error,
+									"[depth={}]: Conflicting deduction for type param '{}'",
+									recursion_depth, StringTable::getStringView(p.dependent_name));
+								return std::nullopt;
+							}
+							slot_produced_deduction = true;
+							FLASH_LOG_FORMAT(Templates, Debug,
+								"[depth={}]: Pre-deduced type param '{}' = type {}",
+								recursion_depth,
+								StringTable::getStringView(p.dependent_name),
+								static_cast<int>(c.base_type));
+						} else {
+							// Concrete argument is a value (c.is_value==true); deduce a non-type param.
+							// We check c.is_value (the concrete arg) rather than p.is_value (the
+							// placeholder), because dependent non-type params are stored as
+							// is_value==false in the placeholder even though they carry an integer value
+							// at instantiation time.
+							TemplateArgument new_arg = TemplateArgument::makeValue(c.intValue(), c.base_type);
+							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
+							if (!inserted && !(it->second == new_arg)) {
+								FLASH_LOG_FORMAT(Templates, Error,
+									"[depth={}]: Conflicting deduction for non-type param '{}'",
+									recursion_depth, StringTable::getStringView(p.dependent_name));
+								return std::nullopt;
+							}
+							slot_produced_deduction = true;
+							FLASH_LOG_FORMAT(Templates, Debug,
+								"[depth={}]: Pre-deduced non-type param '{}' = {}",
+								recursion_depth,
+								StringTable::getStringView(p.dependent_name),
+								c.intValue());
+						}
+					}
+					if (slot_produced_deduction)
+						pre_deduced_arg_indices.insert(i);
+				}
+			}
+		}
+	}
+
 	// Deduce template parameters in order from function arguments
 	// For template<typename T, typename U> T func(T a, U b):
 	//   - T is deduced from first argument
@@ -760,6 +914,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		if (param.kind() == TemplateParameterKind::Template) {
 			// Template template parameter - deduce from argument type
+			// Skip any arg slots fully consumed by the pre-deduction pass
+			while (arg_index < arg_types.size() && pre_deduced_arg_indices.count(arg_index))
+				arg_index++;
 			if (arg_index < arg_types.size()) {
 				const TypeSpecifierNode& arg_type = arg_types[arg_index];
 				
@@ -821,8 +978,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		} else if (param.kind() == TemplateParameterKind::Type) {
 			// Type parameter - check if it's variadic (parameter pack)
 			if (param.is_variadic()) {
-				// Deduce all remaining argument types for this parameter pack
+				// Deduce all remaining argument types for this parameter pack,
+				// skipping any slots already consumed by the pre-deduction pass.
 				while (arg_index < arg_types.size()) {
+					if (pre_deduced_arg_indices.count(arg_index)) {
+						arg_index++;
+						continue;
+					}
 					// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
 					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
 					arg_index++;
@@ -830,25 +992,38 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				
 				// Note: If no arguments remain, the pack is empty (which is valid)
 			} else {
-				// Non-variadic type parameter
-				if (!deduced_type_args.empty()) {
+				// Non-variadic type parameter — check pre-deduction map first
+				StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
+				auto map_it = param_name_to_arg.find(param_handle);
+				if (map_it != param_name_to_arg.end()) {
+					template_args.push_back(map_it->second);
+				} else if (!deduced_type_args.empty()) {
 					Type deduced_type = deduced_type_args[0];
 					template_args.push_back(TemplateArgument::makeType(deduced_type));
 					deduced_type_args.erase(deduced_type_args.begin());
-				} else if (arg_index < arg_types.size()) {
-					// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
-					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
-					arg_index++;
 				} else {
-					// Not enough arguments to deduce all template parameters
-					// Fall back to first argument for remaining parameters
-					// Store full TypeSpecifierNode to preserve reference info
-					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[0]));
+					// Skip any arg slots fully consumed by the pre-deduction pass
+					while (arg_index < arg_types.size() && pre_deduced_arg_indices.count(arg_index))
+						arg_index++;
+					if (arg_index < arg_types.size()) {
+						// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
+						template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
+						arg_index++;
+					} else {
+						// Not enough arguments to deduce all template parameters
+						// Fall back to first argument for remaining parameters
+						// Store full TypeSpecifierNode to preserve reference info
+						template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[0]));
+					}
 				}
 			}
 		} else {
-			// Non-type parameter - check if it has a default value
-			if (param.has_default()) {
+			// Non-type parameter — check pre-deduction map first
+			StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
+			auto map_it = param_name_to_arg.find(param_handle);
+			if (map_it != param_name_to_arg.end()) {
+				template_args.push_back(map_it->second);
+			} else if (param.has_default()) {
 				// Use the default value for non-type parameters
 				// The default value is an expression that will be evaluated during instantiation
 				// For now, we skip it in deduction and let the instantiation phase use the default
@@ -856,11 +1031,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					recursion_depth, param.name());
 				// Don't add anything to template_args - the instantiation will use the default
 				continue;
-			}
-			// No default value and can't deduce - fail
-			FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
+			} else {
+				// No default value and can't deduce - fail
+				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
 
-			return std::nullopt;
+				return std::nullopt;
+			}
 		}
 	}
 
@@ -908,9 +1084,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				type_arg.pointer_depth = type_spec.pointer_depth();
 				type_arg.cv_qualifier = type_spec.cv_qualifier();
 			} else {
-				// Fallback to legacy behavior for backward compatibility
+				// Fallback: use stored type_value and type_index.
+				// type_index may be non-zero for struct types pre-deduced via makeType(base, idx).
 				type_arg.base_type = arg.type_value;
-				type_arg.type_index = 0;  // Simple types don't have an index
+				type_arg.type_index = arg.type_index;
 			}
 			
 			template_args_as_type_args.push_back(type_arg);
@@ -931,8 +1108,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				}
 			}
 			template_args_as_type_args.push_back(type_arg);
+		} else if (arg.kind == TemplateArgument::Kind::Value) {
+			// Non-type (value) argument: include in template_args_as_type_args so that
+			// body re-parsing can register the non-type parameter substitution.
+			TemplateTypeArg val_arg;
+			val_arg.is_value = true;
+			val_arg.value = arg.int_value;
+			val_arg.base_type = arg.value_type;
+			template_args_as_type_args.push_back(val_arg);
 		}
-		// Note: Value arguments aren't used in type substitution
 	}
 
 	// Check for explicit specialization before instantiating the primary template.
@@ -1115,29 +1299,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 		
-		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			const TemplateTypeArg& arg = template_args_as_type_args[i];
-			
-			// Add this template parameter -> concrete type mapping
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0);	// Placeholder size
-			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
-			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
-			// instead of staying as UserDefined, which would cause toString() to return "?"
-			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
-			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
-				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
-			} else {
-				// For Struct, UserDefined, and other non-basic types, use type_index to get size
-				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-					type_info.type_size_ = gTypeInfo[arg.type_index].type_size_;
-				} else {
-					type_info.type_size_ = 0;  // Will be resolved later
-				}
-			}
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope.addParameter(&type_info);
-		}
+		registerTypeParamsInScope(param_names, template_args_as_type_args, template_scope);
 		
 		// Re-parse the return type with template parameters in scope
 		auto return_type_result = parse_type_specifier();
@@ -1203,25 +1365,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Add template parameters back
 		FlashCpp::TemplateParameterScope template_scope2;
-		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			const TemplateTypeArg& arg = template_args_as_type_args[i];
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size(), 0); // Placeholder size
-			// Set type_size_ so parse_type_specifier treats this as a typedef
-			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
-			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
-				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
-			} else {
-				// For Struct, UserDefined, and other non-basic types, use type_index to get size
-				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-					type_info.type_size_ = gTypeInfo[arg.type_index].type_size_;
-				} else {
-					type_info.type_size_ = 0;  // Will be resolved later
-				}
-			}
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope2.addParameter(&type_info);
-		}
+		registerTypeParamsInScope(param_names, template_args_as_type_args, template_scope2);
 		
 		auto type_and_name_result = parse_type_and_name();
 		restore_lexer_position_only(current_pos);
@@ -1542,6 +1686,37 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					auto [subst_type, subst_type_index] = substitute_template_parameter(
 						orig_param_type, template_params, template_args_as_type_args
 					);
+					// substitute_template_parameter only resolves UserDefined types by name
+					// matching against template parameter names. When the original parameter
+					// type is a UserDefined dependent-placeholder (e.g., the TypeInfo entry
+					// for Array$xxxx created when parsing `Array<T,N>& arr` inside the
+					// template with T and N still dependent), the full mangled name doesn't
+					// match any template param name, so the substitution returns unchanged.
+					// The call-site argument already holds the fully-resolved concrete type
+					// (e.g., Array<Point,3>). Use it when:
+					//   - substitution left a UserDefined type (dependent placeholder)
+					//   - the type_index was unchanged (no substitution happened)
+					//   - the TypeInfo at that index is a template instantiation (placeholder)
+					//   - we have a concrete call-site argument of type Struct
+					//
+					// NOTE: We use 'i' (the function parameter index) to index arg_types,
+					// matching the pre-deduction pass (line ~821) which also assumes 1:1
+					// correspondence between func_params[i] and arg_types[i]. Using
+					// arg_type_index here would be incorrect after a variadic pack
+					// expansion, since arg_type_index advances through multiple arg slots
+					// for a single function parameter, breaking the correspondence.
+					if (subst_type == Type::UserDefined &&
+					    subst_type_index == orig_param_type.type_index() &&
+					    subst_type_index > 0 && subst_type_index < gTypeInfo.size() &&
+					    gTypeInfo[subst_type_index].isTemplateInstantiation() &&
+					    i < arg_types.size() &&
+					    arg_types[i].type() == Type::Struct) {
+						subst_type = Type::Struct;
+						subst_type_index = arg_types[i].type_index();
+						FLASH_LOG_FORMAT(Templates, Debug,
+							"[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
+							recursion_depth, subst_type_index);
+					}
 					param_type = emplace_node<TypeSpecifierNode>(
 						subst_type,
 						TypeQualifier::None,
@@ -1628,14 +1803,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 		
-		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			Type concrete_type = template_args[i].type_value;
-
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
-		}
+		registerTypeParamsInScope(param_names, template_args, template_scope);
 
 		// Save current position
 		SaveHandle current_pos = save_token_position();
@@ -1712,9 +1880,26 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
+		// Set current_template_param_names_ so the expression parser can find
+		// template parameters (e.g., N in "return N") as TemplateParameterReferenceNode
+		// rather than looking them up as regular identifiers (which would fail for
+		// non-type params that have no entry in the symbol table).
+		// NOTE: try_instantiate_template_explicit does the same setup; keeping both in
+		// sync is exactly the kind of maintenance burden described in
+		// docs/REFACTORING_PROPOSAL_2026-03-03.md — extracting a shared helper would
+		// prevent this class of divergence bug.
+		std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& pn : param_names) {
+			current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+		}
+
 		// Parse the function body
 		auto block_result = parse_block();
-		
+
+		// Restore template param names
+		current_template_param_names_ = std::move(saved_template_param_names);
+
 		// Restore the template parameter substitutions
 		template_param_substitutions_ = std::move(saved_template_param_substitutions);
 
@@ -1722,20 +1907,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// After parsing, we need to substitute template parameters in the body
 			// This is essential for features like fold expressions that need AST transformation
 			// Note: pack_param_info_ is still active here so PackExpansionExprNode expansion works
-			// Convert template_args to TemplateArgument format for substitution
-			std::vector<TemplateArgument> converted_template_args;
-			for (const auto& arg : template_args) {
-				if (arg.kind == TemplateArgument::Kind::Type) {
-					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
-				} else if (arg.kind == TemplateArgument::Kind::Value) {
-					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
-				}
-			}
-		
+			// template_args already holds the canonical TemplateArgument vector with correct
+			// kind, type_value, type_index, int_value, and value_type — pass it directly.
 			ASTNode substituted_body = substituteTemplateParameters(
 				*block_result.node(),
 				template_params,
-				converted_template_args
+				template_args
 			);
 		
 			new_func_ref.set_definition(substituted_body);

@@ -10,10 +10,10 @@ struct TemplateArgument {
 	};
 	
 	Kind kind;
-	Type type_value;  // For type arguments (legacy - enum only, kept for backwards compatibility)
+	Type type_value{};  // For type arguments (legacy - enum only, kept for backwards compatibility)
 	TypeIndex type_index = 0;  // For type arguments - index into gTypeInfo for complex types (NEW in Task 2)
-	int64_t int_value;  // For non-type integer arguments
-	Type value_type;  // For non-type arguments: the type of the value (bool, int, etc.)
+	int64_t int_value = 0;  // For non-type integer arguments
+	Type value_type{};  // For non-type arguments: the type of the value (bool, int, etc.)
 	StringHandle template_name;  // For template template arguments (name of the template)
 	std::optional<TypeSpecifierNode> type_specifier;  // Full type info including references, pointers, CV qualifiers
 	
@@ -50,11 +50,29 @@ struct TemplateArgument {
 	}
 	
 	// Hash for use in maps (needed for InstantiationQueue)
+	//
+	// IMPORTANT: hash only the fields shared by ALL Kind::Type objects.
+	// operator== treats a missing type_specifier as "default qualifiers"
+	// (CVQualifier::None, pointer_depth 0, etc.), so makeType(Int) equals
+	// makeTypeSpecifier(Int, no_qualifiers).  Including qualifiers in the
+	// hash would break that case (same equality, different hash).
+	// Hash collisions from qualifier differences are acceptable — they
+	// only cause bucket collisions, not correctness issues.
 	size_t hash() const {
 		size_t h = std::hash<int>{}(static_cast<int>(kind));
-		h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
-		h ^= std::hash<TypeIndex>{}(type_index) << 2;
-		h ^= std::hash<int64_t>{}(int_value) << 3;
+		switch (kind) {
+			case Kind::Type:
+				h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
+				h ^= std::hash<TypeIndex>{}(type_index) << 2;
+				break;
+			case Kind::Value:
+				h ^= std::hash<int64_t>{}(int_value) << 1;
+				h ^= std::hash<int>{}(static_cast<int>(value_type)) << 2;
+				break;
+			case Kind::Template:
+				h ^= std::hash<StringHandle>{}(template_name) << 1;
+				break;
+		}
 		return h;
 	}
 	
@@ -62,8 +80,41 @@ struct TemplateArgument {
 	bool operator==(const TemplateArgument& other) const {
 		if (kind != other.kind) return false;
 		switch (kind) {
-			case Kind::Type:
-				return type_value == other.type_value && type_index == other.type_index;
+			case Kind::Type: {
+				if (type_value != other.type_value || type_index != other.type_index)
+					return false;
+				// Compare qualifiers (CV, pointer depth, reference, array).
+				// A missing type_specifier (created via makeType) implicitly means
+				// "no qualifiers" — CVQualifier::None, pointer_depth 0, etc.
+				bool a_has = type_specifier.has_value();
+				bool b_has = other.type_specifier.has_value();
+				if (!a_has && !b_has)
+					return true;  // both bare — no qualifiers to compare
+				if (a_has && b_has) {
+					// Both present — full qualifier comparison
+					const auto& a = *type_specifier;
+					const auto& b = *other.type_specifier;
+					if (a.cv_qualifier() != b.cv_qualifier()) return false;
+					if (a.pointer_depth() != b.pointer_depth()) return false;
+					if (a.reference_qualifier() != b.reference_qualifier()) return false;
+					if (a.is_array() != b.is_array()) return false;
+					if (a.is_array() && a.array_size() != b.array_size()) return false;
+					const auto& a_levels = a.pointer_levels();
+					const auto& b_levels = b.pointer_levels();
+					for (size_t i = 0; i < a_levels.size(); ++i) {
+						if (a_levels[i].cv_qualifier != b_levels[i].cv_qualifier)
+							return false;
+					}
+					return true;
+				}
+				// Exactly one side has type_specifier — it must have all-default qualifiers
+				// to be equal to the bare makeType() side.
+				const auto& ts = a_has ? *type_specifier : *other.type_specifier;
+				return ts.cv_qualifier() == CVQualifier::None
+					&& ts.pointer_depth() == 0
+					&& ts.reference_qualifier() == ReferenceQualifier::None
+					&& !ts.is_array();
+			}
 			case Kind::Value:
 				return int_value == other.int_value && value_type == other.value_type;
 			case Kind::Template:
