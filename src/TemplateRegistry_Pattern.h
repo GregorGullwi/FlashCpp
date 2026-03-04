@@ -98,6 +98,7 @@ struct TemplateArgument {
 					if (a.pointer_depth() != b.pointer_depth()) return false;
 					if (a.reference_qualifier() != b.reference_qualifier()) return false;
 					if (a.is_array() != b.is_array()) return false;
+					if (a.is_array() && a.array_size() != b.array_size()) return false;
 					const auto& a_levels = a.pointer_levels();
 					const auto& b_levels = b.pointer_levels();
 					for (size_t i = 0; i < a_levels.size(); ++i) {
