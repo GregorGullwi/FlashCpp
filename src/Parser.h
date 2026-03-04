@@ -786,6 +786,16 @@ private:
             const ASTNode& template_node,
             const std::vector<TemplateArgument>& template_args,
             const FlashCpp::TemplateInstantiationKey& key);
+		void registerTypeParamsInScope(
+			const std::vector<std::string_view>& param_names,
+			const std::vector<TemplateArgument>& template_args,
+			FlashCpp::TemplateParameterScope& scope,
+			bool preserve_ref_qualifier = false);
+		void registerTypeParamsInScope(
+			const std::vector<std::string_view>& param_names,
+			const std::vector<TemplateTypeArg>& type_args,
+			FlashCpp::TemplateParameterScope& scope,
+			bool preserve_ref_qualifier = false);
     public:
         std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
         bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand

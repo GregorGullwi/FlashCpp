@@ -441,7 +441,7 @@ longer-horizon work best tackled after 1 and 3 land.
 | 1 | **Valid**. The two body re-parse blocks still exist and can drift. | Keep as a pure extraction after low-risk cleanup tasks. | Planned |
 | 2 | **Valid**. Registration loops are still duplicated across parser/template files. | Defer until shared helper shape (TemplateArgument/TemplateTypeArg overloads) is finalized. | Planned |
 | 3 | **Valid**. `current_template_param_names_` save/restore remains scattered. | Defer until proposal 1 lands so the highest-churn reparse paths are centralized first. | Planned |
-| 4 | **Valid and actionable now**. Remaining member/lazy sites were still registering value/template args as `TypeInfo`. | Apply 4A guards immediately at all 3 sites, keep 4B for follow-up consolidation. | **Done (4A)** |
+| 4 | **Valid and actionable now**. Remaining member/lazy sites were still registering value/template args as `TypeInfo`. | Apply 4A guards immediately, then promote shared helper for cross-file reuse. | **Done (4A, 4B)** |
 | 5 | **Valid**. `template_args_as_type_args` is still a second vector in single-template instantiation. | Defer until helper signatures are widened to avoid a broad risky change. | Planned |
 | 6 | **Valid and actionable now**. Duplicate `toTemplateTypeArg` conversion existed in `ExpressionSubstitutor.cpp`. | Move conversion to canonical `TemplateTypeArg` API and delete local duplicate helper. | **Done** |
 | 7 | **Valid, high risk**. Both argument structs are still heavily used across the pipeline. | Keep as a dedicated future PR after 1/2/5 reduce coupling first. | Planned |
@@ -455,7 +455,12 @@ longer-horizon work best tackled after 1 and 3 land.
 - [x] **Encountered issue fixed during validation**: member-function template/value-parameter body reparse missed non-type substitution context (`N` unresolved in `template<int N> auto f()->int { return N; }`). Fixed by populating/restoring `template_param_substitutions_` and `current_template_param_names_` in:
   - `src/Parser_Templates_Inst_MemberFunc.cpp`
   - `src/Parser_Templates_Lazy.cpp`
-- [ ] Tasks 1, 2, 3, 4B, 5, 7 remain as planned follow-up work.
+- [x] **Task 4B**: promoted `registerTypeParamsInScope` to shared `Parser` helpers (both `TemplateArgument` and `TemplateTypeArg` overloads), then switched member/lazy sites to the shared helpers:
+  - `src/Parser_Templates_Inst_Deduction.cpp` (helper ownership moved from file-local static to `Parser::`)
+  - `src/Parser.h` (shared helper declarations)
+  - `src/Parser_Templates_Inst_MemberFunc.cpp` (body/SFINAE registration now routed through helper)
+  - `src/Parser_Templates_Lazy.cpp` (lazy registration now routed through helper with preserved ref qualifiers)
+- [ ] Tasks 1, 2, 3, 5, 7 remain as planned follow-up work.
 
 ---
 

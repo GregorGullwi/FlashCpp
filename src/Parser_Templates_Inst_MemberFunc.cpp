@@ -236,20 +236,24 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			register_parameters_in_scope(func_decl.parameter_nodes());
 
 			FlashCpp::TemplateParameterScope sfinae_scope;
+			std::vector<std::string_view> sfinae_param_names;
+			sfinae_param_names.reserve(template_params.size());
+			for (const auto& tparam_node : template_params) {
+				if (tparam_node.is<TemplateParameterNode>()) {
+					sfinae_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+				}
+			}
+			registerTypeParamsInScope(sfinae_param_names, template_args, sfinae_scope, /*preserve_ref_qualifier=*/true);
 			// Add inner template params (the member function template's own params, e.g. U)
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				if (template_args[i].kind != TemplateArgument::Kind::Type) {
 					continue;
 				}
+				if (!template_params[i].is<TemplateParameterNode>()) {
+					continue;
+				}
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				Type concrete_type = template_args[i].type_value;
-				auto& type_info = gTypeInfo.emplace_back(
-					StringTable::getOrInternStringHandle(tparam.name()),
-					concrete_type, gTypeInfo.size(),
-					getTypeSizeFromTemplateArgument(template_args[i]));
-				gTypesByName.emplace(type_info.name(), &type_info);
-				sfinae_scope.addParameter(&type_info);
-				sfinae_type_map_[type_info.name()] = template_args[i].type_index;
+				sfinae_type_map_[StringTable::getOrInternStringHandle(tparam.name())] = template_args[i].type_index;
 			}
 			// Add outer template params (from enclosing class template, e.g. T→int)
 			const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
@@ -424,17 +428,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 	
-	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-		if (template_args[i].kind != TemplateArgument::Kind::Type) {
-			continue;
-		}
-		std::string_view param_name = param_names[i];
-		Type concrete_type = template_args[i].type_value;
-
-		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
-		gTypesByName.emplace(type_info.name(), &type_info);
-		template_scope.addParameter(&type_info);
-	}
+	registerTypeParamsInScope(param_names, template_args, template_scope);
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
 	if (outer_binding) {

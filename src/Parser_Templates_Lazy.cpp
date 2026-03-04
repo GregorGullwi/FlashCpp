@@ -140,22 +140,7 @@ if (param_decl.has_default_value()) {
 			}
 		}
 		
-		for (size_t i = 0; i < param_names.size() && i < lazy_info.template_args.size(); ++i) {
-			if (lazy_info.template_args[i].is_value || lazy_info.template_args[i].is_template_template_arg) {
-				continue;
-			}
-			std::string_view param_name = param_names[i];
-			Type concrete_type = lazy_info.template_args[i].base_type;
-
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
-			
-			// Copy reference qualifiers from template arg
-			type_info.reference_qualifier_ = lazy_info.template_args[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
-				: (lazy_info.template_args[i].is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-			
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope.addParameter(&type_info);
-		}
+		registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, /*preserve_ref_qualifier=*/true);
 
 		// Save current position and parsing context
 		SaveHandle current_pos = save_token_position();
