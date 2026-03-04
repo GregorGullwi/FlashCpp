@@ -45,6 +45,12 @@
 #include "Log.h"
 #include "ObjFileWriter.h"
 #include "NameMangling.h"
+
+// ObjFileWriter method definitions (for unity build)
+#include "ObjFileWriter_Symbols.cpp"
+#include "ObjFileWriter_Debug.cpp"
+#include "ObjFileWriter_EH.cpp"
+#include "ObjFileWriter_RTTI.cpp"
 #include "TemplateProfilingStats.h"
 #include "AstNodeTypes.h"
 #include "NamespaceRegistry.h"
@@ -54,6 +60,13 @@
 // Only include ELF writer on non-Windows platforms
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
 #include "ElfFileWriter.h"
+#endif
+
+// ElfFileWriter method definitions (for unity build)
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+#include "ElfFileWriter_GlobalRTTI.cpp"
+#include "ElfFileWriter_FuncSig.cpp"
+#include "ElfFileWriter_EH.cpp"
 #endif
 
 // Shared globals (g_enable_debug_output, gNamespaceRegistry, etc.)
