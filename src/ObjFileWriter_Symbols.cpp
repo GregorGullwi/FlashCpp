@@ -38,9 +38,20 @@ void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32
 	// Handle dllexport - add export directive
 	if (linkage == Linkage::DllExport) {
 		auto section_drectve = coffi_.get_sections()[sectiontype_to_index[SectionType::DRECTVE]];
-		std::string export_directive = std::string(" /EXPORT:") + std::string(mangled_name);
-		if (g_enable_debug_output) std::cerr << "Adding export directive: " << export_directive << std::endl;
-		section_drectve->append_data(export_directive.c_str(), export_directive.size());
+		// Validate mangled_name contains no spaces or directive-terminating characters
+		// to prevent linker directive injection via crafted symbol names.
+		// Valid MSVC-mangled names only contain [A-Za-z0-9?@_$] - no spaces.
+		bool name_is_safe = mangled_name.find(' ') == std::string_view::npos &&
+		                    mangled_name.find('\t') == std::string_view::npos &&
+		                    mangled_name.find('\n') == std::string_view::npos &&
+		                    !mangled_name.empty();
+		if (name_is_safe) {
+			std::string export_directive = std::string(" /EXPORT:") + std::string(mangled_name);
+			if (g_enable_debug_output) std::cerr << "Adding export directive: " << export_directive << std::endl;
+			section_drectve->append_data(export_directive.c_str(), export_directive.size());
+		} else {
+			if (g_enable_debug_output) std::cerr << "Skipping export directive for invalid mangled name: " << mangled_name << std::endl;
+		}
 	}
 
 	// Extract unmangled name for debug info
