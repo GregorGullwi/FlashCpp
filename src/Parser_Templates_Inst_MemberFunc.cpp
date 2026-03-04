@@ -220,8 +220,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		if (func_decl.has_trailing_return_type_position()) {
 			bool prev_sfinae_context = in_sfinae_context_;
 			bool prev_parsing_template_body = parsing_template_body_;
-			auto prev_template_param_names = std::move(current_template_param_names_);
-			auto prev_sfinae_type_map = std::move(sfinae_type_map_);
+			FlashCpp::ScopedState<std::vector<StringHandle>> guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState<decltype(sfinae_type_map_)> guard_sfinae_map(sfinae_type_map_);
 			in_sfinae_context_ = true;
 			parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
 			current_template_param_names_.clear();  // No dependent names during SFINAE
@@ -237,21 +237,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 			FlashCpp::TemplateParameterScope sfinae_scope;
 			// Add inner template params (the member function template's own params, e.g. U)
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				// Value (non-type) params must NOT be registered as TypeInfo: makeValue()
-				// leaves type_value uninitialized which would poison gTypesByName.
-				if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
-				if (template_args[i].kind == TemplateArgument::Kind::Template) continue;
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				Type concrete_type = template_args[i].type_value;
-				auto& type_info = gTypeInfo.emplace_back(
-					StringTable::getOrInternStringHandle(tparam.name()),
-					concrete_type, gTypeInfo.size(),
-					getTypeSizeFromTemplateArgument(template_args[i]));
-				gTypesByName.emplace(type_info.name(), &type_info);
-				sfinae_scope.addParameter(&type_info);
-				sfinae_type_map_[type_info.name()] = template_args[i].type_index;
-			}
+			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 			// Add outer template params (from enclosing class template, e.g. T→int)
 			const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
 			if (outer_binding) {
@@ -274,8 +260,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			restore_lexer_position_only(sfinae_pos);
 			in_sfinae_context_ = prev_sfinae_context;
 			parsing_template_body_ = prev_parsing_template_body;
-			current_template_param_names_ = std::move(prev_template_param_names);
-			sfinae_type_map_ = std::move(prev_sfinae_type_map);
+			// guard_param_names and guard_sfinae_map restore their fields automatically
 
 			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 				continue;  // SFINAE: this overload's return type failed, try next

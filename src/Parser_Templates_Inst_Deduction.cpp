@@ -82,6 +82,37 @@ static void registerTypeParamsInScope(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// registerTypeParamsInScope — ASTNode-based overload for SFINAE trailing-return
+// type re-parse.  Takes the raw template_param_nodes ASTNode vector (handles
+// mixed TemplateParameterNode / non-TemplateParameterNode safely), plus an
+// optional sfinae_map to populate alongside gTypesByName.  Unlike the
+// string_view overloads above, it does not need a pre-built param_names vector,
+// so the caller avoids index-alignment issues.
+// ─────────────────────────────────────────────────────────────────────────────
+static void registerTypeParamsInScope(
+	const std::vector<ASTNode>& template_param_nodes,
+	const std::vector<TemplateArgument>& template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr
+) {
+	for (size_t i = 0; i < template_param_nodes.size() && i < template_args.size(); ++i) {
+		if (!template_param_nodes[i].is<TemplateParameterNode>()) continue;
+		if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
+		if (template_args[i].kind == TemplateArgument::Kind::Template) continue;
+		std::string_view param_name = template_param_nodes[i].as<TemplateParameterNode>().name();
+		Type concrete_type = template_args[i].type_value;
+		auto& type_info = gTypeInfo.emplace_back(
+			StringTable::getOrInternStringHandle(param_name),
+			concrete_type, gTypeInfo.size(),
+			getTypeSizeFromTemplateArgument(template_args[i]));
+		gTypesByName.emplace(type_info.name(), &type_info);
+		scope.addParameter(&type_info);
+		if (sfinae_map)
+			(*sfinae_map)[type_info.name()] = template_args[i].type_index;
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // buildTemplateTypeArgVector
 // ─────────────────────────────────────────────────────────────────────────────
 // Convert a TemplateArgument vector to TemplateTypeArg format for downstream
@@ -471,23 +502,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		register_parameters_in_scope(func_decl.parameter_nodes());
 
 		FlashCpp::TemplateParameterScope sfinae_scope;
-		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-			if (!template_params[i].is<TemplateParameterNode>()) continue;
-			const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-			// Value (non-type) params must NOT be registered as TypeInfo: makeValue()
-			// leaves type_value uninitialized which would poison gTypesByName.
-			if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
-			if (template_args[i].kind == TemplateArgument::Kind::Template) continue;
-			Type concrete_type = template_args[i].type_value;
-			auto& type_info = gTypeInfo.emplace_back(
-				StringTable::getOrInternStringHandle(tparam.name()),
-				concrete_type, gTypeInfo.size(),
-				getTypeSizeFromTemplateArgument(template_args[i]));
-			gTypesByName.emplace(type_info.name(), &type_info);
-			sfinae_scope.addParameter(&type_info);
-			// Populate SFINAE type map so expression parser can resolve template params
-			sfinae_type_map_[type_info.name()] = template_args[i].type_index;
-		}
+		registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
 		auto return_type_result = parse_type_specifier();
 		gSymbolTable.exit_scope();
