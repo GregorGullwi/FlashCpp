@@ -405,7 +405,7 @@ private:
                 bool is_destructor;                      // Special handling for destructors
                 ConstructorDeclarationNode* ctor_node;   // For constructors (nullptr for regular functions)
                 DestructorDeclarationNode* dtor_node;    // For destructors (nullptr for regular functions)
-                std::vector<StringHandle> template_param_names; // For template member functions
+                InlineVector<StringHandle, 4> template_param_names; // For template member functions
                 bool is_member_function_template = false; // True when this is a member function template (template<T> void f())
                                                           // as opposed to a regular member of a template class
         };
@@ -430,7 +430,7 @@ private:
 		bool parsing_template_class_ = false;
 		// Track when an inline namespace declaration was prefixed with 'inline'
 		bool pending_inline_namespace_ = false;
-		std::vector<StringHandle> current_template_param_names_;  // Names of current template parameters - from Token storage
+		InlineVector<StringHandle, 4> current_template_param_names_;  // Names of current template parameters - from Token storage
 
         // Template parameter substitution for deferred template body parsing
         // Maps template parameter names to their substituted values (for non-type AND type parameters)
@@ -443,7 +443,7 @@ private:
             bool is_type_param = false;
             TemplateTypeArg substituted_type;  // The concrete type for type parameters
         };
-        std::vector<TemplateParamSubstitution> template_param_substitutions_;
+        InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 
         // Track if we're parsing a template body (for template parameter reference recognition)
         bool parsing_template_body_ = false;
@@ -744,10 +744,10 @@ private:
         // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
         // Returns the TemplateFunctionDeclarationNode in out_template_node
         ParseResult parse_template_function_declaration_body(
-            std::vector<ASTNode>& template_params,
+            InlineVector<ASTNode, 4>& template_params,
             std::optional<ASTNode> requires_clause,
             ASTNode& out_template_node);
-        ParseResult parse_template_parameter_list(std::vector<ASTNode>& out_params);  // NEW: Parse template parameter list
+        ParseResult parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params);  // NEW: Parse template parameter list
         ParseResult parse_template_parameter();  // NEW: Parse a single template parameter
         // Simple struct to hold constant expression evaluation results
         // Public members are intentional for this lightweight data structure
@@ -776,23 +776,22 @@ private:
         void reparse_template_function_body(
             FunctionDeclarationNode& new_func_ref,
             const FunctionDeclarationNode& func_decl,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateArgument>& template_args,
+            const InlineVector<ASTNode, 4>& template_params,
+            const InlineVector<TemplateTypeArg, 4>& template_args,
             bool preserve_ref_qualifier = false);
         // Populate template_param_substitutions_ from parallel (name, arg) pairs for
         // body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
         // Overload 1: TemplateTypeArg source (lazy body-reparse path).
-        // Overload 2: TemplateArgument source (member-func body-reparse path).
+        // Overload 2: TemplateTypeArg source (member-func body-reparse path).
         void populateTemplateParamSubstitutions(
-            std::vector<TemplateParamSubstitution>& subs,
-            const std::vector<StringHandle>& param_names,
+            InlineVector<TemplateParamSubstitution, 4>& subs,
+            const InlineVector<StringHandle, 4>& param_names,
             const std::vector<TemplateTypeArg>& type_args);
         void populateTemplateParamSubstitutions(
-            std::vector<TemplateParamSubstitution>& subs,
+            InlineVector<TemplateParamSubstitution, 4>& subs,
             const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateArgument>& template_args);
+            const std::vector<TemplateTypeArg>& template_args);
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
-        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateArgument>& template_args, bool force_eager = false);  // Thin shim (task 5B)
         std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
         std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template
         ASTNode substitute_template_params_in_expression(
@@ -808,7 +807,7 @@ private:
             std::string_view struct_name, std::string_view member_name,
             StringHandle qualified_name,
             const ASTNode& template_node,
-            const std::vector<TemplateArgument>& template_args,
+            const std::vector<TemplateTypeArg>& template_args,
             const FlashCpp::TemplateInstantiationKey& key);
     public:
         std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
@@ -818,7 +817,6 @@ private:
         std::optional<std::pair<Type, TypeIndex>> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);  // Phase 3: Evaluate lazy type alias on-demand
         std::optional<TypeIndex> instantiateLazyNestedType(StringHandle parent_class_name, StringHandle nested_type_name);  // Phase 4: Instantiate lazy nested type on-demand
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
-        std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateArgument>& template_args);  // Thin shim (task 5B)
         std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
         
         // Template name extraction helpers - extract base template names from mangled/instantiated names
@@ -831,7 +829,7 @@ private:
             const std::vector<TemplateTypeArg>& args,
             const std::vector<ASTNode>& params);  // Substitute non-type template parameter in initializer
         
-        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<StringHandle>& template_param_names, const std::vector<ASTNode>& inner_template_params = {}, const std::vector<StringHandle>& inner_template_param_names = {});  // NEW: Parse out-of-line template member function
+        std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<ASTNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<ASTNode, 4>& inner_template_params = {}, const InlineVector<StringHandle, 4>& inner_template_param_names = {});  // NEW: Parse out-of-line template member function
         bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
         bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
                 const std::vector<TypeSpecifierNode>& argument_types,
@@ -851,7 +849,7 @@ public:  // Public methods for template instantiation
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,
-		const std::vector<std::string_view>& template_param_names,
+		const InlineVector<std::string_view, 4>& template_param_names,
 		const std::vector<Type>& concrete_types,
 		StringHandle struct_name,  // Optional: for member functions
 		TypeIndex struct_type_index = 0     // Optional: for member functions
@@ -860,16 +858,16 @@ public:  // Public methods for template instantiation
 	// Substitute template parameters in an AST node with concrete types/values
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
-		const std::vector<ASTNode>& template_params,
-		const std::vector<TemplateArgument>& template_args
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args
 	);private:  // Resume private methods
 		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
 		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
 		void substituteFunctionCallExtras(
 			FunctionCallNode& new_call,
 			const FunctionCallNode& old_call,
-			const std::vector<ASTNode>& template_params,
-			const std::vector<TemplateArgument>& template_args
+			const InlineVector<ASTNode, 4>& template_params,
+			const InlineVector<TemplateTypeArg, 4>& template_args
 		);
 		void register_builtin_functions();  // Register compiler builtin functions
         ParseResult parse_block();
@@ -940,15 +938,15 @@ public:  // Public methods for template instantiation
         // Returns true if expansion was performed, false otherwise
         bool expandPackExpansionArgs(
             const PackExpansionExprNode& pack_expansion,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateArgument>& template_args,
+            const InlineVector<ASTNode, 4>& template_params,
+            const InlineVector<TemplateTypeArg, 4>& template_args,
             ChunkedVector<ASTNode>& out_args);
 
         // Phase 3: Expression context tracking for template disambiguation
         enum class ExpressionContext {
             Normal,              // Regular expression context
             Decltype,            // Inside decltype() - strictest template-first rules
-            TemplateArgument,    // Template argument context
+            TemplateTypeArg,    // Template argument context
             RequiresClause,      // Requires clause expression
             ConceptDefinition    // Concept definition context
         };
@@ -960,7 +958,7 @@ public:  // Public methods for template instantiation
         static constexpr int DEFAULT_PRECEDENCE = 2;
         // NOTE: ExpressionContext is required (no default) to prevent bugs where context
         // is accidentally not passed in recursive calls (e.g., ternary branch parsing).
-        // Use ExpressionContext::Normal for most cases; TemplateArgument when inside <...>.
+        // Use ExpressionContext::Normal for most cases; TemplateTypeArg when inside <...>.
         ParseResult parse_expression(int precedence, ExpressionContext context);
         ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }  // Wrapper for keyword map
         ParseResult parse_primary_expression(ExpressionContext context);
@@ -1033,7 +1031,7 @@ public:  // Public methods for template instantiation
             StructDeclarationNode& struct_ref,
             StructTypeInfo* struct_info,
             AccessSpecifier current_access,
-            const std::vector<StringHandle>& current_template_param_names
+            const InlineVector<StringHandle, 4>& current_template_param_names
         );
         
         // Helper to parse entire static member block (data or function) - reduces code duplication
@@ -1042,7 +1040,7 @@ public:  // Public methods for template instantiation
             StructDeclarationNode& struct_ref,
             StructTypeInfo* struct_info,
             AccessSpecifier current_access,
-            const std::vector<StringHandle>& current_template_param_names,
+            const InlineVector<StringHandle, 4>& current_template_param_names,
             bool use_struct_type_info = false  // If true, use struct_type_info.getStructInfo() for data members
         );
         
@@ -1134,14 +1132,8 @@ public:  // Public methods for template instantiation
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
         std::pair<Type, TypeIndex> substitute_template_parameter(
             const TypeSpecifierNode& original_type,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateTypeArg>& template_args
-        );
-        // Thin shim: accepts TemplateArgument vector (task 5B).
-        std::pair<Type, TypeIndex> substitute_template_parameter(
-            const TypeSpecifierNode& original_type,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateArgument>& template_args
+            const InlineVector<ASTNode, 4>& template_params,
+            const InlineVector<TemplateTypeArg, 4>& template_args
         );
        
         // Lookup symbol with template parameter checking

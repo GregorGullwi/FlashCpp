@@ -706,9 +706,9 @@
 					// Build instantiation key
 					const TemplateFunctionDeclarationNode& template_func = template_opt->as<TemplateFunctionDeclarationNode>();
 					
-					std::vector<TemplateArgument> template_args;
+					InlineVector<TemplateTypeArg, 4> template_args;
 					for (const auto& [arg_type, arg_type_index] : arg_types) {
-						template_args.push_back(TemplateArgument::makeType(arg_type, arg_type_index));
+						template_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
 					}
 					
 					// Check if we already have this instantiation
@@ -723,7 +723,7 @@
 								template_func.requires_clause()->as<RequiresClauseNode>();
 							
 							// Get template parameter names for evaluation
-							std::vector<std::string_view> eval_param_names;
+							InlineVector<std::string_view, 4> eval_param_names;
 							for (const auto& tparam_node : template_func.template_parameters()) {
 								if (tparam_node.is<TemplateParameterNode>()) {
 									eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
@@ -731,7 +731,7 @@
 							}
 							
 							// Convert arg_types to TemplateTypeArg for evaluation
-							std::vector<TemplateTypeArg> type_args;
+							InlineVector<TemplateTypeArg, 4> type_args;
 							for (const auto& [arg_type, arg_type_index] : arg_types) {
 								TemplateTypeArg type_arg;
 								type_arg.base_type = arg_type;
@@ -773,7 +773,7 @@
 						}
 						
 						// Get template parameter names
-						std::vector<std::string_view> param_names;
+						InlineVector<std::string_view, 4> param_names;
 						for (const auto& tparam_node : template_func.template_parameters()) {
 							if (tparam_node.is<TemplateParameterNode>()) {
 								param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
@@ -928,24 +928,24 @@
 					// This is a member function template - use the mangled name
 					
 					// Deduce template arguments from call arguments
-					std::vector<TemplateArgument> template_args;
+					InlineVector<TemplateTypeArg, 4> template_args;
 					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 						if (!argument.is<ExpressionNode>()) return;
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 						
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							template_args.push_back(TemplateArgument::makeType(Type::Bool));
+							template_args.push_back(TemplateTypeArg::makeType(Type::Bool));
 						} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
-							template_args.push_back(TemplateArgument::makeType(lit.type()));
+							template_args.push_back(TemplateTypeArg::makeType(lit.type()));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 							auto symbol_opt = symbol_table.lookup(ident.name());
 							if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 								const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 								const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
-								template_args.push_back(TemplateArgument::makeType(type.type()));
+								template_args.push_back(TemplateTypeArg::makeType(type.type()));
 							}
 						}
 					});

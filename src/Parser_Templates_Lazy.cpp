@@ -132,7 +132,7 @@ if (param_decl.has_default_value()) {
 		
 		// Set up template parameter types in the type system for body parsing
 		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<StringHandle> param_names;
+		InlineVector<StringHandle, 4> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
@@ -199,13 +199,13 @@ if (param_decl.has_default_value()) {
 
 	// Substitute template parameters in the function body
 	if (body_to_substitute.has_value()) {
-		// Convert TemplateTypeArg vector to TemplateArgument vector
-		std::vector<TemplateArgument> converted_template_args;
+		// Build template argument vector for registration
+		std::vector<TemplateTypeArg> converted_template_args;
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
 			} else {
-				converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type, ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
 			}
 		}
 
@@ -326,8 +326,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	if (lazy_info.needs_substitution && lazy_info.initializer.has_value() && 
 	    lazy_info.initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
-		const std::vector<ASTNode>& template_params = lazy_info.template_params;
-		const std::vector<TemplateTypeArg>& template_args = lazy_info.template_args;
+		const auto& template_params = lazy_info.template_params;
+		const auto& template_args = lazy_info.template_args;
 		
 		// Helper to calculate pack size for substitution
 		auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {

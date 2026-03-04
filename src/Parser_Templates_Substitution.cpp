@@ -1,7 +1,7 @@
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
-	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateArgument>& template_args
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
 	// Helper function to get type name as string
 	auto get_type_name = [](Type type) -> std::string_view {
@@ -40,29 +40,29 @@ ASTNode Parser::substituteTemplateParameters(
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == param_name) {
-					const TemplateArgument& arg = template_args[i];
+					const TemplateTypeArg& arg = template_args[i];
 
 					// When a non-type param (e.g., _Size) receives a Type argument due to
 					// dependent expressions like sizeof(_Tp), skip the substitution to avoid
 					// creating broken identifiers like "user_defined".
-					if (tparam.kind() == TemplateParameterKind::NonType && arg.kind != TemplateArgument::Kind::Value) {
+					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value) {
 						break;  // Leave unsubstituted
 					}
 
-					if (arg.kind == TemplateArgument::Kind::Type) {
+					if (arg.isTypeArgument()) {
 						// Create an identifier node for the concrete type
-						Token type_token(Token::Type::Identifier, get_type_name(arg.type_value),
+						Token type_token(Token::Type::Identifier, get_type_name(arg.base_type),
 						                tparam_ref.token().line(), tparam_ref.token().column(),
 						                tparam_ref.token().file_index());
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
-					} else if (arg.kind == TemplateArgument::Kind::Value) {
+					} else if (arg.is_value) {
 						// Create a numeric literal node for the value with the correct type
-						Type value_type = arg.value_type;
+						Type value_type = arg.base_type;
 						int size_bits = get_type_size_bits(value_type);
-						Token value_token(Token::Type::Literal, StringBuilder().append(arg.int_value).commit(),
+						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
 						                 tparam_ref.token().line(), tparam_ref.token().column(),
 						                 tparam_ref.token().file_index());
-						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), value_type, TypeQualifier::None, size_bits));
+						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
 					}
 					// For template template parameters, not yet supported
 					break;
@@ -83,23 +83,23 @@ ASTNode Parser::substituteTemplateParameters(
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == id_name) {
-					const TemplateArgument& arg = template_args[i];
+					const TemplateTypeArg& arg = template_args[i];
 					
 					// Skip substitution when non-type param gets a dependent Type argument
-					if (tparam.kind() == TemplateParameterKind::NonType && arg.kind != TemplateArgument::Kind::Value) {
+					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value) {
 						break;  // Leave unsubstituted
 					}
 					
-					if (arg.kind == TemplateArgument::Kind::Type) {
+					if (arg.isTypeArgument()) {
 						// Create an identifier node for the concrete type
-						Token type_token(Token::Type::Identifier, get_type_name(arg.type_value), 0, 0, 0);
+						Token type_token(Token::Type::Identifier, get_type_name(arg.base_type), 0, 0, 0);
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
-					} else if (arg.kind == TemplateArgument::Kind::Value) {
+					} else if (arg.is_value) {
 						// Create a numeric literal node for the value with the correct type
-						Type value_type = arg.value_type;
+						Type value_type = arg.base_type;
 						int size_bits = get_type_size_bits(value_type);
-						Token value_token(Token::Type::Literal, StringBuilder().append(arg.int_value).commit(), 0, 0, 0);
-						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), value_type, TypeQualifier::None, size_bits));
+						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
+						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
 					}
 					break;
 				}
@@ -146,9 +146,9 @@ ASTNode Parser::substituteTemplateParameters(
 								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
 								if (tparam.name() == arg_type_name) {
 									// Substitute with the concrete type
-									const TemplateArgument& concrete_arg = template_args[p];
-									if (concrete_arg.kind == TemplateArgument::Kind::Type) {
-										arg.base_type = concrete_arg.type_value;
+									const TemplateTypeArg& concrete_arg = template_args[p];
+									if (concrete_arg.isTypeArgument()) {
+										arg.base_type = concrete_arg.base_type;
 										arg.type_index = concrete_arg.type_index;
 										arg.is_dependent = false;
 										any_substituted = true;
@@ -221,18 +221,18 @@ ASTNode Parser::substituteTemplateParameters(
 				// Build concrete template arguments from the substitution context
 				std::vector<TemplateTypeArg> inst_args;
 				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-					const TemplateArgument& arg = template_args[i];
-					if (arg.kind == TemplateArgument::Kind::Type) {
+					const TemplateTypeArg& arg = template_args[i];
+					if (arg.isTypeArgument()) {
 						TemplateTypeArg type_arg;
-						type_arg.base_type = arg.type_value;
+						type_arg.base_type = arg.base_type;
 						type_arg.type_index = arg.type_index;
 						type_arg.is_value = false;
 						inst_args.push_back(type_arg);
-					} else if (arg.kind == TemplateArgument::Kind::Value) {
+					} else if (arg.is_value) {
 						TemplateTypeArg val_arg;
 						val_arg.is_value = true;
-						val_arg.value = arg.int_value;
-						val_arg.base_type = arg.value_type;
+						val_arg.value = arg.value;
+						val_arg.base_type = arg.base_type;
 						inst_args.push_back(val_arg);
 					}
 				}
@@ -350,11 +350,11 @@ ASTNode Parser::substituteTemplateParameters(
 				for (size_t i = 0; i < num_pack_elements; ++i) {
 					// Create a single-element template params/args pair for the variadic parameter
 					std::vector<ASTNode> single_param = { template_params[variadic_param_idx] };
-					std::vector<TemplateArgument> single_arg = { template_args[non_variadic_count + i] };
+					std::vector<TemplateTypeArg> single_arg = { template_args[non_variadic_count + i] };
 					
 					// Also include the non-variadic parameters so they get substituted too
 					std::vector<ASTNode> subst_params;
-					std::vector<TemplateArgument> subst_args;
+					std::vector<TemplateTypeArg> subst_args;
 					for (size_t p = 0; p < template_params.size(); ++p) {
 						if (template_params[p].is<TemplateParameterNode>()) {
 							const auto& tparam = template_params[p].as<TemplateParameterNode>();
@@ -404,8 +404,8 @@ ASTNode Parser::substituteTemplateParameters(
 						bool all_values = true;
 						std::vector<int64_t> pack_int_values;
 						for (size_t i = non_variadic_count; i < template_args.size(); ++i) {
-							if (template_args[i].kind == TemplateArgument::Kind::Value) {
-								pack_int_values.push_back(template_args[i].int_value);
+							if (template_args[i].is_value) {
+								pack_int_values.push_back(template_args[i].value);
 							} else {
 								all_values = false;
 								break;
@@ -761,11 +761,11 @@ ASTNode Parser::substituteTemplateParameters(
 						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 							if (tparam.name() == type_name) {
-								const TemplateArgument& arg = template_args[i];
+								const TemplateTypeArg& arg = template_args[i];
 								
-								if (arg.kind == TemplateArgument::Kind::Type) {
+								if (arg.isTypeArgument()) {
 									// Get the size of the concrete type in bytes
-									size_t type_size = get_type_size_bits(arg.type_value) / 8;
+									size_t type_size = get_type_size_bits(arg.base_type) / 8;
 									
 									// Create an integer literal with the type size
 									StringBuilder size_builder;
@@ -858,12 +858,12 @@ ASTNode Parser::substituteTemplateParameters(
 			// Check if this type name matches a template parameter
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.name() == type_name && template_args[i].kind == TemplateArgument::Kind::Type) {
+				if (tparam.name() == type_name && template_args[i].isTypeArgument()) {
 					// Substitute with concrete type
 					return emplace_node<TypeSpecifierNode>(
-						template_args[i].type_value,
+						template_args[i].base_type,
 						TypeQualifier::None,
-						get_type_size_bits(template_args[i].type_value),
+						get_type_size_bits(template_args[i].base_type),
 						Token()
 					);
 				}
@@ -1127,8 +1127,8 @@ static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 // then template parameters are substituted.
 bool Parser::expandPackExpansionArgs(
 	const PackExpansionExprNode& pack_expansion,
-	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateArgument>& template_args,
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
 	ChunkedVector<ASTNode>& out_args) {
 
 	const ASTNode& pattern = pack_expansion.pattern();
@@ -1165,7 +1165,7 @@ bool Parser::expandPackExpansionArgs(
 	for (size_t pi = 0; pi < num_pack_elements; ++pi) {
 		// Build substitution params for this single pack element
 		std::vector<ASTNode> subst_params;
-		std::vector<TemplateArgument> subst_args;
+		std::vector<TemplateTypeArg> subst_args;
 		for (size_t p = 0; p < template_params.size(); ++p) {
 			if (!template_params[p].is<TemplateParameterNode>()) continue;
 			const auto& tparam = template_params[p].as<TemplateParameterNode>();
@@ -1301,8 +1301,8 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 void Parser::substituteFunctionCallExtras(
 FunctionCallNode& new_call,
 const FunctionCallNode& old_call,
-const std::vector<ASTNode>& template_params,
-const std::vector<TemplateArgument>& template_args
+const InlineVector<ASTNode, 4>& template_params,
+const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
 if (old_call.has_mangled_name()) {
 new_call.set_mangled_name(old_call.mangled_name());

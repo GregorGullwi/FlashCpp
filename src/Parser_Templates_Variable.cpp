@@ -13,19 +13,12 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	std::vector<ASTNode> template_params;
-	std::vector<StringHandle> template_param_names;
+	InlineVector<ASTNode, 4> template_params;
+	InlineVector<StringHandle, 4> template_param_names;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
 		return param_list_result;
-	}
-
-	// Extract parameter names for later lookup
-	for (const auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
-		}
 	}
 
 	// Expect '>' to close template parameter list
@@ -34,13 +27,14 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	}
 	advance(); // consume '>'
 
-	// Temporarily add template parameters to type system using RAII scope guard
+	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			template_param_names.push_back(tparam.nameHandle());
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
+				auto& type_info = add_user_type(tparam.nameHandle(), 0);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -143,18 +137,24 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	}
 	advance(); // consume '<'
 	
-	std::vector<ASTNode> template_params;
-	std::vector<std::string_view> template_param_names;
+	InlineVector<ASTNode, 4> template_params;
+	InlineVector<std::string_view, 4> template_param_names;
 	
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
 		return param_list_result;
 	}
 	
-	// Extract parameter names
+	// Extract parameter names and register type parameters in one pass
+	FlashCpp::TemplateParameterScope template_scope;
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			template_param_names.push_back(param.as<TemplateParameterNode>().name());
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			template_param_names.push_back(tparam.name());
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				auto& type_info = add_user_type(tparam.nameHandle(), 0);
+				template_scope.addParameter(&type_info);
+			}
 		}
 	}
 	
@@ -163,18 +163,6 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 		return ParseResult::error("Expected '>' after template parameter list", current_token_);
 	}
 	advance(); // consume '>'
-	
-	// Temporarily add template parameters to type system using RAII scope guard
-	FlashCpp::TemplateParameterScope template_scope;
-	for (const auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
-				template_scope.addParameter(&type_info);
-			}
-		}
-	}
 	
 	// Parse storage class specifiers (static, constexpr, inline, etc.)
 	bool is_constexpr = false;

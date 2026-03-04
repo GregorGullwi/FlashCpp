@@ -56,10 +56,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 			break;
 		}
 		
-		// In TemplateArgument context, stop at '>' and ',' as they delimit template arguments
+		// In TemplateTypeArg context, stop at '>' and ',' as they delimit template arguments
 		// This allows parsing expressions like "T::value || X::value" while stopping at the
 		// template argument delimiter
-		if (context == ExpressionContext::TemplateArgument) {
+		if (context == ExpressionContext::TemplateTypeArg) {
 			if (peek() == ">"_tok || peek() == ">>"_tok) {
 				break;  // Stop at template closing bracket
 			}
@@ -76,7 +76,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		// 
 		// Context-aware rules:
 		// - Decltype context: strongly prefer template arguments (strictest)
-		// - TemplateArgument context: prefer template arguments
+		// - TemplateTypeArg context: prefer template arguments
 		// - RequiresClause context: prefer template arguments
 		// - Normal context: use regular disambiguation
 		if (is_operator && peek() == "<"_tok && result.node().has_value()) {
@@ -124,19 +124,19 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 				           std::holds_alternative<MemberAccessNode>(expr)) {
 					// For qualified identifiers like R1<T>::num or member access expressions,
 					// we need to check if the final member could be a template.
-					// In TemplateArgument context, patterns like _R1::num < _R2::num> should be
+					// In TemplateTypeArg context, patterns like _R1::num < _R2::num> should be
 					// parsed as comparisons, not as _R1::num<_R2::num> (template instantiation).
 					// 
 					// The key insight is: for dependent member access (where the base is a template
 					// parameter), the member is likely a static data member, not a member template.
 					// Even if could_be_template_arguments() succeeds (because _R2::num> looks like
 					// valid template arguments), we should prefer treating < as comparison in
-					// TemplateArgument context.
+					// TemplateTypeArg context.
 					//
 					// Strategy:
 					// 1. Extract the final member name from the qualified identifier
 					// 2. Check if it's a known template (class or variable template)
-					// 3. If not a known template AND we're in TemplateArgument context,
+					// 3. If not a known template AND we're in TemplateTypeArg context,
 					//    treat < as comparison operator
 					
 					std::string_view member_name;
@@ -156,15 +156,15 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					if (template_opt.has_value() || var_template_opt.has_value() || alias_template_opt.has_value()) {
 						// Member is a known template, allow template argument parsing
 						could_be_template_name = true;
-					} else if (context == ExpressionContext::TemplateArgument) {
+					} else if (context == ExpressionContext::TemplateTypeArg) {
 						// Member is NOT a known template and we're parsing template arguments
 						// This is likely a pattern like: integral_constant<bool, _R1::num < _R2::num>
 						// where < is a comparison operator, not template arguments
-						FLASH_LOG(Parser, Debug, "In TemplateArgument context, member '", member_name, 
+						FLASH_LOG(Parser, Debug, "In TemplateTypeArg context, member '", member_name, 
 						          "' is not a known template - treating '<' as comparison operator");
 						could_be_template_name = false;
 					} else {
-						// Not in TemplateArgument context, be conservative and allow template parsing
+						// Not in TemplateTypeArg context, be conservative and allow template parsing
 						could_be_template_name = true;
 					}
 				} else {
@@ -986,7 +986,7 @@ bool Parser::parse_static_member_function(
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
-	const std::vector<StringHandle>& current_template_param_names
+	const InlineVector<StringHandle, 4>& current_template_param_names
 ) {
 	// Check if this is a function (has '(')
 	if (peek() != "("_tok) {
@@ -1155,7 +1155,7 @@ ParseResult Parser::parse_static_member_block(
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
-	const std::vector<StringHandle>& current_template_param_names,
+	const InlineVector<StringHandle, 4>& current_template_param_names,
 	bool use_struct_type_info
 ) {
 	// consume "static" already done by caller

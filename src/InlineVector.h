@@ -32,6 +32,52 @@ class InlineVector {
 public:
 	InlineVector() = default;
 	
+	// Construct from std::vector (enables seamless migration)
+	InlineVector(const std::vector<T>& vec) {
+		reserve(vec.size());
+		for (const auto& item : vec) {
+			push_back(item);
+		}
+	}
+	
+	// Move-construct from std::vector
+	InlineVector(std::vector<T>&& vec) {
+		reserve(vec.size());
+		for (auto& item : vec) {
+			push_back(std::move(item));
+		}
+	}
+	
+	// Assignment from std::vector
+	InlineVector& operator=(const std::vector<T>& vec) {
+		clear();
+		reserve(vec.size());
+		for (const auto& item : vec) {
+			push_back(item);
+		}
+		return *this;
+	}
+	
+	// Move-assignment from std::vector
+	InlineVector& operator=(std::vector<T>&& vec) {
+		clear();
+		reserve(vec.size());
+		for (auto& item : vec) {
+			push_back(std::move(item));
+		}
+		return *this;
+	}
+	
+	// Implicit conversion to std::vector (enables seamless migration)
+	operator std::vector<T>() const {
+		std::vector<T> result;
+		result.reserve(size());
+		for (size_t i = 0; i < size(); ++i) {
+			result.push_back((*this)[i]);
+		}
+		return result;
+	}
+	
 	// Copy constructor
 	InlineVector(const InlineVector& other) 
 		: inline_count_(other.inline_count_), overflow_(other.overflow_) {
@@ -44,7 +90,7 @@ public:
 	InlineVector(InlineVector&& other) noexcept
 		: inline_count_(other.inline_count_), overflow_(std::move(other.overflow_)) {
 		for (size_t i = 0; i < inline_count_; ++i) {
-			inline_data_[i] = other.inline_data_[i];
+			inline_data_[i] = std::move(other.inline_data_[i]);
 		}
 		other.inline_count_ = 0;
 	}
@@ -67,7 +113,7 @@ public:
 			inline_count_ = other.inline_count_;
 			overflow_ = std::move(other.overflow_);
 			for (size_t i = 0; i < inline_count_; ++i) {
-				inline_data_[i] = other.inline_data_[i];
+				inline_data_[i] = std::move(other.inline_data_[i]);
 			}
 			other.inline_count_ = 0;
 		}
@@ -181,8 +227,20 @@ public:
 		iterator_impl& operator--() { --idx_; return *this; }
 		iterator_impl operator--(int) { iterator_impl tmp = *this; --idx_; return tmp; }
 		
+		iterator_impl operator+(difference_type n) const { return iterator_impl(vec_, idx_ + n); }
+		friend iterator_impl operator+(difference_type n, const iterator_impl& it) { return iterator_impl(it.vec_, it.idx_ + n); }
+		iterator_impl operator-(difference_type n) const { return iterator_impl(vec_, idx_ - n); }
+		difference_type operator-(const iterator_impl& other) const { return static_cast<difference_type>(idx_) - static_cast<difference_type>(other.idx_); }
+		iterator_impl& operator+=(difference_type n) { idx_ += n; return *this; }
+		iterator_impl& operator-=(difference_type n) { idx_ -= n; return *this; }
+		reference operator[](difference_type n) const { return (*vec_)[idx_ + n]; }
+		
 		bool operator==(const iterator_impl& other) const { return vec_ == other.vec_ && idx_ == other.idx_; }
 		bool operator!=(const iterator_impl& other) const { return vec_ != other.vec_ || idx_ != other.idx_; }
+		bool operator<(const iterator_impl& other) const { return idx_ < other.idx_; }
+		bool operator>(const iterator_impl& other) const { return idx_ > other.idx_; }
+		bool operator<=(const iterator_impl& other) const { return idx_ <= other.idx_; }
+		bool operator>=(const iterator_impl& other) const { return idx_ >= other.idx_; }
 		
 	private:
 		vec_type vec_;

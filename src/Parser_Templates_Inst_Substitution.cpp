@@ -1,8 +1,3 @@
-// Thin shim: get_instantiated_class_name using TemplateArgument vector (task 5B).
-std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateArgument>& template_args) {
-	return get_instantiated_class_name(template_name, buildTemplateTypeArgVector(template_args));
-}
-
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		template_name = template_name.substr(last_colon + 2);
@@ -95,7 +90,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 		auto primary_template_opt = gTemplateRegistry.lookupTemplate(base_class_name);
 		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
 			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
-			const std::vector<ASTNode>& primary_params = primary_template.template_parameters();
+			const auto& primary_params = primary_template.template_parameters();
 			
 			// Fill in defaults for missing arguments
 			std::vector<TemplateTypeArg> filled_args = template_args;
@@ -472,14 +467,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Build deduced args from the structural match substitutions.
 				// TemplatePattern::matches() already deduced T→int by stripping
 				// pattern qualifiers, so we use those substitutions directly.
-				std::vector<TemplateArgument> converted_args;
+				std::vector<TemplateTypeArg> converted_args;
 				converted_args.reserve(spec_params.size());
 				for (const auto& param : spec_params) {
 					if (param.is<TemplateParameterNode>()) {
 						const TemplateParameterNode& tp = param.as<TemplateParameterNode>();
 						auto it = structural_match->substitutions.find(tp.nameHandle());
 						if (it != structural_match->substitutions.end()) {
-							converted_args.push_back(toTemplateArgument(it->second));
+							converted_args.push_back(it->second);
 						} else {
 							// Fallback: use resolved arg with qualifiers stripped
 							if (converted_args.size() < resolved_args.size()) {
@@ -490,7 +485,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 								deduced.pointer_depth = 0;
 								deduced.pointer_cv_qualifiers.clear();
 								deduced.is_array = false;
-								converted_args.push_back(toTemplateArgument(deduced));
+								converted_args.push_back(deduced);
 							} else {
 								FLASH_LOG(Templates, Warning, "Cannot deduce param '",
 								          tp.name(), "': no substitution and no remaining args");
@@ -545,7 +540,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	}
 	
 	// Perform template substitution
-	const std::vector<ASTNode>& template_params = var_template.template_parameters();
+	const auto& template_params = var_template.template_parameters();
 	if (resolved_args.size() != template_params.size()) {
 		FLASH_LOG(Templates, Error, "Template argument count mismatch: expected ", template_params.size(), 
 		          ", got ", resolved_args.size());

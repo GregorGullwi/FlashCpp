@@ -363,7 +363,7 @@ public:
 	// Overload that accepts template parameters (eliminates global callback)
 	std::optional<ASTNode> lookup(StringHandle identifier, 
 								 ScopeHandle scope_limit_handle,
-								 const std::vector<StringHandle>* template_params) const {
+								 const InlineVector<StringHandle, 4>* template_params) const {
 		// Check if this is a template parameter
 		if (template_params) {
 			auto it = std::find(template_params->begin(), template_params->end(), identifier);

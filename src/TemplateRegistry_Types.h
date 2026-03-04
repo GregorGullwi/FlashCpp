@@ -95,7 +95,7 @@ enum class MemberPointerKind : uint8_t {
  *    - Use when you need a simple container for type and value information
  *    - Distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
  * 
- * 2. TemplateArgument: For function template deduction and instantiation tracking
+ * 2. TemplateTypeArg: For function template deduction and instantiation tracking
  *    - Supports Type, Value, and Template template parameters (Kind enum)
  *    - Has both legacy (type_value) and modern (type_specifier) type representation
  *    - Includes TypeIndex for complex types (added in consolidation Task 2)
@@ -108,20 +108,9 @@ enum class MemberPointerKind : uint8_t {
  *    - Most comprehensive - used by substitute_template_parameter()
  *    - Use for: pattern matching, specialization selection, template instantiation
  * 
- * Conversion Functions:
- *   - toTemplateTypeArg(TemplateArgument) -> TemplateTypeArg
- *   - toTemplateArgument(TemplateTypeArg) -> TemplateArgument
- *   These provide explicit, type-safe conversions preserving all type information
- * 
- * Design Rationale:
- *   - Keeping types separate maintains clarity of purpose
- *   - TemplateTypeArg's complexity not needed in all contexts
- *   - TemplateArgument's template template parameter support not needed in TemplateTypeArg
- *   - Conversion functions make interoperability straightforward
- * 
  * History:
- *   - Original: Duplicate TemplateArgument in TemplateRegistry.h and InstantiationQueue.h
- *   - Consolidation (Tasks 1-4): Unified into single TemplateArgument with TypeIndex support
+ *   - Original: Duplicate TemplateTypeArg in TemplateRegistry.h and InstantiationQueue.h
+ *   - Consolidation (Tasks 1-4): Unified into single TemplateTypeArg with TypeIndex support
  *   - See docs/TEMPLATE_ARGUMENT_CONSOLIDATION_PLAN.md for full details
  */
 
@@ -194,6 +183,7 @@ struct TemplateTypeArg {
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
+	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
 	TemplateTypeArg()
 		: base_type(Type::Invalid)
@@ -270,6 +260,58 @@ struct TemplateTypeArg {
 		, is_template_template_arg(false)
 		, template_name_handle() {}
 	
+	// Factory methods (match the former TemplateTypeArg API)
+	static TemplateTypeArg makeType(Type t, TypeIndex idx = 0) {
+		TemplateTypeArg arg;
+		arg.base_type = t;
+		arg.type_index = idx;
+		return arg;
+	}
+	
+	static TemplateTypeArg makeTypeSpecifier(const TypeSpecifierNode& ts) {
+		return TemplateTypeArg(ts);  // delegate to existing constructor
+	}
+	
+	static TemplateTypeArg makeValue(int64_t v, Type type = Type::Int) {
+		return TemplateTypeArg(v, type);
+	}
+	
+	static TemplateTypeArg makeTemplate(StringHandle name) {
+		TemplateTypeArg arg;
+		arg.is_template_template_arg = true;
+		arg.template_name_handle = name;
+		return arg;
+	}
+	
+	// Hash for use in maps (used by InstantiationQueue and SpecializationKey)
+	size_t hash() const {
+		// Normalize Bool/Int to Int to match operator== which treats them as interchangeable
+		// for value parameters. This maintains the invariant: a == b → hash(a) == hash(b).
+		Type effective_type = (is_value && (base_type == Type::Bool || base_type == Type::Int))
+		    ? Type::Int : base_type;
+		size_t h = std::hash<int>{}(static_cast<int>(effective_type));
+		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
+			h ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (array_size.has_value()) {
+			h ^= std::hash<size_t>{}(*array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (is_value) {
+			h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		h ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (is_template_template_arg) {
+			h ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		return h;
+	}
+	
 	bool operator==(const TemplateTypeArg& other) const {
 		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
 		// For primitive types like int, float, etc., the type_index should be ignored
@@ -305,7 +347,9 @@ struct TemplateTypeArg {
 		       array_size == other.array_size &&
 		       member_pointer_kind == other.member_pointer_kind &&
 		       is_value == other.is_value &&
-		       (!is_value || value == other.value);  // Only compare value if it's a value
+		       (!is_value || value == other.value) &&  // Only compare value if it's a value
+		       is_template_template_arg == other.is_template_template_arg &&
+		       (!is_template_template_arg || template_name_handle == other.template_name_handle);
 	}
 
 	// Helper method to check if this is a parameter pack
@@ -407,7 +451,10 @@ struct TemplateTypeArg {
 	// Uses the same hash algorithm as TemplateTypeArgHash for consistency
 	std::string toHashString() const {
 		// Compute hash using the same algorithm as TemplateTypeArgHash
-		size_t hash = std::hash<int>{}(static_cast<int>(base_type));
+		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
+		Type effective_type = (is_value && (base_type == Type::Bool || base_type == Type::Int))
+		    ? Type::Int : base_type;
+		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
 		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
 			hash ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
@@ -423,6 +470,10 @@ struct TemplateTypeArg {
 		if (is_value) {
 			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
+		hash ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		if (is_template_template_arg) {
+			hash ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
 		
 		// Convert to hex string
 		char buf[17];
@@ -434,7 +485,10 @@ struct TemplateTypeArg {
 // Hash function for TemplateTypeArg
 struct TemplateTypeArgHash {
 	size_t operator()(const TemplateTypeArg& arg) const {
-		size_t hash = std::hash<int>{}(static_cast<int>(arg.base_type));
+		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
+		Type effective_type = (arg.is_value && (arg.base_type == Type::Bool || arg.base_type == Type::Int))
+		    ? Type::Int : arg.base_type;
+		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
 		// Only include type_index in hash for user-defined types (to match operator==)
 		if (arg.base_type == Type::Struct || arg.base_type == Type::Enum || arg.base_type == Type::UserDefined) {
 			hash ^= std::hash<size_t>{}(arg.type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -450,6 +504,10 @@ struct TemplateTypeArgHash {
 		hash ^= std::hash<bool>{}(arg.is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (arg.is_value) {
 			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		if (arg.is_template_template_arg) {
+			hash ^= std::hash<StringHandle>{}(arg.template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		// NOTE: is_pack is intentionally NOT included in the hash to match operator==
 		return hash;

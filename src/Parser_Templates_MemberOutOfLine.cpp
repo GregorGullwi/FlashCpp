@@ -1,8 +1,8 @@
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
-	const std::vector<ASTNode>& template_params,
-	const std::vector<StringHandle>& template_param_names,
-	const std::vector<ASTNode>& inner_template_params,
-	const std::vector<StringHandle>& inner_template_param_names) {
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<StringHandle, 4>& template_param_names,
+	const InlineVector<ASTNode, 4>& inner_template_params,
+	const InlineVector<StringHandle, 4>& inner_template_param_names) {
 
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
@@ -763,7 +763,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 // This is called during code generation to instantiate member function templates
 std::optional<ASTNode> Parser::parseTemplateBody(
 	SaveHandle body_pos,
-	const std::vector<std::string_view>& template_param_names,
+	const InlineVector<std::string_view, 4>& template_param_names,
 	const std::vector<Type>& concrete_types,
 	StringHandle struct_name,
 	TypeIndex struct_type_index

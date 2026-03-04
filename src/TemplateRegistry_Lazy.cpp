@@ -13,8 +13,8 @@ struct LazyMemberFunctionInfo {
 	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "vector_int")
 	StringHandle member_function_name;         // Member function name
 	ASTNode original_function_node;            // Original function from template
-	std::vector<ASTNode> template_params;      // Template parameters from class template
-	std::vector<TemplateTypeArg> template_args; // Concrete template arguments used for instantiation
+	InlineVector<ASTNode, 4> template_params;      // Template parameters from class template
+	InlineVector<TemplateTypeArg, 4> template_args; // Concrete template arguments used for instantiation
 	AccessSpecifier access;                    // Access specifier (public/private/protected)
 	bool is_virtual;                           // Virtual function flag
 	bool is_pure_virtual;                      // Pure virtual flag
@@ -1055,8 +1055,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 // Evaluates constraints and provides detailed error messages when they fail
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ASTNode& constraint_expr, 
-	const std::vector<TemplateTypeArg>& template_args,
-	const std::vector<std::string_view>& template_param_names = {}) {
+	const InlineVector<TemplateTypeArg, 4>& template_args,
+	const InlineVector<std::string_view, 4>& template_param_names = {}) {
 	
 	FLASH_LOG(Templates, Debug, "evaluateConstraint: constraint type=", constraint_expr.type_name(), ", template_args.size()=", template_args.size());
 	for (size_t i = 0; i < template_param_names.size(); ++i) {
@@ -1574,10 +1574,4 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	return ConstraintEvaluationResult::success();
 }
 
-// Thin shim: evaluate constraint using TemplateArgument vector (task 5B).
-inline ConstraintEvaluationResult evaluateConstraint(
-	const ASTNode& constraint_expr,
-	const std::vector<TemplateArgument>& template_args,
-	const std::vector<std::string_view>& template_param_names = {}) {
-	return evaluateConstraint(constraint_expr, buildTemplateTypeArgVector(template_args), template_param_names);
-}
+

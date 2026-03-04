@@ -33,13 +33,13 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
-	const std::vector<ASTNode>& template_params = template_func.template_parameters();
+	const auto& template_params = template_func.template_parameters();
 	if (arg_types.empty()) {
 		return std::nullopt;  // Can't deduce without arguments
 	}
 
 	// Build template argument list
-	std::vector<TemplateArgument> template_args;
+	std::vector<TemplateTypeArg> template_args;
 	
 	// Deduce template parameters in order from function arguments
 	size_t arg_index = 0;
@@ -52,11 +52,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		} else if (param.kind() == TemplateParameterKind::Type) {
 			if (arg_index < arg_types.size()) {
-				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type(), arg_types[arg_index].type_index()));
+				template_args.push_back(TemplateTypeArg::makeType(arg_types[arg_index].type(), arg_types[arg_index].type_index()));
 				arg_index++;
 			} else {
 				// Not enough arguments - use first argument type
-				template_args.push_back(TemplateArgument::makeType(arg_types[0].type(), arg_types[0].type_index()));
+				template_args.push_back(TemplateTypeArg::makeType(arg_types[0].type(), arg_types[0].type_index()));
 			}
 		} else {
 			// Non-type parameter - not yet supported
@@ -199,14 +199,10 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 
 		const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
-		const std::vector<ASTNode>& template_params = template_func.template_parameters();
+		const auto& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
-		// Convert TemplateTypeArg to TemplateArgument (preserving type_index for struct types)
-		std::vector<TemplateArgument> template_args;
-		for (const auto& type_arg : template_type_args) {
-			template_args.push_back(toTemplateArgument(type_arg));
-		}
+		const auto& template_args = template_type_args;
 
 		// Check if we already have this instantiation
 		auto key = FlashCpp::makeInstantiationKey(qualified_name, template_args);
@@ -269,11 +265,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	std::string_view struct_name, std::string_view member_name,
 	StringHandle qualified_name,
 	const ASTNode& template_node,
-	const std::vector<TemplateArgument>& template_args,
+	const std::vector<TemplateTypeArg>& template_args,
 	const FlashCpp::TemplateInstantiationKey& key) {
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
-	const std::vector<ASTNode>& template_params = template_func.template_parameters();
+	const auto& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
 
@@ -295,7 +291,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			if (auto_param_index < template_args.size()) {
 				const auto& arg = template_args[auto_param_index];
 				auto_param_index++;
-				return { arg.type_value, arg.type_index };
+				return { arg.base_type, arg.type_index };
 			}
 			return { type, type_index };
 		}
@@ -307,7 +303,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			for (size_t i = 0; i < template_params.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == tn && i < template_args.size()) {
-					return { template_args[i].type_value, template_args[i].type_index };
+					return { template_args[i].base_type, template_args[i].type_index };
 				}
 			}
 			// Check outer template params (e.g., T→int from class template)
@@ -391,7 +387,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Temporarily add the concrete types to the type system with template parameter names
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<StringHandle> param_names;
+	InlineVector<StringHandle, 4> param_names;
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
 			param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());

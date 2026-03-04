@@ -1,55 +1,17 @@
 // Helper: register type-kind template parameters as TypeInfo / gTypesByName entries so
-// that body re-parsing can resolve their names.  Kind::Value (non-type) parameters are
-// intentionally skipped: makeValue() leaves type_value uninitialized, which would
-// poison gTypesByName with an Invalid/garbage-type entry for the param name (e.g. "N").
-// Those params are already handled via template_param_substitutions_.
-// Kind::Template (template-template) parameters are also skipped: makeTemplate() only
-// sets template_name, leaving type_value indeterminate, so registering them would
-// create a garbage TypeInfo entry.
-//
-// preserve_ref_qualifier: pass true for the explicit-instantiation path where the
-//   type_specifier reference qualifier was set from the user-written explicit arg
-//   (e.g. f<int&> → T registered as int&).  Pass false for the deduction path where
-//   the type_specifier comes from the call-site argument expression's lvalue-ness,
-//   which must NOT be propagated to TypeInfo (otherwise "T tmp = a;" in a swap body
-//   would declare tmp as int& instead of int, breaking the copy).
-static void registerTypeParamsInScope(
-	const std::vector<StringHandle>& param_names,
-	const std::vector<TemplateArgument>& template_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier = false
-) {
-	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-		if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
-		if (template_args[i].kind == TemplateArgument::Kind::Template) continue;  // template-template params don't represent concrete types
-		Type concrete_type = template_args[i].type_value;
-		auto& type_info = gTypeInfo.emplace_back(
-			param_names[i],
-			concrete_type, gTypeInfo.size(),
-			getTypeSizeFromTemplateArgument(template_args[i]));
-		if (preserve_ref_qualifier && template_args[i].type_specifier.has_value()) {
-			const auto& ts = *template_args[i].type_specifier;
-			type_info.reference_qualifier_ = ts.reference_qualifier();
-		}
-		gTypesByName.emplace(type_info.name(), &type_info);
-		scope.addParameter(&type_info);
-	}
-}
-
-// Overload for TemplateTypeArg-based registration used in the declaration-reparse
-// paths (return-type and function-name re-parsing inside try_instantiate_single_template).
-// is_value entries (non-type params) are intentionally skipped for the same reason
-// as Kind::Value in the TemplateArgument overload: makeValue() leaves base_type as the
-// value-type (e.g. Type::Int for int N), so registering it as a TypeInfo entry would
-// erroneously add a type named "N" to gTypesByName and confuse subsequent type lookups.
+// that body re-parsing can resolve their names.  Non-type (value) parameters are
+// intentionally skipped: makeValue() leaves base_type as the value-type (e.g. Type::Int
+// for int N), so registering it as a TypeInfo entry would erroneously add a type named
+// "N" to gTypesByName and confuse subsequent type lookups.
+// Template-template parameters are also skipped for the same reason.
 //
 // preserve_ref_qualifier: pass true for paths where the TemplateTypeArg ref_qualifier was
 //   set from user-written explicit args or class-template instantiation args (e.g., T
 //   bound to int& from a class<int&> instantiation).  Pass false for deduction paths
 //   where lvalue-ness of the call-site argument must NOT propagate to the TypeInfo entry.
 static void registerTypeParamsInScope(
-	const std::vector<StringHandle>& param_names,
-	const std::vector<TemplateTypeArg>& type_args,
+	const InlineVector<StringHandle, 4>& param_names,
+	const InlineVector<TemplateTypeArg, 4>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier = false
 ) {
@@ -89,15 +51,15 @@ static void registerTypeParamsInScope(
 // ─────────────────────────────────────────────────────────────────────────────
 static void registerTypeParamsInScope(
 	const std::vector<ASTNode>& template_param_nodes,
-	const std::vector<TemplateArgument>& template_args,
+	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr
 ) {
 	for (size_t i = 0; i < template_param_nodes.size() && i < template_args.size(); ++i) {
 		if (!template_param_nodes[i].is<TemplateParameterNode>()) continue;
-		if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
-		if (template_args[i].kind == TemplateArgument::Kind::Template) continue;
-		Type concrete_type = template_args[i].type_value;
+		if (template_args[i].is_value) continue;
+		if (template_args[i].is_template_template_arg) continue;
+		Type concrete_type = template_args[i].base_type;
 		auto& type_info = gTypeInfo.emplace_back(
 			template_param_nodes[i].as<TemplateParameterNode>().nameHandle(),
 			concrete_type, gTypeInfo.size(),
@@ -148,13 +110,13 @@ static void registerOuterBindingInScope(
 //
 // Overload 1: TemplateTypeArg source (lazy body-reparse: param names are
 //             pre-built string_views; args already in TemplateTypeArg form).
-// Overload 2: TemplateArgument source (member-func body-reparse: template_params
-//             are ASTNodes; args are TemplateArgument).  Handles the
+// Overload 2: TemplateTypeArg source (member-func body-reparse: template_params
+//             are ASTNodes; args are TemplateTypeArg).  Handles the
 //             !is<TemplateParameterNode>() guard internally.
 // ─────────────────────────────────────────────────────────────────────────────
 void Parser::populateTemplateParamSubstitutions(
-	std::vector<TemplateParamSubstitution>& subs,
-	const std::vector<StringHandle>& param_names,
+	InlineVector<TemplateParamSubstitution, 4>& subs,
+	const InlineVector<StringHandle, 4>& param_names,
 	const std::vector<TemplateTypeArg>& type_args
 ) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
@@ -176,24 +138,24 @@ void Parser::populateTemplateParamSubstitutions(
 }
 
 void Parser::populateTemplateParamSubstitutions(
-	std::vector<TemplateParamSubstitution>& subs,
+	InlineVector<TemplateParamSubstitution, 4>& subs,
 	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateArgument>& template_args
+	const std::vector<TemplateTypeArg>& template_args
 ) {
 	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 		if (!template_params[i].is<TemplateParameterNode>()) continue;
-		const TemplateArgument& arg = template_args[i];
-		if (arg.kind == TemplateArgument::Kind::Template) continue;
+		const TemplateTypeArg& arg = template_args[i];
+		if (arg.is_template_template_arg) continue;
 		TemplateParamSubstitution subst;
 		subst.param_name = template_params[i].as<TemplateParameterNode>().nameHandle();
-		if (arg.kind == TemplateArgument::Kind::Value) {
+		if (arg.is_value) {
 			subst.is_value_param = true;
-			subst.value = arg.int_value;
-			subst.value_type = arg.value_type;
+			subst.value = arg.value;
+			subst.value_type = arg.base_type;
 		} else {
 			subst.is_value_param = false;
 			subst.is_type_param = true;
-			subst.substituted_type = toTemplateTypeArg(arg);
+			subst.substituted_type = arg;
 		}
 		subs.push_back(subst);
 	}
@@ -211,13 +173,13 @@ void Parser::populateTemplateParamSubstitutions(
 void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
-	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateArgument>& template_args,
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier)
 {
 	// Collect parameter names and register TypeInfo entries for type params.
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<StringHandle> param_names;
+	InlineVector<StringHandle, 4> param_names;
 	param_names.reserve(template_params.size());
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
@@ -351,7 +313,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	}
 
 	// Build template argument list
-	std::vector<TemplateArgument> template_args;
+	InlineVector<TemplateTypeArg, 4> template_args;
 	size_t explicit_idx = 0;  // Track position in explicit_types
 	bool overload_mismatch = false;
 	for (size_t i = 0; i < template_params.size(); ++i) {
@@ -375,12 +337,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					tpl_name_handle = arg.dependent_name;
 				}
 			}
-			template_args.push_back(TemplateArgument::makeTemplate(tpl_name_handle));
+			template_args.push_back(TemplateTypeArg::makeTemplate(tpl_name_handle));
 			++explicit_idx;
 		} else if (param.is_variadic()) {
 			// Variadic parameter pack - consume all remaining explicit types
 			for (size_t j = explicit_idx; j < explicit_types.size(); ++j) {
-				template_args.push_back(toTemplateArgument(explicit_types[j]));
+				template_args.push_back(explicit_types[j]);
 			}
 			explicit_idx = explicit_types.size();  // All types consumed
 		} else {
@@ -392,8 +354,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				overload_mismatch = true;
 				break;
 			}
-			// Use toTemplateArgument() to preserve full type info including references
-			template_args.push_back(toTemplateArgument(explicit_types[explicit_idx]));
+			template_args.push_back(explicit_types[explicit_idx]);
 			++explicit_idx;
 		}
 	}
@@ -406,7 +367,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			template_func.requires_clause()->as<RequiresClauseNode>();
 		
 		// Get template parameter names for evaluation
-		std::vector<std::string_view> eval_param_names;
+		InlineVector<std::string_view, 4> eval_param_names;
 		for (const auto& tparam_node : template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
 				eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
@@ -414,7 +375,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 		
 		// Create a copy of explicit_types with template template arg flags properly set
-		std::vector<TemplateTypeArg> constraint_eval_args;
+		InlineVector<TemplateTypeArg, 4> constraint_eval_args;
 		size_t constraint_idx = 0;
 		for (size_t i = 0; i < template_params.size() && constraint_idx < explicit_types.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) continue;
@@ -490,8 +451,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					// Strip lvalue reference that deduction adds for lvalue arguments.
 					TemplateTypeArg concept_arg = explicit_types[arg_idx];
 					concept_arg.ref_qualifier = ReferenceQualifier::None;
-					std::vector<TemplateTypeArg> concept_args = { concept_arg };
-					std::vector<std::string_view> concept_param_names;
+					InlineVector<TemplateTypeArg, 4> concept_args;
+					concept_args.push_back(concept_arg);
+					InlineVector<std::string_view, 4> concept_param_names;
 					if (!concept_params.empty()) {
 						concept_param_names.push_back(concept_params[0].name());
 					}
@@ -877,14 +839,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Build template argument list
-	std::vector<TemplateArgument> template_args;
+	InlineVector<TemplateTypeArg, 4> template_args;
 	std::vector<Type> deduced_type_args;  // For types extracted from instantiated names
 
 	// Pre-deduction pass: build a map from template parameter names to deduced arguments
 	// by matching function parameter types against call argument types.
 	// This handles cases like: template<typename T, int N> int f(Array<T, N>& a)
 	// where T and N should be deduced from the struct's template args.
-	std::unordered_map<StringHandle, TemplateArgument, StringHash, StringEqual> param_name_to_arg;
+	std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
 	// Tracks which function-argument slot indices were consumed by the pre-deduction pass
 	// so the main loop can skip past them when doing direct arg consumption.
 	std::unordered_set<size_t> pre_deduced_arg_indices;
@@ -927,7 +889,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// Type argument — build a TypeSpecifierNode from the
 							// TemplateArgInfo so that pointer depth, CV qualifiers,
 							// and reference qualifiers are preserved through the
-							// entire pipeline (TemplateArgument → TemplateTypeArg →
+							// entire pipeline (TemplateTypeArg →
 							// substitute_template_parameter / registerTypeParamsInScope).
 							TypeSpecifierNode synth_ts(
 								c.base_type, c.type_index,
@@ -942,7 +904,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							if (c.is_array) {
 								synth_ts.set_array(true, c.array_size);
 							}
-							TemplateArgument new_arg = TemplateArgument::makeTypeSpecifier(synth_ts);
+							TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(synth_ts);
 							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
 							if (!inserted && !(it->second == new_arg)) {
 								FLASH_LOG_FORMAT(Templates, Error,
@@ -962,7 +924,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// placeholder), because dependent non-type params are stored as
 							// is_value==false in the placeholder even though they carry an integer value
 							// at instantiation time.
-							TemplateArgument new_arg = TemplateArgument::makeValue(c.intValue(), c.base_type);
+							TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.base_type);
 							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
 							if (!inserted && !(it->second == new_arg)) {
 								FLASH_LOG_FORMAT(Templates, Error,
@@ -1017,7 +979,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// Check if this template exists
 							auto template_check = gTemplateRegistry.lookupTemplate(inner_template_name);
 							if (template_check.has_value()) {
-								template_args.push_back(TemplateArgument::makeTemplate(inner_template_name));
+								template_args.push_back(TemplateTypeArg::makeTemplate(inner_template_name));
 								
 								// For hash-based naming, type arguments can be retrieved from TypeInfo::templateArgs()
 								// instead of parsing the name string
@@ -1067,7 +1029,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						continue;
 					}
 					// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
-					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
+					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
 					arg_index++;
 				}
 				
@@ -1080,7 +1042,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					template_args.push_back(map_it->second);
 				} else if (!deduced_type_args.empty()) {
 					Type deduced_type = deduced_type_args[0];
-					template_args.push_back(TemplateArgument::makeType(deduced_type));
+					template_args.push_back(TemplateTypeArg::makeType(deduced_type));
 					deduced_type_args.erase(deduced_type_args.begin());
 				} else {
 					// Skip any arg slots fully consumed by the pre-deduction pass
@@ -1088,13 +1050,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						arg_index++;
 					if (arg_index < arg_types.size()) {
 						// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
-						template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
+						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
 						arg_index++;
 					} else {
 						// Not enough arguments to deduce all template parameters
 						// Fall back to first argument for remaining parameters
 						// Store full TypeSpecifierNode to preserve reference info
-						template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[0]));
+						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[0]));
 					}
 				}
 			}
@@ -1121,17 +1083,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
-	// Lazy-init: convert template_args → TemplateTypeArg vector at most once per call.
-	// Several callees (lookupSpecialization, evaluateConstraint, substitute_template_parameter,
-	// try_instantiate_class_template, get_instantiated_class_name) each require
-	// vector<TemplateTypeArg>.  Building the converted vector on first request and caching
-	// it avoids repeated allocations in what is the hot template-instantiation path.
-	std::optional<std::vector<TemplateTypeArg>> type_args_cache;
-	auto get_type_args = [&]() -> const std::vector<TemplateTypeArg>& {
-		if (!type_args_cache.has_value())
-			type_args_cache = buildTemplateTypeArgVector(template_args);
-		return *type_args_cache;
-	};
+	// template_args is already std::vector<TemplateTypeArg> — no conversion needed.
 
 	// Step 2: Check if we already have this instantiation
 	auto key = FlashCpp::makeInstantiationKey(
@@ -1164,7 +1116,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Check for explicit specialization before instantiating the primary template.
 	// This handles cases like: template<> int identity<int>(int val) { return val + 1; }
 	// being called as identity(5) where T=int is deduced from the argument.
-	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, get_type_args());
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args);
 	if (specialization_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found explicit specialization for deduced args of '", template_name, "'");
 		return *specialization_opt;
@@ -1188,7 +1140,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Evaluate the constraint with the template arguments
 		auto constraint_result = evaluateConstraint(
-			requires_clause.constraint_expr(), get_type_args(), eval_param_names);
+			requires_clause.constraint_expr(), template_args, eval_param_names);
 		
 		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 		
@@ -1232,10 +1184,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// Strip the lvalue reference that deduction adds for lvalue arguments.
 					// For abbreviated function templates (ConceptName auto x), the deduced
 					// type T is the parameter type without reference qualification.
-					TemplateTypeArg concept_arg = toTemplateTypeArg(template_args[arg_idx]);
+					TemplateTypeArg concept_arg = template_args[arg_idx];
 					concept_arg.ref_qualifier = ReferenceQualifier::None;
-					std::vector<TemplateTypeArg> concept_args = { concept_arg };
-					std::vector<std::string_view> concept_param_names;
+					InlineVector<TemplateTypeArg, 4> concept_args;
+					concept_args.push_back(concept_arg);
+					InlineVector<std::string_view, 4> concept_param_names;
 					if (!concept_params.empty()) {
 						concept_param_names.push_back(concept_params[0].name());
 					}
@@ -1334,7 +1287,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Add template parameters to the type system temporarily
 		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<StringHandle> param_names;
+		InlineVector<StringHandle, 4> param_names;
 		for (const auto& tparam_node : template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
 				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
@@ -1425,7 +1378,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	} else {
 		// Fallback: Use simple substitution (old behavior)
 		auto [return_type_enum, return_type_index] = substitute_template_parameter(
-			orig_return_type, template_params, get_type_args()
+			orig_return_type, template_params, template_args
 		);
 		
 		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
@@ -1515,9 +1468,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			if (!base_template_name.empty()) {
 				auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-					try_instantiate_class_template(base_template_name, get_type_args());
+					try_instantiate_class_template(base_template_name, template_args);
 					
-					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, get_type_args());
+					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = gTypesByName.find(resolved_handle);
 					
@@ -1726,7 +1679,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					}
 				} else {
 					auto [subst_type, subst_type_index] = substitute_template_parameter(
-						orig_param_type, template_params, get_type_args()
+						orig_param_type, template_params, template_args
 					);
 					// substitute_template_parameter only resolves UserDefined types by name
 					// matching against template parameter names. When the original parameter

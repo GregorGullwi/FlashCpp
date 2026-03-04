@@ -144,7 +144,7 @@ ParseResult Parser::parse_template_declaration() {
 	}
 
 	// Parse template parameter list (unless it's a specialization)
-	std::vector<ASTNode> template_params;
+	InlineVector<ASTNode, 4> template_params;
 	if (!is_specialization) {
 		auto param_list_result = parse_template_parameter_list(template_params);
 		if (param_list_result.is_error()) {
@@ -180,7 +180,7 @@ ParseResult Parser::parse_template_declaration() {
 	// Add template parameters to the type system temporarily using RAII scope guard (Phase 6)
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<StringHandle> template_param_names;
+	InlineVector<StringHandle, 4> template_param_names;
 	bool has_packs = false;  // Track if any parameter is a pack
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
@@ -233,7 +233,7 @@ ParseResult Parser::parse_template_declaration() {
 			advance(); // consume '<'
 
 			// Parse inner template parameters
-			std::vector<ASTNode> inner_template_params;
+			InlineVector<ASTNode, 4> inner_template_params;
 			auto inner_param_result = parse_template_parameter_list(inner_template_params);
 			if (inner_param_result.is_error()) {
 				// Fallback: skip the rest (for standard headers that use unsupported features)
@@ -267,7 +267,7 @@ ParseResult Parser::parse_template_declaration() {
 			advance(); // consume '>'
 
 			// Extract inner template parameter names
-			std::vector<StringHandle> inner_template_param_names;
+			InlineVector<StringHandle, 4> inner_template_param_names;
 			for (const auto& param : inner_template_params) {
 				if (param.is<TemplateParameterNode>()) {
 					inner_template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
@@ -3835,7 +3835,7 @@ if (struct_type_info.getStructInfo()) {
 		}
 
 		// Set template parameter context for current_template_param_names_
-		std::vector<StringHandle> template_param_names_for_body;
+		InlineVector<StringHandle, 4> template_param_names_for_body;
 		for (const auto& param : template_params) {
 			if (param.is<TemplateParameterNode>()) {
 				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
@@ -4488,7 +4488,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	std::vector<ASTNode> template_params;
+	InlineVector<ASTNode, 4> template_params;
 	std::vector<std::string_view> template_param_names;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
