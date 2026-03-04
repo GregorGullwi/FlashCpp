@@ -1056,7 +1056,11 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 							const TemplateTypeArg& concrete_arg = template_args[i];
 							if (concrete_arg.type_index < gTypeInfo.size()) {
 								std::string_view concrete_tpl_name = StringTable::getStringView(gTypeInfo[concrete_arg.type_index].name());
-								// Convert the preserved args from the placeholder to TemplateTypeArg
+								// Convert the preserved args from the placeholder to TemplateTypeArg,
+								// substituting any dependent template params with their concrete types.
+								// E.g., for Container<T> with Container=Box, T=int, the placeholder
+								// Container$xxx has stored arg T (dependent). We must replace T->int
+								// before instantiating Box, otherwise we get Box<T_dep> not Box<int>.
 								std::vector<TemplateTypeArg> concrete_args;
 								for (const auto& arg_info : placeholder_info.templateArgs()) {
 									TemplateTypeArg ta;
@@ -1064,6 +1068,32 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 									ta.type_index = arg_info.type_index;
 									ta.is_value = arg_info.is_value;
 									ta.value = arg_info.intValue();
+									// Substitute dependent type params by dependent_name first
+									bool substituted = false;
+									if (arg_info.dependent_name.isValid()) {
+										std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
+										for (size_t j = 0; j < template_params.size() && j < template_args.size(); ++j) {
+											if (!template_params[j].is<TemplateParameterNode>()) continue;
+											if (template_params[j].as<TemplateParameterNode>().name() == dep_name) {
+												ta = template_args[j];
+												substituted = true;
+												break;
+											}
+										}
+									}
+									// Fallback: match by type_index name against param names
+									if (!substituted && !arg_info.is_value &&
+									    (arg_info.base_type == Type::UserDefined || arg_info.base_type == Type::Struct) &&
+									    arg_info.type_index < gTypeInfo.size()) {
+										std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg_info.type_index].name());
+										for (size_t j = 0; j < template_params.size() && j < template_args.size(); ++j) {
+											if (!template_params[j].is<TemplateParameterNode>()) continue;
+											if (template_params[j].as<TemplateParameterNode>().name() == arg_type_name) {
+												ta = template_args[j];
+												break;
+											}
+										}
+									}
 									concrete_args.push_back(ta);
 								}
 								// Instantiate the concrete template with the preserved args

@@ -45,6 +45,17 @@ The same template arguments are held simultaneously in three different forms:
 Converting between these forms is error-prone.  The `Kind::Value` case was missing from
 the `template_args → template_args_as_type_args` loop before being caught.
 
+**Design suggestion** (from code review): it might make sense to unify the unresolved and
+resolved members into a single array entry:
+
+```
+{ Type, TypeIndex, TVariant<int64_t/StringHandle/...> }
+```
+
+where the `TVariant` slot handles non-type values and the `Type`/`TypeIndex` pair handles
+type arguments.  This would eliminate the fan-out into three vectors while keeping the
+same information density.
+
 ### B. Two near-identical function-body re-parsing blocks
 
 `try_instantiate_template_explicit` (~line 385–560) and `try_instantiate_single_template`
@@ -164,6 +175,10 @@ this instead of duplicating the ~80-line block.  This eliminates the class of bu
 one path drifts from the other (including the `current_template_param_names_` divergence
 that caused the `N` bug).
 
+**Performance note** (from code review): template parameter counts are almost always small
+(1–4), so the `std::vector<TemplateArgument>` parameter could be `InlineVector<TemplateArgument, 4>`
+to avoid heap allocation in the hot instantiation path.
+
 **Touches**: 2 call sites in `Parser_Templates_Inst_Deduction.cpp`.  
 **Risk**: low — pure extraction, no logic change.
 
@@ -188,6 +203,9 @@ three source-vector types (`TemplateArgument`, `TemplateTypeArg`,
 `Parser_Core.cpp` into a shared header (e.g., `TemplateRegistry_Types.h`) would allow
 all sites to use the same size computation.
 
+**Performance note** (from code review): since template parameter lists are typically very
+short, `InlineVector<std::string_view, 4>` for `param_names` would keep these on the stack.
+
 **Touches**: `Parser_Templates_Inst_Deduction.cpp`, `Parser_Templates_Inst_MemberFunc.cpp`,
 `Parser_Templates_Inst_ClassTemplate.cpp`, `Parser_Templates_Lazy.cpp`,
 `TemplateRegistry_Lazy.cpp`, `Parser_Expr_PrimaryExpr.cpp`.  
@@ -197,17 +215,39 @@ all sites to use the same size computation.
 
 ### 3 — Introduce a `ScopedTemplateParamNames` RAII guard
 
+A guard that saves and restores `current_template_param_names_` around template body re-parsing.
+
+**Design note** (from code review): coupling population logic to the guard constructor makes it
+harder to reuse across sites where the sources differ.  A more flexible form separates the RAII
+mechanism from the population:
+
 ```cpp
-class ScopedTemplateParamNames {
+// Decoupled form — saves on construction, restores on destruction.
+// The caller is responsible for clearing and populating the vector.
+class ScopedState {
 public:
-    ScopedTemplateParamNames(std::vector<StringHandle>& field,
-                              const std::vector<std::string_view>& names);
-    ~ScopedTemplateParamNames();  // restores saved value
+    explicit ScopedState(std::vector<StringHandle>& field)
+        : field_ref_(field), saved_state_(std::move(field)) {}
+    ~ScopedState() { field_ref_ = std::move(saved_state_); }
+    ScopedState(const ScopedState&) = delete;
+    ScopedState& operator=(const ScopedState&) = delete;
 private:
-    std::vector<StringHandle>& field_;
-    std::vector<StringHandle>  saved_;
+    std::vector<StringHandle>& field_ref_;
+    std::vector<StringHandle>  saved_state_;
 };
+
+// Usage:
+{
+    ScopedState guard(current_template_param_names_);
+    current_template_param_names_.clear();
+    // ... custom population logic ...
+} // old state restored here
 ```
+
+**Performance note** (from code review): since template parameter lists are almost always
+small (typically 1–4 elements), using `InlineVector<StringHandle, 4>` instead of
+`std::vector<StringHandle>` would eliminate heap allocation in the common case.  This applies
+to both `current_template_param_names_` itself and the `saved_state_` member inside the guard.
 
 Replaces the ~50 manual save/clear/restore occurrences of `current_template_param_names_`
 spread across 9 files.  Since it follows the same RAII pattern as
