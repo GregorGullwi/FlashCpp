@@ -218,24 +218,105 @@ spread across 9 files.  Since it follows the same RAII pattern as
 
 ---
 
-### 4 — Skip TypeInfo registration for value params (quick fix)
+### 4 — Skip TypeInfo registration for value params at all sites
 
-In every `param_names + template_args → gTypeInfo` loop, guard the `gTypeInfo.emplace_back`
-with:
-```cpp
-if (template_args[i].kind == TemplateArgument::Kind::Value) continue;
-```
-(or the equivalent `arg.is_value` check for `TemplateTypeArg` vectors).
+`registerTypeParamsInScope` (added in `Parser_Templates_Inst_Deduction.cpp:16-71` by
+PR #839) already skips `Kind::Value` and `Kind::Template` entries for the three paths
+inside that file.  However, the helper is `static` (file-local), so it cannot be called
+from the three remaining vulnerable sites:
 
-For value params `type_value` is `Type::Invalid` (unset by `makeValue`), so `N` ends up
-in `gTypesByName` with type `Invalid`, which can corrupt type lookups in edge cases.
-Value params should only be registered in `template_param_substitutions_`.
+| File | Line(s) | Source type | Currently skips Value? |
+|------|---------|-------------|----------------------|
+| `Parser_Templates_Inst_MemberFunc.cpp` | ~424-431 | `vector<TemplateArgument>` | **No** |
+| `Parser_Templates_Inst_MemberFunc.cpp` | ~240-249 | `vector<TemplateArgument>` | **No** |
+| `Parser_Templates_Lazy.cpp` | ~143-154 | `vector<TemplateTypeArg>` (via `LazyMemberFunctionInfo`) | **No** |
 
-After proposal 2 is implemented this fix is applied once inside
-`registerTemplateParamsAsTypeInfo()` rather than at every call site.
+These sites are latent today because non-type template parameters are not yet supported
+in the member function template deduction path (line 61-63 returns `std::nullopt`).
+Once non-type params are extended to member templates, all three will poison
+`gTypesByName` with `Type::Invalid` entries, exactly as `try_instantiate_single_template`
+did before this PR.
 
-**Touches**: same ~12 sites as proposal 2, or just 1 after proposal 2 lands.  
-**Risk**: very low.
+#### Option A — inline skip (minimal, immediate)
+
+Add `Kind::Value`/`Kind::Template` (or `is_value`/`is_template_template_arg`) guards
+inline at each of the three sites.  ~3 lines per site, no cross-file changes.
+
+#### Option B — promote `registerTypeParamsInScope` to a shared helper (proper fix)
+
+1. Move `getTypeSizeFromTemplateArgument` from `static` in `Parser_Core.cpp` to a
+   shared location (e.g., a new free function in `TemplateRegistry_Types.h`, or a
+   `Parser::` member).
+
+2. Move both overloads of `registerTypeParamsInScope` (the `TemplateArgument` overload
+   and the `TemplateTypeArg` overload) from `static` in
+   `Parser_Templates_Inst_Deduction.cpp` to `Parser::` member functions (declared in
+   `Parser.h`), or to free functions in a shared header that takes the required globals
+   as parameters.
+
+3. Replace all six existing call sites in `Parser_Templates_Inst_Deduction.cpp` (already
+   calling the `static` version) with calls to the new shared version — no behaviour
+   change, just linkage.
+
+4. Replace the three vulnerable sites listed above with calls to the shared helper:
+
+   **`Parser_Templates_Inst_MemberFunc.cpp:424-431`** (body reparse in
+   `instantiate_member_function_template_core`):
+   ```cpp
+   // Before:
+   for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+       Type concrete_type = template_args[i].type_value;
+       auto& type_info = gTypeInfo.emplace_back(...);
+       gTypesByName.emplace(type_info.name(), &type_info);
+       template_scope.addParameter(&type_info);
+   }
+   // After:
+   registerTypeParamsInScope(param_names, template_args, template_scope);
+   ```
+
+   **`Parser_Templates_Inst_MemberFunc.cpp:240-249`** (SFINAE trailing-return-type in
+   `try_instantiate_member_function_template_explicit`):
+   ```cpp
+   // Before:  loops over template_params[i] / template_args[i] with no skip
+   // After:   same call, but this loop also updates sfinae_type_map_, so either:
+   //   (a) split into registerTypeParamsInScope() + a separate sfinae_type_map_ loop, or
+   //   (b) add an optional sfinae_type_map* parameter to the helper.
+   ```
+
+   **`Parser_Templates_Lazy.cpp:143-154`** (lazy member function body reparse):
+   ```cpp
+   // Before:
+   for (size_t i = 0; i < param_names.size() && i < lazy_info.template_args.size(); ++i) {
+       Type concrete_type = lazy_info.template_args[i].base_type;
+       auto& type_info = gTypeInfo.emplace_back(...);
+       gTypesByName.emplace(type_info.name(), &type_info);
+       template_scope.addParameter(&type_info);
+   }
+   // After (TemplateTypeArg overload):
+   registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope);
+   ```
+   Note: the lazy path currently also copies `reference_qualifier_` from the
+   `TemplateTypeArg` onto the `TypeInfo`; the `TemplateTypeArg` overload of
+   `registerTypeParamsInScope` does not do this.  Either add it to the overload
+   (behind a flag, like `preserve_ref_qualifier` on the `TemplateArgument` overload)
+   or handle it after the call.
+
+5. The SFINAE trailing-return-type loop in `try_instantiate_template_explicit`
+   (`Parser_Templates_Inst_Deduction.cpp:332-349`) also remains inline because it
+   updates `sfinae_type_map_`.  The same `sfinae_type_map*` parameter from step 4b
+   would unify this site too.
+
+**Touches**: `Parser.h` (declaration), `Parser_Core.cpp` or `TemplateRegistry_Types.h`
+(move `getTypeSizeFromTemplateArgument`), `Parser_Templates_Inst_Deduction.cpp` (remove
+`static`, update calls), `Parser_Templates_Inst_MemberFunc.cpp` (2 sites),
+`Parser_Templates_Lazy.cpp` (1 site).  
+**Risk**: low — the helper already exists and is tested; the change is purely making it
+reachable from other translation units.
+
+**Recommendation**: Do Option A immediately (3 lines each, prevents the latent bug from
+activating when non-type member template support lands).  Follow up with Option B as
+part of proposal 2, since `registerTypeParamsInScope` is essentially the
+`registerTemplateParamsAsTypeInfo` helper proposed there.
 
 ---
 
@@ -297,7 +378,8 @@ noise of `std::visit` at every use site.
 
 | # | Change | Effort | Risk | Benefit |
 |---|--------|--------|------|---------|
-| 4 | Skip TypeInfo for value params | XS | Very low | Fixes latent Invalid-type bug |
+| 4A | Inline skip at 3 remaining sites | XS | Very low | Fixes latent Invalid-type bug |
+| 4B | Promote `registerTypeParamsInScope` to shared | S | Low | Eliminates the duplication that caused the bug |
 | 6 | Consolidate `toTemplateTypeArg` | XS | Very low | Removes duplicate conversion |
 | 1 | Extract `reparse_template_function_body()` | S | Low | Eliminates body-parse divergence class |
 | 3 | `ScopedTemplateParamNames` RAII guard | M | Low | Removes ~50 manual save/restore sites |
@@ -305,9 +387,10 @@ noise of `std::visit` at every use site.
 | 5 | Eliminate `template_args_as_type_args` | M | Medium | Single authoritative arg vector |
 | 7 | Unify `TemplateArgument` / `TemplateTypeArg` | L | High | One type, no conversions |
 
-Items 4 and 6 can be done in isolation with no risk.  Items 1 and 3 are the highest
-value for effort (each eliminates a whole *class* of future divergence bugs).  Items 2,
-5, and 7 are longer-horizon work best tackled after 1 and 3 land.
+Items 4A and 6 can be done in isolation with no risk.  Item 4B subsumes 4A and feeds
+naturally into proposal 2.  Items 1 and 3 are the highest value for effort (each
+eliminates a whole *class* of future divergence bugs).  Items 2, 5, and 7 are
+longer-horizon work best tackled after 1 and 3 land.
 
 ---
 
@@ -315,15 +398,16 @@ value for effort (each eliminates a whole *class* of future divergence bugs).  I
 
 | File | Proposals |
 |------|-----------|
-| `src/Parser_Templates_Inst_Deduction.cpp` | 1, 2, 4, 5 |
+| `src/Parser_Templates_Inst_Deduction.cpp` | 1, 2, 4B, 5 |
 | `src/Parser_Templates_Class.cpp` | 3 |
 | `src/Parser_Templates_Function.cpp` | 3 |
 | `src/Parser_Templates_Variable.cpp` | 3 |
-| `src/Parser_Templates_Inst_MemberFunc.cpp` | 2, 4 |
-| `src/Parser_Templates_Inst_ClassTemplate.cpp` | 2, 4 |
-| `src/Parser_Templates_Lazy.cpp` | 2, 4 |
-| `src/TemplateRegistry_Lazy.cpp` | 2, 4 |
+| `src/Parser_Templates_Inst_MemberFunc.cpp` | 2, 4A/4B |
+| `src/Parser_Templates_Inst_ClassTemplate.cpp` | 2, 4A |
+| `src/Parser_Templates_Lazy.cpp` | 2, 4A/4B |
+| `src/TemplateRegistry_Lazy.cpp` | 2, 4A |
 | `src/ExpressionSubstitutor.cpp` | 6 |
 | `src/TemplateRegistry_Pattern.h` / `TemplateRegistry_Types.h` | 6, 7 |
 | `src/ParserScopeGuards.h` | 3 |
-| `src/Parser_Core.cpp` | 2 (move `getTypeSizeFromTemplateArgument` to shared header) |
+| `src/Parser.h` | 4B (declaration of shared helper) |
+| `src/Parser_Core.cpp` | 2, 4B (move `getTypeSizeFromTemplateArgument` to shared header) |
