@@ -1,238 +1,116 @@
-# Template Template Parameters - Design Plan
+# Template Template Parameters
 
 ## Current Status
 
-Template template parameters (e.g., `template<template<typename> class Container, typename T>`) are partially working but have architectural issues that need to be addressed.
+Template template parameters (e.g., `template<template<typename> class Container, typename T>`) are **fully implemented and working**.
 
-## Problems Identified
+## Implementation Summary
 
-### 1. Global Type Registry Pollution
+### Template Parameter Scoping (Option A — Implemented)
 
-**Issue**: Template parameter names are registered in `gTypeInfo` (global type registry), which causes conflicts when multiple templates use the same parameter names.
+The originally proposed Option A (Local Template Parameter Registry) has been implemented. Template parameters are scoped locally to their template rather than being registered in `gTypeInfo`.
 
-**Example**:
+**Mechanism** (`src/Parser.h`):
 ```cpp
-template<template<typename> class Container, typename T>
-void foo() { }
-
-template<template<typename> class Container, typename T>  // Same names!
-void bar() { }
-```
-
-Both register "Container" and "T" in `gTypeInfo`, leading to:
-- Name collisions
-- Incorrect type lookups
-- Stale type information from previous template
-
-**Current Behavior**:
-```
-gTypeInfo entries:
-[18] {name_="Container" type_=UserDefined ...}  // From first template
-[19] {name_="T" type_=UserDefined ...}          // From first template
-[23] {name_="Container" type_=Int ...}          // From second template?
-[24] {name_="Container" type_=Int ...}          // Duplicate/confusion
-```
-
-### 2. Template Parameter Scope
-
-**Issue**: Template parameters should be scoped to their template, not globally visible.
-
-**Why**: 
-- Different templates can (and commonly do) use the same parameter names
-- Template parameters only exist during template instantiation
-- They should not pollute global namespace or persist across templates
-
-### 3. Code Generation Challenges
-
-**Issue**: Template template parameters need special handling during instantiation.
-
-**Current**: `Container` is treated like a regular type
-**Needed**: `Container` is a template, not a type - `Container<int>` is the actual type
-
-## Proposed Solutions
-
-### Option A: Local Template Parameter Registry (Recommended)
-
-**Approach**: Keep template parameters in a local scope during template parsing/instantiation.
-
-**Changes Needed**:
-1. Add `template_param_scope_` stack to Parser
-2. Push new scope when entering template declaration
-3. Register template parameters in local scope, not gTypeInfo
-4. Look up template parameters in local scope first
-5. Pop scope when exiting template
-
-**Pros**:
-- Clean separation of concerns
-- No global pollution
-- Natural scoping behavior
-- Handles nested templates correctly
-
-**Cons**:
-- Requires threading scope through parsing functions
-- Moderate refactoring effort
-
-**Implementation Sketch**:
-```cpp
-struct TemplateParameterScope {
-    std::unordered_map<std::string, TypeInfo> params;
-    std::unordered_map<std::string, TemplateParameterInfo> template_params;
+// Per-instantiation substitution table kept on the Parser
+struct TemplateParamSubstitution {
+    StringHandle param_name;
+    bool is_value_param;           // true for non-type parameters
+    int64_t value;                 // For non-type parameters
+    Type value_type;               // Type of the value
+    bool is_type_param = false;
+    TemplateTypeArg substituted_type;  // Concrete type for type parameters
 };
+InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
+InlineVector<StringHandle, 4> current_template_param_names_;
+```
 
-class Parser {
-    std::vector<TemplateParameterScope> template_param_scopes_;
-    
-    void enter_template_scope() {
-        template_param_scopes_.push_back({});
-    }
-    
-    void exit_template_scope() {
-        template_param_scopes_.pop_back();
-    }
-    
-    std::optional<TypeInfo> lookup_template_param(const std::string& name) {
-        for (auto it = template_param_scopes_.rbegin(); 
-             it != template_param_scopes_.rend(); ++it) {
-            if (auto p = it->params.find(name); p != it->params.end()) {
-                return p->second;
-            }
-        }
-        return std::nullopt;
+During body re-parse (`parsing_template_body_ == true`) all parameter name lookups consult `current_template_param_names_` and `template_param_substitutions_` before falling through to `gSymbolTable`, so template-local names never collide with global entries.
+
+`ScopedState` RAII guards save and restore these vectors across nested instantiations (see `src/ParserScopeGuards.h`).
+
+### Template Template Argument Representation
+
+`TemplateTypeArg` (`src/TemplateRegistry_Types.h`) carries a dedicated flag for template template arguments:
+
+```cpp
+struct TemplateTypeArg {
+    // ...
+    bool is_template_template_arg;   // true when this arg is a template, not a type
+    StringHandle template_name_handle; // e.g. "HasType", "vector"
+    // ...
+    static TemplateTypeArg makeTemplateTemplate(StringHandle name) {
+        TemplateTypeArg arg;
+        arg.is_template_template_arg = true;
+        arg.template_name_handle = name;
+        return arg;
     }
 };
 ```
 
-### Option B: Template Parameter Namespacing
+`TemplateInstantiationKey` (`src/TemplateTypes.h`) hashes template template args through a separate `template_template_args` vector so that specialisations keyed on different template arguments are cached separately.
 
-**Approach**: Mangle template parameter names with template context.
+### Parsing Template Template Parameters
 
-**Changes Needed**:
-1. Generate unique names: `Container` → `__template_foo_param_Container`
-2. Store mapping in template metadata
-3. Unmangle during instantiation
+`src/Parser_Templates_Params.cpp` — `parse_template_template_parameter_forms()` parses the nested parameter list of a template template parameter (e.g., `template<typename, typename>` in `template<template<typename, typename> class C>`).
 
-**Pros**:
-- Minimal changes to existing code
-- Uses existing gTypeInfo infrastructure
+`src/Parser_Templates_Inst_Deduction.cpp` — deduction skips `is_template_template_arg` entries when computing concrete type sizes and maps the template name into the substitution table so downstream code can call `Container<T>`.
 
-**Cons**:
-- Hacky name mangling
-- Harder to debug
-- Doesn't solve fundamental scoping issues
+`src/Parser_Templates_Substitution.cpp` — substitution guards (`!arg.is_template_template_arg`) prevent the substitution pass from treating a template name as a concrete type.
 
-### Option C: Delayed Parameter Resolution
+## Resolved Problems
 
-**Approach**: Don't register template parameters at all during declaration.
+### ✅ Global Type Registry Pollution
 
-**Changes Needed**:
-1. Mark identifiers as "unresolved template parameter"
-2. Resolve only during instantiation with concrete arguments
-3. Use AST node placeholders instead of TypeInfo
+Template parameter names are no longer registered globally. Each instantiation populates its own `template_param_substitutions_` vector, which is in scope only for the duration of the body re-parse and then discarded via RAII.
 
-**Pros**:
-- Cleanest conceptually
-- Matches C++ semantics closely
+### ✅ Template Parameter Scope
 
-**Cons**:
-- Significant parser refactoring
-- Complex implementation
+`current_template_param_names_` + `template_param_substitutions_` provide proper per-instantiation scoping. Multiple templates with identical parameter names (e.g., both using `Container` and `T`) instantiate without collision.
 
-## Recommendation
+### ✅ Code Generation for Template Template Arguments
 
-**Use Option A** (Local Template Parameter Registry) for these reasons:
+`is_template_template_arg == true` in a `TemplateTypeArg` tells instantiation code that the argument is a template name, not a concrete type. Calls like `Container<T>` are resolved at instantiation time by looking up the concrete template name stored in `template_name_handle`.
 
-1. **Clean Architecture**: Properly scoped, matches language semantics
-2. **Maintainable**: Clear separation between global types and template parameters
-3. **Extensible**: Handles nested templates, template specializations naturally
-4. **Debuggable**: Easy to inspect what's in scope at any point
+## Test Coverage
 
-**Implementation Priority**:
-- Phase 1: Implement local scope for regular template parameters (typename T)
-- Phase 2: Add template template parameter support (template<typename> class C)
-- Phase 3: Handle non-type template parameters with proper scoping
-- Phase 4: Test with complex nested template scenarios
+| Test file | Scenario |
+|-----------|----------|
+| `tests/template_template_minimal_ret0.cpp` | Minimal smoke test |
+| `tests/template_template_simple_ret0.cpp` | Simple one-parameter case |
+| `tests/template_template_call_ret0.cpp` | Template template used in a function call |
+| `tests/template_template_just_func_ret0.cpp` | Template template on a free function |
+| `tests/template_template_params_ret0.cpp` | Multiple template template parameters |
+| `tests/template_template_test_ret0.cpp` | General feature test |
+| `tests/template_template_with_inst_ret0.cpp` | Instantiation of template template |
+| `tests/template_template_with_member_ret0.cpp` | Template template with member access |
+| `tests/template_template_with_vector_ret0.cpp` | Template template with std::vector |
 
-## Known Limitations (Not Yet Addressed)
+All nine tests pass.
+
+## Known Limitations
 
 ### Braced Initializer Lists in Template Contexts
 
-**Issue**: Braced initializers don't work in certain template contexts.
+Braced initializer lists (`Container<T> v{1, 2, 3}`) inside template template functions are not yet supported. Use default construction plus member calls as a workaround:
 
-**Example** (from template_template_call.cpp):
 ```cpp
-template<template<typename> class Container, typename T>
-void call() {
-    // This doesn't work:
-    Container<T> v{1, 2, 3};  // ❌ Braced initializer list fails
-    
-    // Workarounds:
-    Container<T> v;            // ✅ Default construction
-    v.push_back(1);           // ✅ Member function calls
-}
+Container<T> v;   // ✅ default construction
+v.push_back(1);   // ✅ member calls
 ```
 
-**Root Cause**: Braced initializer parsing doesn't interact correctly with template-dependent types.
-
-**Impact**: 
-- Limited - can use other initialization syntax
-- Workarounds available
-- Not blocking for basic template template parameter support
-
-**Future Work**: 
-- Enhance braced initializer parsing to handle template contexts
-- Add type deduction for initializer lists in templates
-- Test with std::initializer_list patterns
-
-## Testing Plan
-
-### Test Cases Needed
-
-1. **Basic Template Template Parameters**
-   ```cpp
-   template<template<typename> class Container, typename T>
-   void test() { Container<T> v; }
-   ```
-
-2. **Multiple Templates with Same Parameter Names**
-   ```cpp
-   template<template<typename> class C, typename T> void foo();
-   template<template<typename> class C, typename T> void bar();  // Same names
-   ```
-
-3. **Nested Templates**
-   ```cpp
-   template<template<typename> class Outer>
-   struct Test {
-       template<typename Inner>
-       void method();
-   };
-   ```
-
-4. **Template Specialization with Template Parameters**
-   ```cpp
-   template<template<typename> class C>
-   struct Wrapper { };
-   
-   template<>
-   struct Wrapper<std::vector> { };  // Specialize for specific template
-   ```
+See `docs/MISSING_FEATURES.md` for tracking.
 
 ## References
 
 - C++ Standard: Template Template Parameters [temp.arg.template]
-- Current failing test: tests/template_template_call.cpp
-- Related code: src/Parser.cpp parse_template_parameters()
-- Type system: src/Parser.h TypeInfo, gTypeInfo
-
-## Status
-
-- ✅ Problem identified and documented
-- ✅ Root causes understood
-- ⏸️ Implementation deferred (not blocking current SFINAE work)
-- 📅 Planned for future enhancement
+- Type definition: `src/TemplateRegistry_Types.h` — `TemplateTypeArg::is_template_template_arg`
+- Parameter parsing: `src/Parser_Templates_Params.cpp` — `parse_template_template_parameter_forms()`
+- Deduction: `src/Parser_Templates_Inst_Deduction.cpp`
+- Substitution: `src/Parser_Templates_Substitution.cpp`
+- Scoping: `src/Parser.h` — `TemplateParamSubstitution`, `template_param_substitutions_`
 
 ---
 
-*Document created: 2025-12-13*
-*Author: Copilot (via investigation of gTypeInfo debug output)*
-*Related PR: Complete SFINAE implementation*
+*Document originally created: 2025-12-13*
+*Updated: 2026-03-04 — reflects completed implementation*
