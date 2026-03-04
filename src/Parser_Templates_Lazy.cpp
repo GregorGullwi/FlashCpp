@@ -141,6 +141,9 @@ if (param_decl.has_default_value()) {
 		}
 		
 		for (size_t i = 0; i < param_names.size() && i < lazy_info.template_args.size(); ++i) {
+			if (lazy_info.template_args[i].is_value || lazy_info.template_args[i].is_template_template_arg) {
+				continue;
+			}
 			std::string_view param_name = param_names[i];
 			Type concrete_type = lazy_info.template_args[i].base_type;
 

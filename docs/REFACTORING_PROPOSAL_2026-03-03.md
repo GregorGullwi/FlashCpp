@@ -434,6 +434,28 @@ longer-horizon work best tackled after 1 and 3 land.
 
 ---
 
+## Implementation evaluation (2026-03-04)
+
+| # | Validity assessment | Plan | Status |
+|---|---------------------|------|--------|
+| 1 | **Valid**. The two body re-parse blocks still exist and can drift. | Keep as a pure extraction after low-risk cleanup tasks. | Planned |
+| 2 | **Valid**. Registration loops are still duplicated across parser/template files. | Defer until shared helper shape (TemplateArgument/TemplateTypeArg overloads) is finalized. | Planned |
+| 3 | **Valid**. `current_template_param_names_` save/restore remains scattered. | Defer until proposal 1 lands so the highest-churn reparse paths are centralized first. | Planned |
+| 4 | **Valid and actionable now**. Remaining member/lazy sites were still registering value/template args as `TypeInfo`. | Apply 4A guards immediately at all 3 sites, keep 4B for follow-up consolidation. | **Done (4A)** |
+| 5 | **Valid**. `template_args_as_type_args` is still a second vector in single-template instantiation. | Defer until helper signatures are widened to avoid a broad risky change. | Planned |
+| 6 | **Valid and actionable now**. Duplicate `toTemplateTypeArg` conversion existed in `ExpressionSubstitutor.cpp`. | Move conversion to canonical `TemplateTypeArg` API and delete local duplicate helper. | **Done** |
+| 7 | **Valid, high risk**. Both argument structs are still heavily used across the pipeline. | Keep as a dedicated future PR after 1/2/5 reduce coupling first. | Planned |
+
+### Task updates
+
+- [x] **Task 4A**: added `Kind::Type`/`is_value` guards in:
+  - `src/Parser_Templates_Inst_MemberFunc.cpp` (SFINAE template param registration and body reparse registration)
+  - `src/Parser_Templates_Lazy.cpp` (lazy member body reparse registration)
+- [x] **Task 6**: removed duplicate local converter in `src/ExpressionSubstitutor.cpp` and added canonical conversion support in `src/TemplateRegistry_Types.h` (`TemplateTypeArg(const TypeInfo::TemplateArgInfo&)`).
+- [ ] Tasks 1, 2, 3, 4B, 5, 7 remain as planned follow-up work.
+
+---
+
 ## Files most affected
 
 | File | Proposals |

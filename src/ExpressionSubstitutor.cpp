@@ -3,25 +3,6 @@
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
 
-// Convert stored template instantiation metadata to TemplateTypeArg for substitution.
-static TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
-	TemplateTypeArg ta;
-	ta.base_type = arg.base_type;
-	ta.type_index = arg.type_index;
-	ta.is_value = arg.is_value;
-	ta.cv_qualifier = arg.cv_qualifier;
-	ta.ref_qualifier = arg.ref_qualifier;
-	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
-	ta.is_array = arg.is_array;
-	ta.array_size = arg.array_size;
-	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-	ta.dependent_name = arg.dependent_name;
-	if (arg.is_value) {
-		ta.value = arg.intValue();
-	}
-	return ta;
-}
-
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
 		return expr;
@@ -830,7 +811,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
 		const auto& stored_args = type_it->second->templateArgs();
 		for (const auto& arg : stored_args) {
-			TemplateTypeArg ta = toTemplateTypeArg(arg);
+			TemplateTypeArg ta(arg);
 			
 			// Check if this arg has a dependent_name that can be substituted
 			if (ta.dependent_name.isValid()) {
@@ -1056,7 +1037,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 			bool needs_substitution = false;
 			for (const auto& arg : stored_args) {
-				TemplateTypeArg ta = toTemplateTypeArg(arg);
+				TemplateTypeArg ta(arg);
 				bool substituted = false;
 
 				if (ta.dependent_name.isValid()) {

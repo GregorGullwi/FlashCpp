@@ -238,6 +238,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			FlashCpp::TemplateParameterScope sfinae_scope;
 			// Add inner template params (the member function template's own params, e.g. U)
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				if (template_args[i].kind != TemplateArgument::Kind::Type) {
+					continue;
+				}
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				Type concrete_type = template_args[i].type_value;
 				auto& type_info = gTypeInfo.emplace_back(
@@ -422,6 +425,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 	
 	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+		if (template_args[i].kind != TemplateArgument::Kind::Type) {
+			continue;
+		}
 		std::string_view param_name = param_names[i];
 		Type concrete_type = template_args[i].type_value;
 

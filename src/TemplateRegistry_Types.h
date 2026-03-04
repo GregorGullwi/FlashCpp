@@ -234,6 +234,24 @@ struct TemplateTypeArg {
 		}
 	}
 
+	explicit TemplateTypeArg(const TypeInfo::TemplateArgInfo& arg)
+		: base_type(arg.base_type)
+		, type_index(arg.type_index)
+		, ref_qualifier(arg.ref_qualifier)
+		, pointer_depth(static_cast<uint8_t>(arg.pointer_depth))
+		, pointer_cv_qualifiers(arg.pointer_cv_qualifiers)
+		, cv_qualifier(arg.cv_qualifier)
+		, is_array(arg.is_array)
+		, array_size(arg.array_size)
+		, member_pointer_kind(MemberPointerKind::None)
+		, is_value(arg.is_value)
+		, value(arg.is_value ? arg.intValue() : 0)
+		, is_pack(false)
+		, is_dependent(arg.dependent_name.valid())
+		, dependent_name(arg.dependent_name)
+		, is_template_template_arg(false)
+		, template_name_handle() {}
+
 	// Constructor for non-type template parameters
 	explicit TemplateTypeArg(int64_t val)
 		: base_type(Type::Int)  // Default to int for values
@@ -564,4 +582,3 @@ inline std::string_view generateInstantiatedNameFromArgs(
 }
 
 } // namespace FlashCpp
-
