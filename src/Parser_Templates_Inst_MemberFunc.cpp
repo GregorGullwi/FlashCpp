@@ -523,8 +523,39 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
+	std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
+	template_param_substitutions_.clear();
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) continue;
+		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+		const TemplateArgument& arg = template_args[i];
+		if (arg.kind == TemplateArgument::Kind::Value) {
+			TemplateParamSubstitution subst;
+			subst.param_name = param.name();
+			subst.is_value_param = true;
+			subst.value = arg.int_value;
+			subst.value_type = arg.value_type;
+			template_param_substitutions_.push_back(subst);
+		} else if (arg.kind == TemplateArgument::Kind::Type) {
+			TemplateParamSubstitution subst;
+			subst.param_name = param.name();
+			subst.is_value_param = false;
+			subst.is_type_param = true;
+			subst.substituted_type = toTemplateTypeArg(arg);
+			subst.substituted_type.is_dependent = false;
+			template_param_substitutions_.push_back(subst);
+		}
+	}
+	std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
+	current_template_param_names_.clear();
+	for (const auto& pn : param_names) {
+		current_template_param_names_.push_back(StringTable::getOrInternStringHandle(pn));
+	}
+
 	// Parse the function body
 	auto block_result = parse_block();
+	current_template_param_names_ = std::move(saved_template_param_names);
+	template_param_substitutions_ = std::move(saved_template_param_substitutions);
 	if (!block_result.is_error() && block_result.node().has_value()) {
 		// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
 		ASTNode substituted_body = substituteTemplateParameters(

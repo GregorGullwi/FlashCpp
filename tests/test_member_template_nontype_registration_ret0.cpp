@@ -3,7 +3,13 @@ struct Box {
 	int get() { return N; }
 };
 
+struct Converter {
+	template<int N>
+	auto value() -> int { return N; }
+};
+
 int main() {
 	Box<4> box;
-	return box.get() - 4;
+	Converter c;
+	return box.get() + c.value<6>() - 10;
 }

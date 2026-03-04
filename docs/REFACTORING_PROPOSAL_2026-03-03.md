@@ -452,6 +452,9 @@ longer-horizon work best tackled after 1 and 3 land.
   - `src/Parser_Templates_Inst_MemberFunc.cpp` (SFINAE template param registration and body reparse registration)
   - `src/Parser_Templates_Lazy.cpp` (lazy member body reparse registration)
 - [x] **Task 6**: removed duplicate local converter in `src/ExpressionSubstitutor.cpp` and added canonical conversion support in `src/TemplateRegistry_Types.h` (`TemplateTypeArg(const TypeInfo::TemplateArgInfo&)`).
+- [x] **Encountered issue fixed during validation**: member-function template/value-parameter body reparse missed non-type substitution context (`N` unresolved in `template<int N> auto f()->int { return N; }`). Fixed by populating/restoring `template_param_substitutions_` and `current_template_param_names_` in:
+  - `src/Parser_Templates_Inst_MemberFunc.cpp`
+  - `src/Parser_Templates_Lazy.cpp`
 - [ ] Tasks 1, 2, 3, 4B, 5, 7 remain as planned follow-up work.
 
 ---

@@ -247,7 +247,7 @@ struct TemplateTypeArg {
 		, is_value(arg.is_value)
 		, value(arg.is_value ? arg.intValue() : 0)
 		, is_pack(false)
-		, is_dependent(arg.dependent_name.valid())
+		, is_dependent(arg.dependent_name.isValid())
 		, dependent_name(arg.dependent_name)
 		, is_template_template_arg(false)
 		, template_name_handle() {}
