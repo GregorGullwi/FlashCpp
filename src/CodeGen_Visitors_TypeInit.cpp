@@ -1062,3 +1062,727 @@
 		}
 	}
 
+
+
+
+// ── inline private helpers (CodeGen_Visitors_TypeInit.cpp) ──
+// Helper: resolve self-referential struct types in template instantiations.
+// When a template member function references its own class (e.g., const W& in W<T>::operator+=),
+// the type_index may point to the unfinalized template base. This resolves it to the
+// enclosing instantiated struct's type_index by mutating `type` in-place.
+// Important: only resolves when the unfinalized type's name matches the base name of the
+// enclosing struct — avoids incorrectly resolving outer class references in nested classes.
+void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
+	if (type.type() == Type::Struct && type.type_index() > 0 && type.type_index() < gTypeInfo.size()) {
+		auto& ti = gTypeInfo[type.type_index()];
+		if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
+			if (enclosing_type_index < gTypeInfo.size()) {
+				// Verify this is actually a self-reference by checking that the unfinalized
+				// type's name matches the base name of the enclosing struct.
+				// For template instantiations: W (unfinalized) matches W$hash (enclosing)
+				// For nested classes: Outer (unfinalized) does NOT match Outer::Inner (enclosing)
+				auto unfinalized_name = StringTable::getStringView(ti.name());
+				auto enclosing_name = StringTable::getStringView(gTypeInfo[enclosing_type_index].name());
+				
+				// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
+				// Template hash: "Name$hash" -> "Name"
+				// Nested class: "Outer::Inner" -> "Inner"
+				auto base_name = enclosing_name;
+				auto last_scope = base_name.rfind("::");
+				if (last_scope != std::string_view::npos) {
+					base_name = base_name.substr(last_scope + 2);
+				}
+				auto dollar_pos = base_name.find('$');
+				if (dollar_pos != std::string_view::npos) {
+					base_name = base_name.substr(0, dollar_pos);
+				}
+				
+				if (unfinalized_name == base_name) {
+					type.set_type_index(enclosing_type_index);
+				}
+			}
+		}
+	}
+}
+
+
+
+// Helper function to resolve template parameter size from struct name
+// This is used by both ConstExpr evaluator and IR generation for sizeof(T)
+// where T is a template parameter in a template class member function
+size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) {
+	// Parse the struct name to extract template arguments
+	// e.g., "Container_int" -> T = int (4 bytes), "Processor_char" -> T = char (1 byte)
+	// Pointer types have "P" suffix: "Container_intP" -> T = int* (8 bytes)
+	// Reference types have "R" or "RR" suffix: "Container_intR" -> T = int& (sizeof returns size of int)
+	size_t underscore_pos = struct_name.rfind('_');
+	if (underscore_pos == std::string_view::npos || underscore_pos + 1 >= struct_name.size()) {
+		return 0;
+	}
+	
+	std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
+	
+	// Strip CV qualifier prefixes ('C' for const, 'V' for volatile)
+	// TemplateTypeArg::toString() adds CV qualifiers as prefixes (e.g., "Cint" for const int)
+	// sizeof(const T) and sizeof(volatile T) return the same size as sizeof(T)
+	while (!type_suffix.empty() && (type_suffix.front() == 'C' || type_suffix.front() == 'V')) {
+		type_suffix = type_suffix.substr(1);
+	}
+	
+	// Check for reference types (suffix ends with 'R' or 'RR')
+	// TemplateTypeArg::toString() appends "R" for lvalue reference, "RR" for rvalue reference
+	// sizeof(T&) and sizeof(T&&) return the size of T, not the size of the reference itself
+	if (type_suffix.size() >= 2 && type_suffix.ends_with("RR")) {
+		// Rvalue reference - strip "RR" and get base type size
+		type_suffix = type_suffix.substr(0, type_suffix.size() - 2);
+	} else if (!type_suffix.empty() && type_suffix.back() == 'R') {
+		// Lvalue reference - strip "R" and get base type size
+		type_suffix = type_suffix.substr(0, type_suffix.size() - 1);
+	}
+	
+	// Check for pointer types (suffix ends with 'P')
+	// TemplateTypeArg::toString() appends 'P' for each pointer level
+	// e.g., "intP" for int*, "intPP" for int**, etc.
+	if (!type_suffix.empty() && type_suffix.back() == 'P') {
+		// All pointers are 8 bytes on x64
+		return 8;
+	}
+	
+	// Check for array types (suffix contains 'A')
+	// Arrays are like "intA[10]" - sizeof(array) = element_size * element_count
+	size_t array_pos = type_suffix.find('A');
+	if (array_pos != std::string_view::npos) {
+		// Extract base type and array dimensions
+		std::string_view base_type = type_suffix.substr(0, array_pos);
+		std::string_view array_part = type_suffix.substr(array_pos + 1); // Skip 'A'
+		
+		// Strip CV qualifiers from base_type (already stripped from type_suffix earlier, but double-check)
+		while (!base_type.empty() && (base_type.front() == 'C' || base_type.front() == 'V')) {
+			base_type = base_type.substr(1);
+		}
+		
+		// Parse array dimensions like "[10]" or "[]"
+		if (array_part.starts_with('[') && array_part.ends_with(']')) {
+			std::string_view dimensions = array_part.substr(1, array_part.size() - 2);
+			if (!dimensions.empty()) {
+				// Parse the dimension as a number
+				size_t array_count = 0;
+				auto result = std::from_chars(dimensions.data(), dimensions.data() + dimensions.size(), array_count);
+				if (result.ec == std::errc{} && array_count > 0) {
+					// Get base type size
+					size_t base_size = 0;
+					
+					// Check if base_type is a pointer (ends with 'P')
+					// e.g., "intP" for int*, "charPP" for char**, etc.
+					if (!base_type.empty() && base_type.back() == 'P') {
+						// All pointers are 8 bytes on x64
+						base_size = 8;
+					} else {
+						// Look up non-pointer base type size
+						if (base_type == "int") base_size = 4;
+						else if (base_type == "char") base_size = 1;
+						else if (base_type == "short") base_size = 2;
+						else if (base_type == "long") base_size = get_long_size_bits() / 8;
+						else if (base_type == "float") base_size = 4;
+						else if (base_type == "double") base_size = 8;
+						else if (base_type == "bool") base_size = 1;
+						else if (base_type == "uint") base_size = 4;
+						else if (base_type == "uchar") base_size = 1;
+						else if (base_type == "ushort") base_size = 2;
+						else if (base_type == "ulong") base_size = get_long_size_bits() / 8;
+						else if (base_type == "ulonglong") base_size = 8;
+						else if (base_type == "longlong") base_size = 8;
+					}
+					
+					if (base_size > 0) {
+						return base_size * array_count;
+					}
+				}
+			}
+		}
+		return 0;  // Failed to parse array dimensions
+	}
+	
+	// Map common type suffixes to their sizes
+	// Note: Must match the output of TemplateTypeArg::toString() in TemplateRegistry.h
+	if (type_suffix == "int") return 4;
+	else if (type_suffix == "char") return 1;
+	else if (type_suffix == "short") return 2;
+	else if (type_suffix == "long") return get_long_size_bits() / 8;
+	else if (type_suffix == "float") return 4;
+	else if (type_suffix == "double") return 8;
+	else if (type_suffix == "bool") return 1;
+	else if (type_suffix == "uint") return 4;
+	else if (type_suffix == "uchar") return 1;
+	else if (type_suffix == "ushort") return 2;
+	else if (type_suffix == "ulong") return get_long_size_bits() / 8;
+	else if (type_suffix == "ulonglong") return 8;
+	else if (type_suffix == "longlong") return 8;
+	
+	return 0;  // Unknown type
+}
+
+
+
+// Recursively zero-initialize all scalar leaf members of a struct.
+// For sub-members that are themselves structs (> 64 bits), recurse instead of
+// emitting a single MemberStore with 0ULL (which would only zero the first 8 bytes).
+void AstToIr::emitRecursiveZeroFill(
+	const StructTypeInfo& struct_info,
+	StringHandle base_object,
+	int base_offset,
+	const Token& token)
+{
+	for (const StructMember& sub_member : struct_info.members) {
+		bool is_nested_struct = (sub_member.type == Type::Struct || sub_member.type == Type::UserDefined)
+			&& sub_member.type_index < gTypeInfo.size()
+			&& gTypeInfo[sub_member.type_index].struct_info_
+			&& (sub_member.size * 8) > 64;
+
+		if (is_nested_struct) {
+			emitRecursiveZeroFill(
+				*gTypeInfo[sub_member.type_index].struct_info_,
+				base_object,
+				base_offset + static_cast<int>(sub_member.offset),
+				token);
+		} else {
+			MemberStoreOp member_store;
+			member_store.value.type = sub_member.type;
+			member_store.value.size_in_bits = static_cast<int>(sub_member.size * 8);
+			member_store.value.value = 0ULL;
+			member_store.object = base_object;
+			member_store.member_name = sub_member.getName();
+			member_store.offset = base_offset + static_cast<int>(sub_member.offset);
+			member_store.is_reference = sub_member.is_reference();
+			member_store.is_rvalue_reference = sub_member.is_rvalue_reference();
+			member_store.struct_type_info = nullptr;
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+		}
+	}
+}
+
+
+
+// Implementation of recursive nested member store generation
+bool AstToIr::tryEmitArrayMemberStores(
+const StructMember& member,
+const InitializerListNode& init_list,
+StringHandle base_object,
+int base_offset,
+const Token& token)
+{
+	if (!member.is_array || member.array_dimensions.empty()) {
+		return false;
+	}
+
+	size_t element_count = 1;
+	for (size_t dim : member.array_dimensions) {
+		element_count *= dim;
+	}
+	if (element_count == 0) {
+		return false;
+	}
+
+	int element_size_bits = 0;
+	if (member.type_index < gTypeInfo.size()) {
+		const TypeInfo& elem_type_info = gTypeInfo[member.type_index];
+		if (elem_type_info.struct_info_) {
+			// Struct types store type_size_ in bytes
+			element_size_bits = static_cast<int>(elem_type_info.type_size_ * 8);
+		} else if (elem_type_info.type_size_ > 0) {
+			// Non-struct types (enums, typedefs, etc.) store type_size_ in bits
+			element_size_bits = static_cast<int>(elem_type_info.type_size_);
+		}
+	}
+	if (element_size_bits <= 0) {
+		element_size_bits = static_cast<int>((member.size * 8) / element_count);
+	}
+
+	auto count_expressions = [&](const auto& self, const InitializerListNode& list) -> size_t {
+		size_t count = 0;
+		for (const ASTNode& node : list.initializers()) {
+			if (node.is<ExpressionNode>()) {
+				count++;
+			} else if (node.is<InitializerListNode>()) {
+				count += self(self, node.as<InitializerListNode>());
+			}
+		}
+		return count;
+	};
+
+	const size_t first_dimension_limit = member.array_dimensions[0];
+	size_t nested_subarray_count = 0;
+	const size_t subarray_limit = member.array_dimensions.size() > 1
+		? (element_count / first_dimension_limit)
+		: element_count;
+	for (const ASTNode& node : init_list.initializers()) {
+		if (node.is<InitializerListNode>()) {
+			nested_subarray_count++;
+			if (nested_subarray_count > first_dimension_limit) {
+				throw CompileError("Too many initializers for array");
+			}
+			if (member.array_dimensions.size() > 1 &&
+				count_expressions(count_expressions, node.as<InitializerListNode>()) > subarray_limit) {
+				throw CompileError("Too many initializers for array subobject");
+			}
+		}
+	}
+
+	std::vector<const ExpressionNode*> flat_initializers;
+	auto collect_initializers = [&](const auto& self, const InitializerListNode& list) -> void {
+		for (const ASTNode& node : list.initializers()) {
+			if (node.is<ExpressionNode>()) {
+				flat_initializers.push_back(&node.as<ExpressionNode>());
+			} else if (node.is<InitializerListNode>()) {
+				self(self, node.as<InitializerListNode>());
+			}
+		}
+	};
+	collect_initializers(collect_initializers, init_list);
+	if (flat_initializers.size() > element_count) {
+		throw CompileError("Too many initializers for array");
+	}
+
+	const size_t emit_count = std::min(element_count, flat_initializers.size());
+	for (size_t i = 0; i < emit_count; ++i) {
+		auto init_operands = visitExpressionNode(*flat_initializers[i]);
+		if (init_operands.size() < 3) {
+			throw InternalError("Invalid array member initializer operands");
+		}
+
+		emitArrayStore(
+			member.type,
+			element_size_bits,
+			base_object,
+			TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+			toTypedValue(init_operands),
+			base_offset + static_cast<int>(member.offset),
+			false,
+			token
+		);
+	}
+
+	// Zero-fill trailing uninitialized elements.
+	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
+	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
+	const bool is_struct_element = (member.type == Type::Struct || member.type == Type::UserDefined)
+		&& member.type_index < gTypeInfo.size()
+		&& gTypeInfo[member.type_index].struct_info_
+		&& element_size_bits > 64;
+
+	for (size_t i = emit_count; i < element_count; ++i) {
+		if (is_struct_element) {
+			// Recursively zero each sub-member of the struct element.
+			int element_byte_offset = base_offset
+				+ static_cast<int>(member.offset)
+				+ static_cast<int>(i) * (element_size_bits / 8);
+
+			emitRecursiveZeroFill(*gTypeInfo[member.type_index].struct_info_,
+				base_object, element_byte_offset, token);
+		} else {
+			TypedValue zero_value{member.type, element_size_bits, 0ULL};
+			emitArrayStore(
+				member.type,
+				element_size_bits,
+				base_object,
+				TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+				zero_value,
+				base_offset + static_cast<int>(member.offset),
+				false,
+				token
+			);
+		}
+	}
+
+	return true;
+}
+
+
+void AstToIr::generateNestedMemberStores(
+const StructTypeInfo& struct_info,
+const InitializerListNode& init_list,
+StringHandle base_object,
+int base_offset,
+const Token& token)
+{
+	// Build map of member names to initializer expressions
+	std::unordered_map<StringHandle, const ASTNode*> member_values;
+	size_t positional_index = 0;
+	const auto& initializers = init_list.initializers();
+
+	for (size_t i = 0; i < initializers.size(); ++i) {
+		if (init_list.is_designated(i)) {
+			member_values[init_list.member_name(i)] = &initializers[i];
+		} else if (positional_index < struct_info.members.size()) {
+			StringHandle member_name = struct_info.members[positional_index].getName();
+			member_values[member_name] = &initializers[i];
+			positional_index++;
+		}
+	}
+
+	// Process each struct member
+	for (const StructMember& member : struct_info.members) {
+		StringHandle member_name = member.getName();
+
+		if (!member_values.count(member_name)) {
+			// Zero-initialize unspecified members
+			MemberStoreOp member_store;
+			member_store.value.type = member.type;
+			member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+			member_store.value.value = 0ULL;
+			member_store.object = base_object;
+			member_store.member_name = member_name;
+			member_store.offset = base_offset + static_cast<int>(member.offset);
+			member_store.is_reference = member.is_reference();
+			member_store.is_rvalue_reference = member.is_rvalue_reference();
+			member_store.struct_type_info = nullptr;
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+			continue;
+		}
+
+		const ASTNode& init_expr = *member_values[member_name];
+
+		if (init_expr.is<InitializerListNode>()) {
+			// Nested brace initializer - check if member is a struct
+			const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+
+			if (tryEmitArrayMemberStores(member, nested_init_list, base_object, base_offset, token)) {
+				continue;
+			}
+
+			if (member.type_index < gTypeInfo.size()) {
+				const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+
+				if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
+					// RECURSIVE CALL for nested struct
+					generateNestedMemberStores(
+					*member_type_info.struct_info_,
+					nested_init_list,
+					base_object,
+					base_offset + static_cast<int>(member.offset),
+					token
+					);
+					continue;
+				}
+			}
+
+			// Not a struct type - try to extract single value from single-element list
+			const auto& nested_initializers = nested_init_list.initializers();
+			if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
+				auto init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+				IrValue member_value = 0ULL;
+				if (init_operands.size() >= 3) {
+					if (std::holds_alternative<TempVar>(init_operands[2])) {
+						member_value = std::get<TempVar>(init_operands[2]);
+					} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+						member_value = std::get<unsigned long long>(init_operands[2]);
+					} else if (std::holds_alternative<double>(init_operands[2])) {
+						member_value = std::get<double>(init_operands[2]);
+					} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
+						member_value = std::get<StringHandle>(init_operands[2]);
+					}
+				}
+
+				MemberStoreOp member_store;
+				member_store.value.type = member.type;
+				member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+				member_store.value.value = member_value;
+				member_store.object = base_object;
+				member_store.member_name = member_name;
+				member_store.offset = base_offset + static_cast<int>(member.offset);
+				member_store.is_reference = member.is_reference();
+				member_store.is_rvalue_reference = member.is_rvalue_reference();
+				member_store.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+			} else {
+				// Zero-initialize if we can't extract a value
+				MemberStoreOp member_store;
+				member_store.value.type = member.type;
+				member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+				member_store.value.value = 0ULL;
+				member_store.object = base_object;
+				member_store.member_name = member_name;
+				member_store.offset = base_offset + static_cast<int>(member.offset);
+				member_store.is_reference = member.is_reference();
+				member_store.is_rvalue_reference = member.is_rvalue_reference();
+				member_store.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+			}
+		} else if (init_expr.is<ExpressionNode>()) {
+			// Direct expression initializer
+			auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+			IrValue member_value = 0ULL;
+			if (init_operands.size() >= 3) {
+				if (std::holds_alternative<TempVar>(init_operands[2])) {
+					member_value = std::get<TempVar>(init_operands[2]);
+				} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+					member_value = std::get<unsigned long long>(init_operands[2]);
+				} else if (std::holds_alternative<double>(init_operands[2])) {
+					member_value = std::get<double>(init_operands[2]);
+				} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
+					member_value = std::get<StringHandle>(init_operands[2]);
+				}
+			}
+
+			MemberStoreOp member_store;
+			member_store.value.type = member.type;
+			member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+			member_store.value.value = member_value;
+			member_store.object = base_object;
+			member_store.member_name = member_name;
+			member_store.offset = base_offset + static_cast<int>(member.offset);
+			member_store.is_reference = member.is_reference();
+			member_store.is_rvalue_reference = member.is_rvalue_reference();
+			member_store.struct_type_info = nullptr;
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+		}
+	}
+}
+
+
+
+// Generate just the function declaration for a template instantiation (without body)
+// This is called immediately when a template call is detected, so the IR converter
+// knows the full function signature before the call is converted to object code
+void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst_info) {
+	const FunctionDeclarationNode& template_func_decl = inst_info.template_node_ptr->function_decl_node();
+	const DeclarationNode& template_decl = template_func_decl.decl_node();
+
+	// Create mangled name token
+	Token mangled_token(
+		Token::Type::Identifier,
+		StringTable::getStringView(inst_info.mangled_name),
+		template_decl.identifier_token().line(),
+		template_decl.identifier_token().column(),
+		template_decl.identifier_token().file_index()
+	);
+
+	StringHandle full_func_name = inst_info.mangled_name;
+	StringHandle struct_name = inst_info.struct_name;
+
+	// Generate function declaration IR using typed payload
+	FunctionDeclOp func_decl_op;
+	
+	// Add return type
+	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
+	func_decl_op.return_type = return_type.type();
+	func_decl_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+	func_decl_op.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
+	
+	// Add function name and struct name
+	func_decl_op.function_name = full_func_name;
+	func_decl_op.struct_name = struct_name;
+	
+	// Add linkage (C++)
+	func_decl_op.linkage = Linkage::None;
+
+	// Add variadic flag (template functions are typically not variadic, but check anyway)
+	func_decl_op.is_variadic = template_func_decl.is_variadic();
+
+	// Mangled name is the full function name (already stored in StringBuilder's stable storage)
+	func_decl_op.mangled_name = full_func_name;
+
+	// Add function parameters with concrete types
+	size_t template_unnamed_param_counter = 0;
+	for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
+		const auto& param_node = template_func_decl.parameter_nodes()[i];
+		if (param_node.is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+
+			FunctionParam func_param;
+			// Use concrete type if this parameter uses a template parameter
+			if (i < inst_info.template_args.size()) {
+				Type concrete_type = inst_info.template_args[i];
+				func_param.type = concrete_type;
+				func_param.size_in_bits = static_cast<int>(get_type_size_bits(concrete_type));
+				func_param.pointer_depth = 0;  // pointer depth
+			} else {
+				// Use original parameter type
+				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				func_param.type = param_type.type();
+				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+			}
+			
+			// Handle empty parameter names
+			std::string_view param_name = param_decl.identifier_token().value();
+			if (param_name.empty()) {
+				func_param.name = StringTable::getOrInternStringHandle(
+					StringBuilder().append("__param_").append(template_unnamed_param_counter++).commit());
+			} else {
+				func_param.name = StringTable::getOrInternStringHandle(param_name);
+			}
+			
+			func_param.is_reference = false;
+			func_param.is_rvalue_reference = false;
+			func_param.cv_qualifier = CVQualifier::None;
+			func_decl_op.parameters.push_back(func_param);
+		}
+	}
+
+	// Emit function declaration IR (declaration only, no body)
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), mangled_token));
+}
+
+
+// Generate an instantiated member function template
+void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info) {
+	auto saved_namespace_stack = current_namespace_stack_;
+	auto parse_namespace_components = [](std::string_view qualified_prefix) {
+		std::vector<std::string> components;
+		size_t start = 0;
+		while (start < qualified_prefix.size()) {
+			size_t sep = qualified_prefix.find("::", start);
+			if (sep == std::string_view::npos) {
+				components.emplace_back(qualified_prefix.substr(start));
+				break;
+			}
+			components.emplace_back(qualified_prefix.substr(start, sep - start));
+			start = sep + 2;
+		}
+		return components;
+	};
+	auto extract_namespace_prefix = [](std::string_view qualified_name) -> std::string_view {
+		size_t scope_pos = qualified_name.rfind("::");
+		if (scope_pos == std::string_view::npos) {
+			return {};
+		}
+		return qualified_name.substr(0, scope_pos);
+	};
+
+	std::string_view namespace_source;
+	if (inst_info.struct_name.isValid()) {
+		namespace_source = extract_namespace_prefix(StringTable::getStringView(inst_info.struct_name));
+	} else {
+		namespace_source = extract_namespace_prefix(StringTable::getStringView(inst_info.qualified_template_name));
+	}
+	if (!namespace_source.empty()) {
+		current_namespace_stack_ = parse_namespace_components(namespace_source);
+	} else {
+		current_namespace_stack_.clear();
+	}
+
+	// First, generate the FunctionDecl IR for the template instantiation
+	// This must be done at the top level, BEFORE any function bodies that might call it
+	generateTemplateFunctionDecl(inst_info);
+	
+	// Get the template function declaration
+	const FunctionDeclarationNode& template_func_decl = inst_info.template_node_ptr->function_decl_node();
+	const DeclarationNode& template_decl = template_func_decl.decl_node();
+
+	// Create mangled name token
+	Token mangled_token(
+		Token::Type::Identifier,
+		StringTable::getStringView(inst_info.mangled_name),
+		template_decl.identifier_token().line(),
+		template_decl.identifier_token().column(),
+		template_decl.identifier_token().file_index()
+	);
+
+	// Enter function scope
+	symbol_table.enter_scope(ScopeType::Function);
+
+	// Get struct type info for member functions
+	const TypeInfo* struct_type_info = nullptr;
+	if (inst_info.struct_name.isValid()) {
+		auto struct_type_it = gTypesByName.find(inst_info.struct_name);
+		if (struct_type_it != gTypesByName.end()) {
+			struct_type_info = struct_type_it->second;
+		}
+	}
+
+	// For member functions, add implicit 'this' pointer to symbol table
+	// This is needed so member variable access works during template body parsing
+	if (struct_type_info) {
+		// Create a 'this' pointer type (pointer to the struct)
+		auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			Type::UserDefined,
+			struct_type_info->type_index_,
+			64,  // Pointer size in bits
+			template_decl.identifier_token()
+		);
+		
+		// Set pointer depth to 1 (this is a pointer)
+		this_type_node.as<TypeSpecifierNode>().add_pointer_level(CVQualifier::None);
+		
+		// Create 'this' declaration
+		Token this_token(Token::Type::Identifier, "this"sv, 
+			template_decl.identifier_token().line(),
+			template_decl.identifier_token().column(),
+			template_decl.identifier_token().file_index());
+		auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type_node, this_token);
+		
+		// Add 'this' to symbol table
+		symbol_table.insert("this"sv, this_decl);
+	}
+
+	// Add function parameters to symbol table for name resolution during body parsing
+	for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
+		const auto& param_node = template_func_decl.parameter_nodes()[i];
+		if (param_node.is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+
+			// Create declaration with concrete type
+			if (i < inst_info.template_args.size()) {
+				Type concrete_type = inst_info.template_args[i];
+				auto concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+					concrete_type, 
+					TypeQualifier::None, 
+					get_type_size_bits(concrete_type),
+					param_decl.identifier_token()
+				);
+				auto concrete_param_decl = ASTNode::emplace_node<DeclarationNode>(concrete_type_node, param_decl.identifier_token());
+				symbol_table.insert(param_decl.identifier_token().value(), concrete_param_decl);
+			} else {
+				symbol_table.insert(param_decl.identifier_token().value(), param_node);
+			}
+		}
+	}
+
+	// Parse the template body with concrete types
+	// Pass the struct name and type index so the parser can set up member function context
+	auto body_node_opt = parser_->parseTemplateBody(
+		inst_info.body_position,
+		inst_info.template_param_names,
+		inst_info.template_args,
+		inst_info.struct_name.isValid() ? inst_info.struct_name : StringHandle(),  // Pass struct name
+		struct_type_info ? struct_type_info->type_index_ : 0  // Pass type index
+	);
+
+	if (body_node_opt.has_value()) {
+		if (body_node_opt->is<BlockNode>()) {
+			const BlockNode& block = body_node_opt->as<BlockNode>();
+			const auto& stmts = block.get_statements();
+			
+			// Visit each statement in the block to generate IR
+			for (size_t i = 0; i < stmts.size(); ++i) {
+				visit(stmts[i]);
+			}
+		}
+	} else {
+		std::cerr << "Warning: Template body does NOT have value!\n";
+	}
+
+	// Add implicit return for void functions
+	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
+	if (return_type.type() == Type::Void) {
+		ReturnOp ret_op;  // No return value for void
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), mangled_token));
+	}
+
+	// Exit function scope
+	symbol_table.exit_scope();
+	current_namespace_stack_ = saved_namespace_stack;
+}
+
+
+
+std::vector<IrOperand> AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
+	// This should not happen during normal code generation - template parameters should be substituted
+	// during template instantiation. If we get here, it means template instantiation failed.
+	std::string param_name = std::string(templateParamRefNode.param_name().view());
+	std::cerr << "Error: Template parameter '" << param_name << "' was not substituted during template instantiation\n";
+	std::cerr << "This indicates a bug in template instantiation - template parameters should be replaced with concrete types/values\n";
+	assert(false && "Template parameter reference found during code generation - should have been substituted");
+	return {};
+}

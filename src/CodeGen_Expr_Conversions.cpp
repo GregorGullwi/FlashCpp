@@ -1461,3 +1461,416 @@
 		// Return the result
 		return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };
 	}
+
+
+
+// Helper: generate a member function call for user-defined operator++/-- overloads on structs.
+// Returns the IR operands {result_type, result_size, ret_var, result_type_index} on success,
+// or std::nullopt if no overload was found.
+std::optional<std::vector<IrOperand>> AstToIr::generateUnaryIncDecOverloadCall(
+	OverloadableOperator op_kind,  // Increment or Decrement
+	Type operandType,
+	const std::vector<IrOperand>& operandIrOperands,
+	bool is_prefix
+) {
+	if (operandType != Type::Struct || operandIrOperands.size() < 4)
+		return std::nullopt;
+
+	TypeIndex operand_type_index = 0;
+	if (std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
+		operand_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operandIrOperands[3]));
+	}
+	if (operand_type_index == 0)
+		return std::nullopt;
+
+	// For ++/--, we need to distinguish prefix (0 params) from postfix (1 param: dummy int).
+	// findUnaryOperatorOverload returns the first match; scan all member functions to pick
+	// the overload whose parameter count matches the call form.
+	size_t expected_param_count = is_prefix ? 0 : 1;
+	const StructMemberFunction* matched_func = nullptr;
+	const StructMemberFunction* fallback_func = nullptr;
+	if (operand_type_index < gTypeInfo.size()) {
+		const StructTypeInfo* struct_info = gTypeInfo[operand_type_index].getStructInfo();
+		if (struct_info) {
+			for (const auto& mf : struct_info->member_functions) {
+				if (mf.operator_kind == op_kind) {
+					const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+					if (fd.parameter_nodes().size() == expected_param_count) {
+						matched_func = &mf;
+						break;
+					}
+					if (!fallback_func) fallback_func = &mf;
+				}
+			}
+		}
+	}
+	// Fallback: if no exact arity match, use any operator++ / operator-- overload.
+	// This handles the common case where only one form (prefix or postfix) is defined.
+	if (!matched_func) matched_func = fallback_func;
+	if (!matched_func)
+		return std::nullopt;
+
+	const StructMemberFunction& member_func = *matched_func;
+	const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+	std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index].name());
+	TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	resolveSelfReferentialType(return_type, operand_type_index);
+
+	std::vector<TypeSpecifierNode> param_types;
+	// Use the matched function's actual parameter count for mangling, not the call form.
+	// When the fallback path is taken (e.g., only prefix defined but postfix called),
+	// we must mangle to match the definition, not the call site.
+	const auto& actual_params = func_decl.parameter_nodes();
+	if (actual_params.size() == 1 && actual_params[0].is<DeclarationNode>()) {
+		// Postfix overload has a dummy int parameter
+		TypeSpecifierNode int_type(Type::Int, TypeQualifier::None, 32, Token());
+		param_types.push_back(int_type);
+	}
+	std::vector<std::string_view> empty_namespace;
+	auto op_func_name = StringBuilder().append("operator").append(overloadableOperatorToString(op_kind)).commit();
+	auto mangled_name = NameMangling::generateMangledName(
+		op_func_name, return_type, param_types, false,
+		struct_name, empty_namespace, Linkage::CPlusPlus
+	);
+
+	TempVar ret_var = var_counter.next();
+	CallOp call_op;
+	call_op.result = ret_var;
+	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+	call_op.return_type = return_type.type();
+	call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+	if (call_op.return_size_in_bits == 0 && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
+		call_op.return_size_in_bits = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
+	}
+	call_op.return_type_index = return_type.type_index();
+	call_op.is_member_function = true;
+
+	// Detect if returning struct by value (needs hidden return parameter for RVO).
+	// Small structs (≤ ABI threshold) return in registers and need no return_slot.
+	if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64())) {
+		call_op.return_slot = ret_var;
+	}
+
+	// Take address of operand for 'this' pointer
+	TempVar this_addr = var_counter.next();
+	AddressOfOp addr_op;
+	addr_op.result = this_addr;
+	addr_op.operand = toTypedValue(operandIrOperands);
+	addr_op.operand.pointer_depth = 0;
+	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+
+	TypedValue this_arg;
+	this_arg.type = operandType;
+	this_arg.size_in_bits = 64;
+	this_arg.value = this_addr;
+	call_op.args.push_back(this_arg);
+
+	// For postfix operators, pass dummy int argument (value 0)
+	// For postfix operators, pass dummy int argument (value 0)
+	// Use the matched function's actual parameter count (not the call form) to decide,
+	// since the fallback path may match a prefix function for a postfix call or vice versa.
+	if (actual_params.size() == 1) {
+		TypedValue dummy_arg;
+		dummy_arg.type = Type::Int;
+		dummy_arg.size_in_bits = 32;
+		dummy_arg.value = 0ULL;
+		call_op.args.push_back(dummy_arg);
+	}
+
+	int result_size = call_op.return_size_in_bits;
+	TypeIndex result_type_index = call_op.return_type_index;
+	Type result_type = call_op.return_type;
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
+	return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
+}
+
+
+
+// Helper: generate built-in pointer or integer increment/decrement IR.
+// Handles pointer arithmetic (add/subtract element_size) and integer pre/post inc/dec.
+// is_increment: true for ++, false for --
+std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
+	bool is_increment,
+	bool is_prefix,
+	bool operandHandledAsIdentifier,
+	const UnaryOperatorNode& unaryOperatorNode,
+	const std::vector<IrOperand>& operandIrOperands,
+	Type operandType,
+	TempVar result_var
+) {
+	// Check if this is a pointer increment/decrement (requires pointer arithmetic)
+	bool is_pointer = false;
+	int element_size = 1;
+	if (operandHandledAsIdentifier && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+		if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+			const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+			auto symbol = symbol_table.lookup(identifier.name());
+			if (symbol.has_value()) {
+				const TypeSpecifierNode* type_node = nullptr;
+				if (symbol->is<DeclarationNode>()) {
+					type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				} else if (symbol->is<VariableDeclarationNode>()) {
+					type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+				}
+				
+				if (type_node && type_node->pointer_depth() > 0) {
+					is_pointer = true;
+					if (type_node->pointer_depth() > 1) {
+						element_size = 8;  // Multi-level pointer: element is a pointer
+					} else {
+						element_size = getSizeInBytes(type_node->type(), type_node->type_index(), type_node->size_in_bits());
+					}
+				}
+			}
+		}
+	}
+	
+	UnaryOp unary_op{
+		.value = toTypedValue(operandIrOperands),
+		.result = result_var
+	};
+	
+	IrOpcode arith_opcode = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
+	
+	if (is_pointer) {
+		// For pointers, use a BinaryOp to add/subtract element_size
+		// Extract the pointer operand value once (used in multiple BinaryOp/AssignmentOp below)
+		IrValue ptr_operand = std::holds_alternative<StringHandle>(operandIrOperands[2])
+			? IrValue(std::get<StringHandle>(operandIrOperands[2])) : IrValue{};
+		
+		if (is_prefix) {
+			BinaryOp bin_op{
+				.lhs = { Type::UnsignedLongLong, 64, ptr_operand },
+				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), Token()));
+			// Store back to the pointer variable
+			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+				AssignmentOp assign_op;
+				assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+				assign_op.lhs = { Type::UnsignedLongLong, 64, ptr_operand };
+				assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+			}
+			return { operandType, 64, result_var, 0ULL };
+		} else {
+			// Postfix: save old value, modify, return old value
+			TempVar old_value = var_counter.next();
+			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+				AssignmentOp save_op;
+				save_op.result = old_value;
+				save_op.lhs = { Type::UnsignedLongLong, 64, old_value };
+				save_op.rhs = toTypedValue(operandIrOperands);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
+			}
+			BinaryOp bin_op{
+				.lhs = { Type::UnsignedLongLong, 64, ptr_operand },
+				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), Token()));
+			// Store back to the pointer variable
+			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+				AssignmentOp assign_op;
+				assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+				assign_op.lhs = { Type::UnsignedLongLong, 64, ptr_operand };
+				assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+			}
+			return { operandType, 64, old_value, 0ULL };
+		}
+	} else {
+		// Regular integer increment/decrement
+		IrOpcode pre_opcode = is_increment ? IrOpcode::PreIncrement : IrOpcode::PreDecrement;
+		IrOpcode post_opcode = is_increment ? IrOpcode::PostIncrement : IrOpcode::PostDecrement;
+		ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, Token()));
+	}
+	
+	return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };
+}
+
+
+
+// Helper function to evaluate whether an expression is noexcept
+// Returns true if the expression is guaranteed not to throw, false otherwise
+bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
+	// Literals are always noexcept
+	if (std::holds_alternative<BoolLiteralNode>(expr) ||
+	std::holds_alternative<NumericLiteralNode>(expr) ||
+	std::holds_alternative<StringLiteralNode>(expr)) {
+		return true;
+	}
+	
+	// Identifiers (variable references) are noexcept
+	if (std::holds_alternative<IdentifierNode>(expr) ||
+	std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+		return true;
+	}
+	
+	// Template parameter references are noexcept
+	if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+		return true;
+	}
+	
+	// Built-in operators on primitives are noexcept
+	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+		const auto& binop = std::get<BinaryOperatorNode>(expr);
+		// Recursively check operands
+		if (binop.get_lhs().is<ExpressionNode>() && binop.get_rhs().is<ExpressionNode>()) {
+			return isExpressionNoexcept(binop.get_lhs().as<ExpressionNode>()) &&
+			isExpressionNoexcept(binop.get_rhs().as<ExpressionNode>());
+		}
+		// If operands are not expressions, assume noexcept for built-ins
+		return true;
+	}
+	
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const auto& unop = std::get<UnaryOperatorNode>(expr);
+		if (unop.get_operand().is<ExpressionNode>()) {
+			return isExpressionNoexcept(unop.get_operand().as<ExpressionNode>());
+		}
+		return true;
+	}
+	
+	// Ternary operator: check all three sub-expressions
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		const auto& ternary = std::get<TernaryOperatorNode>(expr);
+		bool cond_noexcept = true, then_noexcept = true, else_noexcept = true;
+		if (ternary.condition().is<ExpressionNode>()) {
+			cond_noexcept = isExpressionNoexcept(ternary.condition().as<ExpressionNode>());
+		}
+		if (ternary.true_expr().is<ExpressionNode>()) {
+			then_noexcept = isExpressionNoexcept(ternary.true_expr().as<ExpressionNode>());
+		}
+		if (ternary.false_expr().is<ExpressionNode>()) {
+			else_noexcept = isExpressionNoexcept(ternary.false_expr().as<ExpressionNode>());
+		}
+		return cond_noexcept && then_noexcept && else_noexcept;
+	}
+	
+	// Function calls: check if function is declared noexcept
+	if (std::holds_alternative<FunctionCallNode>(expr)) {
+		const auto& func_call = std::get<FunctionCallNode>(expr);
+		// Check if function_declaration is available and noexcept
+		// The FunctionCallNode contains a reference to the function's DeclarationNode
+		// We need to look up the FunctionDeclarationNode to check noexcept
+		const DeclarationNode& decl = func_call.function_declaration();
+		std::string_view func_name = decl.identifier_token().value();
+		
+		// Look up the function in the symbol table
+		extern SymbolTable gSymbolTable;
+		auto symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(func_name));
+		if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& func_decl = symbol->as<FunctionDeclarationNode>();
+			return func_decl.is_noexcept();
+		}
+		// If we can't determine, conservatively assume it may throw
+		return false;
+	}
+	
+	// Member function calls: check if method is declared noexcept
+	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
+		const FunctionDeclarationNode& func_decl = member_call.function_declaration();
+		return func_decl.is_noexcept();
+	}
+	
+	// Constructor calls: check if constructor is noexcept
+	if (std::holds_alternative<ConstructorCallNode>(expr)) {
+		// For now, conservatively assume constructors may throw
+		// A complete implementation would check the constructor declaration
+		return false;
+	}
+	
+	// Array subscript: noexcept if index expression is noexcept
+	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+		const auto& subscript = std::get<ArraySubscriptNode>(expr);
+		if (subscript.index_expr().is<ExpressionNode>()) {
+			return isExpressionNoexcept(subscript.index_expr().as<ExpressionNode>());
+		}
+		return true;
+	}
+	
+	// Member access is noexcept
+	if (std::holds_alternative<MemberAccessNode>(expr)) {
+		return true;
+	}
+	
+	// sizeof, alignof, offsetof are always noexcept
+	if (std::holds_alternative<SizeofExprNode>(expr) ||
+	std::holds_alternative<SizeofPackNode>(expr) ||
+	std::holds_alternative<AlignofExprNode>(expr) ||
+	std::holds_alternative<OffsetofExprNode>(expr)) {
+		return true;
+	}
+	
+	// Type traits are noexcept
+	if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+		return true;
+	}
+	
+	// new/delete can throw (unless using nothrow variant)
+	if (std::holds_alternative<NewExpressionNode>(expr) ||
+	std::holds_alternative<DeleteExpressionNode>(expr)) {
+		return false;
+	}
+	
+	// Cast expressions: check the operand
+	if (std::holds_alternative<StaticCastNode>(expr)) {
+		const auto& cast = std::get<StaticCastNode>(expr);
+		if (cast.expr().is<ExpressionNode>()) {
+			return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+		}
+		return true;
+	}
+	if (std::holds_alternative<DynamicCastNode>(expr)) {
+		// dynamic_cast can throw std::bad_cast
+		return false;
+	}
+	if (std::holds_alternative<ConstCastNode>(expr)) {
+		const auto& cast = std::get<ConstCastNode>(expr);
+		if (cast.expr().is<ExpressionNode>()) {
+			return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+		}
+		return true;
+	}
+	if (std::holds_alternative<ReinterpretCastNode>(expr)) {
+		const auto& cast = std::get<ReinterpretCastNode>(expr);
+		if (cast.expr().is<ExpressionNode>()) {
+			return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+		}
+		return true;
+	}
+	
+	// typeid can throw for dereferencing null polymorphic pointers
+	if (std::holds_alternative<TypeidNode>(expr)) {
+		return false;
+	}
+	
+	// Lambda expressions themselves are noexcept (creating the closure)
+	if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+		return true;
+	}
+	
+	// Fold expressions: would need to check all sub-expressions
+	if (std::holds_alternative<FoldExpressionNode>(expr)) {
+		// Conservatively assume may throw
+		return false;
+	}
+	
+	// Pseudo-destructor calls are noexcept
+	if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
+		return true;
+	}
+	
+	// Nested noexcept expression
+	if (std::holds_alternative<NoexceptExprNode>(expr)) {
+		// noexcept(noexcept(x)) - the outer noexcept doesn't evaluate its operand
+		return true;
+	}
+	
+	// Default: conservatively assume may throw
+	return false;
+}

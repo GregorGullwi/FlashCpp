@@ -1,0 +1,193 @@
+#include "CodeGen.h"
+
+
+
+void AstToIr::exitScope() {
+	if (!scope_stack_.empty()) {
+		// Generate destructor calls for all variables in this scope (in reverse order)
+		const auto& scope_vars = scope_stack_.back();
+		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+			// Generate destructor call
+			DestructorCallOp dtor_op;
+			dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
+			dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
+			ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+		}
+		scope_stack_.pop_back();
+	}
+}
+
+
+
+void AstToIr::registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name) {
+	if (!scope_stack_.empty()) {
+		scope_stack_.back().push_back({var_name, struct_name});
+	}
+}
+
+
+
+// Helper functions to emit store instructions
+// These can be used by both the unified handler and special-case code
+
+// Emit ArrayStore instruction
+void AstToIr::emitArrayStore(Type element_type, int element_size_bits,
+std::variant<StringHandle, TempVar> array,
+const TypedValue& index, const TypedValue& value,
+int64_t member_offset, bool is_pointer_to_array,
+const Token& token) {
+	ArrayStoreOp payload;
+	payload.element_type = element_type;
+	payload.element_size_in_bits = element_size_bits;
+	payload.array = array;
+	payload.index = index;
+	payload.value = value;
+	payload.member_offset = member_offset;
+	payload.is_pointer_to_array = is_pointer_to_array;
+	
+	ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), token));
+}
+
+
+
+// Emit MemberStore instruction
+void AstToIr::emitMemberStore(const TypedValue& value,
+std::variant<StringHandle, TempVar> object,
+StringHandle member_name, int offset,
+bool is_reference, bool is_rvalue_reference,
+bool is_pointer_to_member,
+const Token& token,
+std::optional<size_t> bitfield_width,
+size_t bitfield_bit_offset) {
+	MemberStoreOp member_store;
+	member_store.value = value;
+	member_store.object = object;
+	member_store.member_name = member_name;
+	member_store.offset = offset;
+	member_store.struct_type_info = nullptr;
+	member_store.is_reference = is_reference;
+	member_store.is_rvalue_reference = is_rvalue_reference;
+	member_store.vtable_symbol = StringHandle();
+	member_store.is_pointer_to_member = is_pointer_to_member;
+	member_store.bitfield_width = bitfield_width;
+	member_store.bitfield_bit_offset = bitfield_bit_offset;
+	
+	ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+}
+
+
+
+// Emit DereferenceStore instruction
+void AstToIr::emitDereferenceStore(const TypedValue& value, Type pointee_type, [[maybe_unused]] int pointee_size_bits,
+std::variant<StringHandle, TempVar> pointer,
+const Token& token) {
+	DereferenceStoreOp store_op;
+	store_op.value = value;
+	
+	// Populate pointer TypedValue
+	store_op.pointer.type = pointee_type;
+	store_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+	store_op.pointer.pointer_depth = 1;  // Single pointer dereference
+	// Convert std::variant<StringHandle, TempVar> to IrValue
+	if (std::holds_alternative<StringHandle>(pointer)) {
+		store_op.pointer.value = std::get<StringHandle>(pointer);
+	} else {
+		store_op.pointer.value = std::get<TempVar>(pointer);
+	}
+	
+	ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
+}
+
+
+
+const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std::string_view context) const {
+	try {
+		return node.as<DeclarationNode>();
+	} catch (...) {
+		FLASH_LOG(Codegen, Error, "BAD DeclarationNode cast in ", context,
+		": type_name=", node.type_name(),
+		" has_value=", node.has_value());
+		throw;
+	}
+}
+
+
+
+// Helper to get the size of a type in bytes
+// Reuses the same logic as sizeof() operator
+// Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
+size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const {
+	if (type == Type::Struct) {
+		assert(type_index < gTypeInfo.size() && "Invalid type_index for struct");
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		assert(struct_info && "Struct type info not found");
+		return struct_info->total_size;
+	}
+	// For primitive types, convert bits to bytes
+	return size_in_bits / 8;
+}
+
+
+
+
+// ── inline private helpers (CodeGen_Lambdas.cpp) ──
+/// Unified symbol lookup: searches local scope first, then falls back to global scope
+std::optional<ASTNode> AstToIr::lookupSymbol(StringHandle handle) const {
+	auto symbol = symbol_table.lookup(handle);
+	if (!symbol.has_value() && global_symbol_table_) {
+		symbol = global_symbol_table_->lookup(handle);
+	}
+	return symbol;
+}
+
+
+
+std::optional<ASTNode> AstToIr::lookupSymbol(std::string_view name) const {
+	auto symbol = symbol_table.lookup(name);
+	if (!symbol.has_value() && global_symbol_table_) {
+		symbol = global_symbol_table_->lookup(name);
+	}
+	return symbol;
+}
+
+
+/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
+TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Token token) {
+	TempVar addr_var = var_counter.next();
+	AddressOfOp addr_op;
+	addr_op.result = addr_var;
+	addr_op.operand.type = type;
+	addr_op.operand.size_in_bits = size_in_bits;
+	addr_op.operand.pointer_depth = 0;
+	addr_op.operand.value = source;
+	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
+	return addr_var;
+}
+
+
+/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
+TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token) {
+	TempVar result_var = var_counter.next();
+	DereferenceOp deref_op;
+	deref_op.result = result_var;
+	deref_op.pointer.type = pointee_type;
+	deref_op.pointer.size_in_bits = pointer_size_bits;
+	deref_op.pointer.pointer_depth = pointer_depth;
+	deref_op.pointer.value = pointer_value;
+	ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
+	return result_var;
+}
+
+
+
+// ============================================================================
+// Return IR helper
+// ============================================================================
+void AstToIr::emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token) {
+	ReturnOp ret_op;
+	ret_op.return_value = return_value;
+	ret_op.return_type = return_type;
+	ret_op.return_size = return_size;
+	ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
+}
