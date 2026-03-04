@@ -457,6 +457,38 @@ scope (~200 occurrences across the codebase).  Its preconditions (tasks 1–3) a
 now met, and the thin shim overloads added in task 5B provide a clean migration
 path: each shim can be replaced with native `TemplateArgument` support incrementally.
 
+### Known issue: `resolve_dependent_member_alias` passes full function template args to class template instantiation
+
+**Status**: ⏳ Investigate — pre-existing (not introduced by task 5B)
+
+In `try_instantiate_single_template`, the `resolve_dependent_member_alias` lambda
+(~line 1447) passes the function template's full `template_args` vector to
+`try_instantiate_class_template` and `get_instantiated_class_name` when attempting
+to instantiate a base class template (lines 1506-1508).  This is correct when the
+function template and the base class template share the same parameters (the common
+case for patterns like `template<typename T> typename Helper<T>::type foo(T x)`),
+but would be wrong when they differ.
+
+**Example that would be incorrect** (not yet tested):
+```cpp
+template<typename T>
+struct Helper { using type = T; };
+
+// Two template params, but Helper only uses the second
+template<typename T, typename U>
+typename Helper<U>::type foo(T x, U y) { return y; }
+
+int main() { return foo(3.14, 0); }
+```
+Here `template_args = [double, int]` but `Helper` expects one arg (`[int]`).
+The full `[double, int]` vector gets passed to `try_instantiate_class_template("Helper", ...)`.
+
+**Action items**:
+1. Write a test exercising this pattern and verify whether it passes or fails.
+2. If it fails, fix `resolve_dependent_member_alias` to extract only the args
+   relevant to the base class template (e.g. by matching the substituted
+   `base_part` string against the class template's parameter list).
+
 ---
 
 ## Files most affected
