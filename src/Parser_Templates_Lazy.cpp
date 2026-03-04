@@ -149,7 +149,7 @@ if (param_decl.has_default_value()) {
 		// When re-parsing a lazy member function body with concrete types,
 		// we're no longer in a dependent template context. Set parsing_template_body_
 		// to false so that constant expressions like sizeof(int) are evaluated.
-		bool saved_parsing_template_body = parsing_template_body_;
+		FlashCpp::ScopedState guard_ptb(parsing_template_body_);
 		parsing_template_body_ = false;
 
 		// Restore to the function body start
@@ -191,7 +191,6 @@ if (param_decl.has_default_value()) {
 		} // template_param_substitutions_ restored here
 		
 		// Clean up context
-		parsing_template_body_ = saved_parsing_template_body;
 		current_function_ = saved_current_function;
 		gSymbolTable.exit_scope();
 

@@ -4272,16 +4272,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Save current lexer position and parser state
 		SaveHandle saved_pos = save_token_position();
-		auto saved_template_body = parsing_template_body_;
-		auto saved_template_class = parsing_template_class_;
-		auto saved_param_names = current_template_param_names_;
-		auto saved_delayed_bodies = std::move(delayed_function_bodies_);
-		delayed_function_bodies_.clear();
-		
-		// Set up template parsing context so template parameter types resolve correctly
-		parsing_template_body_ = true;
-		parsing_template_class_ = true;
+		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 		current_template_param_names_ = ool_nested.template_param_names;
+		FlashCpp::ScopedState guard_template_body(parsing_template_body_);
+		parsing_template_body_ = true;
+		FlashCpp::ScopedState guard_template_class(parsing_template_class_);
+		parsing_template_class_ = true;
+		FlashCpp::ScopedState guard_delayed_bodies(delayed_function_bodies_);
 
 		// Restore lexer to the saved position (at the struct/class keyword).
 		// Push the instantiated template onto struct_parsing_context_stack_ so that
@@ -4311,11 +4308,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			          StringTable::getStringView(qualified_name));
 		}
 		
-		// Restore parser state
-		current_template_param_names_ = saved_param_names;
-		parsing_template_body_ = saved_template_body;
-		parsing_template_class_ = saved_template_class;
-		delayed_function_bodies_ = std::move(saved_delayed_bodies);
 		restore_lexer_position_only(saved_pos);
 	}
 
