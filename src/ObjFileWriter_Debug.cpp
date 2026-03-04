@@ -1,7 +1,7 @@
 // ObjFileWriter_Debug.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
-// ObjFileWriter_Debug.h - Debug info and CodeView methods
+
 
 // --- Helper structs for exception info sub-functions ---
 

@@ -1,7 +1,7 @@
 // ObjFileWriter_EH.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
-// ObjFileWriter_EH.h - Exception handling (SEH/C++ EH) and unwind methods
+
 
 void ObjectFileWriter::build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start,
                            const std::vector<SehTryBlockInfo>& seh_try_blocks,

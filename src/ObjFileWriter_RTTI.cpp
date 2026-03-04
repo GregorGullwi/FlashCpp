@@ -1,7 +1,7 @@
 // ObjFileWriter_RTTI.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
-// ObjFileWriter_RTTI.h - Global variable, RTTI, vtable methods and private data members
+
 
 void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, const std::vector<SehTryBlockInfo>& seh_try_blocks, uint32_t stack_frame_size) {
 	// Check if exception info has already been added for this function

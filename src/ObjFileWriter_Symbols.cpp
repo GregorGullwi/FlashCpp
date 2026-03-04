@@ -1,7 +1,7 @@
 // ObjFileWriter_Symbols.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
-// ObjFileWriter_Symbols.h - Function symbol, relocation, and signature methods
+
 
 // Add function signature information for member functions with class name
 // Returns the mangled name for the function
