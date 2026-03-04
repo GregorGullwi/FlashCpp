@@ -2984,3 +2984,558 @@
 		return { Type::Bool, 8, static_cast<unsigned long long>(result ? 1 : 0) };
 	}
 
+
+
+
+// Helper function to check if access to a member is allowed
+// Returns true if access is allowed, false otherwise
+bool AstToIr::checkMemberAccess(const StructMember* member,
+const StructTypeInfo* member_owner_struct,
+const StructTypeInfo* accessing_struct,
+[[maybe_unused]] const BaseClassSpecifier* inheritance_path,
+const std::string_view& accessing_function) const {
+	if (!member || !member_owner_struct) {
+		return false;
+	}
+
+	// If access control is disabled, allow all access
+	if (context_->isAccessControlDisabled()) {
+		return true;
+	}
+
+	// Public members are always accessible
+	if (member->access == AccessSpecifier::Public) {
+		return true;
+	}
+
+	// Check if accessing function is a friend function of the member owner
+	if (!accessing_function.empty() && member_owner_struct->isFriendFunction(accessing_function)) {
+		return true;
+	}
+
+	// Check if accessing class is a friend class of the member owner.
+	if (checkFriendClassAccess(member_owner_struct, accessing_struct)) return true;
+
+	// If we're not in a member function context, only public members are accessible
+	if (!accessing_struct) {
+		return false;
+	}
+
+
+	// Private members are only accessible from:
+	// 1. The same class (or a template instantiation of the same class)
+	// 2. Nested classes within the same class
+	if (member->access == AccessSpecifier::Private) {
+		if (isSameClassOrInstantiation(accessing_struct, member_owner_struct)) {
+			return true;
+		}
+		// Check if accessing_struct is nested within member_owner_struct
+		return isNestedWithin(accessing_struct, member_owner_struct);
+	}
+
+	// Protected members are accessible from:
+	// 1. The same class (or a template instantiation of the same class)
+	// 2. Derived classes (if inherited as public or protected)
+	// 3. Nested classes within the same class (C++ allows nested classes to access protected)
+	if (member->access == AccessSpecifier::Protected) {
+		// Same class
+		if (isSameClassOrInstantiation(accessing_struct, member_owner_struct)) {
+			return true;
+		}
+
+		// Check if accessing_struct is nested within member_owner_struct
+		if (isNestedWithin(accessing_struct, member_owner_struct)) {
+			return true;
+		}
+
+		// Check if accessing_struct is derived from member_owner_struct
+		return isAccessibleThroughInheritance(accessing_struct, member_owner_struct);
+	}
+
+	return false;
+}
+
+
+
+// Helper: check if accessing_struct is a declared friend class of member_owner_struct.
+//
+// Friend declarations are stored both under the source-level name (typically
+// unqualified, e.g. "__use_cache") AND the namespace-qualified form (e.g.
+// "std::__use_cache") — the parser registers both at addFriendClass time.
+//
+// At codegen time the accessing struct carries its full internal name, which
+// may be:
+//   • namespace-qualified  – "std::__use_cache"
+//   • a $hash instantiation – "std::__use_cache$00a6ac8c5dbe3409"
+//   • a $pattern struct    – "std::__use_cache$pattern_P"
+//
+// The helper therefore tries, in order:
+//   1. Exact match on the full accessing name.
+//   2. The registered base-template name from TypeInfo (strips $hash).
+//   3. A manual $-strip (fallback for instantiations not yet in TypeInfo).
+//   4. For partial-specialisation pattern structs (identified via the registry):
+//      strip the "$pattern" separator to recover the base template name,
+//      preserving the namespace prefix for correct matching.
+bool AstToIr::checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
+                             const StructTypeInfo* accessing_struct) const {
+	if (!accessing_struct) return false;
+
+	// Fast path: exact StringHandle match avoids string_view ↔ StringHandle round-trip.
+	// This covers the most common case: non-template, same-namespace friend, or
+	// fully-qualified name matching the qualified friend entry stored by the parser.
+	StringHandle acc_handle = accessing_struct->getName();
+	if (member_owner_struct->isFriendClass(acc_handle)) return true;
+
+	std::string_view acc_name = StringTable::getStringView(acc_handle);
+
+	// 2. Registered base-template name from TypeInfo ($hash instantiations).
+	//    e.g. "std::__use_cache$00a6ac8c" → "std::__use_cache"
+	std::string_view base = extractBaseTemplateName(acc_name);
+	if (!base.empty() && base != acc_name) {
+		if (member_owner_struct->isFriendClass(base)) return true;
+	}
+
+	// 3. Fallback: manually strip at '$' for names not yet recorded in TypeInfo.
+	auto dollar_pos = acc_name.find('$');
+	if (dollar_pos != std::string_view::npos) {
+		std::string_view stripped = acc_name.substr(0, dollar_pos);
+		if (member_owner_struct->isFriendClass(stripped)) return true;
+	}
+
+	// 4. Partial-specialisation pattern structs.
+	//    Use the registry for non-string-based lookup of the base template name.
+	//    The base template name was stored when the pattern was registered,
+	//    so no string parsing of the pattern name is needed.
+	if (gTemplateRegistry.isPatternStructName(accessing_struct->getName())) {
+		auto base_opt = gTemplateRegistry.getPatternBaseTemplateName(accessing_struct->getName());
+		if (base_opt.has_value()) {
+			if (member_owner_struct->isFriendClass(*base_opt)) return true;
+			// Also try with namespace prefix from the accessing name
+			// e.g., pattern "std::__use_cache$pattern_P" has base "__use_cache",
+			// but the friend entry might be "std::__use_cache"
+			// Only prepend namespace if the base name is not already qualified
+			// (member struct patterns store fully qualified names like "ParentStruct::List")
+			std::string_view base_sv = StringTable::getStringView(*base_opt);
+			if (base_sv.find("::") == std::string_view::npos) {
+				auto last_scope = acc_name.rfind("::");
+				if (last_scope != std::string_view::npos) {
+					std::string_view ns_prefix = acc_name.substr(0, last_scope + 2);
+					StringBuilder qualified_base;
+					std::string_view qualified = qualified_base.append(ns_prefix).append(base_sv).commit();
+					if (member_owner_struct->isFriendClass(qualified)) return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+
+
+// Helper: check if two structs are the same class, including template instantiations.
+// Template instantiations use a '$hash' suffix (e.g., basic_string_view$291eceb35e7234a9)
+// that must be stripped for comparison with the base template.
+bool AstToIr::isSameClassOrInstantiation(const StructTypeInfo* a, const StructTypeInfo* b) const {
+	if (a == b) return true;
+	if (!a || !b) return false;
+	std::string_view name_a = StringTable::getStringView(a->getName());
+	std::string_view name_b = StringTable::getStringView(b->getName());
+	if (name_a == name_b) return true;
+	auto stripHash = [](std::string_view name) -> std::string_view {
+		std::string_view base = extractBaseTemplateName(name);
+		if (!base.empty()) {
+			auto dollar_pos = name.find('$');
+			auto search_region = (dollar_pos != std::string_view::npos) ? name.substr(0, dollar_pos) : name;
+			auto pos = search_region.rfind(base);
+			if (pos != std::string_view::npos) {
+				return name.substr(0, pos + base.size());
+			}
+			return base;
+		}
+		return name;
+	};
+	std::string_view base_a = stripHash(name_a);
+	std::string_view base_b = stripHash(name_b);
+	if (base_a.empty() || base_b.empty()) return false;
+	if (base_a == base_b) return true;
+	auto getUnqualified = [](std::string_view name) -> std::string_view {
+		auto ns_pos = name.rfind("::");
+		if (ns_pos != std::string_view::npos) {
+			return name.substr(ns_pos + 2);
+		}
+		return name;
+	};
+	bool a_has_ns = base_a.find("::") != std::string_view::npos;
+	bool b_has_ns = base_b.find("::") != std::string_view::npos;
+	if (a_has_ns == b_has_ns) return false;
+	return getUnqualified(base_a) == getUnqualified(base_b);
+}
+
+
+
+// Helper to check if accessing_struct is nested within member_owner_struct
+bool AstToIr::isNestedWithin(const StructTypeInfo* accessing_struct,
+const StructTypeInfo* member_owner_struct) const {
+	if (!accessing_struct || !member_owner_struct) {
+		return false;
+	}
+
+	// Check if accessing_struct is nested within member_owner_struct
+	StructTypeInfo* current = accessing_struct->getEnclosingClass();
+	while (current) {
+		if (current == member_owner_struct) {
+			return true;
+		}
+		current = current->getEnclosingClass();
+	}
+
+	return false;
+}
+
+
+
+// Helper to check if derived_struct can access protected members of base_struct
+bool AstToIr::isAccessibleThroughInheritance(const StructTypeInfo* derived_struct,
+const StructTypeInfo* base_struct) const {
+	if (!derived_struct || !base_struct) {
+		return false;
+	}
+
+	// Check direct base classes
+	for (const auto& base : derived_struct->base_classes) {
+		if (base.type_index >= gTypeInfo.size()) {
+			continue;
+		}
+
+		const TypeInfo& base_type = gTypeInfo[base.type_index];
+		const StructTypeInfo* base_info = base_type.getStructInfo();
+
+		if (!base_info) {
+			continue;
+		}
+
+		// Found the base class
+		if (base_info == base_struct) {
+			// Protected members are accessible if inherited as public or protected
+			return base.access == AccessSpecifier::Public ||
+			base.access == AccessSpecifier::Protected;
+		}
+
+		// Recursively check base classes
+		if (isAccessibleThroughInheritance(base_info, base_struct)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+// Get the current struct context (which class we're currently in)
+const StructTypeInfo* AstToIr::getCurrentStructContext() const {
+	// Check if we're in a member function by looking at the symbol table
+	// The 'this' pointer is only present in member function contexts
+	auto this_symbol = symbol_table.lookup("this");
+	if (this_symbol.has_value() && this_symbol->is<DeclarationNode>()) {
+		const DeclarationNode& this_decl = this_symbol->as<DeclarationNode>();
+		const TypeSpecifierNode& this_type = this_decl.type_node().as<TypeSpecifierNode>();
+
+		if ((this_type.type() == Type::Struct || this_type.type() == Type::UserDefined) && this_type.type_index() < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[this_type.type_index()];
+			return type_info.getStructInfo();
+		}
+	}
+
+	return nullptr;
+}
+
+
+
+// Helper function to check if access to a member function is allowed
+bool AstToIr::checkMemberFunctionAccess(const StructMemberFunction* member_func,
+const StructTypeInfo* member_owner_struct,
+const StructTypeInfo* accessing_struct,
+std::string_view accessing_function) const {
+	if (!member_func || !member_owner_struct) {
+		return false;
+	}
+
+	// If access control is disabled, allow all access
+	if (context_->isAccessControlDisabled()) {
+		return true;
+	}
+
+	// Public member functions are always accessible
+	if (member_func->access == AccessSpecifier::Public) {
+		return true;
+	}
+
+	// Check if accessing function is a friend function of the member owner
+	if (!accessing_function.empty() && member_owner_struct->isFriendFunction(accessing_function)) {
+		return true;
+	}
+
+	// Check if accessing class is a friend class of the member owner.
+	if (checkFriendClassAccess(member_owner_struct, accessing_struct)) return true;
+
+	// If we're not in a member function context, only public functions are accessible
+	if (!accessing_struct) {
+		return false;
+	}
+
+	// Private member functions are only accessible from:
+	// 1. The same class (or a template instantiation of the same class)
+	// 2. Nested classes within the same class
+	if (member_func->access == AccessSpecifier::Private) {
+		if (isSameClassOrInstantiation(accessing_struct, member_owner_struct)) {
+			return true;
+		}
+		// Check if accessing_struct is nested within member_owner_struct
+		return isNestedWithin(accessing_struct, member_owner_struct);
+	}
+
+	// Protected member functions are accessible from:
+	// 1. The same class (or a template instantiation of the same class)
+	// 2. Derived classes
+	// 3. Nested classes within the same class (C++ allows nested classes to access protected)
+	if (member_func->access == AccessSpecifier::Protected) {
+		// Same class or template instantiation
+		if (isSameClassOrInstantiation(accessing_struct, member_owner_struct)) {
+			return true;
+		}
+
+		// Check if accessing_struct is nested within member_owner_struct
+		if (isNestedWithin(accessing_struct, member_owner_struct)) {
+			return true;
+		}
+
+		// Check if accessing_struct is derived from member_owner_struct
+		return isAccessibleThroughInheritance(accessing_struct, member_owner_struct);
+	}
+
+	return false;
+}
+
+
+
+// Helper function to check if a variable is a reference by looking it up in the symbol table
+// Returns true if the variable is declared as a reference (&  or &&)
+bool AstToIr::isVariableReference(std::string_view var_name) const {
+	const std::optional<ASTNode> symbol = symbol_table.lookup(var_name);
+	
+	if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+		const auto& decl = symbol->as<DeclarationNode>();
+		const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		return type_spec.is_lvalue_reference() || type_spec.is_rvalue_reference();
+	}
+	
+	return false;
+}
+
+
+
+// Helper function to resolve the struct type and member info for a member access chain
+// Handles nested member access like o.inner.callback by recursively resolving types
+// Returns true if successfully resolved, with the struct_info and member populated
+bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
+const StructTypeInfo*& out_struct_info,
+const StructMember*& out_member) const {
+	// Get the base object expression
+	const ASTNode& base_node = member_access.object();
+	if (!base_node.is<ExpressionNode>()) {
+		return false;
+	}
+	
+	const ExpressionNode& base_expr = base_node.as<ExpressionNode>();
+	TypeSpecifierNode base_type;
+	
+	if (std::holds_alternative<IdentifierNode>(base_expr)) {
+		// Simple identifier - look it up in the symbol table
+		const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
+		std::optional<ASTNode> symbol = lookupSymbol(base_ident.name());
+		if (!symbol.has_value()) {
+			return false;
+		}
+		const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
+		if (!base_decl) {
+			return false;
+		}
+		base_type = base_decl->type_node().as<TypeSpecifierNode>();
+	} else if (std::holds_alternative<MemberAccessNode>(base_expr)) {
+		// Nested member access - recursively resolve
+		const MemberAccessNode& nested_access = std::get<MemberAccessNode>(base_expr);
+		const StructTypeInfo* nested_struct_info = nullptr;
+		const StructMember* nested_member = nullptr;
+		if (!resolveMemberAccessType(nested_access, nested_struct_info, nested_member)) {
+			return false;
+		}
+		if (!nested_member || (nested_member->type != Type::Struct && nested_member->type != Type::UserDefined)) {
+			return false;
+		}
+		// Get the type info for the nested member's struct type
+		if (nested_member->type_index >= gTypeInfo.size()) {
+			return false;
+		}
+		const TypeInfo& nested_type_info = gTypeInfo[nested_member->type_index];
+		if (!nested_type_info.isStruct()) {
+			return false;
+		}
+		// Convert size from bytes to bits for TypeSpecifierNode
+		base_type = TypeSpecifierNode(Type::Struct, nested_member->type_index, 
+		nested_member->size * 8, Token());  // size in bits
+	} else {
+		// Unsupported base expression type
+		return false;
+	}
+	
+	// If the base type is a pointer, dereference it
+	if (base_type.pointer_levels().size() > 0) {
+		base_type.remove_pointer_level();
+	}
+	
+	// The base type should now be a struct type
+	if (base_type.type() != Type::Struct && base_type.type() != Type::UserDefined) {
+		return false;
+	}
+	
+	// Look up the struct info
+	size_t struct_type_index = base_type.type_index();
+	if (struct_type_index >= gTypeInfo.size()) {
+		return false;
+	}
+	const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+	const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+	if (!struct_info) {
+		return false;
+	}
+	
+	// Find the member in the struct
+	std::string_view member_name = member_access.member_name();
+	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+	for (const auto& member : struct_info->members) {
+		if (member.getName() == member_name_handle) {
+			out_struct_info = struct_info;
+			out_member = &member;
+			return true;
+		}
+	}
+	
+	return false;
+}
+
+
+
+// Helper to find a conversion operator in a struct that converts to the target type
+// Returns nullptr if no suitable conversion operator is found
+// Searches the struct and its base classes for "operator target_type()"
+const StructMemberFunction* AstToIr::findConversionOperator(
+	const StructTypeInfo* struct_info,
+	Type target_type,
+	TypeIndex target_type_index) const {
+	
+	if (!struct_info) return nullptr;
+	
+	// Build the operator name we are looking for (e.g., "operator int")
+	std::string_view target_type_name;
+	if (target_type == Type::Struct && target_type_index < gTypeInfo.size()) {
+		target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
+	} else {
+		// For primitive types, use the helper function to get the type name
+		target_type_name = getTypeName(target_type);
+		if (target_type_name.empty()) {
+			return nullptr;
+		}
+	}
+	
+	// Create the operator name string (e.g., "operator int")
+	StringBuilder sb;
+	sb.append("operator ").append(target_type_name);
+	std::string_view operator_name = sb.commit();
+	StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
+	
+	// Search member functions for the conversion operator
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.getName() == operator_name_handle) {
+			return &member_func;
+		}
+	}
+	
+	// WORKAROUND: Also look for "operator user_defined" which may be a conversion operator
+	// that was created with a typedef that wasn't resolved during template instantiation
+	// Check if the return type matches the target type
+	StringHandle user_defined_handle = StringTable::getOrInternStringHandle("operator user_defined");
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.getName() == user_defined_handle) {
+			// Check if this function's return type matches our target
+			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+				const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+				const auto& decl_node = func_decl.decl_node();
+				const auto& return_type_node = decl_node.type_node();
+				if (return_type_node.is<TypeSpecifierNode>()) {
+					const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
+					Type resolved_type = type_spec.type();
+					
+					// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
+					// This handles cases like `operator value_type()` where `using value_type = T;`
+					// Use recursive resolution to handle chains of type aliases
+					if (resolved_type == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+						TypeIndex current_type_index = type_spec.type_index();
+						int max_depth = 10;  // Prevent infinite loops from circular aliases
+						while (resolved_type == Type::UserDefined && current_type_index < gTypeInfo.size() && max_depth-- > 0) {
+							const TypeInfo& alias_type_info = gTypeInfo[current_type_index];
+							if (alias_type_info.type_ != Type::Void && alias_type_info.type_ != Type::UserDefined) {
+								resolved_type = alias_type_info.type_;
+								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
+								break;
+							} else if (alias_type_info.type_ == Type::UserDefined && alias_type_info.type_index_ != current_type_index) {
+								// Follow the chain of aliases
+								current_type_index = alias_type_info.type_index_;
+							} else {
+								break;
+							}
+						}
+					}
+					
+					if (resolved_type == target_type) {
+						// Found a match!
+						FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
+						return &member_func;
+					}
+					
+					// FALLBACK: If the return type is still UserDefined (couldn't resolve via gTypeInfo),
+					// but the size matches the target primitive type, accept it as a match.
+					// This handles template type aliases like `using value_type = T;` where T is substituted
+					// but the return type wasn't fully updated in the AST.
+					if (resolved_type == Type::UserDefined && target_type != Type::Struct && target_type != Type::Enum) {
+						int expected_size = get_type_size_bits(target_type);
+						
+						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
+							FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=", 
+							type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
+							return &member_func;
+						}
+						// Note: We intentionally don't have a permissive fallback here because it would match
+						// conversion operators from pattern templates that don't have generated code, leading
+						// to linker errors (undefined reference to operator user_defined).
+					}
+				}
+			}
+		}
+	}
+	
+	// Search base classes recursively
+	for (const auto& base_spec : struct_info->base_classes) {
+		if (base_spec.type_index < gTypeInfo.size()) {
+			const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+			if (base_type_info.isStruct()) {
+				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+				const StructMemberFunction* result = findConversionOperator(
+					base_struct_info, target_type, target_type_index);
+				if (result) return result;
+			}
+		}
+	}
+	
+	return nullptr;
+}

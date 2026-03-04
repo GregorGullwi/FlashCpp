@@ -2695,3 +2695,457 @@
 		return {Type::UnsignedLongLong, 64, result, 0ULL};
 	}
 
+
+
+
+// Helper function to handle assignment using lvalue metadata
+// Queries LValueInfo::Kind and routes to appropriate store instruction
+// Returns true if assignment was handled via lvalue metadata, false otherwise
+//
+// USAGE: Call this after evaluating both LHS and RHS expressions.
+//        If it returns true, the assignment was handled and caller should skip normal assignment logic.
+//        If it returns false, fall back to normal assignment or special-case handling.
+//
+// CURRENT LIMITATIONS:
+// - ArrayElement and Member cases need additional metadata (index, member_name) not currently in LValueInfo
+// - Only Indirect (dereference) case is fully implemented
+// - Future work: Extend LValueInfo or pass additional context to handle all cases
+bool AstToIr::handleLValueAssignment(const std::vector<IrOperand>& lhs_operands,
+const std::vector<IrOperand>& rhs_operands,
+const Token& token) {
+	// Check if LHS has a TempVar with lvalue metadata
+	if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
+		FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - size=", lhs_operands.size(), " has_tempvar=", (lhs_operands.size() >= 3 ? std::holds_alternative<TempVar>(lhs_operands[2]) : false));
+		return false;
+	}
+
+	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
+	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+	
+	if (!lvalue_info_opt.has_value()) {
+		FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - no lvalue metadata for temp=", lhs_temp.var_number);
+		return false;
+	}
+
+	const LValueInfo& lv_info = lvalue_info_opt.value();
+	
+	FLASH_LOG(Codegen, Debug, "handleLValueAssignment: kind=", static_cast<int>(lv_info.kind));
+
+	// Route to appropriate store instruction based on LValueInfo::Kind
+	switch (lv_info.kind) {
+		case LValueInfo::Kind::ArrayElement: {
+			// Array element assignment: arr[i] = value
+			FLASH_LOG(Codegen, Debug, "  -> ArrayStore (handled via metadata)");
+			
+			// Check if we have the index stored in metadata
+			if (!lv_info.array_index.has_value()) {
+				FLASH_LOG(Codegen, Info, "     ArrayElement: No index in metadata, falling back");
+				return false;
+			}
+			
+			FLASH_LOG(Codegen, Info, "     ArrayElement: Has index in metadata, proceeding with unified handler");
+			
+			// Build TypedValue for index from metadata
+			IrValue index_value = lv_info.array_index.value();
+			TypedValue index_tv;
+			index_tv.value = index_value;
+			index_tv.type = Type::Int;  // Index type (typically int)
+			index_tv.size_in_bits = 32;  // Standard index size
+			
+			// Build TypedValue for value with LHS type/size but RHS value
+			// This is important: the size must match the array element type
+			TypedValue value_tv;
+			value_tv.type = std::get<Type>(lhs_operands[0]);
+			value_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+			value_tv.value = toIrValue(rhs_operands[2]);
+			
+			// Emit the store using helper
+			emitArrayStore(
+				std::get<Type>(lhs_operands[0]),  // element_type
+				std::get<int>(lhs_operands[1]),   // element_size_bits
+				lv_info.base,                      // array
+				index_tv,                          // index
+				value_tv,                          // value (with LHS type/size, RHS value)
+				lv_info.offset,                    // member_offset
+				lv_info.is_pointer_to_array,       // is_pointer_to_array
+				token
+			);
+			return true;
+		}
+
+		case LValueInfo::Kind::Member: {
+			// Member assignment: obj.member = value
+			FLASH_LOG(Codegen, Debug, "  -> MemberStore (handled via metadata)");
+			
+			// Check if we have member_name stored in metadata
+			if (!lv_info.member_name.has_value()) {
+				FLASH_LOG(Codegen, Debug, "     No member_name in metadata, falling back");
+				return false;
+			}
+			
+			// Safety check: validate size is reasonable (not 0 or negative)
+			int lhs_size = std::get<int>(lhs_operands[1]);
+			if (lhs_size <= 0 || lhs_size > 1024) {
+				FLASH_LOG(Codegen, Debug, "     Invalid size in metadata (", lhs_size, "), falling back");
+				return false;
+			}
+			
+			// Build TypedValue with LHS type/size but RHS value
+			// This is important: the size must match the member being stored to, not the RHS
+			TypedValue value_tv;
+			value_tv.type = std::get<Type>(lhs_operands[0]);
+			value_tv.size_in_bits = lhs_size;
+			value_tv.value = toIrValue(rhs_operands[2]);
+			
+			// Emit the store using helper
+			emitMemberStore(
+				value_tv,                           // value (with LHS type/size, RHS value)
+				lv_info.base,                       // object
+				lv_info.member_name.value(),        // member_name
+				lv_info.offset,                     // offset
+				false,                              // is_reference
+				false,                              // is_rvalue_reference
+				lv_info.is_pointer_to_member,       // is_pointer_to_member
+				token,
+				lv_info.bitfield_width,             // bitfield_width
+				lv_info.bitfield_bit_offset         // bitfield_bit_offset
+			);
+			return true;
+		}
+
+		case LValueInfo::Kind::Indirect: {
+			// Dereference assignment: *ptr = value
+			// This case works because we have all needed info in LValueInfo
+			FLASH_LOG(Codegen, Debug, "  -> DereferenceStore (handled via metadata)");
+			
+			// Emit the store using helper
+			emitDereferenceStore(
+				toTypedValue(rhs_operands),     // value
+				std::get<Type>(lhs_operands[0]), // pointee_type
+				std::get<int>(lhs_operands[1]),  // pointee_size_in_bits
+				lv_info.base,                    // pointer
+				token
+			);
+			return true;
+		}
+
+		case LValueInfo::Kind::Direct:
+		case LValueInfo::Kind::Temporary:
+			// Direct variable assignment - handled by regular assignment logic
+			FLASH_LOG(Codegen, Debug, "  -> Regular assignment (Direct/Temporary)");
+			return false;
+
+		default:
+			return false;
+	}
+
+	return false;
+}
+
+
+
+// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] += 5)
+// Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
+// This is similar to handleLValueAssignment but also performs the arithmetic operation
+bool AstToIr::handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
+const std::vector<IrOperand>& rhs_operands,
+const Token& token,
+std::string_view op) {
+	// Check if LHS has a TempVar with lvalue metadata
+	if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
+		FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - size=", lhs_operands.size(), 
+			", has_tempvar=", (lhs_operands.size() >= 3 && std::holds_alternative<TempVar>(lhs_operands[2])));
+		return false;
+	}
+
+	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
+	FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: Checking TempVar {} for metadata", lhs_temp.var_number);
+	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+	
+	if (!lvalue_info_opt.has_value()) {
+		FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: FAIL - no lvalue metadata for TempVar {}", lhs_temp.var_number);
+		return false;
+	}
+
+	const LValueInfo& lv_info = lvalue_info_opt.value();
+	
+	FLASH_LOG(Codegen, Debug, "handleLValueCompoundAssignment: kind=", static_cast<int>(lv_info.kind), " op=", op);
+
+	// For compound assignments, we need to:
+	// 1. The lhs_temp already contains the ADDRESS (from LValueAddress context)
+	// 2. We need to LOAD the current value from that address
+	// 3. Perform the operation with RHS
+	// 4. Store the result back to the address
+	
+	// First, load the current value from the lvalue
+	// The lhs_temp should contain the address, but we need to generate a Load instruction
+	// to get the current value into a temp var
+	TempVar current_value_temp = var_counter.next();
+	
+	// Map compound assignment operator to the corresponding IR opcode (defined once, used by all branches)
+	static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
+		{"+=", IrOpcode::Add},
+		{"-=", IrOpcode::Subtract},
+		{"*=", IrOpcode::Multiply},
+		{"/=", IrOpcode::Divide},
+		{"%=", IrOpcode::Modulo},
+		{"&=", IrOpcode::BitwiseAnd},
+		{"|=", IrOpcode::BitwiseOr},
+		{"^=", IrOpcode::BitwiseXor},
+		{"<<=", IrOpcode::ShiftLeft},
+		{">>=", IrOpcode::ShiftRight}
+	};
+	auto op_it = compound_op_map.find(op);
+	if (op_it == compound_op_map.end()) {
+		FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
+		return false;
+	}
+	IrOpcode operation_opcode = op_it->second;
+	
+	// Generate a Load instruction based on the lvalue kind
+	// Support both Member kind and Indirect kind (for dereferenced pointers like &y in lambda captures)
+	if (lv_info.kind == LValueInfo::Kind::Indirect) {
+		// For Indirect kind (dereferenced pointer), the base can be a TempVar or StringHandle
+		// Generate a Dereference instruction to load the current value
+		DereferenceOp deref_op;
+		deref_op.result = current_value_temp;
+		deref_op.pointer.type = std::get<Type>(lhs_operands[0]);
+		deref_op.pointer.size_in_bits = 64;  // pointer size
+		deref_op.pointer.pointer_depth = 1;
+		
+		// Extract the base (TempVar or StringHandle)
+		std::variant<TempVar, StringHandle> base_value;
+		if (std::holds_alternative<TempVar>(lv_info.base)) {
+			deref_op.pointer.value = std::get<TempVar>(lv_info.base);
+			base_value = std::get<TempVar>(lv_info.base);
+		} else if (std::holds_alternative<StringHandle>(lv_info.base)) {
+			deref_op.pointer.value = std::get<StringHandle>(lv_info.base);
+			base_value = std::get<StringHandle>(lv_info.base);
+		} else {
+			FLASH_LOG(Codegen, Debug, "     Indirect kind requires TempVar or StringHandle base");
+			return false;
+		}
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
+		
+		// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
+		TempVar result_temp = var_counter.next();
+		
+		// Create the binary operation
+		BinaryOp bin_op;
+		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
+		bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+		bin_op.lhs.value = current_value_temp;
+		bin_op.rhs = toTypedValue(rhs_operands);
+		bin_op.result = result_temp;
+		
+		ir_.addInstruction(IrInstruction(operation_opcode, std::move(bin_op), token));
+		
+		// Store result back through the pointer using DereferenceStore
+		TypedValue result_tv;
+		result_tv.type = std::get<Type>(lhs_operands[0]);
+		result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+		result_tv.value = result_temp;
+		
+		// Handle both TempVar and StringHandle bases for DereferenceStore
+		if (std::holds_alternative<TempVar>(base_value)) {
+			emitDereferenceStore(result_tv, std::get<Type>(lhs_operands[0]), std::get<int>(lhs_operands[1]),
+			std::get<TempVar>(base_value), token);
+		} else {
+			// StringHandle base: emitDereferenceStore expects a TempVar, so we pass the StringHandle as the pointer
+			// Generate DereferenceStore with StringHandle directly
+			DereferenceStoreOp store_op;
+			store_op.pointer.type = std::get<Type>(lhs_operands[0]);
+			store_op.pointer.size_in_bits = 64;
+			store_op.pointer.pointer_depth = 1;
+			store_op.pointer.value = std::get<StringHandle>(base_value);
+			store_op.value = result_tv;
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
+		}
+		
+		return true;
+	}
+	
+	// Handle ArrayElement kind for compound assignments (e.g., arr[i] += 5)
+	if (lv_info.kind == LValueInfo::Kind::ArrayElement) {
+		// Check if we have the index stored in metadata
+		if (!lv_info.array_index.has_value()) {
+			FLASH_LOG(Codegen, Debug, "     ArrayElement: No index in metadata for compound assignment");
+			return false;
+		}
+		
+		FLASH_LOG(Codegen, Debug, "     ArrayElement compound assignment: proceeding with unified handler");
+		
+		// Build TypedValue for index from metadata
+		IrValue index_value = lv_info.array_index.value();
+		TypedValue index_tv;
+		index_tv.value = index_value;
+		index_tv.type = Type::Int;  // Index type (typically int)
+		index_tv.size_in_bits = 32;  // Standard index size
+		
+		// Create ArrayAccessOp to load current value
+		ArrayAccessOp load_op;
+		load_op.result = current_value_temp;
+		load_op.element_type = std::get<Type>(lhs_operands[0]);
+		load_op.element_size_in_bits = std::get<int>(lhs_operands[1]);
+		load_op.array = lv_info.base;
+		load_op.index = index_tv;
+		load_op.member_offset = lv_info.offset;
+		load_op.is_pointer_to_array = lv_info.is_pointer_to_array;
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(load_op), token));
+		
+		// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
+		TempVar result_temp = var_counter.next();
+		
+		// Create the binary operation
+		BinaryOp bin_op;
+		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
+		bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+		bin_op.lhs.value = current_value_temp;
+		bin_op.rhs = toTypedValue(rhs_operands);
+		bin_op.result = result_temp;
+		
+		ir_.addInstruction(IrInstruction(operation_opcode, std::move(bin_op), token));
+		
+		// Finally, store the result back to the array element
+		TypedValue result_tv;
+		result_tv.type = std::get<Type>(lhs_operands[0]);
+		result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+		result_tv.value = result_temp;
+		
+		// Emit the store using helper
+		emitArrayStore(
+			std::get<Type>(lhs_operands[0]),  // element_type
+			std::get<int>(lhs_operands[1]),   // element_size_bits
+			lv_info.base,                      // array
+			index_tv,                          // index
+			result_tv,                         // value (result of operation)
+			lv_info.offset,                    // member_offset
+			lv_info.is_pointer_to_array,       // is_pointer_to_array
+			token
+		);
+		
+		return true;
+	}
+	
+// Handle Global kind for compound assignments (e.g., g_score += 20)
+	if (lv_info.kind == LValueInfo::Kind::Global) {
+		if (!std::holds_alternative<StringHandle>(lv_info.base)) {
+			FLASH_LOG(Codegen, Debug, "     Global compound assignment: base is not a StringHandle");
+			return false;
+		}
+		StringHandle global_name = std::get<StringHandle>(lv_info.base);
+		FLASH_LOG(Codegen, Debug, "     Global compound assignment op=", op);
+
+		// lhs_temp already holds the loaded value (from GlobalLoad in LHS evaluation)
+		TempVar result_temp = var_counter.next();
+		BinaryOp bin_op;
+		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
+		bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+		bin_op.lhs.value = lhs_temp;
+		bin_op.rhs = toTypedValue(rhs_operands);
+		bin_op.result = result_temp;
+		ir_.addInstruction(IrInstruction(operation_opcode, std::move(bin_op), token));
+
+		// Store result back to global
+		std::vector<IrOperand> store_operands;
+		store_operands.emplace_back(global_name);
+		store_operands.emplace_back(result_temp);
+		ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), token);
+
+		return true;
+	}
+
+	if (lv_info.kind != LValueInfo::Kind::Member) {
+		FLASH_LOG(Codegen, Debug, "     Compound assignment only supports Member, Indirect, ArrayElement, or Global kind, got: ", static_cast<int>(lv_info.kind));
+		return false;
+	}
+	
+	// For member access, generate MemberAccess (Load) instruction
+	if (!lv_info.member_name.has_value()) {
+		FLASH_LOG(Codegen, Debug, "     No member_name in metadata for compound assignment");
+		return false;
+	}
+	
+	// Lookup member info to get is_reference flags
+	bool member_is_reference = false;
+	bool member_is_rvalue_reference = false;
+	
+	// Try to get struct type info from the base object
+	if (std::holds_alternative<StringHandle>(lv_info.base)) {
+		StringHandle base_name_handle = std::get<StringHandle>(lv_info.base);
+		std::string_view base_name = StringTable::getStringView(base_name_handle);
+		
+		// Look up the base object in symbol table
+		std::optional<ASTNode> symbol = lookupSymbol(base_name);
+		
+		if (symbol.has_value()) {
+			const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+			if (decl) {
+				const TypeSpecifierNode& type_node = decl->type_node().as<TypeSpecifierNode>();
+				if (is_struct_type(type_node.type())) {
+					TypeIndex type_index = type_node.type_index();
+					if (type_index < gTypeInfo.size()) {
+						auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, lv_info.member_name.value());
+						if (result) {
+							member_is_reference = result.member->is_reference();
+							member_is_rvalue_reference = result.member->is_rvalue_reference();
+						}
+					}
+				}
+			}
+		}
+	}
+	// Note: For TempVar base, we don't have easy access to type info, so we default to false
+	// This is acceptable since most compound assignments don't involve reference members
+	
+	MemberLoadOp load_op;
+	load_op.result.value = current_value_temp;
+	load_op.result.type = std::get<Type>(lhs_operands[0]);
+	load_op.result.size_in_bits = std::get<int>(lhs_operands[1]);
+	load_op.object = lv_info.base;
+	load_op.member_name = lv_info.member_name.value();
+	load_op.offset = lv_info.offset;
+	load_op.is_reference = member_is_reference;
+	load_op.is_rvalue_reference = member_is_rvalue_reference;
+	load_op.struct_type_info = nullptr;
+	load_op.bitfield_width = lv_info.bitfield_width;
+	load_op.bitfield_bit_offset = lv_info.bitfield_bit_offset;
+	
+	ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
+	
+	// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
+	TempVar result_temp = var_counter.next();
+	
+	// Create the binary operation
+	BinaryOp bin_op;
+	bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
+	bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+	bin_op.lhs.value = current_value_temp;
+	bin_op.rhs = toTypedValue(rhs_operands);
+	bin_op.result = result_temp;
+	
+	ir_.addInstruction(IrInstruction(operation_opcode, std::move(bin_op), token));
+	
+	// Finally, store the result back to the lvalue
+	TypedValue result_tv;
+	result_tv.type = std::get<Type>(lhs_operands[0]);
+	result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+	result_tv.value = result_temp;
+	
+	emitMemberStore(
+		result_tv,
+		lv_info.base,
+		lv_info.member_name.value(),
+		lv_info.offset,
+		member_is_reference,
+		member_is_rvalue_reference,
+		lv_info.is_pointer_to_member,  // is_pointer_to_member
+		token,
+		lv_info.bitfield_width,
+		lv_info.bitfield_bit_offset
+	);
+	
+	return true;
+}

@@ -1404,3 +1404,21 @@
 		return { return_type.type(), return_size_bits, ret_var, static_cast<unsigned long long>(return_type.type_index()) };
 	}
 
+
+
+
+// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
+// Used when a member function call syntax is used but the object is not a struct
+std::vector<IrOperand> AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
+	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
+	const DeclarationNode& decl_node = func_decl.decl_node();
+	
+	// Copy the arguments using the visit method
+	ChunkedVector<ASTNode> args_copy;
+	memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
+		args_copy.push_back(arg);
+	});
+	
+	FunctionCallNode function_call(decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
+	return generateFunctionCallIr(function_call);
+}

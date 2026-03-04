@@ -956,3 +956,330 @@
 		}
 	}
 
+
+
+
+// Helper to generate FunctionAddress IR for a lambda's __invoke function
+// Returns the TempVar holding the function pointer address
+TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode& lambda) {
+	std::string_view invoke_name = StringBuilder()
+		.append(lambda.generate_lambda_name())
+		.append("_invoke")
+		.commit();
+	
+	// Compute the mangled name for the __invoke function
+	// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
+	Type return_type = Type::Void;
+	int return_size = 0;
+	if (lambda.return_type().has_value()) {
+		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
+		return_type = ret_type_node.type();
+		return_size = ret_type_node.size_in_bits();
+	}
+	TypeSpecifierNode return_type_node(return_type, 0, return_size, lambda.lambda_token());
+	
+	// Build parameter types
+	std::vector<TypeSpecifierNode> param_type_nodes;
+	for (const auto& param : lambda.parameters()) {
+		if (param.is<DeclarationNode>()) {
+			const auto& param_decl = param.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			param_type_nodes.push_back(param_type);
+		}
+	}
+	
+	// Generate mangled name
+	std::string_view mangled = generateMangledNameForCall(
+		invoke_name, return_type_node, param_type_nodes, false, "");
+	
+	// Generate FunctionAddress instruction to get the address
+	TempVar func_addr_var = var_counter.next();
+	FunctionAddressOp op;
+	op.result.type = Type::FunctionPointer;
+	op.result.size_in_bits = 64;
+	op.result.value = func_addr_var;
+	op.function_name = StringTable::getOrInternStringHandle(invoke_name);
+	op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
+	
+	return func_addr_var;
+}
+
+
+
+// ========== Lambda Capture Helper Functions ==========
+
+// Get the current lambda's closure StructTypeInfo, or nullptr if not in a lambda
+const StructTypeInfo* AstToIr::getCurrentClosureStruct() const {
+	if (!current_lambda_context_.isActive()) {
+		return nullptr;
+	}
+	auto it = gTypesByName.find(current_lambda_context_.closure_type);
+	if (it == gTypesByName.end() || !it->second->isStruct()) {
+		return nullptr;
+	}
+	return it->second->getStructInfo();
+}
+
+
+// Check if we're in a lambda with [*this] capture
+bool AstToIr::isInCopyThisLambda() const {
+	if (!current_lambda_context_.isActive()) {
+		return false;
+	}
+	if (current_lambda_context_.has_copy_this) {
+		return true;
+	}
+	if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
+		return closure->findMember("__copy_this") != nullptr;
+	}
+	return false;
+}
+
+
+
+// Get the offset of a member in the current lambda closure struct
+// Returns 0 if not found or not in a lambda context
+int AstToIr::getClosureMemberOffset(std::string_view member_name) const {
+	if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
+		if (const StructMember* member = closure->findMember(member_name)) {
+			return static_cast<int>(member->offset);
+		}
+	}
+	return 0;
+}
+
+
+
+// Emit IR to load __copy_this from current lambda closure into a TempVar.
+// Returns the TempVar holding the copied object, or std::nullopt if not applicable.
+// The Token parameter is used for source location in the IR instruction.
+std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
+	if (!isInCopyThisLambda()) {
+		return std::nullopt;
+	}
+	const StructTypeInfo* closure_struct = getCurrentClosureStruct();
+	if (!closure_struct) {
+		return std::nullopt;
+	}
+	const StructMember* copy_this_member = closure_struct->findMember("__copy_this");
+	if (!copy_this_member || current_lambda_context_.enclosing_struct_type_index == 0) {
+		return std::nullopt;
+	}
+
+	TempVar copy_this_temp = var_counter.next();
+	MemberLoadOp load_op;
+	load_op.result.value = copy_this_temp;
+	load_op.result.type = Type::Struct;
+	load_op.result.size_in_bits = static_cast<int>(copy_this_member->size * 8);
+	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
+	load_op.member_name = StringTable::getOrInternStringHandle("__copy_this");
+	load_op.offset = static_cast<int>(copy_this_member->offset);
+	load_op.is_reference = false;
+	load_op.is_rvalue_reference = false;
+	load_op.struct_type_info = nullptr;
+	ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
+
+	// Mark this temp var as an lvalue pointing to %this.__copy_this
+	// This allows subsequent member accesses and stores to properly chain offsets
+	LValueInfo lvalue_info(
+		LValueInfo::Kind::Member,
+		StringTable::getOrInternStringHandle("this"),
+		static_cast<int>(copy_this_member->offset)
+	);
+	lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
+	lvalue_info.is_pointer_to_member = true;  // Treat closure 'this' as a pointer
+	setTempVarMetadata(copy_this_temp, TempVarMetadata::makeLValue(lvalue_info));
+
+	return copy_this_temp;
+}
+
+
+// Manage lambda context push/pop for nested lambdas
+void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
+	lambda_context_stack_.push_back(current_lambda_context_);
+	current_lambda_context_ = {};
+	current_lambda_context_.closure_type = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);
+	current_lambda_context_.enclosing_struct_type_index = lambda_info.enclosing_struct_type_index;
+	current_lambda_context_.has_copy_this = lambda_info.enclosing_struct_type_index > 0;
+	current_lambda_context_.has_this_pointer = false;
+	current_lambda_context_.is_mutable = lambda_info.is_mutable;
+
+	size_t capture_index = 0;
+	for (const auto& capture : lambda_info.captures) {
+		if (capture.is_capture_all()) {
+			continue;
+		}
+		StringHandle var_name = StringTable::getOrInternStringHandle(capture.identifier_name());
+		current_lambda_context_.captures.insert(var_name);
+		current_lambda_context_.capture_kinds[var_name] = capture.kind();
+		if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+		capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+			current_lambda_context_.captures.insert(StringTable::getOrInternStringHandle("this"sv));
+			current_lambda_context_.capture_kinds[StringTable::getOrInternStringHandle("this"sv)] = capture.kind();
+			if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+				current_lambda_context_.has_copy_this = true;
+			} else if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+				current_lambda_context_.has_this_pointer = true;
+			}
+		} else if (capture.has_initializer()) {
+			// Init-capture: infer type from initializer expression or closure struct member
+			// For init-capture by reference [&y = x], look up x's type
+			const ASTNode& init_node = *capture.initializer();
+			if (init_node.is<IdentifierNode>()) {
+				// Simple identifier like [&y = x] - look up x's type
+				const auto& init_id = init_node.as<IdentifierNode>();
+				std::optional<ASTNode> init_symbol = symbol_table.lookup(init_id.name());
+				if (init_symbol.has_value()) {
+					const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
+					if (init_decl) {
+						current_lambda_context_.capture_types[var_name] = init_decl->type_node().as<TypeSpecifierNode>();
+					}
+				}
+			} else if (init_node.is<ExpressionNode>()) {
+				const auto& expr_node = init_node.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(expr_node)) {
+					const auto& init_id = std::get<IdentifierNode>(expr_node);
+					std::optional<ASTNode> init_symbol = symbol_table.lookup(init_id.name());
+					if (init_symbol.has_value()) {
+						const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
+						if (init_decl) {
+							current_lambda_context_.capture_types[var_name] = init_decl->type_node().as<TypeSpecifierNode>();
+						}
+					}
+				}
+			}
+			// If type still not set, try to get it from closure struct member
+			if (current_lambda_context_.capture_types.find(var_name) == current_lambda_context_.capture_types.end()) {
+				auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
+				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+					if (struct_info) {
+						const StructMember* member = struct_info->findMember(std::string_view(StringTable::getStringView(var_name)));
+						if (member) {
+							// Create a TypeSpecifierNode from the member type
+							TypeSpecifierNode member_type(member->type, TypeQualifier::None, static_cast<int>(member->size * 8));
+							if (member->type == Type::Struct) {
+								// Need to set type_index for struct types
+								member_type = TypeSpecifierNode(member->type, member->type_index, static_cast<int>(member->size * 8), Token());
+							}
+							current_lambda_context_.capture_types[var_name] = member_type;
+						}
+					}
+				}
+			}
+		} else {
+			if (capture_index < lambda_info.captured_var_decls.size()) {
+				const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
+				if (const DeclarationNode* decl = get_decl_from_symbol(var_decl)) {
+					current_lambda_context_.capture_types[var_name] = decl->type_node().as<TypeSpecifierNode>();
+				}
+			}
+			capture_index++;
+		}
+	}
+	if (!current_lambda_context_.has_copy_this) {
+		if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
+			if (closure->findMember("__copy_this")) {
+				current_lambda_context_.has_copy_this = true;
+			}
+		}
+	}
+}
+
+
+
+void AstToIr::popLambdaContext() {
+	if (lambda_context_stack_.empty()) {
+		current_lambda_context_ = {};
+		return;
+	}
+	current_lambda_context_ = lambda_context_stack_.back();
+	lambda_context_stack_.pop_back();
+}
+
+
+
+// Emit IR to load __this pointer from current lambda closure into a TempVar.
+// Returns the TempVar holding the this pointer, or std::nullopt if not applicable.
+std::optional<TempVar> AstToIr::emitLoadThisPointer(const Token& token) {
+	if (!isInThisPointerLambda()) {
+		return std::nullopt;
+	}
+
+	int this_member_offset = getClosureMemberOffset("__this");
+
+	TempVar this_ptr = var_counter.next();
+	MemberLoadOp load_op;
+	load_op.result.value = this_ptr;
+	load_op.result.type = Type::Void;
+	load_op.result.size_in_bits = 64;
+	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
+	load_op.member_name = StringTable::getOrInternStringHandle("__this");
+	load_op.offset = this_member_offset;
+	load_op.is_reference = false;
+	load_op.is_rvalue_reference = false;
+	load_op.struct_type_info = nullptr;
+	ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
+
+	return this_ptr;
+}
+
+
+
+// ========== Auto Type Deduction Helpers ==========
+
+// Try to extract a LambdaExpressionNode from an initializer ASTNode.
+// Returns nullptr if the node is not a lambda expression.
+const LambdaExpressionNode* AstToIr::extractLambdaFromInitializer(const ASTNode& init) {
+	if (init.is<LambdaExpressionNode>()) {
+		return &init.as<LambdaExpressionNode>();
+	}
+	if (init.is<ExpressionNode>()) {
+		const ExpressionNode& expr = init.as<ExpressionNode>();
+		if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+			return &std::get<LambdaExpressionNode>(expr);
+		}
+	}
+	return nullptr;
+}
+
+
+
+// Deduce the actual closure type from an auto-typed lambda variable.
+// Given a symbol from the symbol table, if it's an auto-typed variable
+// initialized with a lambda, returns the TypeSpecifierNode for the closure struct.
+// Returns std::nullopt if type cannot be deduced.
+std::optional<TypeSpecifierNode> AstToIr::deduceLambdaClosureType(const ASTNode& symbol,
+const Token& fallback_token) const {
+	if (!symbol.is<VariableDeclarationNode>()) {
+		return std::nullopt;
+	}
+	const VariableDeclarationNode& var_decl = symbol.as<VariableDeclarationNode>();
+	const std::optional<ASTNode>& init_opt = var_decl.initializer();
+	if (!init_opt.has_value()) {
+		return std::nullopt;
+	}
+
+	const LambdaExpressionNode* lambda_ptr = extractLambdaFromInitializer(*init_opt);
+	if (!lambda_ptr) {
+		return std::nullopt;
+	}
+
+	StringHandle closure_type_name = lambda_ptr->generate_lambda_name();
+	auto type_it = gTypesByName.find(closure_type_name);
+	if (type_it == gTypesByName.end()) {
+		return std::nullopt;
+	}
+
+	const TypeInfo* closure_type = type_it->second;
+	int closure_size = closure_type->getStructInfo()
+		? closure_type->getStructInfo()->total_size * 8
+		: 64;
+	return TypeSpecifierNode(
+		Type::Struct,
+		closure_type->type_index_,
+		closure_size,
+		fallback_token
+	);
+}
