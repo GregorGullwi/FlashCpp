@@ -51,6 +51,7 @@ static void registerTypeParamsInScope(
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
 		if (arg.is_value) continue;  // Non-type (value) params must NOT be registered as TypeInfo
+		if (arg.is_template_template_arg) continue;  // Template-template params don't represent concrete types
 		std::string_view param_name = param_names[i];
 		auto& type_info = gTypeInfo.emplace_back(
 			StringTable::getOrInternStringHandle(param_name),
