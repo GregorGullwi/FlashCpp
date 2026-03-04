@@ -132,7 +132,7 @@ if (param_decl.has_default_value()) {
 		
 		// Set up template parameter types in the type system for body parsing
 		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<StringHandle> param_names;
+		InlineVector<StringHandle, 4> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {

@@ -387,7 +387,7 @@ struct OutOfLineNestedClass {
 	SaveHandle body_start;                          // Saved position at the struct/class keyword for re-parsing via parse_struct_declaration()
 	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
 	bool is_class = false;                          // true if 'class', false if 'struct'
-	std::vector<TemplateTypeArg> specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
+	InlineVector<TemplateTypeArg, 4> specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
 };
 
 // SFINAE condition for void_t patterns
@@ -403,13 +403,13 @@ struct SfinaeCondition {
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
 struct TemplatePattern {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., typename T)
-	std::vector<TemplateTypeArg> pattern_args;  // Pattern like T&, T*, etc.
+	InlineVector<TemplateTypeArg, 4> pattern_args;  // Pattern like T&, T*, etc.
 	ASTNode specialized_node;  // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition;  // Optional SFINAE check for void_t patterns
 	
 	// Constructor to avoid aggregate initialization issues with mutable cache fields
 	TemplatePattern() = default;
-	TemplatePattern(std::vector<ASTNode> tp, std::vector<TemplateTypeArg> pa,
+	TemplatePattern(std::vector<ASTNode> tp, InlineVector<TemplateTypeArg, 4> pa,
 	                ASTNode sn, std::optional<SfinaeCondition> sc)
 		: template_params(std::move(tp)), pattern_args(std::move(pa)),
 		  specialized_node(std::move(sn)), sfinae_condition(std::move(sc)) {}
@@ -940,7 +940,7 @@ struct TemplatePattern {
 // Key for template specializations
 struct SpecializationKey {
 	std::string template_name;
-	std::vector<TemplateTypeArg> template_args;
+	InlineVector<TemplateTypeArg, 4> template_args;
 
 	bool operator==(const SpecializationKey& other) const {
 		return template_name == other.template_name && template_args == other.template_args;

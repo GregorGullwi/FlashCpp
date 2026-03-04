@@ -391,7 +391,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Temporarily add the concrete types to the type system with template parameter names
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<StringHandle> param_names;
+	InlineVector<StringHandle, 4> param_names;
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
 			param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
