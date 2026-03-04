@@ -80,7 +80,7 @@ public:
 	InlineVector(InlineVector&& other) noexcept
 		: inline_count_(other.inline_count_), overflow_(std::move(other.overflow_)) {
 		for (size_t i = 0; i < inline_count_; ++i) {
-			inline_data_[i] = other.inline_data_[i];
+			inline_data_[i] = std::move(other.inline_data_[i]);
 		}
 		other.inline_count_ = 0;
 	}
@@ -103,7 +103,7 @@ public:
 			inline_count_ = other.inline_count_;
 			overflow_ = std::move(other.overflow_);
 			for (size_t i = 0; i < inline_count_; ++i) {
-				inline_data_[i] = other.inline_data_[i];
+				inline_data_[i] = std::move(other.inline_data_[i]);
 			}
 			other.inline_count_ = 0;
 		}

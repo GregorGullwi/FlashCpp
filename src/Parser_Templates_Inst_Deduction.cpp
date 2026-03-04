@@ -1082,17 +1082,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
-	// Lazy-init: convert template_args → TemplateTypeArg vector at most once per call.
-	// Several callees (lookupSpecialization, evaluateConstraint, substitute_template_parameter,
-	// try_instantiate_class_template, get_instantiated_class_name) each require
-	// vector<TemplateTypeArg>.  Building the converted vector on first request and caching
-	// it avoids repeated allocations in what is the hot template-instantiation path.
-	std::optional<std::vector<TemplateTypeArg>> type_args_cache;
-	auto get_type_args = [&]() -> const std::vector<TemplateTypeArg>& {
-		if (!type_args_cache.has_value())
-			type_args_cache = template_args;
-		return *type_args_cache;
-	};
+	// template_args is already std::vector<TemplateTypeArg> — no conversion needed.
 
 	// Step 2: Check if we already have this instantiation
 	auto key = FlashCpp::makeInstantiationKey(
@@ -1125,7 +1115,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Check for explicit specialization before instantiating the primary template.
 	// This handles cases like: template<> int identity<int>(int val) { return val + 1; }
 	// being called as identity(5) where T=int is deduced from the argument.
-	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, get_type_args());
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args);
 	if (specialization_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found explicit specialization for deduced args of '", template_name, "'");
 		return *specialization_opt;
@@ -1149,7 +1139,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Evaluate the constraint with the template arguments
 		auto constraint_result = evaluateConstraint(
-			requires_clause.constraint_expr(), get_type_args(), eval_param_names);
+			requires_clause.constraint_expr(), template_args, eval_param_names);
 		
 		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 		
@@ -1386,7 +1376,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	} else {
 		// Fallback: Use simple substitution (old behavior)
 		auto [return_type_enum, return_type_index] = substitute_template_parameter(
-			orig_return_type, template_params, get_type_args()
+			orig_return_type, template_params, template_args
 		);
 		
 		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
@@ -1476,9 +1466,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			if (!base_template_name.empty()) {
 				auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-					try_instantiate_class_template(base_template_name, get_type_args());
+					try_instantiate_class_template(base_template_name, template_args);
 					
-					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, get_type_args());
+					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = gTypesByName.find(resolved_handle);
 					
@@ -1687,7 +1677,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					}
 				} else {
 					auto [subst_type, subst_type_index] = substitute_template_parameter(
-						orig_param_type, template_params, get_type_args()
+						orig_param_type, template_params, template_args
 					);
 					// substitute_template_parameter only resolves UserDefined types by name
 					// matching against template parameter names. When the original parameter

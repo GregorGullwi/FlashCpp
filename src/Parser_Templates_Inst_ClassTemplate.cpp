@@ -4854,16 +4854,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Substitute template parameters in the function body
 				if (body_to_substitute.has_value()) {
-					// Build template argument vector for registration
-					std::vector<TemplateTypeArg> converted_template_args;
-					for (const auto& ttype_arg : template_args_to_use) {
-						if (ttype_arg.is_value) {
-							converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
-						} else {
-							converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
-						}
-					}
-
 					FLASH_LOG(Templates, Debug, "About to substitute template parameters in function body for struct: ", StringTable::getStringView(instantiated_name));
 					
 					// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
@@ -4880,7 +4870,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						ASTNode substituted_body = substituteTemplateParameters(
 							*body_to_substitute,
 							template_params,
-							converted_template_args
+							template_args_to_use
 						);
 						new_func_ref.set_definition(substituted_body);
 						FLASH_LOG(Templates, Debug, "Successfully substituted function body");
@@ -5097,21 +5087,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// EAGER INSTANTIATION PATH (original code)
 			if (ctor_decl.get_definition().has_value()) {
-				// Build template argument vector for registration
-				std::vector<TemplateTypeArg> converted_template_args;
-				for (const auto& ttype_arg : template_args_to_use) {
-					if (ttype_arg.is_value) {
-						converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
-					} else {
-						converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
-					}
-				}
-
 				try {
 					ASTNode substituted_body = substituteTemplateParameters(
 						*ctor_decl.get_definition(),
 						template_params,
-						converted_template_args
+						template_args_to_use
 					);
 					
 					// Create a new constructor declaration with substituted body
@@ -5227,21 +5207,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// EAGER INSTANTIATION PATH (original code)
 			if (dtor_decl.get_definition().has_value()) {
-				// Build template argument vector for registration
-				std::vector<TemplateTypeArg> converted_template_args;
-				for (const auto& ttype_arg : template_args_to_use) {
-					if (ttype_arg.is_value) {
-						converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
-					} else {
-						converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
-					}
-				}
-
 				try {
 					ASTNode substituted_body = substituteTemplateParameters(
 						*dtor_decl.get_definition(),
 						template_params,
-						converted_template_args
+						template_args_to_use
 					);
 					
 					// Create a new destructor declaration with substituted body
@@ -5576,21 +5546,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					
 					// Now substitute template parameters in the parsed body
-					std::vector<TemplateTypeArg> converted_template_args;
-					converted_template_args.reserve(template_args_to_use.size());
-					for (const auto& ttype_arg : template_args_to_use) {
-						if (ttype_arg.is_value) {
-							converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
-						} else {
-							converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
-						}
-					}
-					
 					try {
 						ASTNode substituted_body = substituteTemplateParameters(
 							*body_result.node(),
 							out_of_line_member.template_params,
-							converted_template_args
+							template_args_to_use
 						);
 						inst_func.set_definition(substituted_body);
 						found_match = true;
@@ -5659,21 +5619,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 					
-					std::vector<TemplateTypeArg> converted_template_args;
-					converted_template_args.reserve(template_args_to_use.size());
-					for (const auto& ttype_arg : template_args_to_use) {
-						if (ttype_arg.is_value) {
-							converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
-						} else {
-							converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
-						}
-					}
-					
 					try {
 						ASTNode substituted_body = substituteTemplateParameters(
 							*body_result.node(),
 							out_of_line_member.template_params,
-							converted_template_args
+							template_args_to_use
 						);
 						ctor.set_definition(substituted_body);
 						// Also update the StructTypeInfo's copy (used by codegen)
@@ -5708,17 +5658,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto out_of_line_vars = gTemplateRegistry.getOutOfLineMemberVariables(template_name);
 	
 	for (const auto& out_of_line_var : out_of_line_vars) {
-		// Substitute template parameters in the type and initializer
-		std::vector<TemplateTypeArg> converted_template_args;
-		converted_template_args.reserve(template_args_to_use.size());
-		for (const auto& ttype_arg : template_args_to_use) {
-			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
-			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
-			}
-		}
-		
 		// Substitute template parameters in the initializer
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
 		if (out_of_line_var.initializer.has_value()) {
@@ -5726,7 +5665,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_initializer = substituteTemplateParameters(
 					*out_of_line_var.initializer,
 					out_of_line_var.template_params,
-					converted_template_args
+					template_args_to_use
 				);
 			} catch (const std::exception& e) {
 				FLASH_LOG(Templates, Error, "Exception during template parameter substitution for static member ", 

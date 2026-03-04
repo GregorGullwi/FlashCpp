@@ -301,6 +301,10 @@ struct TemplateTypeArg {
 		if (is_value) {
 			h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
+		h ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (is_template_template_arg) {
+			h ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		return h;
 	}
 	
@@ -339,7 +343,9 @@ struct TemplateTypeArg {
 		       array_size == other.array_size &&
 		       member_pointer_kind == other.member_pointer_kind &&
 		       is_value == other.is_value &&
-		       (!is_value || value == other.value);  // Only compare value if it's a value
+		       (!is_value || value == other.value) &&  // Only compare value if it's a value
+		       is_template_template_arg == other.is_template_template_arg &&
+		       (!is_template_template_arg || template_name_handle == other.template_name_handle);
 	}
 
 	// Helper method to check if this is a parameter pack
@@ -457,6 +463,10 @@ struct TemplateTypeArg {
 		if (is_value) {
 			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
+		hash ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		if (is_template_template_arg) {
+			hash ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
 		
 		// Convert to hex string
 		char buf[17];
@@ -484,6 +494,10 @@ struct TemplateTypeArgHash {
 		hash ^= std::hash<bool>{}(arg.is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (arg.is_value) {
 			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		if (arg.is_template_template_arg) {
+			hash ^= std::hash<StringHandle>{}(arg.template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		// NOTE: is_pack is intentionally NOT included in the hash to match operator==
 		return hash;
