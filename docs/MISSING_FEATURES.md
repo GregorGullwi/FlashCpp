@@ -215,7 +215,6 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 ### High Priority (Blocking Real-World Code)
 
 1. **Standard Library Remaining Parse Errors**
-   - Fix brace-init expression parsing for template types (`Type<Args>{init}`)
    - Fix aggregate brace initialization for template types (`std::array<int,5> arr = {1,2,3,4,5}`)
    - Fix dependent base class resolution in template structs
    - Fix variable template evaluation in `static_assert` contexts

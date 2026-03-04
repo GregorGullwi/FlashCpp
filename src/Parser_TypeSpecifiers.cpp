@@ -1366,7 +1366,25 @@ ParseResult Parser::parse_type_specifier()
 						return ParseResult::success(type_spec_node);
 					}
 				}
-				
+
+				// Resolve template template parameter aliases: when re-parsing a function body
+				// with concrete substitutions, "Container" may be bound to e.g., "MyVec".
+				// Replace type_name with the concrete template name so instantiation and name
+				// lookup use the correct target template.
+				{
+					StringHandle tn_handle = StringTable::getOrInternStringHandle(type_name);
+					for (const auto& subst : template_param_substitutions_) {
+						if (subst.is_template_template_param && subst.param_name == tn_handle &&
+						    subst.concrete_template_name.isValid()) {
+							type_name = StringTable::getStringView(subst.concrete_template_name);
+							type_name_token = Token(Token::Type::Identifier, type_name,
+								type_name_token.line(), type_name_token.column(), type_name_token.file_index());
+							FLASH_LOG(Templates, Debug, "Resolved template template param alias -> '", type_name, "'");
+							break;
+						}
+					}
+				}
+
 				// Check if this is a variable template (like is_reference_v<T>) - if so, don't try to
 				// instantiate as a class template. Variable templates are expressions, not types.
 				// First try unqualified, then try namespace-qualified lookup

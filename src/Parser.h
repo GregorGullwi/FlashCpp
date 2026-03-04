@@ -442,6 +442,9 @@ private:
             // For type parameters - the concrete type to substitute
             bool is_type_param = false;
             TemplateTypeArg substituted_type;  // The concrete type for type parameters
+            // For template template parameters - maps param name to concrete template name
+            bool is_template_template_param = false;
+            StringHandle concrete_template_name;  // e.g. "MyVec" when Container=MyVec
         };
         InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 

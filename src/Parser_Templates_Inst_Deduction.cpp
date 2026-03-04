@@ -121,7 +121,17 @@ void Parser::populateTemplateParamSubstitutions(
 ) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
-		if (arg.is_template_template_arg) continue;
+		if (arg.is_template_template_arg) {
+			// Record template template parameter so that instantiation and type specifier
+			// parsing can redirect "Container" -> concrete template (e.g., "MyVec") when
+			// re-parsing the function body.
+			TemplateParamSubstitution subst;
+			subst.param_name = param_names[i];
+			subst.is_template_template_param = true;
+			subst.concrete_template_name = arg.template_name_handle;
+			subs.push_back(subst);
+			continue;
+		}
 		TemplateParamSubstitution subst;
 		subst.param_name = param_names[i];
 		if (arg.is_value) {
@@ -145,7 +155,17 @@ void Parser::populateTemplateParamSubstitutions(
 	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 		if (!template_params[i].is<TemplateParameterNode>()) continue;
 		const TemplateTypeArg& arg = template_args[i];
-		if (arg.is_template_template_arg) continue;
+		if (arg.is_template_template_arg) {
+			// Record template template parameter so that instantiation and type specifier
+			// parsing can redirect "Container" -> concrete template (e.g., "MyVec") when
+			// re-parsing the function body.
+			TemplateParamSubstitution subst;
+			subst.param_name = template_params[i].as<TemplateParameterNode>().nameHandle();
+			subst.is_template_template_param = true;
+			subst.concrete_template_name = arg.template_name_handle;
+			subs.push_back(subst);
+			continue;
+		}
 		TemplateParamSubstitution subst;
 		subst.param_name = template_params[i].as<TemplateParameterNode>().nameHandle();
 		if (arg.is_value) {
