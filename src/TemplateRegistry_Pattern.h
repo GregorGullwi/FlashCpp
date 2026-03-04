@@ -205,8 +205,17 @@ inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 }
 
 // TemplateArgument::toString — delegates to the TemplateTypeArg string representation.
+// For Kind::Template, performs the gTypesByName lookup that buildTemplateTypeArgVector
+// would have done, so the resulting TemplateTypeArg has a valid type_index for toString().
 inline std::string TemplateArgument::toString() const {
-	return toTemplateTypeArg(*this).toString();
+	TemplateTypeArg ta = toTemplateTypeArg(*this);
+	if (kind == Kind::Template) {
+		auto type_it = gTypesByName.find(template_name);
+		if (type_it != gTypesByName.end()) {
+			ta.type_index = type_it->second->type_index_;
+		}
+	}
+	return ta.toString();
 }
 
 // Convert a TemplateArgument vector to TemplateTypeArg format for downstream
