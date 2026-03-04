@@ -10,10 +10,10 @@ struct TemplateArgument {
 	};
 	
 	Kind kind;
-	Type type_value;  // For type arguments (legacy - enum only, kept for backwards compatibility)
+	Type type_value{};  // For type arguments (legacy - enum only, kept for backwards compatibility)
 	TypeIndex type_index = 0;  // For type arguments - index into gTypeInfo for complex types (NEW in Task 2)
-	int64_t int_value;  // For non-type integer arguments
-	Type value_type;  // For non-type arguments: the type of the value (bool, int, etc.)
+	int64_t int_value = 0;  // For non-type integer arguments
+	Type value_type{};  // For non-type arguments: the type of the value (bool, int, etc.)
 	StringHandle template_name;  // For template template arguments (name of the template)
 	std::optional<TypeSpecifierNode> type_specifier;  // Full type info including references, pointers, CV qualifiers
 	
