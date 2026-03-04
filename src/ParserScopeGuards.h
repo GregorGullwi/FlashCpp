@@ -260,4 +260,51 @@ private:
 	FunctionScopeGuard function_scope_;
 };
 
+
+// =============================================================================
+// ScopedState<T>
+// =============================================================================
+// Generic RAII guard that saves a value on construction and restores it on
+// destruction.  Intended for parser state fields that must be temporarily
+// overwritten during template body re-parsing and then restored on all exit
+// paths (normal return, early return, exception).
+//
+// Usage:
+//   {
+//       ScopedState guard(current_template_param_names_);
+//       current_template_param_names_.clear();
+//       // ... populate and use ...
+//   } // original value is automatically restored here
+//
+// Replaces the manual three-line pattern:
+//   auto saved = std::move(field);
+//   field.clear();
+//   /* ... */
+//   field = std::move(saved);
+
+template<typename T>
+class ScopedState {
+public:
+	// Unconditional save/restore (the common case).
+	explicit ScopedState(T& field)
+		: field_ref_(field), saved_state_(std::move(field)) {}
+
+	// Conditional save/restore: when active==false the field is left untouched
+	// and the destructor is a no-op.  No default T{} is constructed when inactive.
+	//   ScopedState guard(field, !vec.empty());
+	//   if (!vec.empty()) field = new_value;
+	explicit ScopedState(T& field, bool active)
+		: field_ref_(field)
+		, saved_state_(active ? std::optional<T>{std::move(field)} : std::nullopt) {}
+
+	~ScopedState() { if (saved_state_) field_ref_ = std::move(*saved_state_); }
+
+	ScopedState(const ScopedState&) = delete;
+	ScopedState& operator=(const ScopedState&) = delete;
+
+private:
+	T&              field_ref_;
+	std::optional<T> saved_state_;
+};
+
 } // namespace FlashCpp

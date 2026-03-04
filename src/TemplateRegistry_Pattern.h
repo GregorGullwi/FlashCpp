@@ -187,8 +187,15 @@ inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 		result.is_value = true;
 		result.value = arg.int_value;
 		result.base_type = arg.value_type;
+	} else if (arg.kind == TemplateArgument::Kind::Template) {
+		// Template-template parameter: carry the name so downstream substitution
+		// can resolve Op<Args...>. type_index is left at 0 here; callers that need
+		// the concrete TypeInfo index should perform the gTypesByName lookup themselves
+		// (see buildTemplateTypeArgVector in Parser_Templates_Inst_Deduction.cpp).
+		result.is_template_template_arg = true;
+		result.template_name_handle = arg.template_name;
 	}
-	// Template template parameters: not directly supported in TemplateTypeArg
+	// Other kinds remain zero-initialised.
 	
 	return result;
 }
@@ -238,6 +245,34 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 		
 		return TemplateArgument::makeTypeSpecifier(ts);
 	}
+}
+
+/**
+ * Convert TypeInfo::TemplateArgInfo to TemplateTypeArg
+ *
+ * Provides a single canonical conversion from the TypeInfo-embedded metadata
+ * form to TemplateTypeArg.  Supersedes the local static helper that previously
+ * lived in ExpressionSubstitutor.cpp.
+ *
+ * @param arg The TypeInfo::TemplateArgInfo to convert
+ * @return TemplateTypeArg with all available type information populated
+ */
+inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
+	TemplateTypeArg ta;
+	ta.base_type = arg.base_type;
+	ta.type_index = arg.type_index;
+	ta.is_value = arg.is_value;
+	ta.cv_qualifier = arg.cv_qualifier;
+	ta.ref_qualifier = arg.ref_qualifier;
+	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
+	ta.is_array = arg.is_array;
+	ta.array_size = arg.array_size;
+	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+	ta.dependent_name = arg.dependent_name;
+	if (arg.is_value) {
+		ta.value = arg.intValue();
+	}
+	return ta;
 }
 
 /**

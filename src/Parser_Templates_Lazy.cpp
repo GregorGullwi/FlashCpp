@@ -132,27 +132,15 @@ if (param_decl.has_default_value()) {
 		
 		// Set up template parameter types in the type system for body parsing
 		FlashCpp::TemplateParameterScope template_scope;
-		std::vector<std::string_view> param_names;
+		std::vector<StringHandle> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
 			}
 		}
 		
-		for (size_t i = 0; i < param_names.size() && i < lazy_info.template_args.size(); ++i) {
-			std::string_view param_name = param_names[i];
-			Type concrete_type = lazy_info.template_args[i].base_type;
-
-			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
-			
-			// Copy reference qualifiers from template arg
-			type_info.reference_qualifier_ = lazy_info.template_args[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
-				: (lazy_info.template_args[i].is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-			
-			gTypesByName.emplace(type_info.name(), &type_info);
-			template_scope.addParameter(&type_info);
-		}
+		registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
 
 		// Save current position and parsing context
 		SaveHandle current_pos = save_token_position();
@@ -161,7 +149,7 @@ if (param_decl.has_default_value()) {
 		// When re-parsing a lazy member function body with concrete types,
 		// we're no longer in a dependent template context. Set parsing_template_body_
 		// to false so that constant expressions like sizeof(int) are evaluated.
-		bool saved_parsing_template_body = parsing_template_body_;
+		FlashCpp::ScopedState guard_ptb(parsing_template_body_);
 		parsing_template_body_ = false;
 
 		// Restore to the function body start
@@ -179,15 +167,28 @@ if (param_decl.has_default_value()) {
 			}
 		}
 
-		// Parse the function body
-		auto block_result = parse_block();
-		
-		if (!block_result.is_error() && block_result.node().has_value()) {
-			body_to_substitute = block_result.node();
-		}
+		// Set up template parameter substitutions so non-type params (e.g., int N)
+		// are resolved during parse_block() just as in try_instantiate_single_template.
+		{
+			FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+			populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
+
+			// Parse the function body
+			{
+				FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+				for (const auto& pn : param_names) {
+					current_template_param_names_.push_back(pn);
+				}
+
+				auto block_result = parse_block();
+
+				if (!block_result.is_error() && block_result.node().has_value()) {
+					body_to_substitute = block_result.node();
+				}
+			} // current_template_param_names_ restored here
+		} // template_param_substitutions_ restored here
 		
 		// Clean up context
-		parsing_template_body_ = saved_parsing_template_body;
 		current_function_ = saved_current_function;
 		gSymbolTable.exit_scope();
 

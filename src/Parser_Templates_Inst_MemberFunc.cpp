@@ -220,8 +220,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		if (func_decl.has_trailing_return_type_position()) {
 			bool prev_sfinae_context = in_sfinae_context_;
 			bool prev_parsing_template_body = parsing_template_body_;
-			auto prev_template_param_names = std::move(current_template_param_names_);
-			auto prev_sfinae_type_map = std::move(sfinae_type_map_);
+			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 			in_sfinae_context_ = true;
 			parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
 			current_template_param_names_.clear();  // No dependent names during SFINAE
@@ -237,41 +237,18 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 			FlashCpp::TemplateParameterScope sfinae_scope;
 			// Add inner template params (the member function template's own params, e.g. U)
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				Type concrete_type = template_args[i].type_value;
-				auto& type_info = gTypeInfo.emplace_back(
-					StringTable::getOrInternStringHandle(tparam.name()),
-					concrete_type, gTypeInfo.size(),
-					getTypeSizeFromTemplateArgument(template_args[i]));
-				gTypesByName.emplace(type_info.name(), &type_info);
-				sfinae_scope.addParameter(&type_info);
-				sfinae_type_map_[type_info.name()] = template_args[i].type_index;
-			}
+			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 			// Add outer template params (from enclosing class template, e.g. T→int)
 			const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
-			if (outer_binding) {
-				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-					std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
-					Type outer_concrete_type = outer_binding->param_args[i].base_type;
-					uint32_t outer_size = (outer_binding->param_args[i].type_index != 0 && outer_binding->param_args[i].type_index < gTypeInfo.size())
-						? gTypeInfo[outer_binding->param_args[i].type_index].type_size_
-						: get_type_size_bits(outer_concrete_type);
-					auto& outer_type_info = gTypeInfo.emplace_back(
-						StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
-					gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
-					sfinae_scope.addParameter(&outer_type_info);
-					sfinae_type_map_[outer_type_info.name()] = outer_binding->param_args[i].type_index;
-				}
-			}
+			if (outer_binding)
+				registerOuterBindingInScope(*outer_binding, sfinae_scope, &sfinae_type_map_);
 
 			auto return_type_result = parse_type_specifier();
 			gSymbolTable.exit_scope();
 			restore_lexer_position_only(sfinae_pos);
 			in_sfinae_context_ = prev_sfinae_context;
 			parsing_template_body_ = prev_parsing_template_body;
-			current_template_param_names_ = std::move(prev_template_param_names);
-			sfinae_type_map_ = std::move(prev_sfinae_type_map);
+			// guard_param_names and guard_sfinae_map restore their fields automatically
 
 			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 				continue;  // SFINAE: this overload's return type failed, try next
@@ -414,35 +391,20 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Temporarily add the concrete types to the type system with template parameter names
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<std::string_view> param_names;
+	std::vector<StringHandle> param_names;
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
-			param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
 		}
 	}
 	
-	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-		std::string_view param_name = param_names[i];
-		Type concrete_type = template_args[i].type_value;
-
-		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), getTypeSizeFromTemplateArgument(template_args[i]));
-		gTypesByName.emplace(type_info.name(), &type_info);
-		template_scope.addParameter(&type_info);
-	}
+	// Kind::Value and Kind::Template entries are intentionally skipped by registerTypeParamsInScope:
+	// registering them would poison gTypesByName with Invalid/garbage TypeInfo entries.
+	registerTypeParamsInScope(param_names, template_args, template_scope);
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
 	if (outer_binding) {
-		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-			std::string_view outer_param_name = StringTable::getStringView(outer_binding->param_names[i]);
-			Type outer_concrete_type = outer_binding->param_args[i].base_type;
-			uint32_t outer_size = (outer_binding->param_args[i].type_index != 0 && outer_binding->param_args[i].type_index < gTypeInfo.size())
-				? gTypeInfo[outer_binding->param_args[i].type_index].type_size_
-				: get_type_size_bits(outer_concrete_type);
-			auto& outer_type_info = gTypeInfo.emplace_back(
-				StringTable::getOrInternStringHandle(outer_param_name), outer_concrete_type, gTypeInfo.size(), outer_size);
-			gTypesByName.emplace(outer_type_info.name(), &outer_type_info);
-			template_scope.addParameter(&outer_type_info);
-		}
+		registerOuterBindingInScope(*outer_binding, template_scope);
 		FLASH_LOG(Templates, Debug, "Added ", outer_binding->param_names.size(), " outer template param bindings for body parsing");
 	}
 
@@ -517,17 +479,33 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
-	// Parse the function body
-	auto block_result = parse_block();
-	if (!block_result.is_error() && block_result.node().has_value()) {
-		// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
-		ASTNode substituted_body = substituteTemplateParameters(
-			*block_result.node(),
-			template_params,
-			template_args
-		);
-		new_func_ref.set_definition(substituted_body);
-	}
+	// Set up template parameter substitutions for body parsing so that non-type
+	// parameters (e.g., N in "return N;") are resolved during parse_block().
+	// This mirrors the setup performed by try_instantiate_single_template and
+	// try_instantiate_template_explicit for free function templates.
+	{
+		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+		populateTemplateParamSubstitutions(template_param_substitutions_, template_params, template_args);
+
+		// Parse the function body
+		{
+			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			for (const auto& pn : param_names) {
+				current_template_param_names_.push_back(pn);
+			}
+
+			auto block_result = parse_block();
+			if (!block_result.is_error() && block_result.node().has_value()) {
+				// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
+				ASTNode substituted_body = substituteTemplateParameters(
+					*block_result.node(),
+					template_params,
+					template_args
+				);
+				new_func_ref.set_definition(substituted_body);
+			}
+		} // current_template_param_names_ restored here
+	} // template_param_substitutions_ restored here
 
 	// Clean up context
 	current_function_ = nullptr;

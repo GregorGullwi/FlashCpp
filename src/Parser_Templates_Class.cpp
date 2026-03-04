@@ -2373,9 +2373,10 @@ ParseResult Parser::parse_template_declaration() {
 				});
 
 				// Set up template parameter names if this is a template member
-				std::vector<StringHandle> saved_param_names;
-				if (!delayed.template_param_names.empty()) {
-					saved_param_names = std::move(current_template_param_names_);
+				const bool has_template_params = !delayed.template_param_names.empty();
+				FlashCpp::ScopedState guard_delay_param_names(current_template_param_names_, has_template_params);
+				FlashCpp::ScopedState guard_delay_ptb(parsing_template_body_, has_template_params);
+				if (has_template_params) {
 					current_template_param_names_ = delayed.template_param_names;
 					parsing_template_body_ = true;
 				}
@@ -2400,12 +2401,6 @@ ParseResult Parser::parse_template_declaration() {
 
 				// Parse the function body
 				auto block_result = parse_block();
-
-				// Restore template parameter names
-				if (!delayed.template_param_names.empty()) {
-					current_template_param_names_ = std::move(saved_param_names);
-					parsing_template_body_ = false;
-				}
 
 				if (block_result.is_error()) {
 					member_function_context_stack_.pop_back();
@@ -4611,17 +4606,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	if (is_partial_specialization) {
 		// Save current template param names and set up the new ones for pattern parsing
 		// This allows template parameter references like _Sz in the pattern <_Sz, _List<_Uint, _UInts...>, true>
-		auto saved_template_param_names = std::move(current_template_param_names_);
-		current_template_param_names_.clear();
+		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 		for (const auto& name : template_param_names) {
 			current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
 		}
 		
 		// Parse the specialization pattern: <T, Rest...>, etc.
 		auto pattern_args_opt = parse_explicit_template_arguments();
-		
-		// Restore the original template param names
-		current_template_param_names_ = std::move(saved_template_param_names);
 		
 		if (!pattern_args_opt.has_value()) {
 			return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);
@@ -4720,18 +4711,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 		
 		// Set template context flags so static_assert deferral works correctly
-		// Use ScopeGuard to ensure flags are restored on all exit paths (including error returns)
-		auto saved_tpn_partial = std::move(current_template_param_names_);
-		current_template_param_names_.clear();
+		FlashCpp::ScopedState guard_tpn_partial(current_template_param_names_);
 		for (const auto& name : template_param_names) {
 			current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
 		}
-		bool saved_ptb_partial = parsing_template_body_;
+		FlashCpp::ScopedState guard_ptb_partial(parsing_template_body_);
 		parsing_template_body_ = true;
-		ScopeGuard restore_template_context_partial([&]() {
-			current_template_param_names_ = std::move(saved_tpn_partial);
-			parsing_template_body_ = saved_ptb_partial;
-		});
 		
 		while (!peek().is_eof() && peek() != "}"_tok) {
 			// Skip empty declarations (bare ';' tokens) - valid in C++
@@ -5143,18 +5128,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 	
 	// Set template context flags so static_assert deferral works correctly
-	// Use ScopeGuard to ensure flags are restored on all exit paths (including error returns)
-	auto saved_template_param_names_body = std::move(current_template_param_names_);
-	current_template_param_names_.clear();
+	FlashCpp::ScopedState guard_tpn_body(current_template_param_names_);
 	for (const auto& name : template_param_names) {
 		current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
 	}
-	bool saved_parsing_template_body = parsing_template_body_;
+	FlashCpp::ScopedState guard_ptb_body(parsing_template_body_);
 	parsing_template_body_ = true;
-	ScopeGuard restore_template_context_body([&]() {
-		current_template_param_names_ = std::move(saved_template_param_names_body);
-		parsing_template_body_ = saved_parsing_template_body;
-	});
 	
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		// Skip empty declarations (bare ';' tokens) - valid in C++

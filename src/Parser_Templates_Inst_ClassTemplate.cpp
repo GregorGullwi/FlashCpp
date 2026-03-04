@@ -4272,16 +4272,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Save current lexer position and parser state
 		SaveHandle saved_pos = save_token_position();
-		auto saved_template_body = parsing_template_body_;
-		auto saved_template_class = parsing_template_class_;
-		auto saved_param_names = current_template_param_names_;
-		auto saved_delayed_bodies = std::move(delayed_function_bodies_);
-		delayed_function_bodies_.clear();
-		
-		// Set up template parsing context so template parameter types resolve correctly
-		parsing_template_body_ = true;
-		parsing_template_class_ = true;
+		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 		current_template_param_names_ = ool_nested.template_param_names;
+		FlashCpp::ScopedState guard_template_body(parsing_template_body_);
+		parsing_template_body_ = true;
+		FlashCpp::ScopedState guard_template_class(parsing_template_class_);
+		parsing_template_class_ = true;
+		FlashCpp::ScopedState guard_delayed_bodies(delayed_function_bodies_);
 
 		// Restore lexer to the saved position (at the struct/class keyword).
 		// Push the instantiated template onto struct_parsing_context_stack_ so that
@@ -4311,11 +4308,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			          StringTable::getStringView(qualified_name));
 		}
 		
-		// Restore parser state
-		current_template_param_names_ = saved_param_names;
-		parsing_template_body_ = saved_template_body;
-		parsing_template_class_ = saved_template_class;
-		delayed_function_bodies_ = std::move(saved_delayed_bodies);
 		restore_lexer_position_only(saved_pos);
 	}
 
@@ -4815,27 +4807,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Set up template parameter types in the type system for body parsing
 					FlashCpp::TemplateParameterScope template_scope;
-					std::vector<std::string_view> param_names;
+					std::vector<StringHandle> param_names;
 					param_names.reserve(template_params.size());
 					for (const auto& tparam_node : template_params) {
 						if (tparam_node.is<TemplateParameterNode>()) {
-							param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+							param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
 						}
 					}
 					
-					for (size_t i = 0; i < param_names.size() && i < template_args_to_use.size(); ++i) {
-						std::string_view param_name = param_names[i];
-						Type concrete_type = template_args_to_use[i].base_type;
-
-						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
-						
-						// Copy reference qualifiers from template arg
-						type_info.reference_qualifier_ = template_args_to_use[i].is_rvalue_reference() ? ReferenceQualifier::RValueReference
-							: (template_args_to_use[i].is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-						
-						gTypesByName.emplace(type_info.name(), &type_info);
-						template_scope.addParameter(&type_info);
-					}
+					registerTypeParamsInScope(param_names, template_args_to_use, template_scope, true);
 
 					// Save current position and parsing context
 					SaveHandle current_pos = save_token_position();
@@ -6145,7 +6125,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
 					// Non-type parameter - store value for substitution
 					TemplateParamSubstitution subst;
-					subst.param_name = param.name();
+					subst.param_name = param.nameHandle();
 					subst.is_value_param = true;
 					subst.value = arg.value;
 					subst.value_type = arg.base_type;
@@ -6158,7 +6138,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// This enables variable templates inside function templates to work correctly:
 					// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
 					TemplateParamSubstitution subst;
-					subst.param_name = param.name();
+					subst.param_name = param.nameHandle();
 					subst.is_value_param = false;
 					subst.is_type_param = true;
 					subst.substituted_type = arg;
