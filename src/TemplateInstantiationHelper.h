@@ -376,13 +376,3 @@ inline std::unordered_map<std::string_view, TemplateTypeArg> buildTemplateParamM
 	
 	return param_map;
 }
-
-/**
- * Build a vector of TemplateTypeArg from TemplateTypeArg arguments.
- * Identity pass-through — retained only for API compatibility.
- */
-inline const std::vector<TemplateTypeArg>& buildTemplateArgumentsFromTypeArgs(
-	const std::vector<TemplateTypeArg>& args)
-{
-	return args;
-}
