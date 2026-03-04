@@ -464,7 +464,7 @@ path: each shim can be replaced with native `TemplateArgument` support increment
 In `try_instantiate_single_template`, the `resolve_dependent_member_alias` lambda
 (~line 1447) passes the function template's full `template_args` vector to
 `try_instantiate_class_template` and `get_instantiated_class_name` when attempting
-to instantiate a base class template (lines 1506-1508).  This is correct when the
+to instantiate a base class template (lines 1518-1520).  This is correct when the
 function template and the base class template share the same parameters (the common
 case for patterns like `template<typename T> typename Helper<T>::type foo(T x)`),
 but would be wrong when they differ.
