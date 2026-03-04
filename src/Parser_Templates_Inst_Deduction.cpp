@@ -1698,14 +1698,21 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					//   - the type_index was unchanged (no substitution happened)
 					//   - the TypeInfo at that index is a template instantiation (placeholder)
 					//   - we have a concrete call-site argument of type Struct
+					//
+					// NOTE: We use 'i' (the function parameter index) to index arg_types,
+					// matching the pre-deduction pass (line ~821) which also assumes 1:1
+					// correspondence between func_params[i] and arg_types[i]. Using
+					// arg_type_index here would be incorrect after a variadic pack
+					// expansion, since arg_type_index advances through multiple arg slots
+					// for a single function parameter, breaking the correspondence.
 					if (subst_type == Type::UserDefined &&
 					    subst_type_index == orig_param_type.type_index() &&
 					    subst_type_index > 0 && subst_type_index < gTypeInfo.size() &&
 					    gTypeInfo[subst_type_index].isTemplateInstantiation() &&
-					    arg_type_index < arg_types.size() &&
-					    arg_types[arg_type_index].type() == Type::Struct) {
+					    i < arg_types.size() &&
+					    arg_types[i].type() == Type::Struct) {
 						subst_type = Type::Struct;
-						subst_type_index = arg_types[arg_type_index].type_index();
+						subst_type_index = arg_types[i].type_index();
 						FLASH_LOG_FORMAT(Templates, Debug,
 							"[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
 							recursion_depth, subst_type_index);
