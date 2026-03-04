@@ -60,9 +60,19 @@ struct TemplateArgument {
 	// only cause bucket collisions, not correctness issues.
 	size_t hash() const {
 		size_t h = std::hash<int>{}(static_cast<int>(kind));
-		h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
-		h ^= std::hash<TypeIndex>{}(type_index) << 2;
-		h ^= std::hash<int64_t>{}(int_value) << 3;
+		switch (kind) {
+			case Kind::Type:
+				h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
+				h ^= std::hash<TypeIndex>{}(type_index) << 2;
+				break;
+			case Kind::Value:
+				h ^= std::hash<int64_t>{}(int_value) << 1;
+				h ^= std::hash<int>{}(static_cast<int>(value_type)) << 2;
+				break;
+			case Kind::Template:
+				h ^= std::hash<StringHandle>{}(template_name) << 1;
+				break;
+		}
 		return h;
 	}
 	
