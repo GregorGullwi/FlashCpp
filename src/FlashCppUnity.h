@@ -62,6 +62,13 @@
 #include "ElfFileWriter.h"
 #endif
 
+// ElfFileWriter method definitions (for unity build)
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+#include "ElfFileWriter_GlobalRTTI.cpp"
+#include "ElfFileWriter_FuncSig.cpp"
+#include "ElfFileWriter_EH.cpp"
+#endif
+
 // Shared globals (g_enable_debug_output, gNamespaceRegistry, etc.)
 #include "Globals.cpp"
 
