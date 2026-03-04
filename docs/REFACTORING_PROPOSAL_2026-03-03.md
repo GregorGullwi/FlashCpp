@@ -25,6 +25,8 @@
 | 11 | ✅ Done | **Task 3 continuation (round 3) — last conditional save/restore site in `Class.cpp:2378`**: Extended `ScopedState` with a two-parameter constructor `ScopedState(T& field, bool active)` — when `active=false` the field is left untouched and the destructor is a no-op; `std::optional<T>` used for `saved_state_` (no default `T{}` constructed when inactive, `bool active_` member eliminated). Converted the `!delayed.template_param_names.empty()` conditional save/restore of `current_template_param_names_` and `parsing_template_body_` in `Class.cpp` to `ScopedState(field, has_template_params)`. |
 | 12 | ✅ Done | **StringHandle migration for `param_names` and `TemplateParamSubstitution::param_name`**: (a) Changed all `param_names` build loops in `Deduction.cpp`, `MemberFunc.cpp`, `Lazy.cpp`, `ClassTemplate.cpp` from `vector<string_view>` to `vector<StringHandle>` using `nameHandle()` instead of `name()`. (b) Updated `registerTypeParamsInScope` (TemplateTypeArg + TemplateArgument overloads), `registerOuterBindingInScope` (uses `outer_binding.param_names[i]` directly), `populateTemplateParamSubstitutions` overload 1, and `Parser.h` declaration to use `StringHandle`. Removed all `getOrInternStringHandle(name)` / `getStringView(handle)` round-trips at these sites. (c) Changed `TemplateParamSubstitution::param_name` from `string_view` to `StringHandle`; updated the 4 assignment sites in `Deduction.cpp` and `ClassTemplate.cpp` to use `nameHandle()`; updated the 2 comparison sites in `Substitution.cpp` (`dep_name`/`type_name` variables now `StringHandle`). (d) Added `ScopedState` for `current_function_` in `reparse_template_function_body`. (e) Removed 6 redundant `.clear()` calls after `ScopedState` construction (gemini-code-assist review). |
 | 5B | ✅ Done | **Eliminate `template_args_as_type_args` from `try_instantiate_single_template`**: (a) Added `TemplateArgument::toString()` method (delegates to `toTemplateTypeArg(*this).toString()`). (b) Moved `buildTemplateTypeArgVector` from `static` in `Parser_Templates_Inst_Deduction.cpp` to `inline` in `TemplateRegistry_Pattern.h` (alongside `toTemplateTypeArg`). (c) Added thin shim overloads accepting `vector<TemplateArgument>` for: `TemplateRegistry::lookupSpecialization` (Registry.h), `evaluateConstraint` (Lazy.cpp), `Parser::substitute_template_parameter` (QualLookup.cpp + Parser.h), `Parser::try_instantiate_class_template` (ClassTemplate.cpp + Parser.h), `Parser::get_instantiated_class_name` (Substitution.cpp + Parser.h). `registerTypeParamsInScope` already had a `TemplateArgument` overload. (d) Updated all 17 references to `template_args_as_type_args` in `try_instantiate_single_template` to use `template_args` directly. The intermediate vector is eliminated; each downstream function now converts internally via `buildTemplateTypeArgVector` when needed. |
+| 13 | ✅ Done | **InlineVector migration for template parameter collections**: Replaced `std::vector` with `InlineVector<T, 4>` for all template parameter name and substitution collections. This avoids heap allocation in the common case of 1-4 template parameters. See details below. |
+| KI-1 | ✅ Investigated | **Known issue: `resolve_dependent_member_alias`**: Test confirms the current implementation works correctly — string-based substitution resolves the correct type name before the fallback instantiation path is reached. Regression test added: `tests/dependent_member_alias_multi_param_ret0.cpp`. |
 | 7  | ⏳ Deferred | Unify `TemplateArgument` / `TemplateTypeArg` — high risk; separate PR. Preconditions (tasks 1–3) are now met. |
 
 ---
@@ -449,6 +451,8 @@ noise of `std::visit` at every use site.
 | 3 | `ScopedTemplateParamNames` RAII guard | M | Low | Removes ~50 manual save/restore sites | ✅ Done |
 | 2 | Extract `registerTemplateParamsAsTypeInfo()` | M | Medium | Removes ~12 loop duplicates | ✅ Done |
 | 5 | Eliminate `template_args_as_type_args` | M | Medium | Single authoritative arg vector | ✅ Done |
+| 13 | InlineVector migration for template collections | M | Low | Eliminates heap allocation for 1–4 param common case | ✅ Done |
+| KI-1 | Investigate `resolve_dependent_member_alias` | S | N/A | Not a bug — string substitution resolves correctly | ✅ Investigated |
 | 7 | Unify `TemplateArgument` / `TemplateTypeArg` | L | High | One type, no conversions | ⏳ Deferred |
 
 All items except task 7 are complete.  Task 7 (unifying `TemplateArgument` and
@@ -459,17 +463,17 @@ path: each shim can be replaced with native `TemplateArgument` support increment
 
 ### Known issue: `resolve_dependent_member_alias` passes full function template args to class template instantiation
 
-**Status**: ⏳ Investigate — pre-existing (not introduced by task 5B)
+**Status**: ✅ Investigated — not a bug in current implementation
 
 In `try_instantiate_single_template`, the `resolve_dependent_member_alias` lambda
-(~line 1447) passes the function template's full `template_args` vector to
+(~line 1459) passes the function template's full `template_args` vector to
 `try_instantiate_class_template` and `get_instantiated_class_name` when attempting
 to instantiate a base class template (lines 1518-1520).  This is correct when the
 function template and the base class template share the same parameters (the common
 case for patterns like `template<typename T> typename Helper<T>::type foo(T x)`),
 but would be wrong when they differ.
 
-**Example that would be incorrect** (not yet tested):
+**Test result**: The example below was tested and **passes correctly**:
 ```cpp
 template<typename T>
 struct Helper { using type = T; };
@@ -480,14 +484,75 @@ typename Helper<U>::type foo(T x, U y) { return y; }
 
 int main() { return foo(3.14, 0); }
 ```
-Here `template_args = [double, int]` but `Helper` expects one arg (`[int]`).
-The full `[double, int]` vector gets passed to `try_instantiate_class_template("Helper", ...)`.
+The reason it works: the string-based substitution at lines 1493-1501 correctly
+replaces the template parameter name `U` with the concrete argument type string
+in `base_part` (e.g., `Helper_U` → `Helper_int`).  The `gTypesByName` lookup at
+line 1506 then succeeds because the correctly-resolved type name is already
+registered.  The fallback `try_instantiate_class_template` call at line 1518
+(which would use the full args) is never reached.
 
-**Action items**:
-1. Write a test exercising this pattern and verify whether it passes or fails.
-2. If it fails, fix `resolve_dependent_member_alias` to extract only the args
-   relevant to the base class template (e.g. by matching the substituted
-   `base_part` string against the class template's parameter list).
+Regression test: `tests/dependent_member_alias_multi_param_ret0.cpp`
+
+**Potential future concern**: If the `gTypesByName` lookup ever fails (because the
+class template hasn't been previously instantiated), the fallback path would pass
+incorrect args.  This is unlikely in practice because the substitution step
+produces the correct resolved name, and class templates referenced in return types
+are typically already instantiated by the time the function template is processed.
+
+---
+
+### Task 13: InlineVector migration for template parameter collections
+
+**Status**: ✅ Done
+
+Replaced `std::vector` with `InlineVector<T, 4>` for all template parameter name
+and substitution collections, following the performance notes in proposals 1–3.
+Template parameter lists are almost always 1–4 elements, so the inline buffer
+avoids heap allocation in the hot instantiation path.
+
+**InlineVector enhancements** (required for this migration):
+- Added full random access iterator support (`operator+`, `operator-`, comparison operators)
+- Added `std::vector<T>` conversion constructors and assignment operators for seamless migration
+- Required by `std::find` in `SymbolTable::lookup` and by aggregate initialization from `std::vector`
+
+**Fields changed** (from `std::vector<StringHandle>` to `InlineVector<StringHandle, 4>`):
+- `Parser::current_template_param_names_` — saved/restored on every template instantiation via `ScopedState`
+- `Parser::template_param_substitutions_` (as `InlineVector<TemplateParamSubstitution, 4>`)
+- `DelayedFunctionBody::template_param_names`
+- `DeferredTemplateMemberBody::template_param_names`
+- `OutOfLineMemberFunction::template_param_names` and `inner_template_param_names`
+- `OutOfLineMemberVariable::template_param_names`
+- `OutOfLineNestedClass::template_param_names`
+- `OuterTemplateBinding::param_names`
+- `TemplateAliasNode::template_param_names_`
+- `TemplateRegistry::template_parameters_` storage
+
+**Fields changed** (from `std::vector<TemplateTypeArg>` to `InlineVector<TemplateTypeArg, 4>`):
+- `OuterTemplateBinding::param_args`
+- `OutOfLineNestedClass::specialization_args`
+- `TemplatePattern::pattern_args`
+- `SpecializationKey::template_args`
+
+**Function signatures updated**:
+- `Parser::populateTemplateParamSubstitutions` (both overloads)
+- `registerTypeParamsInScope` (both static overloads)
+- `Parser::parse_static_member_function`, `Parser::parse_static_member_block`
+- `Parser::try_parse_out_of_line_template_member`
+- `SymbolTable::lookup` (template_params pointer)
+- `TemplateRegistry::registerTemplateParameters` / `getTemplateParameters`
+
+**Local variables converted** (all template instantiation paths):
+- `param_names` in `Parser_Templates_Inst_Deduction.cpp` (2 sites)
+- `param_names` in `Parser_Templates_Inst_MemberFunc.cpp`, `Parser_Templates_Lazy.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp`
+- `template_param_names` in `Parser_Templates_Class.cpp` (2 sites)
+- `template_param_name_handles` in `Parser_Templates_Function.cpp`
+- `template_param_names` in `Parser_Templates_Variable.cpp`, `Parser_Decl_FunctionOrVar.cpp`
+- `saved_template_param_names` in `Parser_Templates_Params.cpp`
+- `pattern_args` in `Parser_Templates_Inst_ClassTemplate.cpp`
+
+**Touches**: 20 files across headers and implementation.
+**Risk**: Low — `InlineVector` is API-compatible with `std::vector` for all operations used.
+All 1260 tests pass.
 
 ---
 

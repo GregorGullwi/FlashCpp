@@ -83,7 +83,7 @@ public:
 
 	// Register template parameter names for a template
 	void registerTemplateParameters(StringHandle key, const InlineVector<StringHandle, 4>& param_names) {
-		template_parameters_[key] = InlineVector<StringHandle, 4>(param_names);
+		template_parameters_[key] = param_names;
 	}
 
 	// Register an alias template: template<typename T> using Ptr = T*;

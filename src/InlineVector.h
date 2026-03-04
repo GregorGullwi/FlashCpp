@@ -34,6 +34,7 @@ public:
 	
 	// Construct from std::vector (enables seamless migration)
 	InlineVector(const std::vector<T>& vec) {
+		reserve(vec.size());
 		for (const auto& item : vec) {
 			push_back(item);
 		}
@@ -41,6 +42,7 @@ public:
 	
 	// Move-construct from std::vector
 	InlineVector(std::vector<T>&& vec) {
+		reserve(vec.size());
 		for (auto& item : vec) {
 			push_back(std::move(item));
 		}
@@ -49,6 +51,7 @@ public:
 	// Assignment from std::vector
 	InlineVector& operator=(const std::vector<T>& vec) {
 		clear();
+		reserve(vec.size());
 		for (const auto& item : vec) {
 			push_back(item);
 		}
@@ -58,6 +61,7 @@ public:
 	// Move-assignment from std::vector
 	InlineVector& operator=(std::vector<T>&& vec) {
 		clear();
+		reserve(vec.size());
 		for (auto& item : vec) {
 			push_back(std::move(item));
 		}
