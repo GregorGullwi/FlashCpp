@@ -285,7 +285,11 @@ struct TemplateTypeArg {
 	
 	// Hash for use in maps (used by InstantiationQueue and SpecializationKey)
 	size_t hash() const {
-		size_t h = std::hash<int>{}(static_cast<int>(base_type));
+		// Normalize Bool/Int to Int to match operator== which treats them as interchangeable
+		// for value parameters. This maintains the invariant: a == b → hash(a) == hash(b).
+		Type effective_type = (is_value && (base_type == Type::Bool || base_type == Type::Int))
+		    ? Type::Int : base_type;
+		size_t h = std::hash<int>{}(static_cast<int>(effective_type));
 		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
 			h ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
@@ -447,7 +451,10 @@ struct TemplateTypeArg {
 	// Uses the same hash algorithm as TemplateTypeArgHash for consistency
 	std::string toHashString() const {
 		// Compute hash using the same algorithm as TemplateTypeArgHash
-		size_t hash = std::hash<int>{}(static_cast<int>(base_type));
+		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
+		Type effective_type = (is_value && (base_type == Type::Bool || base_type == Type::Int))
+		    ? Type::Int : base_type;
+		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
 		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
 			hash ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
@@ -478,7 +485,10 @@ struct TemplateTypeArg {
 // Hash function for TemplateTypeArg
 struct TemplateTypeArgHash {
 	size_t operator()(const TemplateTypeArg& arg) const {
-		size_t hash = std::hash<int>{}(static_cast<int>(arg.base_type));
+		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
+		Type effective_type = (arg.is_value && (arg.base_type == Type::Bool || arg.base_type == Type::Int))
+		    ? Type::Int : arg.base_type;
+		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
 		// Only include type_index in hash for user-defined types (to match operator==)
 		if (arg.base_type == Type::Struct || arg.base_type == Type::Enum || arg.base_type == Type::UserDefined) {
 			hash ^= std::hash<size_t>{}(arg.type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
