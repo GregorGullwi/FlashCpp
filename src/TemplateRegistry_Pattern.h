@@ -67,7 +67,7 @@ struct OutOfLineMemberVariable {
 //   template<typename T> struct Outer<T>::Inner { ... };     (partial — applies to all instantiations)
 //   template<> struct Wrapper<int>::Nested { int x; };       (full — applies only when args match)
 struct OutOfLineNestedClass {
-	std::vector<ASTNode> template_params;           // Outer template parameters (e.g., <typename T>)
+	InlineVector<ASTNode, 4> template_params;           // Outer template parameters (e.g., <typename T>)
 	StringHandle nested_class_name;                 // Name of the nested class (e.g., "Inner")
 	SaveHandle body_start;                          // Saved position at the struct/class keyword for re-parsing via parse_struct_declaration()
 	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
@@ -87,14 +87,14 @@ struct SfinaeCondition {
 
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
 struct TemplatePattern {
-	std::vector<ASTNode> template_params;  // Template parameters (e.g., typename T)
+	InlineVector<ASTNode, 4> template_params;  // Template parameters (e.g., typename T)
 	InlineVector<TemplateTypeArg, 4> pattern_args;  // Pattern like T&, T*, etc.
 	ASTNode specialized_node;  // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition;  // Optional SFINAE check for void_t patterns
 	
 	// Constructor to avoid aggregate initialization issues with mutable cache fields
 	TemplatePattern() = default;
-	TemplatePattern(std::vector<ASTNode> tp, InlineVector<TemplateTypeArg, 4> pa,
+	TemplatePattern(InlineVector<ASTNode, 4> tp, InlineVector<TemplateTypeArg, 4> pa,
 	                ASTNode sn, std::optional<SfinaeCondition> sc)
 		: template_params(std::move(tp)), pattern_args(std::move(pa)),
 		  specialized_node(std::move(sn)), sfinae_condition(std::move(sc)) {}

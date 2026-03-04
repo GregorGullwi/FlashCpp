@@ -1,4 +1,4 @@
-ParseResult Parser::parse_template_parameter_list(std::vector<ASTNode>& out_params) {
+ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params) {
 	// Save the current template parameter names so we can restore them later.
 	// This allows nested template declarations to have their own parameter scope.
 	InlineVector<StringHandle, 4> saved_template_param_names = current_template_param_names_;

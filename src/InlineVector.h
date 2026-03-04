@@ -68,6 +68,16 @@ public:
 		return *this;
 	}
 	
+	// Implicit conversion to std::vector (enables seamless migration)
+	operator std::vector<T>() const {
+		std::vector<T> result;
+		result.reserve(size());
+		for (size_t i = 0; i < size(); ++i) {
+			result.push_back((*this)[i]);
+		}
+		return result;
+	}
+	
 	// Copy constructor
 	InlineVector(const InlineVector& other) 
 		: inline_count_(other.inline_count_), overflow_(other.overflow_) {

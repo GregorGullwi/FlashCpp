@@ -13,7 +13,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	std::vector<ASTNode> template_params;
+	InlineVector<ASTNode, 4> template_params;
 	InlineVector<StringHandle, 4> template_param_names;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
@@ -143,8 +143,8 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	}
 	advance(); // consume '<'
 	
-	std::vector<ASTNode> template_params;
-	std::vector<std::string_view> template_param_names;
+	InlineVector<ASTNode, 4> template_params;
+	InlineVector<std::string_view, 4> template_param_names;
 	
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {

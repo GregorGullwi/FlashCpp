@@ -1,7 +1,7 @@
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
-	const std::vector<ASTNode>& template_params,
+	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<StringHandle, 4>& template_param_names,
-	const std::vector<ASTNode>& inner_template_params,
+	const InlineVector<ASTNode, 4>& inner_template_params,
 	const InlineVector<StringHandle, 4>& inner_template_param_names) {
 
 	// Save position in case this isn't an out-of-line definition

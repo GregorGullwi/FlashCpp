@@ -144,7 +144,7 @@ ParseResult Parser::parse_template_declaration() {
 	}
 
 	// Parse template parameter list (unless it's a specialization)
-	std::vector<ASTNode> template_params;
+	InlineVector<ASTNode, 4> template_params;
 	if (!is_specialization) {
 		auto param_list_result = parse_template_parameter_list(template_params);
 		if (param_list_result.is_error()) {
@@ -233,7 +233,7 @@ ParseResult Parser::parse_template_declaration() {
 			advance(); // consume '<'
 
 			// Parse inner template parameters
-			std::vector<ASTNode> inner_template_params;
+			InlineVector<ASTNode, 4> inner_template_params;
 			auto inner_param_result = parse_template_parameter_list(inner_template_params);
 			if (inner_param_result.is_error()) {
 				// Fallback: skip the rest (for standard headers that use unsupported features)
@@ -4488,7 +4488,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	std::vector<ASTNode> template_params;
+	InlineVector<ASTNode, 4> template_params;
 	std::vector<std::string_view> template_param_names;
 
 	auto param_list_result = parse_template_parameter_list(template_params);

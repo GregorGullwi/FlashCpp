@@ -706,7 +706,7 @@
 					// Build instantiation key
 					const TemplateFunctionDeclarationNode& template_func = template_opt->as<TemplateFunctionDeclarationNode>();
 					
-					std::vector<TemplateTypeArg> template_args;
+					InlineVector<TemplateTypeArg, 4> template_args;
 					for (const auto& [arg_type, arg_type_index] : arg_types) {
 						template_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
 					}

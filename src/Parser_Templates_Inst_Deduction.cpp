@@ -11,7 +11,7 @@
 //   where lvalue-ness of the call-site argument must NOT propagate to the TypeInfo entry.
 static void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
-	const std::vector<TemplateTypeArg>& type_args,
+	const InlineVector<TemplateTypeArg, 4>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier = false
 ) {

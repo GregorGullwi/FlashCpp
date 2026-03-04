@@ -744,10 +744,10 @@ private:
         // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
         // Returns the TemplateFunctionDeclarationNode in out_template_node
         ParseResult parse_template_function_declaration_body(
-            std::vector<ASTNode>& template_params,
+            InlineVector<ASTNode, 4>& template_params,
             std::optional<ASTNode> requires_clause,
             ASTNode& out_template_node);
-        ParseResult parse_template_parameter_list(std::vector<ASTNode>& out_params);  // NEW: Parse template parameter list
+        ParseResult parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params);  // NEW: Parse template parameter list
         ParseResult parse_template_parameter();  // NEW: Parse a single template parameter
         // Simple struct to hold constant expression evaluation results
         // Public members are intentional for this lightweight data structure
@@ -829,7 +829,7 @@ private:
             const std::vector<TemplateTypeArg>& args,
             const std::vector<ASTNode>& params);  // Substitute non-type template parameter in initializer
         
-        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const std::vector<ASTNode>& inner_template_params = {}, const InlineVector<StringHandle, 4>& inner_template_param_names = {});  // NEW: Parse out-of-line template member function
+        std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<ASTNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<ASTNode, 4>& inner_template_params = {}, const InlineVector<StringHandle, 4>& inner_template_param_names = {});  // NEW: Parse out-of-line template member function
         bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
         bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
                 const std::vector<TypeSpecifierNode>& argument_types,
@@ -858,16 +858,16 @@ public:  // Public methods for template instantiation
 	// Substitute template parameters in an AST node with concrete types/values
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
-		const std::vector<ASTNode>& template_params,
-		const std::vector<TemplateTypeArg>& template_args
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args
 	);private:  // Resume private methods
 		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
 		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
 		void substituteFunctionCallExtras(
 			FunctionCallNode& new_call,
 			const FunctionCallNode& old_call,
-			const std::vector<ASTNode>& template_params,
-			const std::vector<TemplateTypeArg>& template_args
+			const InlineVector<ASTNode, 4>& template_params,
+			const InlineVector<TemplateTypeArg, 4>& template_args
 		);
 		void register_builtin_functions();  // Register compiler builtin functions
         ParseResult parse_block();

@@ -130,7 +130,7 @@ inline FunctionDeclarationNode* get_function_decl_node_mut(ASTNode& node) {
 class TemplateAliasNode {
 public:
 	TemplateAliasNode() = delete;
-	TemplateAliasNode(std::vector<ASTNode> template_params,
+	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
 	                  InlineVector<StringHandle, 4> param_names,
 	                  StringHandle alias_name,
 	                  ASTNode target_type)
@@ -141,7 +141,7 @@ public:
 		, is_deferred_(false) {}
 	
 	// Constructor for deferred template instantiation (Option 1)
-	TemplateAliasNode(std::vector<ASTNode> template_params,
+	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
 	                  InlineVector<StringHandle, 4> param_names,
 	                  StringHandle alias_name,
 	                  ASTNode target_type,
@@ -155,7 +155,7 @@ public:
 		, target_template_name_(target_template_name)
 		, target_template_args_(std::move(target_template_args)) {}
 
-	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	const InlineVector<StringHandle, 4>& template_param_names() const { return template_param_names_; }
 	std::string_view alias_name() const { return alias_name_.view(); }
 	ASTNode target_type() const { return target_type_; }
@@ -174,7 +174,7 @@ public:
 	}
 
 private:
-	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
+	InlineVector<ASTNode, 4> template_parameters_;  // TemplateParameterNode instances
 	InlineVector<StringHandle, 4> template_param_names_;  // Parameter names for lookup
 	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
 	ASTNode target_type_;  // TypeSpecifierNode - the target type (e.g., T*)

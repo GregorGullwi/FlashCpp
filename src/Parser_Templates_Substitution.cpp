@@ -1,7 +1,7 @@
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
-	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateTypeArg>& template_args
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
 	// Helper function to get type name as string
 	auto get_type_name = [](Type type) -> std::string_view {
@@ -1301,8 +1301,8 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 void Parser::substituteFunctionCallExtras(
 FunctionCallNode& new_call,
 const FunctionCallNode& old_call,
-const std::vector<ASTNode>& template_params,
-const std::vector<TemplateTypeArg>& template_args
+const InlineVector<ASTNode, 4>& template_params,
+const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
 if (old_call.has_mangled_name()) {
 new_call.set_mangled_name(old_call.mangled_name());
