@@ -15,8 +15,9 @@
 | 3  | ✅ Done | `ScopedState<T>` RAII guard added to `ParserScopeGuards.h`; applied to `current_template_param_names_` and `sfinae_type_map_` save/restore in `Parser_Templates_Inst_Deduction.cpp` |
 | Fix | ✅ Done | Member-function-template non-type body reparse: populated `template_param_substitutions_` and `current_template_param_names_` in `instantiate_member_function_template_core` (MemberFunc.cpp) and the lazy re-parse branch (Lazy.cpp). Test: `tests/member_func_template_nontype_ret0.cpp` |
 | 1  | ✅ Done | `Parser::reparse_template_function_body()` extracted in `Parser_Templates_Inst_Deduction.cpp`; both `try_instantiate_template_explicit` and `try_instantiate_single_template` now call it. The old per-path `template_param_substitutions_` loop (21 lines in explicit, 33 lines in deduced) is replaced by a single unified implementation using `toTemplateTypeArg(arg)`. Pack-parameter state and cycle detection remain in callers as planned. |
+| 5A | ✅ Done | `toTemplateTypeArg(const TemplateArgument&)` in `TemplateRegistry_Pattern.h` now handles all three kinds (Type, Value, Template). The 20-line inline conversion loop in `try_instantiate_single_template` is replaced by `buildTemplateTypeArgVector()` — a new `static` helper in `Parser_Templates_Inst_Deduction.cpp` that calls `toTemplateTypeArg` for each arg and does the `gTypesByName` index lookup for `Kind::Template`. |
 | 2  | ⏳ Deferred | Extract `registerTemplateParamsAsTypeInfo()` — medium risk; depends on moving `getTypeSizeFromTemplateArgument` out of `Parser_Core.cpp` |
-| 5  | ⏳ Deferred | Eliminate `template_args_as_type_args` — medium risk; best tackled after tasks 1 and 3 are merged |
+| 5B | ⏳ Deferred | Fully eliminate `template_args_as_type_args` by widening downstream helper signatures — medium risk; best after 5A is merged |
 | 7  | ⏳ Deferred | Unify `TemplateArgument` / `TemplateTypeArg` — high risk; separate PR after 1–3 land |
 
 ---

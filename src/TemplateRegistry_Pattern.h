@@ -187,8 +187,15 @@ inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 		result.is_value = true;
 		result.value = arg.int_value;
 		result.base_type = arg.value_type;
+	} else if (arg.kind == TemplateArgument::Kind::Template) {
+		// Template-template parameter: carry the name so downstream substitution
+		// can resolve Op<Args...>. type_index is left at 0 here; callers that need
+		// the concrete TypeInfo index should perform the gTypesByName lookup themselves
+		// (see buildTemplateTypeArgVector in Parser_Templates_Inst_Deduction.cpp).
+		result.is_template_template_arg = true;
+		result.template_name_handle = arg.template_name;
 	}
-	// Template template parameters: not directly supported in TemplateTypeArg
+	// Other kinds remain zero-initialised.
 	
 	return result;
 }

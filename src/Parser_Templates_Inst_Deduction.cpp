@@ -71,7 +71,34 @@ static void registerTypeParamsInScope(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// reparse_template_function_body
+// buildTemplateTypeArgVector
+// ─────────────────────────────────────────────────────────────────────────────
+// Convert a TemplateArgument vector to TemplateTypeArg format for downstream
+// helpers (lookupSpecialization, substitute_template_parameter, etc.).
+// Uses the canonical toTemplateTypeArg() for Type and Value cases; for
+// Kind::Template it additionally performs the gTypesByName lookup to populate
+// the type_index field (needed by constraint evaluation and substitution).
+static std::vector<TemplateTypeArg> buildTemplateTypeArgVector(
+	const std::vector<TemplateArgument>& template_args)
+{
+	std::vector<TemplateTypeArg> result;
+	result.reserve(template_args.size());
+	for (const auto& arg : template_args) {
+		TemplateTypeArg type_arg = toTemplateTypeArg(arg);
+		if (arg.kind == TemplateArgument::Kind::Template) {
+			// Look up the TypeInfo index from gTypesByName so downstream helpers
+			// that receive this arg (e.g., constraint evaluation) can resolve the
+			// template by its concrete TypeInfo entry.
+			auto type_it = gTypesByName.find(arg.template_name);
+			if (type_it != gTypesByName.end()) {
+				type_arg.type_index = type_it->second->type_index_;
+			}
+		}
+		result.push_back(type_arg);
+	}
+	return result;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helper: re-parse a template function body with concrete argument
 // substitution and set the result as new_func_ref's definition.
@@ -1064,56 +1091,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Get the original function's declaration
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 
-	// Convert template_args to TemplateTypeArg format for substitution
-	std::vector<TemplateTypeArg> template_args_as_type_args;
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			TemplateTypeArg type_arg;
-			
-			// If we have a full type_specifier, use it to preserve all type information
-			// This is critical for perfect forwarding (T&& parameters)
-			if (arg.type_specifier.has_value()) {
-				const TypeSpecifierNode& type_spec = arg.type_specifier.value();
-				type_arg.base_type = type_spec.type();
-				type_arg.type_index = type_spec.type_index();
-				type_arg.ref_qualifier = type_spec.reference_qualifier();
-				type_arg.pointer_depth = type_spec.pointer_depth();
-				type_arg.cv_qualifier = type_spec.cv_qualifier();
-			} else {
-				// Fallback: use stored type_value and type_index.
-				// type_index may be non-zero for struct types pre-deduced via makeType(base, idx).
-				type_arg.base_type = arg.type_value;
-				type_arg.type_index = arg.type_index;
-			}
-			
-			template_args_as_type_args.push_back(type_arg);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			// Handle template template parameters (e.g., Op in template<template<...> class Op>)
-			// Store the template name so constraint evaluation can resolve Op<Args...>
-			TemplateTypeArg type_arg;
-			type_arg.is_template_template_arg = true;
-			type_arg.template_name_handle = arg.template_name;
-			// Try to find the template in the registry to get its type_index
-			auto template_opt = gTemplateRegistry.lookupTemplate(arg.template_name);
-			if (template_opt.has_value()) {
-				// Found the template - store a reference to it
-				auto type_handle = arg.template_name;
-				auto type_it = gTypesByName.find(type_handle);
-				if (type_it != gTypesByName.end()) {
-					type_arg.type_index = type_it->second->type_index_;
-				}
-			}
-			template_args_as_type_args.push_back(type_arg);
-		} else if (arg.kind == TemplateArgument::Kind::Value) {
-			// Non-type (value) argument: include in template_args_as_type_args so that
-			// body re-parsing can register the non-type parameter substitution.
-			TemplateTypeArg val_arg;
-			val_arg.is_value = true;
-			val_arg.value = arg.int_value;
-			val_arg.base_type = arg.value_type;
-			template_args_as_type_args.push_back(val_arg);
-		}
-	}
+	// Convert template_args to TemplateTypeArg format for specialization lookup,
+	// constraint evaluation, type substitution, and class-template instantiation.
+	// See buildTemplateTypeArgVector for the per-kind conversion rules.
+	std::vector<TemplateTypeArg> template_args_as_type_args = buildTemplateTypeArgVector(template_args);
 
 	// Check for explicit specialization before instantiating the primary template.
 	// This handles cases like: template<> int identity<int>(int val) { return val + 1; }
