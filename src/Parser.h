@@ -777,12 +777,12 @@ private:
             FunctionDeclarationNode& new_func_ref,
             const FunctionDeclarationNode& func_decl,
             const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateArgument>& template_args,
+            const std::vector<TemplateTypeArg>& template_args,
             bool preserve_ref_qualifier = false);
         // Populate template_param_substitutions_ from parallel (name, arg) pairs for
         // body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
         // Overload 1: TemplateTypeArg source (lazy body-reparse path).
-        // Overload 2: TemplateArgument source (member-func body-reparse path).
+        // Overload 2: TemplateTypeArg source (member-func body-reparse path).
         void populateTemplateParamSubstitutions(
             InlineVector<TemplateParamSubstitution, 4>& subs,
             const InlineVector<StringHandle, 4>& param_names,
@@ -790,9 +790,8 @@ private:
         void populateTemplateParamSubstitutions(
             InlineVector<TemplateParamSubstitution, 4>& subs,
             const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateArgument>& template_args);
+            const std::vector<TemplateTypeArg>& template_args);
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
-        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateArgument>& template_args, bool force_eager = false);  // Thin shim (task 5B)
         std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
         std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template
         ASTNode substitute_template_params_in_expression(
@@ -808,7 +807,7 @@ private:
             std::string_view struct_name, std::string_view member_name,
             StringHandle qualified_name,
             const ASTNode& template_node,
-            const std::vector<TemplateArgument>& template_args,
+            const std::vector<TemplateTypeArg>& template_args,
             const FlashCpp::TemplateInstantiationKey& key);
     public:
         std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
@@ -818,7 +817,6 @@ private:
         std::optional<std::pair<Type, TypeIndex>> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);  // Phase 3: Evaluate lazy type alias on-demand
         std::optional<TypeIndex> instantiateLazyNestedType(StringHandle parent_class_name, StringHandle nested_type_name);  // Phase 4: Instantiate lazy nested type on-demand
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
-        std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateArgument>& template_args);  // Thin shim (task 5B)
         std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
         
         // Template name extraction helpers - extract base template names from mangled/instantiated names
@@ -861,7 +859,7 @@ public:  // Public methods for template instantiation
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		const std::vector<ASTNode>& template_params,
-		const std::vector<TemplateArgument>& template_args
+		const std::vector<TemplateTypeArg>& template_args
 	);private:  // Resume private methods
 		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
 		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
@@ -869,7 +867,7 @@ public:  // Public methods for template instantiation
 			FunctionCallNode& new_call,
 			const FunctionCallNode& old_call,
 			const std::vector<ASTNode>& template_params,
-			const std::vector<TemplateArgument>& template_args
+			const std::vector<TemplateTypeArg>& template_args
 		);
 		void register_builtin_functions();  // Register compiler builtin functions
         ParseResult parse_block();
@@ -941,14 +939,14 @@ public:  // Public methods for template instantiation
         bool expandPackExpansionArgs(
             const PackExpansionExprNode& pack_expansion,
             const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateArgument>& template_args,
+            const std::vector<TemplateTypeArg>& template_args,
             ChunkedVector<ASTNode>& out_args);
 
         // Phase 3: Expression context tracking for template disambiguation
         enum class ExpressionContext {
             Normal,              // Regular expression context
             Decltype,            // Inside decltype() - strictest template-first rules
-            TemplateArgument,    // Template argument context
+            TemplateTypeArg,    // Template argument context
             RequiresClause,      // Requires clause expression
             ConceptDefinition    // Concept definition context
         };
@@ -960,7 +958,7 @@ public:  // Public methods for template instantiation
         static constexpr int DEFAULT_PRECEDENCE = 2;
         // NOTE: ExpressionContext is required (no default) to prevent bugs where context
         // is accidentally not passed in recursive calls (e.g., ternary branch parsing).
-        // Use ExpressionContext::Normal for most cases; TemplateArgument when inside <...>.
+        // Use ExpressionContext::Normal for most cases; TemplateTypeArg when inside <...>.
         ParseResult parse_expression(int precedence, ExpressionContext context);
         ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }  // Wrapper for keyword map
         ParseResult parse_primary_expression(ExpressionContext context);
@@ -1136,12 +1134,6 @@ public:  // Public methods for template instantiation
             const TypeSpecifierNode& original_type,
             const std::vector<ASTNode>& template_params,
             const std::vector<TemplateTypeArg>& template_args
-        );
-        // Thin shim: accepts TemplateArgument vector (task 5B).
-        std::pair<Type, TypeIndex> substitute_template_parameter(
-            const TypeSpecifierNode& original_type,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateArgument>& template_args
         );
        
         // Lookup symbol with template parameter checking

@@ -1232,7 +1232,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Decide whether to parse template arguments
 			bool should_parse_template_args = true;
-			if (!is_known_template && (context == ExpressionContext::TemplateArgument || base_is_template_param)) {
+			if (!is_known_template && (context == ExpressionContext::TemplateTypeArg || base_is_template_param)) {
 				// Member is NOT a known template and we're in a context where < is likely comparison
 				FLASH_LOG_FORMAT(Parser, Debug, 
 				    "Qualified identifier '{}' member is not a known template - treating '<' as comparison operator (context={}, base_is_param={})",
@@ -2019,7 +2019,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// This allows type aliases like false_type, true_type, enable_if_t to be used in specific contexts
 		// Only apply this fallback when the identifier is followed by '::' or '(' to ensure
 		// we don't break legitimate cases where an identifier should be an error
-		// ENHANCED: In TemplateArgument context, also check for ',' or '>' or '<' because type aliases
+		// ENHANCED: In TemplateTypeArg context, also check for ',' or '>' or '<' because type aliases
 		// and template class names are commonly used as template arguments in <type_traits>
 		if (!identifierType && !found_as_type_alias && !peek().is_eof()) {
 			std::string_view peek = peek_info().value();
@@ -2030,7 +2030,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Type aliases and template class names are commonly used as template arguments
 			// (e.g., first_t<false_type, ...>, __or_<is_reference<T>, is_function<T>>, declval<_Tp&>())
 			// The '&' and '&&' handle reference type declarators like T& or T&&
-			if (!should_check_types && context == ExpressionContext::TemplateArgument) {
+			if (!should_check_types && context == ExpressionContext::TemplateTypeArg) {
 				should_check_types = (peek == "," || peek == ">" || peek == ">>" || peek == "<" || 
 				                      peek == "&" || peek == "&&");
 			}
@@ -2040,7 +2040,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				auto type_it = gTypesByName.find(identifier_handle);
 				if (type_it != gTypesByName.end()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}', context={})", 
-						idenfifier_token.value(), peek, context == ExpressionContext::TemplateArgument ? "TemplateArgument" : "other");
+						idenfifier_token.value(), peek, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
 					found_as_type_alias = true;
 					// Mark that we found it as a type so it can be used for type references
 					// The actual type info will be retrieved later when needed
@@ -2228,11 +2228,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG(Parser, Debug, "Qualified identifier followed by '<', attempting to parse template arguments");
 					template_args = parse_explicit_template_arguments(&template_arg_nodes);
 					// If parsing failed, it might be a less-than operator, continue normally
-				} else if (context == ExpressionContext::TemplateArgument) {
+				} else if (context == ExpressionContext::TemplateTypeArg) {
 					// In template argument context, if the identifier is NOT a known template,
 					// treat '<' as a comparison operator (e.g., R1<T>::num < R2<T>::num>)
 					FLASH_LOG_FORMAT(Parser, Debug, 
-					    "In TemplateArgument context, qualified identifier '{}' is not a known template - treating '<' as comparison operator",
+					    "In TemplateTypeArg context, qualified identifier '{}' is not a known template - treating '<' as comparison operator",
 					    final_identifier.value());
 					// Don't parse template arguments - let the binary operator loop handle '<' as comparison
 				} else {
@@ -5462,17 +5462,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Allow comma operator in parenthesized expressions
 			// Inside parentheses, '>' is always greater-than, not template closer.
 			// Use Normal context so '>' is not treated as a template argument delimiter.
-			ExpressionContext inner_context = (context == ExpressionContext::TemplateArgument)
+			ExpressionContext inner_context = (context == ExpressionContext::TemplateTypeArg)
 				? ExpressionContext::Normal : context;
 			ParseResult paren_result = parse_expression(MIN_PRECEDENCE, inner_context);
 			if (paren_result.is_error()) {
 				return paren_result;
 			}
 			
-			// In TemplateArgument or Decltype context, allow pack expansion (...) before closing paren
+			// In TemplateTypeArg or Decltype context, allow pack expansion (...) before closing paren
 			// Pattern: (expr...) where ... is pack expansion operator
 			// This is needed for patterns like decltype((expr...)) in template contexts
-			if ((context == ExpressionContext::TemplateArgument || context == ExpressionContext::Decltype) &&
+			if ((context == ExpressionContext::TemplateTypeArg || context == ExpressionContext::Decltype) &&
 			    peek() == "..."_tok) {
 				// Consume the ... and create a PackExpansionExprNode
 				Token ellipsis_token = peek_info();

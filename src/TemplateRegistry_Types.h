@@ -95,7 +95,7 @@ enum class MemberPointerKind : uint8_t {
  *    - Use when you need a simple container for type and value information
  *    - Distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
  * 
- * 2. TemplateArgument: For function template deduction and instantiation tracking
+ * 2. TemplateTypeArg: For function template deduction and instantiation tracking
  *    - Supports Type, Value, and Template template parameters (Kind enum)
  *    - Has both legacy (type_value) and modern (type_specifier) type representation
  *    - Includes TypeIndex for complex types (added in consolidation Task 2)
@@ -108,20 +108,9 @@ enum class MemberPointerKind : uint8_t {
  *    - Most comprehensive - used by substitute_template_parameter()
  *    - Use for: pattern matching, specialization selection, template instantiation
  * 
- * Conversion Functions:
- *   - toTemplateTypeArg(TemplateArgument) -> TemplateTypeArg
- *   - toTemplateArgument(TemplateTypeArg) -> TemplateArgument
- *   These provide explicit, type-safe conversions preserving all type information
- * 
- * Design Rationale:
- *   - Keeping types separate maintains clarity of purpose
- *   - TemplateTypeArg's complexity not needed in all contexts
- *   - TemplateArgument's template template parameter support not needed in TemplateTypeArg
- *   - Conversion functions make interoperability straightforward
- * 
  * History:
- *   - Original: Duplicate TemplateArgument in TemplateRegistry.h and InstantiationQueue.h
- *   - Consolidation (Tasks 1-4): Unified into single TemplateArgument with TypeIndex support
+ *   - Original: Duplicate TemplateTypeArg in TemplateRegistry.h and InstantiationQueue.h
+ *   - Consolidation (Tasks 1-4): Unified into single TemplateTypeArg with TypeIndex support
  *   - See docs/TEMPLATE_ARGUMENT_CONSOLIDATION_PLAN.md for full details
  */
 
@@ -269,6 +258,50 @@ struct TemplateTypeArg {
 		, is_dependent(false)
 		, is_template_template_arg(false)
 		, template_name_handle() {}
+	
+	// Factory methods (match the former TemplateTypeArg API)
+	static TemplateTypeArg makeType(Type t, TypeIndex idx = 0) {
+		TemplateTypeArg arg;
+		arg.base_type = t;
+		arg.type_index = idx;
+		return arg;
+	}
+	
+	static TemplateTypeArg makeTypeSpecifier(const TypeSpecifierNode& ts) {
+		return TemplateTypeArg(ts);  // delegate to existing constructor
+	}
+	
+	static TemplateTypeArg makeValue(int64_t v, Type type = Type::Int) {
+		return TemplateTypeArg(v, type);
+	}
+	
+	static TemplateTypeArg makeTemplate(StringHandle name) {
+		TemplateTypeArg arg;
+		arg.is_template_template_arg = true;
+		arg.template_name_handle = name;
+		return arg;
+	}
+	
+	// Hash for use in maps (used by InstantiationQueue and SpecializationKey)
+	size_t hash() const {
+		size_t h = std::hash<int>{}(static_cast<int>(base_type));
+		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
+			h ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (array_size.has_value()) {
+			h ^= std::hash<size_t>{}(*array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (is_value) {
+			h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		return h;
+	}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)

@@ -393,7 +393,7 @@ ParseResult Parser::parse_template_parameter() {
 		
 		// Parse the default value expression in template argument context
 		// This context tells parse_expression to stop at '>' and ',' which delimit template arguments
-		auto default_value_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateArgument);
+		auto default_value_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateTypeArg);
 		if (default_value_result.is_error()) {
 			return ParseResult::error("Expected expression after '=' in template parameter default", current_token_);
 		}
@@ -550,12 +550,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
-		// Use parse_expression with ExpressionContext::TemplateArgument to handle
+		// Use parse_expression with ExpressionContext::TemplateTypeArg to handle
 		// member access expressions like is_int<T>::value and complex expressions
 		// like T::value || my_or<Rest...>::value
 		// Precedence 2 allows all binary operators except comma (precedence 1)
-		// The TemplateArgument context ensures we stop at '>' and ',' delimiters
-		auto expr_result = parse_expression(2, ExpressionContext::TemplateArgument);
+		// The TemplateTypeArg context ensures we stop at '>' and ',' delimiters
+		auto expr_result = parse_expression(2, ExpressionContext::TemplateTypeArg);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a boolean or numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
@@ -1247,7 +1247,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// Optional array size
 						std::optional<size_t> ptr_array_size;
 						if (peek() != "]"_tok) {
-							auto size_result = parse_expression(0, ExpressionContext::TemplateArgument);
+							auto size_result = parse_expression(0, ExpressionContext::TemplateTypeArg);
 							if (!size_result.is_error() && size_result.node().has_value()) {
 								if (auto const_size = try_evaluate_constant_expression(*size_result.node())) {
 									if (const_size->value >= 0) {
@@ -1395,7 +1395,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 			// Optional size expression
 			if (peek() != "]"_tok) {
-				auto size_result = parse_expression(0, ExpressionContext::TemplateArgument);
+				auto size_result = parse_expression(0, ExpressionContext::TemplateTypeArg);
 				if (size_result.is_error() || !size_result.node().has_value()) {
 					restore_token_position(saved_pos);
 					last_failed_template_arg_parse_handle_ = saved_pos;

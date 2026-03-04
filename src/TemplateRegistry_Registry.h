@@ -366,35 +366,8 @@ public:
 	// Example: max<int> -> max$a1b2c3d4, max<int, 5> -> max$e5f6g7h8
 	// Build a unique hash-based name for a template instantiation and register it.
 	// This avoids collisions from underscore-based naming (e.g., type names with underscores)
-	std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
-		// Convert TemplateArgument to TemplateTypeArg for hash-based naming
-		std::vector<TemplateTypeArg> type_args;
-		type_args.reserve(args.size());
-		
-		for (const auto& arg : args) {
-			TemplateTypeArg ta;
-			if (arg.kind == TemplateArgument::Kind::Type) {
-				ta.base_type = arg.type_value;
-				ta.type_index = arg.type_index;
-				if (arg.type_specifier.has_value()) {
-					const auto& ts = *arg.type_specifier;
-					ta.ref_qualifier = ts.reference_qualifier();
-					ta.cv_qualifier = ts.cv_qualifier();
-					ta.pointer_depth = static_cast<uint8_t>(ts.pointer_levels().size());
-				}
-			} else if (arg.kind == TemplateArgument::Kind::Value) {
-				ta.is_value = true;
-				ta.value = arg.int_value;
-				ta.base_type = arg.value_type;
-			} else if (arg.kind == TemplateArgument::Kind::Template) {
-				// For template template arguments, mark as template template arg
-				ta.is_template_template_arg = true;
-				ta.template_name_handle = arg.template_name;
-			}
-			type_args.push_back(ta);
-		}
-		
-		auto result = FlashCpp::generateInstantiatedNameFromArgs(base_name, type_args);
+	std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateTypeArg>& args) {
+		auto result = FlashCpp::generateInstantiatedNameFromArgs(base_name, args);
 		return result;
 	}
 
@@ -682,10 +655,6 @@ public:
 		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args);
 	}
 
-	// Thin shim: look up specialization using TemplateArgument vector (task 5B).
-	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateArgument>& template_args) const {
-		return lookupSpecialization(template_name, buildTemplateTypeArgVector(template_args));
-	}
 	
 	// Find a matching specialization pattern (StringHandle overload)
 	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name, 

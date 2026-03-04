@@ -92,23 +92,18 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 	return result;
 }
 
-// Helper function to safely get type size from TemplateArgument
-static int getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
+// Helper function to safely get type size from TemplateTypeArg
+static int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
-	if (arg.type_value >= Type::Void && arg.type_value <= Type::MemberObjectPointer) {
-		return static_cast<size_t>(get_type_size_bits(arg.type_value));
+	if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
+		return static_cast<size_t>(get_type_size_bits(arg.base_type));
 	}
-	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
-	if (arg.type_specifier.has_value()) {
-		const auto& type_spec = arg.type_specifier.value();
-		// Use type_index for direct O(1) lookup - no name-based lookup needed
-		size_t type_index = type_spec.type_index();
-		if (type_index > 0 && type_index < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[type_index];
-			if (type_info.type_size_ > 0) {
-				return type_info.type_size_;
-			}
+	// For UserDefined and other types, use type_index for direct O(1) lookup
+	if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[arg.type_index];
+		if (type_info.type_size_ > 0) {
+			return type_info.type_size_;
 		}
 	}
 	return 0;  // Will be resolved during member access

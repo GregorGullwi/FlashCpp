@@ -1574,10 +1574,4 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	return ConstraintEvaluationResult::success();
 }
 
-// Thin shim: evaluate constraint using TemplateArgument vector (task 5B).
-inline ConstraintEvaluationResult evaluateConstraint(
-	const ASTNode& constraint_expr,
-	const std::vector<TemplateArgument>& template_args,
-	const std::vector<std::string_view>& template_param_names = {}) {
-	return evaluateConstraint(constraint_expr, buildTemplateTypeArgVector(template_args), template_param_names);
-}
+

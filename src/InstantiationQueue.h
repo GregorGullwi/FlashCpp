@@ -4,7 +4,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
-#include "TemplateRegistry.h"  // For TemplateArgument (canonical definition)
+#include "TemplateRegistry.h"  // For TemplateTypeArg (canonical definition)
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
@@ -32,13 +32,13 @@ struct SourceLocation {
 		: file(std::move(f)), line(l), column(c) {}
 };
 
-// Note: TemplateArgument is now defined in TemplateRegistry.h (canonical version)
+// Note: TemplateTypeArg is now defined in TemplateRegistry.h (canonical version)
 // The duplicate definition has been removed as part of Task 3 consolidation
 
 // Key for identifying unique instantiations
 struct InstantiationKey {
 	StringHandle template_name;
-	std::vector<TemplateArgument> arguments;
+	std::vector<TemplateTypeArg> arguments;
 	
 	size_t hash() const {
 		size_t h = std::hash<StringHandle>{}(template_name);
@@ -217,7 +217,7 @@ public:
 		key.template_name = StringTable::getOrInternStringHandle(template_name);
 		key.arguments.reserve(template_args.size());
 		for (const auto& arg : template_args) {
-			key.arguments.push_back(toTemplateArgument(arg));
+			key.arguments.push_back(arg);
 		}
 		return key;
 	}

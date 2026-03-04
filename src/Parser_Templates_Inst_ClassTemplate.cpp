@@ -1,8 +1,3 @@
-// Thin shim: try_instantiate_class_template using TemplateArgument vector (task 5B).
-std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateArgument>& template_args, bool force_eager) {
-	return try_instantiate_class_template(template_name, buildTemplateTypeArgVector(template_args), force_eager);
-}
-
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
@@ -4859,13 +4854,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Substitute template parameters in the function body
 				if (body_to_substitute.has_value()) {
-					// Convert TemplateTypeArg vector to TemplateArgument vector
-					std::vector<TemplateArgument> converted_template_args;
+					// Convert TemplateTypeArg vector to TemplateTypeArg vector
+					std::vector<TemplateTypeArg> converted_template_args;
 					for (const auto& ttype_arg : template_args_to_use) {
 						if (ttype_arg.is_value) {
-							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+							converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
 						} else {
-							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type, ttype_arg.type_index));
+							converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
 						}
 					}
 
@@ -5102,13 +5097,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// EAGER INSTANTIATION PATH (original code)
 			if (ctor_decl.get_definition().has_value()) {
-				// Convert TemplateTypeArg vector to TemplateArgument vector
-				std::vector<TemplateArgument> converted_template_args;
+				// Convert TemplateTypeArg vector to TemplateTypeArg vector
+				std::vector<TemplateTypeArg> converted_template_args;
 				for (const auto& ttype_arg : template_args_to_use) {
 					if (ttype_arg.is_value) {
-						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+						converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
 					} else {
-						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+						converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
 					}
 				}
 
@@ -5232,13 +5227,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// EAGER INSTANTIATION PATH (original code)
 			if (dtor_decl.get_definition().has_value()) {
-				// Convert TemplateTypeArg vector to TemplateArgument vector
-				std::vector<TemplateArgument> converted_template_args;
+				// Convert TemplateTypeArg vector to TemplateTypeArg vector
+				std::vector<TemplateTypeArg> converted_template_args;
 				for (const auto& ttype_arg : template_args_to_use) {
 					if (ttype_arg.is_value) {
-						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+						converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
 					} else {
-						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+						converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
 					}
 				}
 
@@ -5581,13 +5576,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					
 					// Now substitute template parameters in the parsed body
-					std::vector<TemplateArgument> converted_template_args;
+					std::vector<TemplateTypeArg> converted_template_args;
 					converted_template_args.reserve(template_args_to_use.size());
 					for (const auto& ttype_arg : template_args_to_use) {
 						if (ttype_arg.is_value) {
-							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+							converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
 						} else {
-							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+							converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
 						}
 					}
 					
@@ -5664,13 +5659,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 					
-					std::vector<TemplateArgument> converted_template_args;
+					std::vector<TemplateTypeArg> converted_template_args;
 					converted_template_args.reserve(template_args_to_use.size());
 					for (const auto& ttype_arg : template_args_to_use) {
 						if (ttype_arg.is_value) {
-							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+							converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
 						} else {
-							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+							converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
 						}
 					}
 					
@@ -5714,13 +5709,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	
 	for (const auto& out_of_line_var : out_of_line_vars) {
 		// Substitute template parameters in the type and initializer
-		std::vector<TemplateArgument> converted_template_args;
+		std::vector<TemplateTypeArg> converted_template_args;
 		converted_template_args.reserve(template_args_to_use.size());
 		for (const auto& ttype_arg : template_args_to_use) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
 			} else {
-				converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type));
 			}
 		}
 		

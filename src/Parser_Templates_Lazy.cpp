@@ -199,13 +199,13 @@ if (param_decl.has_default_value()) {
 
 	// Substitute template parameters in the function body
 	if (body_to_substitute.has_value()) {
-		// Convert TemplateTypeArg vector to TemplateArgument vector
-		std::vector<TemplateArgument> converted_template_args;
+		// Convert TemplateTypeArg vector to TemplateTypeArg vector
+		std::vector<TemplateTypeArg> converted_template_args;
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
 			} else {
-				converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type, ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
 			}
 		}
 
