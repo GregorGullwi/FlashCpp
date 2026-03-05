@@ -841,8 +841,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		convertToTemplateArgInfo(template_args)
 	);
 	
-	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access());
-	struct_info->is_union = spec_struct.is_union();
+	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access(), spec_struct.is_union(), gSymbolTable.get_current_namespace_handle());
 	
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {

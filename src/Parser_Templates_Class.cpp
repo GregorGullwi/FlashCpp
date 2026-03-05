@@ -1305,8 +1305,7 @@ ParseResult Parser::parse_template_declaration() {
 			);
 
 			// Create struct info for tracking members - required before parsing static members
-			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
-			struct_info->is_union = is_union;
+			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
@@ -2624,8 +2623,7 @@ ParseResult Parser::parse_template_declaration() {
 				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()), {});
 			
 			// Create StructTypeInfo for this specialization
-			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
-			struct_info->is_union = is_union;
+			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {

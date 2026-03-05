@@ -1140,7 +1140,7 @@ ParseResult Parser::parse_lambda_expression() {
     const auto& lambda_captures = lambda.captures();
 
     TypeInfo& closure_type = add_struct_type(closure_name, gSymbolTable.get_current_namespace_handle());
-    auto closure_struct_info = std::make_unique<StructTypeInfo>(closure_name, AccessSpecifier::Public);
+    auto closure_struct_info = std::make_unique<StructTypeInfo>(closure_name, AccessSpecifier::Public, false, gSymbolTable.get_current_namespace_handle());
 
     // For non-capturing lambdas, create a 1-byte struct (like Clang does)
     if (lambda_captures.empty()) {

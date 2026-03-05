@@ -733,8 +733,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			class_template_pack_registry_[instantiated_name] = class_template_pack_stack_.back();
 		}
 		
-		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
-		struct_info->is_union = pattern_struct.is_union();
+		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access(), pattern_struct.is_union(), gSymbolTable.get_current_namespace_handle());
 		
 		// Handle base classes from the pattern
 		// Base classes need to be instantiated with concrete template arguments
@@ -2632,8 +2631,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	
 	// Create StructTypeInfo
-	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
-	struct_info->is_union = class_decl.is_union();
+	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public, class_decl.is_union(), gSymbolTable.get_current_namespace_handle());
 
 	// Handle base classes from the primary template
 	// Base classes need to be instantiated with concrete template arguments

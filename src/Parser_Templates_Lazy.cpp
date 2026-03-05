@@ -705,7 +705,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	TypeIndex type_index = nested_type_info.type_index_;
 	
 	// Create StructTypeInfo for the nested type
-	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access());
+	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access(), false, gSymbolTable.get_current_namespace_handle());
 	
 	// Process members with template parameter substitution
 	for (const auto& member_decl : nested_struct.members()) {

@@ -461,7 +461,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 			
 			// Create StructTypeInfo
-			auto struct_info = std::make_unique<StructTypeInfo>(struct_name, is_class ? AccessSpecifier::Private : AccessSpecifier::Public);
+			auto struct_info = std::make_unique<StructTypeInfo>(struct_name, is_class ? AccessSpecifier::Private : AccessSpecifier::Public, false, gSymbolTable.get_current_namespace_handle());
 			
 			// Expect opening brace
 			if (!consume("{"_tok)) {
@@ -1246,7 +1246,7 @@ ParseResult Parser::parse_typedef_declaration()
 		});
 
 		// Create StructTypeInfo
-		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public);
+		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public, false, gSymbolTable.get_current_namespace_handle());
 		
 		// Update the struct parsing context with the local_struct_info for static member lookup
 		if (!struct_parsing_context_stack_.empty()) {
@@ -1309,13 +1309,8 @@ ParseResult Parser::parse_typedef_declaration()
 						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 						
 						// Create StructTypeInfo
-						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public);
+						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public, is_union, gSymbolTable.get_current_namespace_handle());
 						StructTypeInfo* anon_struct_info = anon_struct_info_ptr.get();
-						
-						// Set the union flag if this is a union
-						if (is_union) {
-							anon_struct_info->is_union = true;
-						}
 						
 						// Parse all members using the recursive helper
 						ParseResult members_result = parse_anonymous_struct_union_members(anon_struct_info, anon_type_name);

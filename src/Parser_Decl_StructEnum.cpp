@@ -786,13 +786,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 						
 						// Create StructTypeInfo
-						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public);
+						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public, is_union_keyword, gSymbolTable.get_current_namespace_handle());
 						StructTypeInfo* anon_struct_info = anon_struct_info_ptr.get();
-						
-						// Set the union flag if this is a union
-						if (is_union_keyword) {
-							anon_struct_info->is_union = true;
-						}
 						
 						// Parse all members of the anonymous struct/union and add them to the anonymous type
 						while (!peek().is_eof() && peek() != "}"_tok) {
@@ -3708,13 +3703,8 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				TypeInfo& nested_anon_type_info = add_struct_type(nested_anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 				
 				// Create StructTypeInfo
-				auto nested_anon_struct_info_ptr = std::make_unique<StructTypeInfo>(nested_anon_type_name_handle, AccessSpecifier::Public);
+				auto nested_anon_struct_info_ptr = std::make_unique<StructTypeInfo>(nested_anon_type_name_handle, AccessSpecifier::Public, nested_is_union, gSymbolTable.get_current_namespace_handle());
 				StructTypeInfo* nested_anon_struct_info = nested_anon_struct_info_ptr.get();
-				
-				// Set the union flag if this is a union
-				if (nested_is_union) {
-					nested_anon_struct_info->is_union = true;
-				}
 				
 				// Recursively parse members of the nested anonymous struct/union
 				ParseResult nested_result = parse_anonymous_struct_union_members(nested_anon_struct_info, nested_anon_type_name);
