@@ -48,3 +48,52 @@ Use unique struct names across namespaces until this is fixed.
 
 Low - most real-world code uses unique type names. This affects code that relies on
 namespace isolation for identically-named types.
+
+## Lazy Nested Type Instantiation Ignores Union Flag
+
+### Status: BUG - Lazily instantiated nested unions are laid out as structs
+
+### Description
+
+In `Parser_Templates_Lazy.cpp`, the `instantiateLazyNestedType` function creates a
+`StructTypeInfo` with `is_union` hardcoded to `false` instead of reading it from the
+nested struct declaration's `is_union()` accessor. If a lazily-instantiated nested type
+is actually a union, all members will be laid out sequentially (struct layout) instead
+of at offset 0 (union layout), producing incorrect struct sizes and member offsets.
+
+### Root Cause
+
+At `src/Parser_Templates_Lazy.cpp:708`:
+```cpp
+auto nested_struct_info = std::make_unique<StructTypeInfo>(..., false, ...);
+//                                                          ^^^^^
+//                                          should be: nested_struct.is_union()
+```
+
+### Impact
+
+Low - nested unions inside lazily-instantiated templates are uncommon.
+
+## Template Instantiation Namespace Tracking Incomplete
+
+### Status: TODO - Some instantiation paths still use instantiation-site namespace
+
+### Description
+
+The primary and specialization paths in `try_instantiate_class_template` now correctly
+derive the declaration-site namespace from `template_name` or `class_decl.name()`.
+However, several secondary instantiation paths still use
+`gSymbolTable.get_current_namespace_handle()`, which returns the *instantiation-site*
+namespace rather than the *declaration-site* namespace.
+
+### Affected Paths
+
+- `instantiate_full_specialization` (`Parser_Templates_Inst_Substitution.cpp:836,844`)
+- `instantiateLazyNestedType` (`Parser_Templates_Lazy.cpp:704,708`)
+
+### Impact
+
+None currently — the `NamespaceHandle` fields on `TypeInfo` and `StructTypeInfo` are
+not yet consumed by downstream code (codegen, name mangling). When they are consumed
+to fix the same-named-types bug above, these paths will need updating to match the
+pattern used in the primary template instantiation path.
