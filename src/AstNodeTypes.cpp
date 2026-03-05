@@ -91,9 +91,8 @@ TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns) {
     if (existing_it != gTypesByName.end()) {
         // Type already exists - return the existing one
         // This handles the case where we have a forward declaration followed by a full definition
-        // Update namespace if not already set (forward declaration may not have had context)
-        NamespaceHandle existing_ns = existing_it->second->namespaceHandle();
-        if (!existing_ns.isValid() || existing_ns.isGlobal()) {
+        // Update namespace if still at global default (forward declaration may not have had context)
+        if (existing_it->second->namespaceHandle().isGlobal()) {
             existing_it->second->setNamespaceHandle(ns);
         }
         return *existing_it->second;

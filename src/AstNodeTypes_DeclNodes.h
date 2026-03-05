@@ -707,7 +707,7 @@ struct TypeInfo
 	}
 
 	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
-	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (preserves structured context)
+	NamespaceHandle namespace_handle_{0};  // Namespace this type was declared in (default: global)
 	Type type_;
 	TypeIndex type_index_;
 
@@ -1507,7 +1507,7 @@ private:
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
-	NamespaceHandle namespace_handle_;  // Namespace this function was declared in
+	NamespaceHandle namespace_handle_{0};  // Namespace this function was declared in (default: global)
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	bool has_template_body_ = false;
