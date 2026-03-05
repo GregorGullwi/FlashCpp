@@ -1319,3 +1319,47 @@ if (old_call.has_qualified_name()) {
 new_call.set_qualified_name(old_call.qualified_name());
 }
 }
+
+// Return true if the expression tree contains an IdentifierNode whose name equals pack_name.
+// Recursively walks ExpressionNode, FunctionCallNode, BinaryOperatorNode, UnaryOperatorNode, and
+// ConstructorCallNode children so that complex patterns like `f(g(args))` are handled correctly.
+bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
+if (!expr.has_value() || pack_name.empty()) return false;
+
+if (expr.is<ExpressionNode>()) {
+const ExpressionNode& ev = expr.as<ExpressionNode>();
+if (std::holds_alternative<IdentifierNode>(ev))
+return std::get<IdentifierNode>(ev).name() == pack_name;
+if (std::holds_alternative<FunctionCallNode>(ev)) {
+for (const auto& arg : std::get<FunctionCallNode>(ev).arguments())
+if (exprContainsIdentifier(arg, pack_name)) return true;
+return false;
+}
+if (std::holds_alternative<BinaryOperatorNode>(ev)) {
+const auto& b = std::get<BinaryOperatorNode>(ev);
+return exprContainsIdentifier(b.get_lhs(), pack_name) ||
+       exprContainsIdentifier(b.get_rhs(), pack_name);
+}
+if (std::holds_alternative<UnaryOperatorNode>(ev))
+return exprContainsIdentifier(std::get<UnaryOperatorNode>(ev).get_operand(), pack_name);
+if (std::holds_alternative<ConstructorCallNode>(ev)) {
+for (const auto& arg : std::get<ConstructorCallNode>(ev).arguments())
+if (exprContainsIdentifier(arg, pack_name)) return true;
+return false;
+}
+if (std::holds_alternative<StaticCastNode>(ev))
+return exprContainsIdentifier(std::get<StaticCastNode>(ev).expr(), pack_name);
+return false;
+}
+
+if (expr.is<FunctionCallNode>()) {
+for (const auto& arg : expr.as<FunctionCallNode>().arguments())
+if (exprContainsIdentifier(arg, pack_name)) return true;
+return false;
+}
+
+if (expr.is<IdentifierNode>())
+return expr.as<IdentifierNode>().name() == pack_name;
+
+return false;
+}

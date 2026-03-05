@@ -1849,13 +1849,21 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		if (lambda) {
 			return evaluate_lambda_call(*lambda, member_func_call.arguments(), context);
 		}
+		// Brace-initialized or ConstructorCallNode-initialized callable: delegate to evaluate_callable_object
+		if (initializer.has_value() && (initializer->is<InitializerListNode>() || extract_constructor_call(initializer))) {
+			if (!symbol_node.is<VariableDeclarationNode>()) {
+				return EvalResult::error("Callable object is not a variable");
+			}
+			return evaluate_callable_object(symbol_node.as<VariableDeclarationNode>(), member_func_call.arguments(), context);
+		}
 	}
 	
-	if (!initializer->is<ConstructorCallNode>()) {
+	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
+	if (!ctor_call_ptr) {
 		return EvalResult::error("Member function calls require struct/class objects");
 	}
 	
-	const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
+	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 	
 	// Get the struct type info
 	const ASTNode& type_node = ctor_call.type_node();
@@ -2023,11 +2031,35 @@ EvalResult Evaluator::extract_object_members(
 		return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
 	}
 	
-	if (!initializer->is<ConstructorCallNode>()) {
+	// Handle brace-initialized objects (aggregate init): extract member values by position.
+	if (initializer->is<InitializerListNode>()) {
+		const DeclarationNode& decl = var_decl.declaration();
+		if (!decl.type_node().is<TypeSpecifierNode>()) {
+			return EvalResult::error("Brace-initialized object has invalid type");
+		}
+		const TypeSpecifierNode& agg_type_spec = decl.type_node().as<TypeSpecifierNode>();
+		TypeIndex agg_type_index = agg_type_spec.type_index();
+		if (agg_type_index >= gTypeInfo.size())
+			return EvalResult::error("Invalid type index in brace-initialized object");
+		const StructTypeInfo* agg_struct_info = gTypeInfo[agg_type_index].getStructInfo();
+		if (!agg_struct_info)
+			return EvalResult::error("Brace-initialized object is not a struct");
+		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+		for (size_t mi = 0; mi < agg_struct_info->members.size() && mi < init_list.size(); ++mi) {
+			std::string_view mname = StringTable::getStringView(agg_struct_info->members[mi].getName());
+			auto val = evaluate(init_list.initializers()[mi], context);
+			if (!val.success()) return val;
+			member_bindings[mname] = val;
+		}
+		return EvalResult::from_bool(true);
+	}
+
+	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
+	if (!ctor_call_ptr) {
 		return EvalResult::error("Member function calls require struct/class objects");
 	}
 	
-	const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
+	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 	
 	// Get the struct type info
 	const ASTNode& type_node = ctor_call.type_node();

@@ -77,13 +77,13 @@
 
 ---
 
-## 13. Complex Pack Expansion Rewriting ✅ Valid (open)
+## 13. Complex Pack Expansion Rewriting ✅ Fixed
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Expr_PrimaryExpr.cpp` | 3306 | ✅ Valid |
+| `src/Parser_Expr_PrimaryExpr.cpp` | 3306 | ✅ Fixed |
 
-When a pack-expansion argument contains a non-trivial expression (e.g., `f(g(args)...)` where `g` wraps each element), the parser logs an error and falls back to copying the unexpanded node. Only the simple `identifier...` pattern is rewritten. Full C++20 fold-expression and pack-expansion rewriting (§13.7.4 [temp.variadic]) requires a recursive AST rewriter that can substitute every occurrence of a pack within an arbitrary expression.
+When a pack-expansion argument in a non-template function call contained a non-trivial expression (e.g., `add3(do_abs(args)...)`), the parser logged an error and fell back to copying the unexpanded node. Fix: `exprContainsIdentifier()` helper walks the expression tree to find which pack parameter is referenced; `replacePackIdentifierInExpr()` then expands it for each pack element. Tests: `test_complex_pack_expansion_ret42.cpp`.
 
 ---
 
@@ -172,12 +172,12 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 | Status | Count |
 |--------|-------|
-| ✅ Fixed | 43 |
+| ✅ Fixed | 44 |
 | ✅ Verified / Already works | 9 |
-| ✅ Valid (open) | 3 |
+| ✅ Valid (open) | 2 |
 | **Total** | **49** (+ several post-analysis fixes) |
 
-**Open items**: constexpr complex initializers (#8), complex pack expansion (#13), `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21).
+**Open items**: constexpr complex initializers (#8), `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21).
 
 ---
 
@@ -185,6 +185,8 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 - Global `constexpr` arrays of struct objects still trigger `Non-constant initializer in global variable` warning from `CodeGen_Stmt_Decl.cpp:100`.
 - Constexpr array-member extraction falls back to an error (instead of an ambiguity diagnostic) when multiple same-arity constructors are viable.
-- `constinit` on brace-initialized callable objects (e.g., `constexpr Add add{}; constinit int x = add(1,2);`) still fails with `Member function calls require struct/class objects` through `evaluate_member_function_call()`.
+- `constinit` on brace-initialized callable objects (e.g., `constexpr Add add{}; constinit int x = add(1,2);`) ✅ Fixed – `evaluate_callable_object` now handles `InitializerListNode` initializers. `evaluate_member_function_call` delegates `operator()` calls to `evaluate_callable_object`. Tests: `test_constinit_callable_ret42.cpp`, `test_constinit_callable_ctor_ret42.cpp`.
+- `ConstructorCallNode` wrapped in `ExpressionNode` not recognised in constexpr evaluator ✅ Fixed – added `extract_constructor_call()` helper that unwraps both direct and `ExpressionNode`-wrapped `ConstructorCallNode`s.
 - Constexpr `evaluate_callable_object()` rejects ambiguous same-arity `operator()` overloads rather than resolving by type.
 - `tests/test_integral_constant_pattern_ret42.cpp` emits pre-existing `Parser returned size_bits=0` / `handleLValueCompoundAssignment: FAIL` diagnostics despite producing the correct runtime result.
+- `tests/test_namespace_template_specialization_ret42.cpp` fails to link: mangled name mismatch for member functions of template specializations declared inside namespaces.

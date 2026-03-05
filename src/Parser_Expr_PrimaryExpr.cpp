@@ -3303,12 +3303,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									}
 								}
 							} else {
-								// TODO Complex expression: need full rewriting (not implemented yet)
-								FLASH_LOG(Parser, Error, "Complex pack expansion not yet implemented");
-								if (auto node = argResult.node()) {
-									args.push_back(*node);
+							// Complex expression with pack expansion (e.g., f(args)..., static_cast<T>(args)...)
+							// Find which pack parameter appears in the expression and expand it.
+							bool expanded = false;
+							for (const auto& pack_info : pack_param_info_) {
+								if (pack_info.pack_size == 0) continue;
+								if (exprContainsIdentifier(*arg_node, pack_info.original_name)) {
+									for (size_t pi = 0; pi < pack_info.pack_size; ++pi) {
+										args.push_back(replacePackIdentifierInExpr(*arg_node, pack_info.original_name, pi));
+									}
+									expanded = true;
+									break;
 								}
 							}
+							if (!expanded) {
+								FLASH_LOG(Parser, Error, "Complex pack expansion: no matching pack parameter found");
+								args.push_back(*arg_node);
+							}
+						}
 						}
 					} else {
 						// Regular argument

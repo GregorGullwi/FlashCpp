@@ -273,6 +273,9 @@ private:
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
+	// Extract ConstructorCallNode from an initializer, handling direct storage and
+	// ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
+	static const ConstructorCallNode* extract_constructor_call(const std::optional<ASTNode>& initializer);
 	static EvalResult evaluate_lambda_captures(
 		const std::vector<LambdaCaptureNode>& captures,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
