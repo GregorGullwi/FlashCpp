@@ -15,9 +15,12 @@ Try to reuse as much code as possible. Look in the same PR for similar code patt
 For patterns that are used in different places in a compiler, like parsing attributes, skipping balanced braces, brackets, etc, search for existing helper functions and try to use those.
 Target warning-clean builds under both MSVC and clang. Use tab indentation, same-line braces, and keep includes grouped `<system>` before quotes.
 Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase.
-Prefer `std::string_view` for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
+Prefer StringHandle primarily or `std::string_view` secondary for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
 Prefer StringBuilder instead of using std::string concatination.
 Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do not add opcodes manually to `textSectionData` in `IRConverter.h`, make helper functions if no fitting `emit` function exist.
+Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.
+Try to make complete C++20 standard compliant solutions. If you deviate from that, notify the user and make a TODO.
+If you encounter existing bugs while testing, notify the user. If it's close to the area you are already working on, make an effort to investigste and fix it.
 
 ## Testing Guidelines
 When adding new test cases and files, verify that they are valid C++20 source file by compiling them with clang first in c++20 mode.
