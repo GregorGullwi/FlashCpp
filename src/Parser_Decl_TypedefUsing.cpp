@@ -455,7 +455,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			
 			// Register the struct type early
 			StringHandle struct_name = StringTable::getOrInternStringHandle(struct_name_view);
-			TypeInfo& struct_type_info = add_struct_type(struct_name, gSymbolTable.get_current_namespace_handle());			TypeIndex struct_type_index = struct_type_info.type_index_;
+			TypeInfo& struct_type_info = add_struct_type(struct_name, gSymbolTable.get_current_namespace_handle());
+			TypeIndex struct_type_index = struct_type_info.type_index_;
 			// Create struct declaration node
 			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 			
