@@ -1158,10 +1158,15 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		StringHandle req_handle = StringTable::getOrInternStringHandle(member_name);
 		size_t pos_idx = 0;
 		for (size_t mi = 0; mi < aggr_list.size(); ++mi) {
-			StringHandle mname = aggr_list.is_designated(mi)
-				? aggr_list.member_name(mi)
-				: (pos_idx < aggr_struct->members.size() ? aggr_struct->members[pos_idx].getName() : StringHandle{});
-			pos_idx++;
+			StringHandle mname;
+			if (aggr_list.is_designated(mi)) {
+				mname = aggr_list.member_name(mi);
+			} else if (pos_idx < aggr_struct->members.size()) {
+				mname = aggr_struct->members[pos_idx].getName();
+				pos_idx++;
+			} else {
+				break;
+			}
 			if (mname != req_handle) continue;
 			// Found the member – evaluate its element (must be scalar)
 			return evaluate(aggr_list.initializers()[mi], context);
@@ -1386,10 +1391,15 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		const ASTNode* inter_init = nullptr;
 		size_t pos_idx = 0;
 		for (size_t ii = 0; ii < outer_list.size(); ++ii) {
-			StringHandle mname = outer_list.is_designated(ii)
-				? outer_list.member_name(ii)
-				: (pos_idx < base_aggr_struct->members.size() ? base_aggr_struct->members[pos_idx].getName() : StringHandle{});
-			pos_idx++;
+			StringHandle mname;
+			if (outer_list.is_designated(ii)) {
+				mname = outer_list.member_name(ii);
+			} else if (pos_idx < base_aggr_struct->members.size()) {
+				mname = base_aggr_struct->members[pos_idx].getName();
+				pos_idx++;
+			} else {
+				break;
+			}
 			if (mname == inter_handle) { inter_init = &outer_list.initializers()[ii]; break; }
 		}
 		if (!inter_init)
@@ -1419,18 +1429,23 @@ EvalResult Evaluator::evaluate_nested_member_access(
 				return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in nested aggregate init");
 			return it->second;
 		} else {
-			// Scalar inter_init: evaluate it and look up final member via scalar search
-			auto val = evaluate(*inter_init, context);
-			if (!val.success()) return val;
-			return val;
+			// Scalar inter_init (brace elision): initializes the first member of the inner struct.
+			// Return the value only if final_member_name matches the first inner struct member.
+			StringHandle final_handle = StringTable::getOrInternStringHandle(final_member_name);
+			if (!inner_aggr_struct->members.empty() &&
+				inner_aggr_struct->members[0].getName() == final_handle) {
+				return evaluate(*inter_init, context);
+			}
+			return EvalResult::error("Final member '" + std::string(final_member_name) +
+				"' not reachable via scalar initializer (brace elision) in nested aggregate");
 		}
 	}
-	
 	// Constructor-initialized base
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
 	if (!ctor_call_ptr) {
 		return EvalResult::error("Nested member access requires a struct with constructor");
 	}
+	
 	
 	const ConstructorCallNode& base_ctor = *ctor_call_ptr;
 	
