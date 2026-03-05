@@ -718,8 +718,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Copy members from the pattern, substituting template parameters
 		// For now, if members use template parameters, we substitute them
 		
-		// Resolve namespace from template_name (declaration-site, not instantiation-site)
-		NamespaceHandle spec_decl_ns = QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()).namespace_handle;
+		// Resolve namespace from template_name (declaration-site, not instantiation-site).
+		// For qualified names like "std::vector", extract namespace from the name itself.
+		// For unqualified names like "Vec", derive from pattern_struct.name() which may
+		// store the qualified form "math::Vec" (same approach as the primary template path
+		// which uses class_decl.name()).
+		NamespaceHandle spec_decl_ns = gSymbolTable.get_current_namespace_handle();
+		{
+			if (template_name.find("::") != std::string_view::npos) {
+				spec_decl_ns = QualifiedIdentifier::fromQualifiedName(template_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+			} else {
+				std::string_view decl_name = StringTable::getStringView(pattern_struct.name());
+				if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
+					spec_decl_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+				}
+			}
+		}
 		
 		// Create struct type info first
 		TypeInfo& struct_type_info = add_struct_type(instantiated_name, spec_decl_ns);
