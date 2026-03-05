@@ -118,6 +118,48 @@ struct TemplatePattern {
 		return cached_template_param_names_;
 	}
 	
+	// Builds a TemplateTypeArg from a concrete TypeInfo::TemplateArgInfo for use in deduction.
+	static TemplateTypeArg createDeducedArgFromConcrete(const TypeInfo::TemplateArgInfo& c) {
+		TemplateTypeArg deduced;
+		if (c.is_value) {
+			deduced.is_value = true;
+			deduced.value = c.intValue();
+			deduced.base_type = c.base_type != Type::Invalid ? c.base_type : Type::Int;
+		} else {
+			deduced.base_type = c.base_type;
+			deduced.type_index = c.type_index;
+			deduced.cv_qualifier = c.cv_qualifier;
+			deduced.pointer_depth = static_cast<uint8_t>(c.pointer_depth);
+			deduced.ref_qualifier = c.ref_qualifier;
+			deduced.pointer_cv_qualifiers = c.pointer_cv_qualifiers;
+			deduced.is_array = c.is_array;
+			deduced.array_size = c.array_size;
+		}
+		return deduced;
+	}
+
+	// Records a deduction for a single template parameter name, checking consistency
+	// if the parameter was already deduced. Returns false on inconsistency.
+	static bool recordDeduction(
+		StringHandle param_name,
+		const TemplateTypeArg& deduced,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions)
+	{
+		auto sub_it = param_substitutions.find(param_name);
+		if (sub_it != param_substitutions.end()) {
+			if (!(sub_it->second == deduced)) {
+				FLASH_LOG(Templates, Trace, "  FAILED: inconsistent deduction for '",
+				          StringTable::getStringView(param_name), "'");
+				return false;
+			}
+		} else {
+			param_substitutions[param_name] = deduced;
+			FLASH_LOG(Templates, Trace, "  Deduced param '",
+			          StringTable::getStringView(param_name), "'");
+		}
+		return true;
+	}
+
 	// Recursive helper: matches a single inner template argument (possibly itself a nested
 	// template instantiation) against a concrete inner argument, deducing template parameter
 	// substitutions. Handles arbitrarily deep nesting such as Pair<Pair<A,B>, Pair<C,D>>.
@@ -161,56 +203,21 @@ struct TemplatePattern {
 				// Simple template parameter name (e.g., T, U)
 				StringHandle inner_name = p_ti.name();
 				if (inner_name.isValid() && template_param_names.count(inner_name)) {
-					TemplateTypeArg deduced;
-					if (c.is_value) {
-						deduced.is_value = true;
-						deduced.value = c.intValue();
-						deduced.base_type = c.base_type != Type::Invalid ? c.base_type : Type::Int;
-					} else {
-						deduced.base_type = c.base_type;
-						deduced.type_index = c.type_index;
-						deduced.cv_qualifier = c.cv_qualifier;
-						deduced.pointer_depth = static_cast<uint8_t>(c.pointer_depth);
-						deduced.ref_qualifier = c.ref_qualifier;
-						deduced.pointer_cv_qualifiers = c.pointer_cv_qualifiers;
-						deduced.is_array = c.is_array;
-						deduced.array_size = c.array_size;
-					}
-					auto sub_it = param_substitutions.find(inner_name);
-					if (sub_it != param_substitutions.end()) {
-						if (!(sub_it->second == deduced)) {
-							FLASH_LOG(Templates, Trace, "  FAILED: inconsistent deduction for '",
-							          StringTable::getStringView(inner_name), "'");
-							return false;
-						}
-					} else {
-						param_substitutions[inner_name] = deduced;
-						FLASH_LOG(Templates, Trace, "  Deduced param '",
-						          StringTable::getStringView(inner_name), "'");
-					}
-					return true;
+					return recordDeduction(inner_name, createDeducedArgFromConcrete(c), param_substitutions);
 				}
 			} else if (p.dependent_name.isValid() && template_param_names.count(p.dependent_name)) {
-				TemplateTypeArg deduced;
-				if (c.is_value) {
-					deduced.is_value = true;
-					deduced.value = c.intValue();
-					deduced.base_type = c.base_type != Type::Invalid ? c.base_type : Type::Int;
-				} else {
-					deduced.base_type = c.base_type;
-					deduced.type_index = c.type_index;
-					deduced.cv_qualifier = c.cv_qualifier;
-					deduced.pointer_depth = static_cast<uint8_t>(c.pointer_depth);
-					deduced.ref_qualifier = c.ref_qualifier;
-					deduced.pointer_cv_qualifiers = c.pointer_cv_qualifiers;
-					deduced.is_array = c.is_array;
-					deduced.array_size = c.array_size;
-				}
 				auto sub_it = param_substitutions.find(p.dependent_name);
+				TemplateTypeArg deduced = createDeducedArgFromConcrete(c);
 				if (sub_it != param_substitutions.end()) {
-					if (!(sub_it->second == deduced)) return false;
+					if (!(sub_it->second == deduced)) {
+						FLASH_LOG(Templates, Trace, "  FAILED: inconsistent deduction for dependent name '",
+						          StringTable::getStringView(p.dependent_name), "'");
+						return false;
+					}
 				} else {
 					param_substitutions[p.dependent_name] = deduced;
+					FLASH_LOG(Templates, Trace, "  Deduced param (dependent name) '",
+					          StringTable::getStringView(p.dependent_name), "'");
 				}
 				return true;
 			}
@@ -224,9 +231,15 @@ struct TemplatePattern {
 				deduced.base_type = c.base_type != Type::Invalid ? c.base_type : Type::Int;
 				auto sub_it = param_substitutions.find(p.dependent_name);
 				if (sub_it != param_substitutions.end()) {
-					if (!(sub_it->second == deduced)) return false;
+					if (!(sub_it->second == deduced)) {
+						FLASH_LOG(Templates, Trace, "  FAILED: inconsistent deduction for value param '",
+						          StringTable::getStringView(p.dependent_name), "'");
+						return false;
+					}
 				} else {
 					param_substitutions[p.dependent_name] = deduced;
+					FLASH_LOG(Templates, Trace, "  Deduced value param '",
+					          StringTable::getStringView(p.dependent_name), "'");
 				}
 				return true;
 			}
