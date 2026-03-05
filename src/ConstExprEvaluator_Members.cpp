@@ -1859,31 +1859,48 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	}
 	
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
-	if (!ctor_call_ptr) {
+	if (!ctor_call_ptr && !initializer->is<InitializerListNode>()) {
 		return EvalResult::error("Member function calls require struct/class objects");
 	}
 	
-	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
+	// Resolve the struct type info. For ConstructorCallNode initializers we get it from
+	// the constructor's type node; for brace-initialized (InitializerListNode) objects we
+	// resolve it from the variable's declared type instead.
+	const StructTypeInfo* struct_info = nullptr;
+	TypeIndex type_index{0};
 	
-	// Get the struct type info
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
+	if (ctor_call_ptr) {
+		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
+		const ASTNode& type_node = ctor_call.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Constructor call without valid type specifier");
+		}
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+			return EvalResult::error("Member function call requires a struct type");
+		}
+		type_index = type_spec.type_index();
+		if (type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid type index in member function call");
+		}
+		struct_info = gTypeInfo[type_index].getStructInfo();
+	} else {
+		// Brace-initialized object: resolve type from variable declaration
+		const DeclarationNode& decl = var_decl.declaration();
+		if (!decl.type_node().is<TypeSpecifierNode>()) {
+			return EvalResult::error("Brace-initialized object has invalid type in member function call");
+		}
+		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+			return EvalResult::error("Member function call requires a struct type");
+		}
+		type_index = type_spec.type_index();
+		if (type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid type index in member function call");
+		}
+		struct_info = gTypeInfo[type_index].getStructInfo();
 	}
 	
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	
-	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
-		return EvalResult::error("Member function call requires a struct type");
-	}
-	
-	TypeIndex type_index = type_spec.type_index();
-	if (type_index >= gTypeInfo.size()) {
-		return EvalResult::error("Invalid type index in member function call");
-	}
-	
-	const TypeInfo& struct_type_info = gTypeInfo[type_index];
-	const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 	if (!struct_info) {
 		return EvalResult::error("Type is not a struct in member function call");
 	}
