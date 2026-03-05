@@ -2023,7 +2023,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	for (size_t mi = init_list.size(); mi < struct_info->members.size(); ++mi) {
 		const auto& member = struct_info->members[mi];
 		std::string_view mname = StringTable::getStringView(member.getName());
-		if (member.default_initializer.has_value()) {
+		if (bindings.find(mname) == bindings.end() && member.default_initializer.has_value()) {
 			auto default_result = evaluate(member.default_initializer.value(), context);
 			if (!default_result.success()) return default_result;
 			bindings[mname] = default_result;
