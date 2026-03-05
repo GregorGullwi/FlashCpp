@@ -1069,13 +1069,9 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 }
 // Helper: resolve a type name within the current namespace context (including using directives)
 static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
-	// Direct lookup (unqualified)
-	auto it = gTypesByName.find(type_handle);
-	if (it != gTypesByName.end()) {
-		return it->second;
-	}
-
-	// Walk current namespace chain outward (e.g., std::foo, ::foo)
+	// Walk current namespace chain outward first (e.g., physics::Vector, ::Vector)
+	// This must come before the unqualified lookup so that namespace-local types
+	// are preferred over short aliases registered by other namespaces.
 	NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
 	while (ns_handle.isValid()) {
 		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, type_handle);
@@ -1087,6 +1083,12 @@ static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 			break;
 		}
 		ns_handle = gNamespaceRegistry.getParent(ns_handle);
+	}
+
+	// Fallback: direct unqualified lookup
+	auto it = gTypesByName.find(type_handle);
+	if (it != gTypesByName.end()) {
+		return it->second;
 	}
 
 	// using directives
