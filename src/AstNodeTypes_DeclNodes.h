@@ -707,7 +707,7 @@ struct TypeInfo
 	}
 
 	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
-	NamespaceHandle namespace_handle_{0};  // Namespace this type was declared in (default: global)
+	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (default: INVALID = not yet set)
 	Type type_;
 	TypeIndex type_index_;
 

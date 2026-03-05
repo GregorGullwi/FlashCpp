@@ -51,28 +51,14 @@ namespace isolation for identically-named types.
 
 ## Lazy Nested Type Instantiation Ignores Union Flag
 
-### Status: BUG - Lazily instantiated nested unions are laid out as structs
+### Status: FIXED - `nested_struct.is_union()` now passed correctly
 
 ### Description
 
-In `Parser_Templates_Lazy.cpp`, the `instantiateLazyNestedType` function creates a
-`StructTypeInfo` with `is_union` hardcoded to `false` instead of reading it from the
-nested struct declaration's `is_union()` accessor. If a lazily-instantiated nested type
-is actually a union, all members will be laid out sequentially (struct layout) instead
-of at offset 0 (union layout), producing incorrect struct sizes and member offsets.
-
-### Root Cause
-
-At `src/Parser_Templates_Lazy.cpp:708`:
-```cpp
-auto nested_struct_info = std::make_unique<StructTypeInfo>(..., false, ...);
-//                                                          ^^^^^
-//                                          should be: nested_struct.is_union()
-```
-
-### Impact
-
-Low - nested unions inside lazily-instantiated templates are uncommon.
+In `Parser_Templates_Lazy.cpp`, the `instantiateLazyNestedType` function previously
+created a `StructTypeInfo` with `is_union` hardcoded to `false`. This was fixed in this
+PR by consolidating the `is_union` flag into the `StructTypeInfo` constructor call,
+which now correctly reads `nested_struct.is_union()`.
 
 ## Template Instantiation Namespace Tracking Incomplete
 
