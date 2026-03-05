@@ -12,6 +12,19 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Verbosity: off by default; enabled by GITHUB_ACTIONS env var or -v/--verbose flag
+VERBOSE=0
+[ "${GITHUB_ACTIONS:-}" = "true" ] && VERBOSE=1
+for arg in "$@"; do
+    case "$arg" in
+        --verbose|-v) VERBOSE=1 ;;
+    esac
+done
+
+# Helpers: vecho prints only when verbose
+vecho()   { [[ "$VERBOSE" = "1" ]] && echo   "$@" >&2; return 0; }
+vecho_n() { [[ "$VERBOSE" = "1" ]] && echo -n "$@" >&2; return 0; }
+
 echo "FlashCpp ELF Test Runner"
 echo "========================"
 
@@ -61,13 +74,15 @@ contains() {
 # Get test files with main()
 TEST_FILES=()
 FAIL_FILES=()
+SEH_SKIPPED=0
 for f in tests/*.cpp; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
 
     # Skip Windows-only SEH tests on Linux
     if [[ "$base" == test_seh_*.cpp ]]; then
-        echo "Skipping Windows-only SEH test: $base" >&2
+        ((SEH_SKIPPED++))
+        vecho "Skipping Windows-only SEH test: $base"
         continue
     fi
 
@@ -78,6 +93,7 @@ done
 
 TOTAL=${#TEST_FILES[@]}
 TOTAL_FAIL=${#FAIL_FILES[@]}
+[ "$SEH_SKIPPED" -gt 0 ] && echo "Skipped $SEH_SKIPPED Windows-only SEH tests"
 echo "Testing $TOTAL files..."
 echo ""
 
@@ -90,7 +106,7 @@ for base in "${TEST_FILES[@]}"; do
     exe="/tmp/${base%.cpp}_exe"
     
     # Print current file being tested (for debugging hangs)
-    echo -n "[$N/$TOTAL] Testing $base... " >&2
+    vecho_n "[$N/$TOTAL] Testing $base... "
     
     rm -f "$obj" "$exe"
     
@@ -107,7 +123,7 @@ for base in "${TEST_FILES[@]}"; do
     
     # Check if compiler crashed (exit code 134 = SIGABRT, 136 = SIGFPE, 139 = SIGSEGV)
     if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
-        echo "" >&2
+        vecho ""
         echo -e "${RED}[COMPILER CRASH]${NC} $base (signal: $compile_exit)"
         # Find and display the most recent crash log
         latest_crash=$(ls -t flashcpp_crash_*.log 2>/dev/null | head -1)
@@ -137,7 +153,7 @@ for base in "${TEST_FILES[@]}"; do
             
             # Check for timeout (exit code 124)
             if [ $return_value -eq 124 ]; then
-                echo "" >&2
+                vecho ""
                 echo -e "${RED}[RUNTIME TIMEOUT]${NC} $base"
                 RUNTIME_CRASH+=("$base")
                 rm -f "$exe"
@@ -148,10 +164,10 @@ for base in "${TEST_FILES[@]}"; do
             if echo "$stderr_output" | grep -qiE "(segmentation fault|illegal instruction|aborted|bus error|floating point exception|killed|dumped core|terminate called)"; then
                 # Check if this is an expected runtime crash
                 if contains "$base" "${EXPECTED_RUNTIME_CRASH[@]}"; then
-                    echo "OK (expected runtime crash)" >&2
+                    vecho "OK (expected runtime crash)"
                 else
                     signal=$((return_value - 128))
-                    echo "" >&2
+                    vecho ""
                     echo -e "${RED}[RUNTIME CRASH]${NC} $base (signal: $signal)"
                     RUNTIME_CRASH+=("$base")
                 fi
@@ -163,15 +179,15 @@ for base in "${TEST_FILES[@]}"; do
             if [[ "$base" =~ _ret([0-9]+)\.cpp$ ]]; then
                 expected_value="${BASH_REMATCH[1]}"
                 if [ "$return_value" -ne "$expected_value" ]; then
-                    echo "" >&2
+                    vecho ""
                     echo -e "${RED}[RETURN MISMATCH]${NC} $base (expected $expected_value, got $return_value)"
                     RETURN_MISMATCH+=("$base")
                 else
-                    echo "OK (returned $expected_value)" >&2
+                    vecho "OK (returned $expected_value)"
                 fi
             else
                 # No expected return value in filename, just report OK
-                echo "OK (returned $return_value)" >&2
+                vecho "OK (returned $return_value)"
             fi
             
             rm -f "$exe"
@@ -180,10 +196,10 @@ for base in "${TEST_FILES[@]}"; do
             if contains "$base" "${EXPECTED_LINK_FAIL[@]}"; then
                 # Expected link failure - don't print
                 LINK_OK+=("$base")  # Count as OK since compile succeeded
-                echo "OK (expected link fail)" >&2
+                vecho "OK (expected link fail)"
             else
                 # Only print unexpected link failures
-                echo "" >&2
+                vecho ""
                 echo -e "${RED}[LINK FAIL]${NC} $base"
                 # Show link errors (undefined references and linker errors)
                 link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed" | head -5)
@@ -196,10 +212,10 @@ for base in "${TEST_FILES[@]}"; do
     else
         if contains "$base" "${EXPECTED_FAIL[@]}"; then
             # Expected failure - don't print
-            echo "OK (expected fail)" >&2
+            vecho "OK (expected fail)"
         else
             # Print unexpected compile failures
-            echo "" >&2
+            vecho ""
             echo -e "${RED}[COMPILE FAIL]${NC} $base"
             COMPILE_FAIL+=("$base")
             # Show first error line
@@ -212,15 +228,15 @@ done
 
 # Test _fail files
 if [ ${#FAIL_FILES[@]} -gt 0 ]; then
-    echo "" >&2
-    echo "Testing _fail files (expected to fail compilation)..." >&2
+    vecho ""
+    vecho "Testing _fail files (expected to fail compilation)..."
     N=0
     for base in "${FAIL_FILES[@]}"; do
         ((N++))
         f="tests/$base"
         obj="${base%.cpp}.obj"
         
-        echo -n "[$N/$TOTAL_FAIL] Testing $base... " >&2
+        vecho_n "[$N/$TOTAL_FAIL] Testing $base... "
         
         rm -f "$obj"
         
@@ -232,7 +248,7 @@ if [ ${#FAIL_FILES[@]} -gt 0 ]; then
         
         # Check if compiler crashed
         if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
-            echo "" >&2
+            vecho ""
             echo -e "${RED}[COMPILER CRASH]${NC} $base (should fail cleanly, not crash!)"
             latest_crash=$(ls -t flashcpp_crash_*.log 2>/dev/null | head -1)
             if [ -n "$latest_crash" ]; then
@@ -246,13 +262,13 @@ if [ ${#FAIL_FILES[@]} -gt 0 ]; then
         fi
         
         if [ -f "$obj" ]; then
-            echo "" >&2
+            vecho ""
             echo -e "${RED}[UNEXPECTED PASS]${NC} $base (should have failed)"
             FAIL_BAD+=("$base")
             rm -f "$obj"
         else
             FAIL_OK+=("$base")
-            echo "OK (failed as expected)" >&2
+            vecho "OK (failed as expected)"
         fi
     done
 fi
