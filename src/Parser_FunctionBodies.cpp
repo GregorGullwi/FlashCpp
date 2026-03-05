@@ -515,10 +515,9 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 			auto struct_name_handle = StringTable::getOrInternStringHandle(parent_name);
 			auto type_it = gTypesByName.find(struct_name_handle);
 			if (type_it != gTypesByName.end()) {
-				NamespaceHandle ns = type_it->second->namespaceHandle();
-				if (ns.isValid() && !ns.isGlobal()) {
-					std::string_view struct_qualified_ns = gNamespaceRegistry.getQualifiedName(ns);
-					ns_path = splitQualifiedNamespace(struct_qualified_ns);
+				auto recovered = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+				for (auto& s : recovered) {
+					ns_path.push_back(s);
 				}
 			}
 		}

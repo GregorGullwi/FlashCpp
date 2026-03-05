@@ -288,15 +288,7 @@
 							auto name_handle = StringTable::getOrInternStringHandle(struct_name);
 							auto type_it = gTypesByName.find(name_handle);
 							if (type_it != gTypesByName.end()) {
-								NamespaceHandle ns = type_it->second->namespaceHandle();
-								std::vector<NamespaceHandle> ns_chain;
-								while (ns.isValid() && !ns.isGlobal()) {
-									ns_chain.push_back(ns);
-									ns = gNamespaceRegistry.getParent(ns);
-								}
-								for (auto it = ns_chain.rbegin(); it != ns_chain.rend(); ++it) {
-									ns_path.emplace_back(gNamespaceRegistry.getName(*it));
-								}
+								ns_path = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
 							}
 						}
 						function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);

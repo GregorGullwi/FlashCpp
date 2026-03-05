@@ -700,12 +700,18 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		return existing_index;
 	}
 	
-	// Derive the declaration-site namespace from the qualified name.
+	// Derive the declaration-site namespace from the parent class name, not the
+	// nested type's qualified_name. The qualified_name (e.g., "ns::Container$hash::Inner")
+	// would create a bogus "Container$hash" namespace via fromQualifiedName. Instead,
+	// look up the parent class's NamespaceHandle which correctly gives "ns".
 	NamespaceHandle decl_ns = gSymbolTable.get_current_namespace_handle();
 	{
-		std::string_view qname = StringTable::getStringView(lazy_info->qualified_name);
-		if (qname.find("::") != std::string_view::npos) {
-			decl_ns = QualifiedIdentifier::fromQualifiedName(qname, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+		auto parent_it = gTypesByName.find(lazy_info->parent_class_name);
+		if (parent_it != gTypesByName.end()) {
+			NamespaceHandle parent_ns = parent_it->second->namespaceHandle();
+			if (parent_ns.isValid() && !parent_ns.isGlobal()) {
+				decl_ns = parent_ns;
+			}
 		}
 	}
 

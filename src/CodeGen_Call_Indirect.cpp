@@ -1067,15 +1067,7 @@
 					std::vector<std::string> namespace_for_mangling;
 					auto struct_name_view = StringTable::getStringView(struct_name);
 					if (struct_name_view.find("::") == std::string_view::npos) {
-						NamespaceHandle ns = struct_info->getNamespaceHandle();
-						std::vector<NamespaceHandle> ns_chain;
-						while (ns.isValid() && !ns.isGlobal()) {
-							ns_chain.push_back(ns);
-							ns = gNamespaceRegistry.getParent(ns);
-						}
-						for (auto it = ns_chain.rbegin(); it != ns_chain.rend(); ++it) {
-							namespace_for_mangling.emplace_back(gNamespaceRegistry.getName(*it));
-						}
+						namespace_for_mangling = buildNamespacePathFromHandle(struct_info->getNamespaceHandle());
 					}
 
 					// Generate proper mangled name including parameter types

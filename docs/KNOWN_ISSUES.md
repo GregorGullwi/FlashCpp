@@ -22,3 +22,8 @@ template name or struct declaration name. Additionally:
   member functions (was previously missing).
 - Codegen definition, direct call, and indirect call paths all recover namespace from
   `NamespaceHandle` as a fallback when `current_namespace_stack_` is empty.
+- `instantiateLazyNestedType` now derives namespace from the parent class's
+  `NamespaceHandle` instead of parsing the nested type's qualified name (which
+  would treat mangled class names as namespaces).
+- Namespace recovery logic is consolidated into `buildNamespacePathFromHandle()`
+  in `NamespaceRegistry.h`.

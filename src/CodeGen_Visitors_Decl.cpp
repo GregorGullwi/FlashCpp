@@ -220,17 +220,7 @@
 				auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
 				auto type_it = gTypesByName.find(struct_name_handle);
 				if (type_it != gTypesByName.end()) {
-					NamespaceHandle ns = type_it->second->namespaceHandle();
-					if (ns.isValid() && !ns.isGlobal()) {
-						std::vector<NamespaceHandle> ns_chain;
-						while (ns.isValid() && !ns.isGlobal()) {
-							ns_chain.push_back(ns);
-							ns = gNamespaceRegistry.getParent(ns);
-						}
-						for (auto it = ns_chain.rbegin(); it != ns_chain.rend(); ++it) {
-							namespace_for_mangling.emplace_back(gNamespaceRegistry.getName(*it));
-						}
-					}
+					namespace_for_mangling = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
 				}
 			}
 		}
