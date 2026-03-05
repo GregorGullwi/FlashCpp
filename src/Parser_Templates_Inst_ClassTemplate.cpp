@@ -718,12 +718,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Copy members from the pattern, substituting template parameters
 		// For now, if members use template parameters, we substitute them
 		
+		// Resolve namespace from template_name (declaration-site, not instantiation-site).
+		// For qualified names like "std::vector", extract namespace from the name itself.
+		// For unqualified names like "Vec", derive from pattern_struct.name() which may
+		// store the qualified form "math::Vec" (same approach as the primary template path
+		// which uses class_decl.name()).
+		NamespaceHandle spec_decl_ns = gSymbolTable.get_current_namespace_handle();
+		{
+			if (template_name.find("::") != std::string_view::npos) {
+				spec_decl_ns = QualifiedIdentifier::fromQualifiedName(template_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+			} else {
+				std::string_view decl_name = StringTable::getStringView(pattern_struct.name());
+				if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
+					spec_decl_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+				}
+			}
+		}
+		
 		// Create struct type info first
-		TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+		TypeInfo& struct_type_info = add_struct_type(instantiated_name, spec_decl_ns);
 		
 		// Store template instantiation metadata for O(1) lookup (Phase 6)
 		struct_type_info.setTemplateInstantiationInfo(
-			QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+			QualifiedIdentifier::fromQualifiedName(template_name, spec_decl_ns),
 			convertToTemplateArgInfo(template_args)
 		);
 		
@@ -733,8 +750,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			class_template_pack_registry_[instantiated_name] = class_template_pack_stack_.back();
 		}
 		
-		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
-		struct_info->is_union = pattern_struct.is_union();
+		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access(), pattern_struct.is_union(), spec_decl_ns);
 		
 		// Handle base classes from the pattern
 		// Base classes need to be instantiated with concrete template arguments
@@ -2591,29 +2607,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	}
 
+	// Resolve the namespace where the template was DECLARED, not where it's being instantiated.
+	// For "std::vector", this returns the NamespaceHandle for "std".
+	// For unqualified names like "Vec", derive from class_decl.name() which may be "math::Vec".
+	NamespaceHandle decl_ns = gSymbolTable.get_current_namespace_handle();
+	{
+		if (template_name.find("::") != std::string_view::npos) {
+			decl_ns = QualifiedIdentifier::fromQualifiedName(template_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+		} else {
+			std::string_view decl_name = StringTable::getStringView(class_decl.name());
+			if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
+				decl_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+			}
+		}
+	}
+
 	// Create a new struct type for the instantiation (but don't create AST node for template instantiations)
-	TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+	TypeInfo& struct_type_info = add_struct_type(instantiated_name, decl_ns);
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
 	// QualifiedIdentifier captures both the namespace and unqualified name.
-	// When template_name is unqualified, derive namespace from class_decl.name()
-	// (the template declaration's struct, which stores the full qualified name).
-	{
-		NamespaceHandle fallback_ns = gSymbolTable.get_current_namespace_handle();
-		if (template_name.find("::") == std::string_view::npos) {
-			// Unqualified template_name — derive namespace from the class declaration name
-			std::string_view decl_name = StringTable::getStringView(class_decl.name());
-			if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
-				// decl_name is qualified (e.g. "std::vector"), resolve from global scope
-				fallback_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
-			}
-		}
-		struct_type_info.setTemplateInstantiationInfo(
-			QualifiedIdentifier::fromQualifiedName(template_name, fallback_ns),
-			convertToTemplateArgInfo(template_args_to_use)
-		);
-	}
+	struct_type_info.setTemplateInstantiationInfo(
+		QualifiedIdentifier::fromQualifiedName(template_name, decl_ns),
+		convertToTemplateArgInfo(template_args_to_use)
+	);
 	
 	// Register class template pack sizes in persistent registry for member function template lookup
 	if (has_parameter_pack) {
@@ -2632,8 +2650,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	
 	// Create StructTypeInfo
-	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
-	struct_info->is_union = class_decl.is_union();
+	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public, class_decl.is_union(), decl_ns);
 
 	// Handle base classes from the primary template
 	// Base classes need to be instantiated with concrete template arguments
@@ -4114,7 +4131,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
 			
 			// Create a new StructTypeInfo for the nested class
-			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access());
+			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access(), nested_struct.is_union(), gSymbolTable.get_current_namespace_handle());
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {

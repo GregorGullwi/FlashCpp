@@ -833,7 +833,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	FLASH_LOG(Templates, Debug, "Instantiating full specialization: ", instantiated_name);
 	
 	// Create TypeInfo for the specialization
-	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name));
+	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name), gSymbolTable.get_current_namespace_handle());
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	struct_type_info.setTemplateInstantiationInfo(
@@ -841,8 +841,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		convertToTemplateArgInfo(template_args)
 	);
 	
-	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access());
-	struct_info->is_union = spec_struct.is_union();
+	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access(), spec_struct.is_union(), gSymbolTable.get_current_namespace_handle());
 	
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {

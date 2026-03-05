@@ -675,7 +675,7 @@ ParseResult Parser::parse_type_specifier()
 		// Forward declaration: struct not yet defined
 		// Create a placeholder type entry for it
 		// This allows pointers to undefined structs (e.g., struct Foo* ptr;)
-		TypeInfo& forward_decl_type = add_struct_type(type_name_handle);
+		TypeInfo& forward_decl_type = add_struct_type(type_name_handle, gSymbolTable.get_current_namespace_handle());
 		type_size = 0;  // Unknown size until defined
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			Type::Struct, forward_decl_type.type_index_, type_size, type_name_token, cv_qualifier));
@@ -780,7 +780,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// Not found - create a placeholder type (forward declaration)
-		TypeInfo& forward_decl_type = add_struct_type(type_name_handle);
+		TypeInfo& forward_decl_type = add_struct_type(type_name_handle, gSymbolTable.get_current_namespace_handle());
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			Type::Struct, forward_decl_type.type_index_, 0, type_name_token, cv_qualifier));
 	}
