@@ -948,7 +948,19 @@ const LambdaExpressionNode* Evaluator::extract_lambda_from_initializer(const std
 	return nullptr;
 }
 
-// Evaluate lambda captures and add their values to bindings
+const ConstructorCallNode* Evaluator::extract_constructor_call(const std::optional<ASTNode>& initializer) {
+	if (!initializer.has_value()) return nullptr;
+	if (initializer->is<ConstructorCallNode>())
+		return &initializer->as<ConstructorCallNode>();
+	if (initializer->is<ExpressionNode>()) {
+		const ExpressionNode& expr = initializer->as<ExpressionNode>();
+		if (std::holds_alternative<ConstructorCallNode>(expr))
+			return &std::get<ConstructorCallNode>(expr);
+	}
+	return nullptr;
+}
+
+
 EvalResult Evaluator::evaluate_lambda_captures(
 	const std::vector<LambdaCaptureNode>& captures,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -1045,9 +1057,11 @@ EvalResult Evaluator::evaluate_callable_object(
 		return evaluate_lambda_call(*lambda, arguments, context);
 	}
 	
-	// Check for ConstructorCallNode (user-defined functor)
+	// Check for ConstructorCallNode (user-defined functor), handling both direct storage
+	// and ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
 	const auto& initializer = var_decl.initializer();
-	if (initializer.has_value() && initializer->is<ConstructorCallNode>()) {
+	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
+	if (ctor_call_ptr) {
 		auto bindArgumentValues = [&](const auto& params,
 		                              const auto& args,
 		                              std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -1070,7 +1084,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::from_bool(true);
 		};
 
-		const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
+		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 		const ASTNode& type_node = ctor_call.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
 			return EvalResult::error("Callable object constructor has invalid type");
@@ -1236,6 +1250,76 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 
 		auto result = evaluate_statement_with_bindings(statements[0], evaluation_bindings, context);
+		context.current_depth--;
+		return result;
+	}
+
+	// Handle brace-initialized callable objects: constexpr Add add{args...}
+	// The initializer is an InitializerListNode; get the struct type from the variable's type.
+	if (initializer.has_value() && initializer->is<InitializerListNode>()) {
+		const DeclarationNode& decl = var_decl.declaration();
+		if (!decl.type_node().is<TypeSpecifierNode>()) {
+			return EvalResult::error("Brace-initialized callable object has invalid type");
+		}
+		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
+		if (!struct_info) {
+			return EvalResult::error("Brace-initialized callable object is not a struct/class type");
+		}
+
+		// Find operator()
+		const FunctionDeclarationNode* call_operator = nullptr;
+		bool ambiguous = false;
+		for (const auto& member_func : struct_info->member_functions) {
+			if (member_func.is_constructor || member_func.is_destructor) continue;
+			if (member_func.operator_kind != OverloadableOperator::Call) continue;
+			if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
+			const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (candidate.parameter_nodes().size() != arguments.size()) continue;
+			if (call_operator) { ambiguous = true; break; }
+			call_operator = &candidate;
+		}
+		if (ambiguous)
+			return EvalResult::error("Ambiguous operator() overload in brace-initialized callable object");
+		if (!call_operator)
+			return EvalResult::error("Brace-initialized callable object has no matching operator()");
+		if (!call_operator->is_constexpr())
+			return EvalResult::error("operator() in brace-initialized callable object must be constexpr");
+		const auto& definition = call_operator->get_definition();
+		if (!definition.has_value())
+			return EvalResult::error("operator() in brace-initialized callable object has no body");
+
+		// Build member bindings from the InitializerListNode (aggregate initialization).
+		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
+		auto member_bind_result = bind_members_from_initializer_list(struct_info, init_list, evaluation_bindings, context);
+		if (!member_bind_result.success()) return member_bind_result;
+
+		// Bind call arguments to operator() parameters.
+		const auto& parameters = call_operator->parameter_nodes();
+		for (size_t i = 0; i < arguments.size(); ++i) {
+			if (!parameters[i].is<DeclarationNode>()) continue;
+			const DeclarationNode& param_decl = parameters[i].as<DeclarationNode>();
+			auto arg_result = evaluate(arguments[i], context);
+			if (!arg_result.success()) return arg_result;
+			evaluation_bindings[param_decl.identifier_token().value()] = arg_result;
+		}
+
+		if (context.current_depth >= context.max_recursion_depth)
+			return EvalResult::error("Constexpr recursion depth limit exceeded");
+		context.current_depth++;
+		const ASTNode& body_node = definition.value();
+		if (!body_node.is<BlockNode>()) {
+			context.current_depth--;
+			return EvalResult::error("operator() body in brace-initialized callable is not a block");
+		}
+		const BlockNode& body = body_node.as<BlockNode>();
+		const auto& stmts = body.get_statements();
+		if (stmts.size() != 1) {
+			context.current_depth--;
+			return EvalResult::error("Constexpr operator() in brace-initialized callable must have a single statement (complex bodies not yet supported)");
+		}
+		auto result = evaluate_statement_with_bindings(stmts[0], evaluation_bindings, context);
 		context.current_depth--;
 		return result;
 	}

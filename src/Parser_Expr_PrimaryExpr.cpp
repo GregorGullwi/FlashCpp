@@ -3303,10 +3303,41 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									}
 								}
 							} else {
-								// TODO Complex expression: need full rewriting (not implemented yet)
-								FLASH_LOG(Parser, Error, "Complex pack expansion not yet implemented");
-								if (auto node = argResult.node()) {
-									args.push_back(*node);
+								// Complex expression with pack expansion (e.g., f(args)..., static_cast<T>(args)...)
+								// Collect ALL pack parameters referenced in this expression (multi-pack support).
+								std::vector<const PackParamInfo*> packs_in_expr;
+								for (const auto& pack_info : pack_param_info_) {
+									if (pack_info.pack_size > 0 && exprContainsIdentifier(*arg_node, pack_info.original_name)) {
+										packs_in_expr.push_back(&pack_info);
+									}
+								}
+
+								if (!packs_in_expr.empty()) {
+									// All participating packs must have the same size (C++ requirement).
+									size_t pack_size = packs_in_expr[0]->pack_size;
+									bool sizes_match = true;
+									for (size_t pi = 1; pi < packs_in_expr.size(); ++pi) {
+										if (packs_in_expr[pi]->pack_size != pack_size) {
+											FLASH_LOG(Parser, Error, "Pack expansion contains parameter packs of different lengths");
+											sizes_match = false;
+											break;
+										}
+									}
+
+									if (sizes_match) {
+										for (size_t i = 0; i < pack_size; ++i) {
+											ASTNode current_arg = *arg_node;
+											for (const auto* pack_info : packs_in_expr) {
+												current_arg = replacePackIdentifierInExpr(current_arg, pack_info->original_name, i);
+											}
+											args.push_back(current_arg);
+										}
+									} else {
+										args.push_back(*arg_node);
+									}
+								} else {
+									FLASH_LOG(Parser, Error, "Complex pack expansion: no matching pack parameter found");
+									args.push_back(*arg_node);
 								}
 							}
 						}

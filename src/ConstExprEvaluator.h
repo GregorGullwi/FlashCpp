@@ -238,6 +238,13 @@ public:
 		const ASTNode& object_expr,
 		std::unordered_map<std::string_view, EvalResult>& member_bindings,
 		EvaluationContext& context);
+	// Shared helper: bind struct members from an InitializerListNode (aggregate init)
+	// and apply default member initializers for any members not covered by the list.
+	static EvalResult bind_members_from_initializer_list(
+		const StructTypeInfo* struct_info,
+		const InitializerListNode& init_list,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
 	static EvalResult evaluate_member_array_subscript(
 		const MemberAccessNode& member_access,
 		size_t index,
@@ -273,6 +280,9 @@ private:
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
+	// Extract ConstructorCallNode from an initializer, handling direct storage and
+	// ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
+	static const ConstructorCallNode* extract_constructor_call(const std::optional<ASTNode>& initializer);
 	static EvalResult evaluate_lambda_captures(
 		const std::vector<LambdaCaptureNode>& captures,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
