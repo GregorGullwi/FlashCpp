@@ -4112,7 +4112,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
 			
 			// Create a new StructTypeInfo for the nested class
-			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access());
+			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access(), nested_struct.is_union(), gSymbolTable.get_current_namespace_handle());
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
