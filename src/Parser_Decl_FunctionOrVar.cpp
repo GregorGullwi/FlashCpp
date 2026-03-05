@@ -1006,11 +1006,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			// Helper lambda: recursively validate a single initializer node
 			// Returns empty string on success, error message on failure
-			std::function<std::string(const ASTNode&)> validate_single = [&](const ASTNode& node) -> std::string {
+			constexpr size_t kValidateSingleMaxDepth = 64;
+			std::function<std::string(const ASTNode&, size_t)> validate_single = [&](const ASTNode& node, size_t depth) -> std::string {
+				if (depth >= kValidateSingleMaxDepth)
+					return "initializer list nesting exceeds maximum depth";
 				if (node.is<InitializerListNode>()) {
 					const InitializerListNode& il = node.as<InitializerListNode>();
 					for (const auto& elem : il.initializers()) {
-						auto msg = validate_single(elem);
+						auto msg = validate_single(elem, depth + 1);
 						if (!msg.empty()) return msg;
 					}
 					return {};
@@ -1020,7 +1023,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return {};
 			};
 
-			auto validation_error = validate_single(initializer.value());
+			auto validation_error = validate_single(initializer.value(), 0);
 			// C++ semantics distinction between constexpr and constinit:
 			// - constexpr: variable CAN be used in constant expressions if initialized with a
 			//   constant expression, but it's not required at parse time. If evaluation fails,

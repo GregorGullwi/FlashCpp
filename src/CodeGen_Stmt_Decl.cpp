@@ -189,8 +189,13 @@
 
 							// Recursive helper to fill init_data from a struct + InitializerListNode.
 							// Handles nested structs by recursing with the member's byte offset as base.
-							std::function<void(const StructTypeInfo*, const InitializerListNode&, size_t)> fillStructData;
-							fillStructData = [&](const StructTypeInfo* sinfo, const InitializerListNode& ilist, size_t base_offset) {
+							constexpr size_t kFillStructMaxDepth = 64;
+							std::function<void(const StructTypeInfo*, const InitializerListNode&, size_t, size_t)> fillStructData;
+							fillStructData = [&](const StructTypeInfo* sinfo, const InitializerListNode& ilist, size_t base_offset, size_t depth) {
+								if (depth >= kFillStructMaxDepth) {
+									FLASH_LOG(Codegen, Warning, "fillStructData: maximum nesting depth (", kFillStructMaxDepth, ") exceeded, skipping remaining members");
+									return;
+								}
 								size_t pos_idx = 0;
 								for (size_t i = 0; i < ilist.size(); ++i) {
 									StringHandle mname;
@@ -212,7 +217,7 @@
 											// Nested struct: recurse
 											const StructTypeInfo* nested = gTypeInfo[member.type_index].getStructInfo();
 											if (nested) {
-												fillStructData(nested, elem_init.as<InitializerListNode>(), abs_offset);
+												fillStructData(nested, elem_init.as<InitializerListNode>(), abs_offset, depth + 1);
 											}
 										} else if (member.bitfield_width.has_value()) {
 											unsigned long long value = evalToValue(elem_init, member.type);
@@ -238,7 +243,7 @@
 									}
 								}
 							};
-							fillStructData(struct_info_ptr, init_list, 0);
+							fillStructData(struct_info_ptr, init_list, 0, 0);
 						} else {
 							// Fallback: array-like behavior
 							op.element_count = initializers.size();
