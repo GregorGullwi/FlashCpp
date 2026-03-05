@@ -1292,22 +1292,8 @@ EvalResult Evaluator::evaluate_callable_object(
 		// Build member bindings from the InitializerListNode (aggregate initialization).
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
 		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
-		for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
-			std::string_view member_name = StringTable::getStringView(struct_info->members[mi].getName());
-			auto val = evaluate(init_list.initializers()[mi], context);
-			if (!val.success()) return val;
-			evaluation_bindings[member_name] = val;
-		}
-		// Apply default member initializers for members not covered by the initializer list.
-		for (size_t mi = init_list.size(); mi < struct_info->members.size(); ++mi) {
-			const auto& member = struct_info->members[mi];
-			std::string_view member_name = StringTable::getStringView(member.getName());
-			if (member.default_initializer.has_value()) {
-				auto default_result = evaluate(member.default_initializer.value(), context);
-				if (!default_result.success()) return default_result;
-				evaluation_bindings[member_name] = default_result;
-			}
-		}
+		auto member_bind_result = bind_members_from_initializer_list(struct_info, init_list, evaluation_bindings, context);
+		if (!member_bind_result.success()) return member_bind_result;
 
 		// Bind call arguments to operator() parameters.
 		const auto& parameters = call_operator->parameter_nodes();

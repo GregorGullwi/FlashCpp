@@ -238,6 +238,13 @@ public:
 		const ASTNode& object_expr,
 		std::unordered_map<std::string_view, EvalResult>& member_bindings,
 		EvaluationContext& context);
+	// Shared helper: bind struct members from an InitializerListNode (aggregate init)
+	// and apply default member initializers for any members not covered by the list.
+	static EvalResult bind_members_from_initializer_list(
+		const StructTypeInfo* struct_info,
+		const InitializerListNode& init_list,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
 	static EvalResult evaluate_member_array_subscript(
 		const MemberAccessNode& member_access,
 		size_t index,

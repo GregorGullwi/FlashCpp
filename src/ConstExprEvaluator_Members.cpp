@@ -1981,6 +1981,33 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	return result;
 }
 
+// Shared helper: bind struct members from an InitializerListNode (aggregate init)
+// and apply default member initializers for any members not covered by the list.
+EvalResult Evaluator::bind_members_from_initializer_list(
+	const StructTypeInfo* struct_info,
+	const InitializerListNode& init_list,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	// Bind members covered by the initializer list.
+	for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
+		std::string_view mname = StringTable::getStringView(struct_info->members[mi].getName());
+		auto val = evaluate(init_list.initializers()[mi], context);
+		if (!val.success()) return val;
+		bindings[mname] = val;
+	}
+	// Apply default member initializers for remaining members.
+	for (size_t mi = init_list.size(); mi < struct_info->members.size(); ++mi) {
+		const auto& member = struct_info->members[mi];
+		std::string_view mname = StringTable::getStringView(member.getName());
+		if (member.default_initializer.has_value()) {
+			auto default_result = evaluate(member.default_initializer.value(), context);
+			if (!default_result.success()) return default_result;
+			bindings[mname] = default_result;
+		}
+	}
+	return EvalResult::from_bool(true);
+}
+
 // Helper to extract member values from a constexpr object
 EvalResult Evaluator::extract_object_members(
 	const ASTNode& object_expr,
@@ -2045,13 +2072,7 @@ EvalResult Evaluator::extract_object_members(
 		if (!agg_struct_info)
 			return EvalResult::error("Brace-initialized object is not a struct");
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-		for (size_t mi = 0; mi < agg_struct_info->members.size() && mi < init_list.size(); ++mi) {
-			std::string_view mname = StringTable::getStringView(agg_struct_info->members[mi].getName());
-			auto val = evaluate(init_list.initializers()[mi], context);
-			if (!val.success()) return val;
-			member_bindings[mname] = val;
-		}
-		return EvalResult::from_bool(true);
+		return bind_members_from_initializer_list(agg_struct_info, init_list, member_bindings, context);
 	}
 
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
