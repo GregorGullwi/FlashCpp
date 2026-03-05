@@ -64,7 +64,7 @@ struct StructTypeInfo {
 	std::optional<TypeIndex> own_type_index_;
 
 	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false,
-	              NamespaceHandle ns = NamespaceHandle{0})
+	              NamespaceHandle ns = NamespaceHandle{})
 		: name(n), namespace_handle(ns), default_access(default_acc), is_union(union_type) {}
 	
 	StringHandle getName() const {
@@ -822,13 +822,13 @@ extern std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTyp
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{0});
+TypeInfo& add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{0});
+TypeInfo& add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{0});
+TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{0});
+TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
 void initialize_native_types();
 
@@ -1097,7 +1097,7 @@ public:
 // reference_qualifier, and function_signature from the TypeSpecifierNode, then
 // registers it in gTypesByName.  Returns a reference for callers that need to
 // do additional work (e.g. namespace-qualified registration).
-TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns = NamespaceHandle{0});
+TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns = NamespaceHandle{});
 
 class DeclarationNode {
 public:
@@ -1507,7 +1507,7 @@ private:
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
-	NamespaceHandle namespace_handle_{0};  // Namespace this function was declared in (default: global)
+	NamespaceHandle namespace_handle_;  // Namespace this function was declared in (default: INVALID = not yet set)
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	bool has_template_body_ = false;
