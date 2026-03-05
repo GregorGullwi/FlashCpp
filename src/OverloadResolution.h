@@ -453,6 +453,21 @@ struct OverloadResolutionResult {
 	}
 };
 
+// Count the minimum required arguments for a function (excluding trailing default arguments)
+inline size_t countMinRequiredArgs(const FunctionDeclarationNode& func) {
+	const auto& params = func.parameter_nodes();
+	size_t min_required = params.size();
+	// Walk from the end - default arguments must be trailing
+	for (size_t i = params.size(); i > 0; --i) {
+		if (params[i-1].is<DeclarationNode>() && params[i-1].as<DeclarationNode>().has_default_value()) {
+			min_required--;
+		} else {
+			break;
+		}
+	}
+	return min_required;
+}
+
 // Perform overload resolution for a function call
 // Returns the best matching overload, or nullptr if no match or ambiguous
 inline OverloadResolutionResult resolve_overload(
@@ -485,24 +500,25 @@ inline OverloadResolutionResult resolve_overload(
 		bool is_variadic = func_decl->is_variadic();
 
 		// For variadic functions, we need at least as many arguments as named parameters
-		// For non-variadic functions, argument count must match exactly
+		// For non-variadic functions, argument count must be between min required and total params
+		size_t min_required = countMinRequiredArgs(*func_decl);
 		if (is_variadic) {
-			if (argument_types.size() < parameters.size()) {
+			if (argument_types.size() < min_required) {
 				continue;  // Too few arguments for variadic function
 			}
 		} else {
-			if (parameters.size() != argument_types.size()) {
-				continue;  // Argument count mismatch for non-variadic function
+			if (argument_types.size() < min_required || argument_types.size() > parameters.size()) {
+				continue;  // Argument count mismatch (accounting for default arguments)
 			}
 		}
 		
-		// Check if all arguments can be converted to parameters
+		// Check if all provided arguments can be converted to parameters
 		// For variadic functions, only check the named parameters
 		// The variadic arguments (...) accept any type
 		std::vector<ConversionRank> conversion_ranks;
 		bool all_convertible = true;
 
-		size_t params_to_check = parameters.size();  // For variadic, only check named params
+		size_t params_to_check = std::min(parameters.size(), argument_types.size());
 
 		for (size_t i = 0; i < params_to_check; ++i) {
 			const auto& param_type = parameters[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();

@@ -4998,6 +4998,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												return ParseResult::error("Invalid function declaration", idenfifier_token);
 											}
 
+											// Fill in default arguments for missing parameters
+											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
+												const auto& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();
+												const auto& params = func_decl.parameter_nodes();
+												for (size_t i = args.size(); i < params.size(); ++i) {
+													if (params[i].is<DeclarationNode>() && params[i].as<DeclarationNode>().has_default_value()) {
+														args.push_back(params[i].as<DeclarationNode>().default_value());
+													}
+												}
+											}
+
 											result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
 											
 											// If the function has a pre-computed mangled name, set it on the FunctionCallNode
