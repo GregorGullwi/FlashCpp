@@ -18,11 +18,11 @@ template<typename A, typename B, typename C, typename D>
 int v<Pair<Pair<A, B>, Pair<C, D>>> = 2;
 
 int main() {
-    // Bare type: should use primary (0)
-    if (v<int> != 0) return 10;
-    // Single Pair: should use Pair<X,Y> (1)
-    if (v<Pair<int,float>> != 1) return 11;
-    // Nested Pair: should use most specific (2)
-    if (v<Pair<Pair<int,float>,Pair<double,char>>> != 2) return 12;
-    return 0;
+	// Bare type: should use primary (0)
+	if (v<int> != 0) return 10;
+	// Single Pair: should use Pair<X,Y> (1)
+	if (v<Pair<int,float>> != 1) return 11;
+	// Nested Pair: should use most specific (2)
+	if (v<Pair<Pair<int,float>,Pair<double,char>>> != 2) return 12;
+	return 0;
 }

@@ -165,6 +165,11 @@ struct TemplatePattern {
 		return true;
 	}
 
+	// Maximum nesting depth for recursive template argument matching/scoring.
+	// Prevents stack overflow on pathological or circular TypeInfo chains.
+	// Real-world C++ template nesting is shallow; 64 is generous.
+	static constexpr int MAX_NESTED_ARG_DEPTH = 64;
+
 	// Recursive helper: matches a single inner template argument (possibly itself a nested
 	// template instantiation) against a concrete inner argument, deducing template parameter
 	// substitutions. Handles arbitrarily deep nesting such as Pair<Pair<A,B>, Pair<C,D>>.
@@ -172,8 +177,13 @@ struct TemplatePattern {
 		const TypeInfo::TemplateArgInfo& p,
 		const TypeInfo::TemplateArgInfo& c,
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
-		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions)
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
+		int depth = 0)
 	{
+		if (depth >= MAX_NESTED_ARG_DEPTH) {
+			FLASH_LOG(Templates, Trace, "  FAILED: matchNestedArg recursion depth limit exceeded (", depth, ")");
+			return false;
+		}
 		// Check if p is a UserDefined type — could be a param name or a nested template instantiation
 		if (!p.is_value && (p.base_type == Type::UserDefined || p.base_type == Type::Struct)) {
 			if (p.type_index > 0 && p.type_index < gTypeInfo.size()) {
@@ -200,7 +210,7 @@ struct TemplatePattern {
 						return false;
 					}
 					for (size_t k = 0; k < np.size(); ++k) {
-						if (!matchNestedArg(np[k], nc[k], template_param_names, param_substitutions))
+						if (!matchNestedArg(np[k], nc[k], template_param_names, param_substitutions, depth + 1))
 							return false;
 					}
 					return true;
@@ -594,7 +604,10 @@ struct TemplatePattern {
 		// A dependent type param (like T) contributes 0; a concrete type (like int) contributes 1;
 		// a nested template instantiation (like Pair<A,B>) contributes 2 + args + recursion,
 		// reflecting the structural constraint it imposes.
-		auto innerArgScore = [&](const TypeInfo::TemplateArgInfo& inner_arg, auto& self) -> int {
+		auto innerArgScore = [&](const TypeInfo::TemplateArgInfo& inner_arg, auto& self, int depth = 0) -> int {
+			if (depth >= MAX_NESTED_ARG_DEPTH) {
+				return 0;  // Depth limit reached; stop adding specificity
+			}
 			if (!inner_arg.is_value &&
 			    (inner_arg.base_type == Type::UserDefined || inner_arg.base_type == Type::Struct)) {
 				if (inner_arg.type_index > 0 && inner_arg.type_index < gTypeInfo.size()) {
@@ -604,7 +617,7 @@ struct TemplatePattern {
 						// e.g., Pair<A,B> is more specific than a bare T.
 						int nested = 2 + static_cast<int>(inner_ti.templateArgs().size());
 						for (const auto& nested_arg : inner_ti.templateArgs()) {
-							nested += self(nested_arg, self);
+							nested += self(nested_arg, self, depth + 1);
 						}
 						return nested;
 					}
