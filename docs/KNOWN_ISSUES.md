@@ -62,26 +62,35 @@ which now correctly reads `nested_struct.is_union()`.
 
 ## Template Instantiation Namespace Tracking Incomplete
 
-### Status: TODO - Some instantiation paths still use instantiation-site namespace
+### Status: TODO - Some secondary instantiation paths still use instantiation-site namespace
 
 ### Description
 
-The primary and specialization paths in `try_instantiate_class_template` now correctly
-derive the declaration-site namespace from `template_name` or `class_decl.name()`.
+The primary template path and the specialization pattern-match path in
+`try_instantiate_class_template` now correctly derive the declaration-site namespace
+from `template_name`, `class_decl.name()`, or `pattern_struct.name()`.
 However, several secondary instantiation paths still use
 `gSymbolTable.get_current_namespace_handle()`, which returns the *instantiation-site*
 namespace rather than the *declaration-site* namespace.
 
-### Affected Paths
+### Fixed Paths
+
+- Primary template path (`Parser_Templates_Inst_ClassTemplate.cpp:2596-2609`) — derives
+  namespace from `template_name` (if qualified) or `class_decl.name()` (if unqualified).
+- Specialization pattern-match path (`Parser_Templates_Inst_ClassTemplate.cpp:721-737`) —
+  derives namespace from `template_name` (if qualified) or `pattern_struct.name()` (if
+  unqualified), matching the primary template approach.
+
+### Remaining Affected Paths
 
 - `instantiate_full_specialization` (`Parser_Templates_Inst_Substitution.cpp:836,844`)
 - `instantiateLazyNestedType` (`Parser_Templates_Lazy.cpp:704,708`)
-- Inline nested class in primary template path (`Parser_Templates_Inst_ClassTemplate.cpp:4120`)
-- Out-of-line nested class `struct_parsing_context_stack_` push (`Parser_Templates_Inst_ClassTemplate.cpp:4311`)
+- Inline nested class in primary template path (`Parser_Templates_Inst_ClassTemplate.cpp:4134`)
+- Out-of-line nested class `struct_parsing_context_stack_` push (`Parser_Templates_Inst_ClassTemplate.cpp:4325`)
 
 ### Impact
 
 None currently — the `NamespaceHandle` fields on `TypeInfo` and `StructTypeInfo` are
 not yet consumed by downstream code (codegen, name mangling). When they are consumed
 to fix the same-named-types bug above, these paths will need updating to match the
-pattern used in the primary template instantiation path.
+pattern used in the primary and specialization template instantiation paths.
