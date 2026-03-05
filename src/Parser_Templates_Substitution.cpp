@@ -1280,6 +1280,27 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			return emplace_node<ExpressionNode>(ReinterpretCastNode(cast.target_type(), new_expr, cast.cast_token()));
 		}
 
+		if (std::holds_alternative<TernaryOperatorNode>(expr_variant)) {
+			const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr_variant);
+			ASTNode new_cond = replacePackIdentifierInExpr(ternary.condition(), pack_name, element_index);
+			ASTNode new_true = replacePackIdentifierInExpr(ternary.true_expr(), pack_name, element_index);
+			ASTNode new_false = replacePackIdentifierInExpr(ternary.false_expr(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(TernaryOperatorNode(new_cond, new_true, new_false, ternary.get_token()));
+		}
+
+		if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
+			const MemberAccessNode& ma = std::get<MemberAccessNode>(expr_variant);
+			ASTNode new_object = replacePackIdentifierInExpr(ma.object(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(MemberAccessNode(new_object, ma.member_token(), ma.is_arrow()));
+		}
+
+		if (std::holds_alternative<ArraySubscriptNode>(expr_variant)) {
+			const ArraySubscriptNode& sub = std::get<ArraySubscriptNode>(expr_variant);
+			ASTNode new_array = replacePackIdentifierInExpr(sub.array_expr(), pack_name, element_index);
+			ASTNode new_index = replacePackIdentifierInExpr(sub.index_expr(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(ArraySubscriptNode(new_array, new_index, sub.bracket_token()));
+		}
+
 		// For other variant types, return as-is
 		return expr;
 	}
@@ -1336,15 +1357,29 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 	if (expr.is<IdentifierNode>())
 		return expr.as<IdentifierNode>().name() == pack_name;
 
-	if (expr.is<FunctionCallNode>())
-		return argsContain(expr.as<FunctionCallNode>().arguments());
+	if (expr.is<FunctionCallNode>()) {
+		const FunctionCallNode& call = expr.as<FunctionCallNode>();
+		if (argsContain(call.arguments())) return true;
+		if (call.has_template_arguments()) {
+			for (const auto& ta : call.template_arguments())
+				if (exprContainsIdentifier(ta, pack_name)) return true;
+		}
+		return false;
+	}
 
 	if (expr.is<ExpressionNode>()) {
 		return std::visit([&](const auto& node) -> bool {
 			using T = std::decay_t<decltype(node)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return node.name() == pack_name;
-			} else if constexpr (std::is_same_v<T, FunctionCallNode> || std::is_same_v<T, ConstructorCallNode>) {
+			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+				if (argsContain(node.arguments())) return true;
+				if (node.has_template_arguments()) {
+					for (const auto& ta : node.template_arguments())
+						if (exprContainsIdentifier(ta, pack_name)) return true;
+				}
+				return false;
+			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				return argsContain(node.arguments());
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				return exprContainsIdentifier(node.get_lhs(), pack_name) ||
