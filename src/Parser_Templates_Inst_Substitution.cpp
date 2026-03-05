@@ -993,6 +993,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				mem_func.is_final
 			);
 			
+			// Compute and set mangled name for the new function (includes namespace recovery)
+			compute_and_set_mangled_name(new_func);
+			
 			// Add to AST for code generation
 			ast_nodes_.push_back(new_func_node);
 		}

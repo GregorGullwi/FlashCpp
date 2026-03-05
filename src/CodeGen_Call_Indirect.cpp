@@ -1062,13 +1062,30 @@
 						}
 					}
 					
+					// Build namespace path from the struct's declaration-site namespace
+					// so member function calls get the correct mangled name.
+					std::vector<std::string> namespace_for_mangling;
+					auto struct_name_view = StringTable::getStringView(struct_name);
+					if (struct_name_view.find("::") == std::string_view::npos) {
+						NamespaceHandle ns = struct_info->getNamespaceHandle();
+						std::vector<NamespaceHandle> ns_chain;
+						while (ns.isValid() && !ns.isGlobal()) {
+							ns_chain.push_back(ns);
+							ns = gNamespaceRegistry.getParent(ns);
+						}
+						for (auto it = ns_chain.rbegin(); it != ns_chain.rend(); ++it) {
+							namespace_for_mangling.emplace_back(gNamespaceRegistry.getName(*it));
+						}
+					}
+
 					// Generate proper mangled name including parameter types
 					std::string_view mangled = generateMangledNameForCall(
 						func_name,
 						return_type_node,
 						param_types,
 						func_for_mangling->is_variadic(),
-						StringTable::getStringView(struct_name)
+						struct_name_view,
+						namespace_for_mangling
 					);
 					function_name = StringTable::getOrInternStringHandle(mangled);
 				}

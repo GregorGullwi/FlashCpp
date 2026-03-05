@@ -507,6 +507,21 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 		std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
 		ns_path = splitQualifiedNamespace(qualified_namespace);
+		// If namespace is empty but the function is a member of a struct with a namespace,
+		// recover the declaration-site namespace from the struct's NamespaceHandle.
+		// This handles template instantiations triggered from a different namespace.
+		if (ns_path.empty() && func_node.is_member_function()) {
+			std::string_view parent_name = func_node.parent_struct_name();
+			auto struct_name_handle = StringTable::getOrInternStringHandle(parent_name);
+			auto type_it = gTypesByName.find(struct_name_handle);
+			if (type_it != gTypesByName.end()) {
+				NamespaceHandle ns = type_it->second->namespaceHandle();
+				if (ns.isValid() && !ns.isGlobal()) {
+					std::string_view struct_qualified_ns = gNamespaceRegistry.getQualifiedName(ns);
+					ns_path = splitQualifiedNamespace(struct_qualified_ns);
+				}
+			}
+		}
 	}
 	
 	// Generate the mangled name using the NameMangling helper

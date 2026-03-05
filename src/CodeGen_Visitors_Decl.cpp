@@ -213,6 +213,26 @@
 		if (struct_name_for_function.find("::") == std::string_view::npos) {
 			// struct_name doesn't contain namespace, use current_namespace_stack_
 			namespace_for_mangling = current_namespace_stack_;
+			// If namespace stack is still empty but the struct has a namespace,
+			// recover it from the struct's NamespaceHandle (handles template specializations
+			// whose member functions are generated out of namespace context)
+			if (namespace_for_mangling.empty() && node.is_member_function() && !struct_name_for_function.empty()) {
+				auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
+				auto type_it = gTypesByName.find(struct_name_handle);
+				if (type_it != gTypesByName.end()) {
+					NamespaceHandle ns = type_it->second->namespaceHandle();
+					if (ns.isValid() && !ns.isGlobal()) {
+						std::vector<NamespaceHandle> ns_chain;
+						while (ns.isValid() && !ns.isGlobal()) {
+							ns_chain.push_back(ns);
+							ns = gNamespaceRegistry.getParent(ns);
+						}
+						for (auto it = ns_chain.rbegin(); it != ns_chain.rend(); ++it) {
+							namespace_for_mangling.emplace_back(gNamespaceRegistry.getName(*it));
+						}
+					}
+				}
+			}
 		}
 		// else: struct_name already contains namespace prefix, don't add it again
 		

@@ -278,9 +278,29 @@
 				if (func_decl->has_mangled_name()) {
 					function_name = func_decl->mangled_name();
 				} else if (func_decl->linkage() != Linkage::C) {
-					function_name = struct_name.empty()
-						? generateMangledNameForCall(*func_decl, "", current_namespace_stack_)
-						: generateMangledNameForCall(*func_decl, struct_name);
+					if (struct_name.empty()) {
+						function_name = generateMangledNameForCall(*func_decl, "", current_namespace_stack_);
+					} else {
+						// Build namespace path from the struct's NamespaceHandle
+						// so calls to member functions include the correct namespace.
+						std::vector<std::string> ns_path;
+						if (struct_name.find("::") == std::string_view::npos && current_namespace_stack_.empty()) {
+							auto name_handle = StringTable::getOrInternStringHandle(struct_name);
+							auto type_it = gTypesByName.find(name_handle);
+							if (type_it != gTypesByName.end()) {
+								NamespaceHandle ns = type_it->second->namespaceHandle();
+								std::vector<NamespaceHandle> ns_chain;
+								while (ns.isValid() && !ns.isGlobal()) {
+									ns_chain.push_back(ns);
+									ns = gNamespaceRegistry.getParent(ns);
+								}
+								for (auto it = ns_chain.rbegin(); it != ns_chain.rend(); ++it) {
+									ns_path.emplace_back(gNamespaceRegistry.getName(*it));
+								}
+							}
+						}
+						function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
+					}
 				}
 			}
 		};
