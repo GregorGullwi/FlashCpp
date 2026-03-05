@@ -4261,6 +4261,57 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				return std::nullopt;
 			}
 			
+			// Register member functions of the nested struct for lazy instantiation.
+			// These are the methods inside Inner (e.g., Inner::get()) — they are not
+			// top-level member functions of the parent template and would otherwise
+			// never be registered, causing link errors when called.
+			for (const StructMemberFunctionDecl& nested_mem_func : nested_struct.member_functions()) {
+				if (nested_mem_func.is_constructor || nested_mem_func.is_destructor) {
+					if (nested_mem_func.is_constructor) {
+						nested_struct_info->addConstructor(nested_mem_func.function_declaration, nested_mem_func.access);
+					} else {
+						nested_struct_info->addDestructor(nested_mem_func.function_declaration, nested_mem_func.access, nested_mem_func.is_virtual);
+					}
+				} else if (nested_mem_func.function_declaration.is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& nested_func_decl = nested_mem_func.function_declaration.as<FunctionDeclarationNode>();
+					const DeclarationNode& nested_decl = nested_func_decl.decl_node();
+
+					LazyMemberFunctionInfo lazy_mem_info;
+					lazy_mem_info.class_template_name = instantiated_name;  // parent instantiation (e.g., "Container$hash")
+					lazy_mem_info.instantiated_class_name = qualified_name;  // nested class (e.g., "Container$hash::Inner")
+					lazy_mem_info.member_function_name = nested_decl.identifier_token().handle();
+					lazy_mem_info.original_function_node = nested_mem_func.function_declaration;
+					lazy_mem_info.template_params = template_params;
+					lazy_mem_info.template_args = template_args_to_use;
+					lazy_mem_info.access = nested_mem_func.access;
+					lazy_mem_info.is_virtual = nested_mem_func.is_virtual;
+					lazy_mem_info.is_pure_virtual = nested_mem_func.is_pure_virtual;
+					lazy_mem_info.is_override = nested_mem_func.is_override;
+					lazy_mem_info.is_final = nested_mem_func.is_final;
+					lazy_mem_info.is_const_method = nested_mem_func.is_const();
+					lazy_mem_info.is_constructor = false;
+					lazy_mem_info.is_destructor = false;
+
+					LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
+
+					nested_struct_info->addMemberFunction(
+						nested_decl.identifier_token().handle(),
+						nested_mem_func.function_declaration,
+						nested_mem_func.access,
+						nested_mem_func.is_virtual,
+						nested_mem_func.is_pure_virtual,
+						nested_mem_func.is_override,
+						nested_mem_func.is_final
+					);
+					if (!nested_struct_info->member_functions.empty()) {
+						nested_struct_info->member_functions.back().cv_qualifier = nested_mem_func.cv_qualifier;
+					}
+
+					FLASH_LOG(Templates, Debug, "Registered lazy member function for nested class: ",
+					          qualified_name, "::", nested_decl.identifier_token().value());
+				}
+			}
+
 			// Register the nested class in the type system
 			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size(), 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
