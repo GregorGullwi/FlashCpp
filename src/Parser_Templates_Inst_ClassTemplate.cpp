@@ -19,6 +19,31 @@ static void registerNestedMemberFunctionsForLazy(
 				nested_struct_info.addConstructor(mem_func.function_declaration, mem_func.access);
 			else
 				nested_struct_info.addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
+
+			// Also register constructors/destructors for lazy instantiation so nested types
+			// can materialize callable definitions on first use.
+			LazyMemberFunctionInfo lazy_mem_info;
+			lazy_mem_info.class_template_name = class_template_name;
+			lazy_mem_info.instantiated_class_name = qualified_name;
+			if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
+				lazy_mem_info.member_function_name = mem_func.function_declaration.as<ConstructorDeclarationNode>().name();
+				lazy_mem_info.is_constructor = true;
+				lazy_mem_info.is_destructor = false;
+			} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
+				lazy_mem_info.member_function_name = mem_func.function_declaration.as<DestructorDeclarationNode>().name();
+				lazy_mem_info.is_constructor = false;
+				lazy_mem_info.is_destructor = true;
+			}
+			lazy_mem_info.original_function_node = mem_func.function_declaration;
+			lazy_mem_info.template_params = template_params;
+			lazy_mem_info.template_args = template_args;
+			lazy_mem_info.access = mem_func.access;
+			lazy_mem_info.is_virtual = mem_func.is_virtual;
+			lazy_mem_info.is_pure_virtual = mem_func.is_pure_virtual;
+			lazy_mem_info.is_override = mem_func.is_override;
+			lazy_mem_info.is_final = mem_func.is_final;
+			lazy_mem_info.is_const_method = mem_func.is_const();
+			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 		} else if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
 			const DeclarationNode& decl = func_decl.decl_node();

@@ -2,6 +2,137 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ", 
 	          lazy_info.instantiated_class_name, "::", lazy_info.member_function_name);
 	
+	// Constructors/destructors for nested template types are also materialized lazily.
+	if (lazy_info.is_constructor && lazy_info.original_function_node.is<ConstructorDeclarationNode>()) {
+		const ConstructorDeclarationNode& ctor_decl = lazy_info.original_function_node.as<ConstructorDeclarationNode>();
+		if (!ctor_decl.get_definition().has_value() && !ctor_decl.has_template_body_position()) {
+			FLASH_LOG(Templates, Error, "Lazy constructor has no definition and no deferred body position");
+			return std::nullopt;
+		}
+
+		StringHandle ctor_name_handle = lazy_info.member_function_name;
+		std::string_view ctor_name_view = StringTable::getStringView(ctor_name_handle);
+		if (ctor_name_view.empty() || ctor_name_view.find("::") != std::string_view::npos) {
+			std::string_view struct_name = StringTable::getStringView(lazy_info.instantiated_class_name);
+			if (size_t pos = struct_name.rfind("::"); pos != std::string_view::npos) {
+				ctor_name_handle = StringTable::getOrInternStringHandle(struct_name.substr(pos + 2));
+			} else {
+				ctor_name_handle = lazy_info.instantiated_class_name;
+			}
+		}
+		auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+			lazy_info.instantiated_class_name, ctor_name_handle
+		);
+
+		for (const auto& param : ctor_decl.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param.as<DeclarationNode>();
+				const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+				auto [param_type, param_type_index] = substitute_template_parameter(
+					param_type_spec, lazy_info.template_params, lazy_info.template_args
+				);
+
+				TypeSpecifierNode substituted_param_type(
+					param_type,
+					param_type_spec.qualifier(),
+					get_type_size_bits(param_type),
+					param_decl.identifier_token(),
+					param_type_spec.cv_qualifier()
+				);
+				substituted_param_type.set_type_index(param_type_index);
+				for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+					substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+
+				auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+				auto substituted_param_decl = emplace_node<DeclarationNode>(substituted_param_type_node, param_decl.identifier_token());
+				new_ctor_ref.add_parameter_node(substituted_param_decl);
+			} else {
+				new_ctor_ref.add_parameter_node(param);
+			}
+		}
+
+		for (const auto& init : ctor_decl.member_initializers()) {
+			new_ctor_ref.add_member_initializer(init.member_name, init.initializer_expr);
+		}
+		for (const auto& init : ctor_decl.base_initializers()) {
+			new_ctor_ref.add_base_initializer(init.getBaseClassName(), init.arguments);
+		}
+		if (ctor_decl.delegating_initializer().has_value()) {
+			new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
+		}
+		new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
+		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
+
+		std::optional<ASTNode> body_to_substitute;
+		if (ctor_decl.get_definition().has_value()) {
+			body_to_substitute = ctor_decl.get_definition();
+		} else if (ctor_decl.has_template_body_position()) {
+			FlashCpp::TemplateParameterScope template_scope;
+			InlineVector<StringHandle, 4> param_names;
+			param_names.reserve(lazy_info.template_params.size());
+			for (const auto& tparam_node : lazy_info.template_params) {
+				if (tparam_node.is<TemplateParameterNode>()) {
+					param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
+				}
+			}
+			registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
+
+			SaveHandle current_pos = save_token_position();
+			restore_lexer_position_only(ctor_decl.template_body_position());
+			gSymbolTable.enter_scope(ScopeType::Function);
+			for (const auto& param : new_ctor_ref.parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					const auto& param_decl = param.as<DeclarationNode>();
+					gSymbolTable.insert(param_decl.identifier_token().value(), param);
+				}
+			}
+
+			{
+				FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+				populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
+				auto block_result = parse_block();
+				if (!block_result.is_error() && block_result.node().has_value()) {
+					body_to_substitute = block_result.node();
+				}
+			}
+
+			gSymbolTable.exit_scope();
+			restore_lexer_position_only(current_pos);
+			discard_saved_token(current_pos);
+		}
+
+		if (!body_to_substitute.has_value()) {
+			FLASH_LOG(Templates, Error, "Failed to obtain constructor body for lazy instantiation");
+			return std::nullopt;
+		}
+
+		std::vector<TemplateTypeArg> converted_template_args;
+		converted_template_args.reserve(lazy_info.template_args.size());
+		for (const auto& ttype_arg : lazy_info.template_args) {
+			if (ttype_arg.is_value) {
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
+			} else {
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
+			}
+		}
+		try {
+			ASTNode substituted_body = substituteTemplateParameters(
+				*body_to_substitute,
+				lazy_info.template_params,
+				converted_template_args
+			);
+			new_ctor_ref.set_definition(substituted_body);
+		} catch (const std::exception& e) {
+			FLASH_LOG(Templates, Error, "Exception during lazy constructor substitution: ", e.what());
+			return std::nullopt;
+		}
+
+		ast_nodes_.push_back(new_ctor_node);
+		return new_ctor_node;
+	}
+
 	// Get the original function declaration
 	if (!lazy_info.original_function_node.is<FunctionDeclarationNode>()) {
 		FLASH_LOG(Templates, Error, "Lazy member function node is not a FunctionDeclarationNode");

@@ -2354,7 +2354,6 @@ std::vector<IrOperand> AstToIr::generateConstructorCallIr(const ConstructorCallN
 			}
 		}
 	}
-	
 	// Get constructor parameter types for reference handling
 	// But first check for aggregate initialization: if no matching constructor was found
 	// (excluding implicit copy/move), and the struct has public members, generate direct
