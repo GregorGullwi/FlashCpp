@@ -1298,6 +1298,16 @@ EvalResult Evaluator::evaluate_callable_object(
 			if (!val.success()) return val;
 			evaluation_bindings[member_name] = val;
 		}
+		// Apply default member initializers for members not covered by the initializer list.
+		for (size_t mi = init_list.size(); mi < struct_info->members.size(); ++mi) {
+			const auto& member = struct_info->members[mi];
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			if (member.default_initializer.has_value()) {
+				auto default_result = evaluate(member.default_initializer.value(), context);
+				if (!default_result.success()) return default_result;
+				evaluation_bindings[member_name] = default_result;
+			}
+		}
 
 		// Bind call arguments to operator() parameters.
 		const auto& parameters = call_operator->parameter_nodes();
