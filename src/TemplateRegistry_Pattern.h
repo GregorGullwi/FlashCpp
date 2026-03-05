@@ -600,37 +600,59 @@ struct TemplatePattern {
 
 		// Use cached hash set of template parameter names for O(1) lookup
 		const auto& template_param_names = getTemplateParamNames();
+
+		// Helper: recursively compute the specificity contribution of a single inner template arg.
+		// A dependent type param (like T) contributes 0; a concrete type (like int) contributes 1;
+		// a nested template instantiation (like Pair<A,B>) contributes 2 + args + recursion,
+		// reflecting the structural constraint it imposes.
+		auto innerArgScore = [&](const TypeInfo::TemplateArgInfo& inner_arg, auto& self) -> int {
+			if (!inner_arg.is_value &&
+			    (inner_arg.base_type == Type::UserDefined || inner_arg.base_type == Type::Struct)) {
+				if (inner_arg.type_index > 0 && inner_arg.type_index < gTypeInfo.size()) {
+					const TypeInfo& inner_ti = gTypeInfo[inner_arg.type_index];
+					if (inner_ti.isTemplateInstantiation()) {
+						// Nested template instantiation: structural constraint adds specificity.
+						// e.g., Pair<A,B> is more specific than a bare T.
+						int nested = 2 + static_cast<int>(inner_ti.templateArgs().size());
+						for (const auto& nested_arg : inner_ti.templateArgs()) {
+							nested += self(nested_arg, self);
+						}
+						return nested;
+					}
+					// Simple template parameter name → dependent, no extra specificity
+					StringHandle iname = inner_ti.name();
+					if (iname.isValid() && template_param_names.count(iname)) {
+						return 0;
+					}
+				} else if (inner_arg.dependent_name.isValid() &&
+				           template_param_names.count(inner_arg.dependent_name)) {
+					return 0;  // dependent name
+				}
+				return 1;  // concrete UserDefined/Struct type
+			}
+			if (inner_arg.is_value && inner_arg.dependent_name.isValid() &&
+			    template_param_names.count(inner_arg.dependent_name)) {
+				return 0;  // dependent non-type param
+			}
+			if (inner_arg.is_value) {
+				return 1;  // concrete non-type value
+			}
+			// Fundamental (non-UserDefined, non-value) concrete type
+			return 1;
+		};
 	
 		for (const auto& arg : pattern_args) {
 			// Base score: any pattern parameter = 0
 		
-			// Template instantiation pattern (e.g., pair<T,U>) is more specific than bare T
-			if (arg.base_type == Type::UserDefined && arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+			// Template instantiation pattern (e.g., pair<T,U> or Pair<Pair<A,B>,Pair<C,D>>) is more specific than bare T
+			if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) &&
+			    arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
 				const TypeInfo& ti = gTypeInfo[arg.type_index];
 				if (ti.isTemplateInstantiation()) {
 					score += 2 + static_cast<int>(ti.templateArgs().size());
-					// Concrete inner args (not template parameters) add extra specificity
-					// e.g., pair<int,U> is more specific than pair<T,U>
+					// Each inner arg contributes to specificity, including nested instantiations
 					for (const auto& inner_arg : ti.templateArgs()) {
-						bool is_dependent = false;
-						if (!inner_arg.is_value &&
-						    (inner_arg.base_type == Type::UserDefined || inner_arg.base_type == Type::Struct)) {
-							StringHandle iname;
-							if (inner_arg.type_index > 0 && inner_arg.type_index < gTypeInfo.size()) {
-								iname = gTypeInfo[inner_arg.type_index].name();
-							} else if (inner_arg.dependent_name.isValid()) {
-								iname = inner_arg.dependent_name;
-							}
-							if (iname.isValid()) {
-								is_dependent = template_param_names.count(iname) > 0;
-							}
-						} else if (inner_arg.is_value && inner_arg.dependent_name.isValid()) {
-							// Non-type value inner arg: check if dependent_name matches a template parameter
-							is_dependent = template_param_names.count(inner_arg.dependent_name) > 0;
-						}
-						if (!is_dependent) {
-							score += 1;  // concrete inner arg adds specificity
-						}
+						score += innerArgScore(inner_arg, innerArgScore);
 					}
 				}
 			}
