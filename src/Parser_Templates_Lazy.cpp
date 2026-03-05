@@ -133,6 +133,60 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		return new_ctor_node;
 	}
 
+	if (lazy_info.is_destructor && lazy_info.original_function_node.is<DestructorDeclarationNode>()) {
+		const DestructorDeclarationNode& dtor_decl = lazy_info.original_function_node.as<DestructorDeclarationNode>();
+		if (!dtor_decl.get_definition().has_value()) {
+			FLASH_LOG(Templates, Error, "Lazy destructor has no definition");
+			return std::nullopt;
+		}
+
+		StringHandle dtor_name_handle = lazy_info.member_function_name;
+		std::string_view dtor_name_view = StringTable::getStringView(dtor_name_handle);
+		// Normalize destructor name for nested template instantiations:
+		// - empty: missing in lazy registry entry
+		// - qualified: need unqualified "~Class" form
+		// - missing '~': malformed name that must be reconstructed
+		if (dtor_name_view.empty() || dtor_name_view.find("::") != std::string_view::npos || dtor_name_view[0] != '~') {
+			std::string_view struct_name = StringTable::getStringView(lazy_info.instantiated_class_name);
+			std::string_view simple_name = struct_name;
+			constexpr size_t kScopeResolutionLen = 2; // "::"
+			if (size_t pos = struct_name.rfind("::"); pos != std::string_view::npos) {
+				simple_name = struct_name.substr(pos + kScopeResolutionLen);
+			}
+			dtor_name_handle = StringTable::getOrInternStringHandle(StringBuilder().append("~").append(simple_name).commit());
+		}
+
+		auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
+			lazy_info.instantiated_class_name, dtor_name_handle
+		);
+		new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
+
+		std::vector<TemplateTypeArg> converted_template_args;
+		converted_template_args.reserve(lazy_info.template_args.size());
+		for (const auto& ttype_arg : lazy_info.template_args) {
+			if (ttype_arg.is_value) {
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
+			} else {
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
+			}
+		}
+
+		try {
+			ASTNode substituted_body = substituteTemplateParameters(
+				*dtor_decl.get_definition(),
+				lazy_info.template_params,
+				converted_template_args
+			);
+			new_dtor_ref.set_definition(substituted_body);
+		} catch (const std::exception& e) {
+			FLASH_LOG(Templates, Error, "Exception during lazy destructor substitution: ", e.what());
+			return std::nullopt;
+		}
+
+		ast_nodes_.push_back(new_dtor_node);
+		return new_dtor_node;
+	}
+
 	// Get the original function declaration
 	if (!lazy_info.original_function_node.is<FunctionDeclarationNode>()) {
 		FLASH_LOG(Templates, Error, "Lazy member function node is not a FunctionDeclarationNode");
