@@ -1,7 +1,7 @@
 # TODO / FIXME Analysis
 
 **Date**: 2026-03-01 (last updated 2026-03-05)
-**Total items found**: 49 (44 TODO + 4 FIXME/minor + 1 discovered)
+**Total items found**: 52 (44 TODO + 4 FIXME/minor + 1 discovered + 3 newly fixed)
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
 ---
@@ -178,10 +178,10 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 | Status | Count |
 |--------|-------|
-| ✅ Fixed | 48 |
+| ✅ Fixed | 51 |
 | ✅ Verified / Already works | 9 |
 | ✅ Valid (open) | 2 |
-| **Total** | **49** (+ several post-analysis fixes) |
+| **Total** | **52** (+ several post-analysis fixes) |
 
 **Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21). All item #8 constexpr evaluation gaps have been resolved.
 
@@ -194,4 +194,24 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 - `ConstructorCallNode` wrapped in `ExpressionNode` not recognised in constexpr evaluator ✅ Fixed – added `extract_constructor_call()` helper that unwraps both direct and `ExpressionNode`-wrapped `ConstructorCallNode`s.
 - Constexpr `evaluate_callable_object()` rejects ambiguous same-arity `operator()` overloads rather than resolving by type.
 - `tests/test_integral_constant_pattern_ret42.cpp` emits pre-existing `Parser returned size_bits=0` / `handleLValueCompoundAssignment: FAIL` diagnostics despite producing the correct runtime result.
-- `tests/test_namespace_template_specialization_ret42.cpp` fails to link: mangled name mismatch for member functions of template specializations declared inside namespaces.
+- `tests/test_namespace_template_specialization_ret42.cpp` ✅ Fixed – mangled name mismatch resolved; test now links and passes.
+
+---
+
+## 26. Default Function Arguments ✅ Fixed (2026-03-05)
+`src/OverloadResolution.h`, `src/SymbolTable.h`, `src/Parser_Expr_PrimaryExpr.cpp` — Overload resolution now accounts for trailing default parameter values. When a call provides fewer arguments than parameters, the remaining default argument expressions are filled into the FunctionCallNode at parse time. Added `countMinRequiredArgs()` helper. Test: `test_default_function_args_ret42.cpp`.
+
+---
+
+## 27. Compound Assignment on Global/Static Variables ✅ Fixed (2026-03-05)
+`src/CodeGen_Expr_Operators.cpp` — Compound assignment operators (`+=`, `-=`, `*=`, etc.) on global variables and static local variables now generate proper `GlobalLoad → arithmetic → GlobalStore` IR. Previously only simple assignment (`=`) was handled; compound ops silently lost the store. Test: `test_compound_assign_global_ret42.cpp`.
+
+---
+
+## 28. Range-Based For Loop with Unsized Arrays ✅ Fixed (2026-03-05)
+`src/CodeGen_Stmt_Control.cpp` — Range-based for loops over unsized arrays (`int arr[] = {1,2,3}`) now infer the array size from the initializer list. Previously, `visitRangedForArray` required `array_size()` which returned `nullopt` for unsized arrays. Test: `test_range_for_unsized_array_ret42.cpp`.
+
+---
+
+## 29. Assignment Through Reference-Returning Methods (Open)
+Assigning through a reference returned by a member function (e.g., `h.getRef() = 42;`) does not update the underlying member. The returned reference is treated as an rvalue rather than as an lvalue. Workaround: assign directly to the member.

@@ -30,10 +30,64 @@ template name or struct declaration name. Additionally:
 
 ## Constexpr Array Dimensions from Constexpr Variable
 
-### Status: Open (pre-existing)
+### Status: FIXED (verified 2026-03-05)
 
-Using a `constexpr int` variable as an array dimension does not evaluate to the
-constant value. For example, `constexpr int N = 42; int arr[N];` produces an
-array of size 1 rather than 42. This affects both global and local arrays.
+Using a `constexpr int` variable as an array dimension now works correctly.
+`constexpr int N = 42; int arr[N];` produces an array of the correct size.
 
-Workaround: use integer literals directly as array dimensions.
+## Default Function Arguments
+
+### Status: FIXED (2026-03-05)
+
+Calling a function with fewer arguments than declared parameters now works
+when the omitted parameters have default values. Example:
+`int add(int a, int b = 32); add(10);` correctly calls `add(10, 32)`.
+
+Fix: Overload resolution (`resolve_overload` and `lookup_function`) now accounts
+for trailing default parameters. Default argument expressions are filled in at
+the call site during parsing.
+
+## Compound Assignment on Global/Static Local Variables
+
+### Status: FIXED (2026-03-05)
+
+Compound assignment operators (`+=`, `-=`, `*=`, etc.) on global variables and
+static local variables now generate proper GlobalLoad → arithmetic → GlobalStore
+IR. Previously, only simple assignment (`=`) was handled for globals; compound
+assignments silently lost the store.
+
+## Range-Based For Loop with Unsized Arrays
+
+### Status: FIXED (2026-03-05)
+
+Range-based for loops over unsized arrays (`int arr[] = {1,2,3}`) now work.
+The array size is inferred from the initializer list when not explicitly declared.
+
+## Assignment Through Reference-Returning Methods
+
+### Status: Open
+
+Assigning through a reference returned by a member function (e.g.,
+`h.getRef() = 42;` where `getRef()` returns `int&`) does not update the
+underlying member. The returned reference is treated as an rvalue rather
+than an lvalue. Workaround: assign directly to the member.
+
+## Increment/Decrement on Static Member Variables
+
+### Status: Open
+
+Using `++` or `--` on static member variables accessed from within member
+functions (e.g., `count++` inside `static void increment()`) does not
+store the result back. The GlobalStore is generated in IR but the
+IrConverter fails to find the global variable during x86 codegen because
+the qualified name (`Counter::count`) doesn't match the registered global.
+Compound assignment (`count += 1`) has the same issue for static members.
+Workaround: use explicit assignment (`count = count + 1;`).
+
+## Array of Structs Aggregate Initialization
+
+### Status: Open
+
+Initializing an array of structs with nested brace initializers
+(e.g., `Pair arr[3] = {{1, 2}, {3, 4}, {5, 6}};`) fails to parse.
+The parser does not handle nested initializer lists for array elements.

@@ -1685,7 +1685,91 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 		// Regular integer increment/decrement
 		IrOpcode pre_opcode = is_increment ? IrOpcode::PreIncrement : IrOpcode::PreDecrement;
 		IrOpcode post_opcode = is_increment ? IrOpcode::PostIncrement : IrOpcode::PostDecrement;
-		ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, Token()));
+
+		// Check if the operand is a global/static variable that needs GlobalStore
+		bool needs_global_store = false;
+		StringHandle global_store_name;
+		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+				std::string_view ident_name = std::get<IdentifierNode>(operandExpr).name();
+				StringHandle ident_handle = StringTable::getOrInternStringHandle(ident_name);
+				auto static_it = static_local_names_.find(ident_handle);
+				if (static_it != static_local_names_.end()) {
+					needs_global_store = true;
+					global_store_name = static_it->second.mangled_name;
+				} else {
+					const std::optional<ASTNode> local_sym = symbol_table.lookup(ident_name);
+					if (!local_sym.has_value() && global_symbol_table_) {
+						const std::optional<ASTNode> global_sym = global_symbol_table_->lookup(ident_name);
+						if (global_sym.has_value() && global_sym->is<VariableDeclarationNode>()) {
+							needs_global_store = true;
+							global_store_name = ident_handle;
+						}
+					}
+				}
+				// Check if this is a static member of the current struct
+				if (!needs_global_store && current_struct_name_.isValid()) {
+					auto struct_it = gTypesByName.find(current_struct_name_);
+					if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
+						const auto* static_member = struct_it->second->getStructInfo()->findStaticMember(StringTable::getOrInternStringHandle(ident_name));
+						if (static_member) {
+							needs_global_store = true;
+							StringBuilder sb;
+							sb.append(current_struct_name_);
+							sb.append("::"sv);
+							sb.append(ident_name);
+							global_store_name = StringTable::createStringHandle(sb);
+						}
+					}
+				}
+			}
+		}
+
+		if (needs_global_store) {
+			// For global/static: manually do load → add/sub 1 → store
+			IrOpcode arith_opcode_int = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
+			Type elem_type = std::get<Type>(operandIrOperands[0]);
+			int elem_size = std::get<int>(operandIrOperands[1]);
+			IrValue loaded_val = std::holds_alternative<TempVar>(operandIrOperands[2])
+				? IrValue(std::get<TempVar>(operandIrOperands[2]))
+				: toIrValue(operandIrOperands[2]);
+
+			if (is_prefix) {
+				BinaryOp bin_op{
+					.lhs = {elem_type, elem_size, loaded_val},
+					.rhs = {Type::Int, 32, 1ULL},
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), Token()));
+				std::vector<IrOperand> store_ops;
+				store_ops.emplace_back(global_store_name);
+				store_ops.emplace_back(result_var);
+				ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_ops), Token());
+			} else {
+				// Postfix: save old value, compute new, store, return old
+				TempVar old_val = var_counter.next();
+				AssignmentOp save_op;
+				save_op.result = old_val;
+				save_op.lhs = {elem_type, elem_size, old_val};
+				save_op.rhs = {elem_type, elem_size, loaded_val};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
+
+				BinaryOp bin_op{
+					.lhs = {elem_type, elem_size, loaded_val},
+					.rhs = {Type::Int, 32, 1ULL},
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), Token()));
+				std::vector<IrOperand> store_ops;
+				store_ops.emplace_back(global_store_name);
+				store_ops.emplace_back(result_var);
+				ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_ops), Token());
+				return { operandType, elem_size, old_val, 0ULL };
+			}
+		} else {
+			ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, Token()));
+		}
 	}
 	
 	return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };
