@@ -2020,7 +2020,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 		bindings[mname] = val;
 	}
 	// Apply default member initializers for remaining members.
-	for (size_t mi = init_list.size(); mi < struct_info->members.size(); ++mi) {
+	for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
 		const auto& member = struct_info->members[mi];
 		std::string_view mname = StringTable::getStringView(member.getName());
 		if (bindings.find(mname) == bindings.end() && member.default_initializer.has_value()) {
