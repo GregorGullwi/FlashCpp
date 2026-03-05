@@ -186,43 +186,64 @@
 						if (struct_info_ptr) {
 							// Struct aggregate initialization: pack values into init_data using member bit offsets
 							op.init_data.resize(struct_info_ptr->total_size, 0);
-							size_t positional_index = 0;
-							for (size_t i = 0; i < initializers.size(); ++i) {
-								StringHandle member_name;
-								if (init_list.is_designated(i)) {
-									member_name = init_list.member_name(i);
-								} else if (positional_index < struct_info_ptr->members.size()) {
-									member_name = struct_info_ptr->members[positional_index].getName();
-									positional_index++;
-								} else {
-									break;
+
+							// Recursive helper to fill init_data from a struct + InitializerListNode.
+							// Handles nested structs by recursing with the member's byte offset as base.
+							constexpr size_t kFillStructMaxDepth = 64;
+							std::function<void(const StructTypeInfo*, const InitializerListNode&, size_t, size_t)> fillStructData;
+							fillStructData = [&](const StructTypeInfo* sinfo, const InitializerListNode& ilist, size_t base_offset, size_t depth) {
+								if (depth >= kFillStructMaxDepth) {
+									FLASH_LOG(Codegen, Warning, "fillStructData: maximum nesting depth (", kFillStructMaxDepth, ") exceeded, skipping remaining members");
+									return;
 								}
-								// Find the member
-								for (const auto& member : struct_info_ptr->members) {
-									if (member.getName() == member_name) {
-										unsigned long long value = evalToValue(initializers[i], member.type);
-										if (member.bitfield_width.has_value()) {
+								size_t pos_idx = 0;
+								for (size_t i = 0; i < ilist.size(); ++i) {
+									StringHandle mname;
+									if (ilist.is_designated(i)) {
+										mname = ilist.member_name(i);
+									} else if (pos_idx < sinfo->members.size()) {
+										mname = sinfo->members[pos_idx].getName();
+										pos_idx++;
+									} else {
+										break;
+									}
+									for (const auto& member : sinfo->members) {
+										if (member.getName() != mname) continue;
+										size_t abs_offset = base_offset + member.offset;
+										const ASTNode& elem_init = ilist.initializers()[i];
+										if (elem_init.is<InitializerListNode>() &&
+											(member.type == Type::Struct || member.type == Type::UserDefined) &&
+											member.type_index < gTypeInfo.size()) {
+											// Nested struct: recurse
+											const StructTypeInfo* nested = gTypeInfo[member.type_index].getStructInfo();
+											if (nested) {
+												fillStructData(nested, elem_init.as<InitializerListNode>(), abs_offset, depth + 1);
+											}
+										} else if (member.bitfield_width.has_value()) {
+											unsigned long long value = evalToValue(elem_init, member.type);
 											size_t width = *member.bitfield_width;
 											size_t bit_offset = member.bitfield_bit_offset;
 											unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
 											value &= mask;
 											unsigned long long existing = 0;
-											for (size_t b = 0; b < member.size && (member.offset + b) < op.init_data.size(); ++b) {
-												existing |= (static_cast<unsigned long long>(static_cast<unsigned char>(op.init_data[member.offset + b])) << (b * 8));
+											for (size_t b = 0; b < member.size && (abs_offset + b) < op.init_data.size(); ++b) {
+												existing |= (static_cast<unsigned long long>(static_cast<unsigned char>(op.init_data[abs_offset + b])) << (b * 8));
 											}
 											existing |= (value << bit_offset);
-											for (size_t b = 0; b < member.size && (member.offset + b) < op.init_data.size(); ++b) {
-												op.init_data[member.offset + b] = static_cast<char>((existing >> (b * 8)) & 0xFF);
+											for (size_t b = 0; b < member.size && (abs_offset + b) < op.init_data.size(); ++b) {
+												op.init_data[abs_offset + b] = static_cast<char>((existing >> (b * 8)) & 0xFF);
 											}
 										} else {
-											for (size_t b = 0; b < member.size && (member.offset + b) < op.init_data.size(); ++b) {
-												op.init_data[member.offset + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
+											unsigned long long value = evalToValue(elem_init, member.type);
+											for (size_t b = 0; b < member.size && (abs_offset + b) < op.init_data.size(); ++b) {
+												op.init_data[abs_offset + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
 											}
 										}
 										break;
 									}
 								}
-							}
+							};
+							fillStructData(struct_info_ptr, init_list, 0, 0);
 						} else {
 							// Fallback: array-like behavior
 							op.element_count = initializers.size();

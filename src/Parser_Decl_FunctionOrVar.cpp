@@ -997,32 +997,44 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				);
 			}
 			
-			// Skip constexpr evaluation for struct types with initializer lists
-			// The constexpr evaluator doesn't currently support InitializerListNode
-			// Also skip for expressions that contain casts or other unsupported operations
-			// TODO: Implement full constexpr evaluation
-			bool is_struct_init_list = (type_specifier.type() == Type::Struct && 
-			                            initializer->is<InitializerListNode>());
-			
-			if (!is_struct_init_list) {
-				// Evaluate the initializer to ensure it's a constant expression
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				eval_ctx.storage_duration = ConstExpr::StorageDuration::Global;
-				eval_ctx.is_constinit = is_constinit;
-				
-				auto eval_result = ConstExpr::Evaluator::evaluate(initializer.value(), eval_ctx);
-				// C++ semantics distinction between constexpr and constinit:
-				// - constexpr: variable CAN be used in constant expressions if initialized with a 
-				//   constant expression, but it's not required at parse time. If evaluation fails,
-				//   the variable is treated as a regular const variable.
-				// - constinit: variable MUST be initialized with a constant expression (C++20).
-				//   Failure to evaluate at compile time is always an error.
-				if (!eval_result.success() && is_constinit) {
-					return ParseResult::error(
-						std::string(keyword_name) + " variable initializer must be a constant expression: " + eval_result.error_message,
-						identifier_token
-					);
+			// Validate the initializer is a constant expression.
+			// For InitializerListNode (aggregate/array init), validate each element individually
+			// since the evaluator works on expression nodes, not initializer lists directly.
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			eval_ctx.storage_duration = ConstExpr::StorageDuration::Global;
+			eval_ctx.is_constinit = is_constinit;
+
+			// Helper lambda: recursively validate a single initializer node
+			// Returns empty string on success, error message on failure
+			constexpr size_t kValidateSingleMaxDepth = 64;
+			std::function<std::string(const ASTNode&, size_t)> validate_single = [&](const ASTNode& node, size_t depth) -> std::string {
+				if (depth >= kValidateSingleMaxDepth)
+					return "initializer list nesting exceeds maximum depth";
+				if (node.is<InitializerListNode>()) {
+					const InitializerListNode& il = node.as<InitializerListNode>();
+					for (const auto& elem : il.initializers()) {
+						auto msg = validate_single(elem, depth + 1);
+						if (!msg.empty()) return msg;
+					}
+					return {};
 				}
+				auto elem_result = ConstExpr::Evaluator::evaluate(node, eval_ctx);
+				if (!elem_result.success()) return elem_result.error_message;
+				return {};
+			};
+
+			auto validation_error = validate_single(initializer.value(), 0);
+			// C++ semantics distinction between constexpr and constinit:
+			// - constexpr: variable CAN be used in constant expressions if initialized with a
+			//   constant expression, but it's not required at parse time. If evaluation fails,
+			//   the variable is treated as a regular const variable.
+			// - constinit: variable MUST be initialized with a constant expression (C++20).
+			//   Failure to evaluate at compile time is always an error.
+			if (!validation_error.empty() && is_constinit) {
+				return ParseResult::error(
+					std::string(keyword_name) + " variable initializer must be a constant expression: " + validation_error,
+					identifier_token
+				);
 			}
 			
 			// Note: The evaluated value could be stored in the VariableDeclarationNode for later use
