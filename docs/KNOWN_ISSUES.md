@@ -90,6 +90,8 @@ namespace rather than the *declaration-site* namespace.
 
 - `instantiate_full_specialization` (`Parser_Templates_Inst_Substitution.cpp:836,844`)
 - `instantiateLazyNestedType` (`Parser_Templates_Lazy.cpp:704,708`)
+- Inline nested class in primary template path (`Parser_Templates_Inst_ClassTemplate.cpp:4120`)
+- Out-of-line nested class `struct_parsing_context_stack_` push (`Parser_Templates_Inst_ClassTemplate.cpp:4311`)
 
 ### Impact
 
