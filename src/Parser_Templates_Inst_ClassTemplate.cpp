@@ -16,6 +16,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Log entry to help debug which call sites are causing issues
 	FLASH_LOG(Templates, Debug, "try_instantiate_class_template: template='", template_name, 
 	          "', args=", template_args.size(), ", force_eager=", force_eager);
+
+	// Resolve template template parameter aliases: when inside a template function body
+	// re-parse, "Container" may be a template template parameter bound to a concrete
+	// template (e.g., "MyVec").  Look up the substitution and redirect.
+	{
+		StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
+		for (const auto& subst : template_param_substitutions_) {
+			if (subst.is_template_template_param && subst.param_name == name_handle &&
+			    subst.concrete_template_name.isValid()) {
+				std::string_view concrete_name = StringTable::getStringView(subst.concrete_template_name);
+				FLASH_LOG(Templates, Debug, "Redirecting template template param '", template_name,
+				          "' -> '", concrete_name, "'");
+				return try_instantiate_class_template(concrete_name, template_args, force_eager);
+			}
+		}
+	}
 	
 	// Early check: verify this is actually a class template before proceeding
 	// This prevents errors when function templates like 'declval' are passed to this function
