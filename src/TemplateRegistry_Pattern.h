@@ -119,6 +119,11 @@ struct TemplatePattern {
 	}
 	
 	// Builds a TemplateTypeArg from a concrete TypeInfo::TemplateArgInfo for use in deduction.
+	// Unlike toTemplateTypeArg() (which is a general-purpose 1:1 conversion that copies all
+	// fields including dependent_name), this helper is specifically for building *resolved*
+	// parameter bindings (e.g., T=int). It intentionally omits dependent_name because the
+	// result represents a concrete type, not a dependent placeholder. It also defaults
+	// base_type to Type::Int for value args with Type::Invalid, which toTemplateTypeArg does not.
 	static TemplateTypeArg createDeducedArgFromConcrete(const TypeInfo::TemplateArgInfo& c) {
 		TemplateTypeArg deduced;
 		if (c.is_value) {
