@@ -211,42 +211,13 @@ struct TemplatePattern {
 					return recordDeduction(inner_name, createDeducedArgFromConcrete(c), param_substitutions);
 				}
 			} else if (p.dependent_name.isValid() && template_param_names.count(p.dependent_name)) {
-				auto sub_it = param_substitutions.find(p.dependent_name);
-				TemplateTypeArg deduced = createDeducedArgFromConcrete(c);
-				if (sub_it != param_substitutions.end()) {
-					if (!(sub_it->second == deduced)) {
-						FLASH_LOG(Templates, Trace, "  FAILED: inconsistent deduction for dependent name '",
-						          StringTable::getStringView(p.dependent_name), "'");
-						return false;
-					}
-				} else {
-					param_substitutions[p.dependent_name] = deduced;
-					FLASH_LOG(Templates, Trace, "  Deduced param (dependent name) '",
-					          StringTable::getStringView(p.dependent_name), "'");
-				}
-				return true;
+				return recordDeduction(p.dependent_name, createDeducedArgFromConcrete(c), param_substitutions);
 			}
 		}
 		// Value parameter deduction
 		if (p.is_value && c.is_value) {
 			if (p.dependent_name.isValid() && template_param_names.count(p.dependent_name)) {
-				TemplateTypeArg deduced;
-				deduced.is_value = true;
-				deduced.value = c.intValue();
-				deduced.base_type = c.base_type != Type::Invalid ? c.base_type : Type::Int;
-				auto sub_it = param_substitutions.find(p.dependent_name);
-				if (sub_it != param_substitutions.end()) {
-					if (!(sub_it->second == deduced)) {
-						FLASH_LOG(Templates, Trace, "  FAILED: inconsistent deduction for value param '",
-						          StringTable::getStringView(p.dependent_name), "'");
-						return false;
-					}
-				} else {
-					param_substitutions[p.dependent_name] = deduced;
-					FLASH_LOG(Templates, Trace, "  Deduced value param '",
-					          StringTable::getStringView(p.dependent_name), "'");
-				}
-				return true;
+				return recordDeduction(p.dependent_name, createDeducedArgFromConcrete(c), param_substitutions);
 			}
 			if (p.intValue() != c.intValue()) {
 				FLASH_LOG(Templates, Trace, "  FAILED: inner value mismatch");
