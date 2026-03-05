@@ -1,10 +1,6 @@
 // Test: Global-scope template with nested type, instantiated from inside a namespace.
-// Exercises the bug where instantiateLazyNestedType assigns the instantiation-site
-// namespace (e.g., "foo") instead of global when the parent class is at global scope.
-//
-// Bug: the condition `parent_ns.isValid() && !parent_ns.isGlobal()` in
-// instantiateLazyNestedType skips global-scope parents, leaving decl_ns as
-// the instantiation-site namespace.
+// Verifies that instantiateLazyNestedType assigns the global namespace (not the
+// instantiation-site namespace "foo") when the parent class is at global scope.
 
 template<typename T>
 struct Container {
