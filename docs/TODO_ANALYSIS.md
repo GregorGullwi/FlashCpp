@@ -45,15 +45,19 @@
 
 | File | Line | Status |
 |------|------|--------|
-| `src/Parser_Decl_FunctionOrVar.cpp` | 1005 | ✅ Valid |
+| `src/Parser_Decl_FunctionOrVar.cpp` | 1005 | ✅ Fixed |
 | `src/ConstExprEvaluator_Members.cpp` | 202 | ✅ Fixed |
 | `src/ConstExprEvaluator_Members.cpp` | 1473 | ✅ Fixed |
 | `src/ConstExprEvaluator_Core.cpp` | 1050 | ✅ Fixed |
+| `src/ConstExprEvaluator_Members.cpp` | 1144 | ✅ Fixed |
+| `src/CodeGen_Stmt_Decl.cpp` | 203 | ✅ Fixed |
 
-- **FunctionOrVar.cpp:1005** – `constexpr` variables whose initializers are `InitializerListNode`s, casts, or other complex expressions bypass evaluation entirely. A full implementation would recursively evaluate those forms.
+- **FunctionOrVar.cpp:1005** ✅ Fixed — Replaced `is_struct_init_list` guard with a recursive `validate_single` lambda that iterates `InitializerListNode` elements individually. Now `constinit int arr[] = {1,2,3}` correctly validates each element, and `constinit Point p = {runtime_val, 2}` correctly fails when the element is non-constant. Tests: `test_constinit_aggregate_ret42.cpp`, `test_constinit_nonconstant_struct_fail.cpp`.
 - **Members.cpp:202** ✅ Fixed — `this->x = value` assignments in constexpr member functions now update `bindings[member_name]`. Test: `test_constexpr_this_member_ret42.cpp`.
 - **Members.cpp:1473** ✅ Fixed — `arr[0].member` in constexpr context now works via `evaluate_array_subscript_member_access()`. Test: `test_constexpr_array_subscript_member_ret42.cpp`.
 - **Core.cpp:1050** ✅ Fixed — Constexpr functor `operator()` calls now materialise member bindings and evaluate the operator body. Test: `test_constexpr_functor_call_ret42.cpp`.
+- **Members.cpp:1144** ✅ Fixed — `evaluate_member_access` now handles aggregate-initialized (brace-init) constexpr structs. Previously, `constexpr Point p = {10, 32}; constexpr int s = p.x + p.y;` failed with "Member access on non-struct constexpr variable not supported". Test: `test_constexpr_aggregate_member_access_ret42.cpp`.
+- **CodeGen_Stmt_Decl.cpp:203** ✅ Fixed — Global struct aggregate initialization with nested struct members (e.g., `Line l = {{1,2},{3,4}}`) now correctly fills bytes for nested members using a recursive `fillStructData` lambda. Test: `test_nested_struct_global_init_ret10.cpp`.
 
 ---
 
@@ -172,18 +176,17 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 | Status | Count |
 |--------|-------|
-| ✅ Fixed | 44 |
+| ✅ Fixed | 48 |
 | ✅ Verified / Already works | 9 |
 | ✅ Valid (open) | 2 |
 | **Total** | **49** (+ several post-analysis fixes) |
 
-**Open items**: constexpr complex initializers (#8), `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21).
+**Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21). All item #8 constexpr evaluation gaps have been resolved.
 
 ---
 
-## Known issues encountered during implementation
+## Known issues encountered during implementation (updated 2026-03-05)
 
-- Global `constexpr` arrays of struct objects still trigger `Non-constant initializer in global variable` warning from `CodeGen_Stmt_Decl.cpp:100`.
 - Constexpr array-member extraction falls back to an error (instead of an ambiguity diagnostic) when multiple same-arity constructors are viable.
 - `constinit` on brace-initialized callable objects (e.g., `constexpr Add add{}; constinit int x = add(1,2);`) ✅ Fixed – `evaluate_callable_object` now handles `InitializerListNode` initializers. `evaluate_member_function_call` delegates `operator()` calls to `evaluate_callable_object`. Tests: `test_constinit_callable_ret42.cpp`, `test_constinit_callable_ctor_ret42.cpp`.
 - `ConstructorCallNode` wrapped in `ExpressionNode` not recognised in constexpr evaluator ✅ Fixed – added `extract_constructor_call()` helper that unwraps both direct and `ExpressionNode`-wrapped `ConstructorCallNode`s.

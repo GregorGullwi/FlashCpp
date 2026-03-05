@@ -27,3 +27,13 @@ template name or struct declaration name. Additionally:
   would treat mangled class names as namespaces).
 - Namespace recovery logic is consolidated into `buildNamespacePathFromHandle()`
   in `NamespaceRegistry.h`.
+
+## Constexpr Array Dimensions from Constexpr Variable
+
+### Status: Open (pre-existing)
+
+Using a `constexpr int` variable as an array dimension does not evaluate to the
+constant value. For example, `constexpr int N = 42; int arr[N];` produces an
+array of size 1 rather than 42. This affects both global and local arrays.
+
+Workaround: use integer literals directly as array dimensions.

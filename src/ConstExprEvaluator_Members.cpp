@@ -1140,12 +1140,36 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
 	}
 	
-	// Check if the initializer is a ConstructorCallNode
-	if (!initializer->is<ConstructorCallNode>()) {
+	// Handle aggregate initialization (InitializerListNode): constexpr Point p = {1, 2};
+	if (initializer->is<InitializerListNode>()) {
+		const DeclarationNode& aggr_decl = var_decl.declaration();
+		if (!aggr_decl.type_node().is<TypeSpecifierNode>())
+			return EvalResult::error("Aggregate-initialized constexpr variable has invalid type");
+		const TypeSpecifierNode& aggr_type = aggr_decl.type_node().as<TypeSpecifierNode>();
+		TypeIndex aggr_idx = aggr_type.type_index();
+		if (aggr_idx >= gTypeInfo.size())
+			return EvalResult::error("Invalid type index in aggregate member access");
+		const StructTypeInfo* aggr_struct = gTypeInfo[aggr_idx].getStructInfo();
+		if (!aggr_struct)
+			return EvalResult::error("Aggregate-initialized constexpr variable is not a struct");
+		std::unordered_map<std::string_view, EvalResult> member_bindings;
+		auto bind_result = bind_members_from_initializer_list(
+			aggr_struct, initializer->as<InitializerListNode>(), member_bindings, context);
+		if (!bind_result.success()) return bind_result;
+		auto it = member_bindings.find(member_name);
+		if (it == member_bindings.end())
+			return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate initializer");
+		return it->second;
+	}
+	
+	// Check if the initializer is a ConstructorCallNode (direct or wrapped in ExpressionNode)
+	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
+	if (!ctor_call_ptr) {
 		return EvalResult::error("Member access on non-struct constexpr variable not supported");
 	}
 	
-	const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
+	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
+	
 	
 	// Get the type being constructed
 	const ASTNode& type_node = ctor_call.type_node();
