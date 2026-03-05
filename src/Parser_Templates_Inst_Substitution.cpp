@@ -833,7 +833,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	FLASH_LOG(Templates, Debug, "Instantiating full specialization: ", instantiated_name);
 	
 	// Create TypeInfo for the specialization
-	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name));
+	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name), gSymbolTable.get_current_namespace_handle());
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	struct_type_info.setTemplateInstantiationInfo(

@@ -719,7 +719,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// For now, if members use template parameters, we substitute them
 		
 		// Create struct type info first
-		TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+		TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 		
 		// Store template instantiation metadata for O(1) lookup (Phase 6)
 		struct_type_info.setTemplateInstantiationInfo(
@@ -2592,7 +2592,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Create a new struct type for the instantiation (but don't create AST node for template instantiations)
-	TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+	TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name

@@ -844,6 +844,9 @@ ParseResult Parser::create_function_from_header(
 	// Create the function declaration node using the DeclarationNode reference
 	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_ref);
 
+	// Set the namespace handle for the function
+	func_ref.set_namespace_handle(gSymbolTable.get_current_namespace_handle());
+
 	// Set calling convention
 	func_ref.set_calling_convention(header.storage.calling_convention);
 

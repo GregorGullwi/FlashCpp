@@ -71,40 +71,49 @@ std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(StringHandle name, int type_size_in_bits) {
+TypeInfo& add_user_type(StringHandle name, int type_size_in_bits, NamespaceHandle ns) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size(), type_size_in_bits);
+    type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& add_function_type(StringHandle name, [[maybe_unused]] Type return_type) {
+TypeInfo& add_function_type(StringHandle name, [[maybe_unused]] Type return_type, NamespaceHandle ns) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size(), 0);
+    type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& add_struct_type(StringHandle name) {
+TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns) {
     // Check if type already exists (forward declaration case)
     auto existing_it = gTypesByName.find(name);
     if (existing_it != gTypesByName.end()) {
         // Type already exists - return the existing one
         // This handles the case where we have a forward declaration followed by a full definition
+        // Update namespace if not already set (forward declaration may not have had context)
+        if (!existing_it->second->namespaceHandle().isValid() || existing_it->second->namespaceHandle().isGlobal()) {
+            existing_it->second->setNamespaceHandle(ns);
+        }
         return *existing_it->second;
     }
     
     auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, gTypeInfo.size(), 0);
+    type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& add_enum_type(StringHandle name) {
+TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, gTypeInfo.size(), 0);
+    type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec) {
+TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns) {
     auto& info = gTypeInfo.emplace_back(name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
+    info.setNamespaceHandle(ns);
     info.pointer_depth_ = type_spec.pointer_depth();
     info.reference_qualifier_ = type_spec.reference_qualifier();
     if (type_spec.has_function_signature()) {

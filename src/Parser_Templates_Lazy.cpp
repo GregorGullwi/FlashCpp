@@ -701,7 +701,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	}
 	
 	// Create a new struct type for the nested class
-	TypeInfo& nested_type_info = add_struct_type(lazy_info->qualified_name);
+	TypeInfo& nested_type_info = add_struct_type(lazy_info->qualified_name, gSymbolTable.get_current_namespace_handle());
 	TypeIndex type_index = nested_type_info.type_index_;
 	
 	// Create StructTypeInfo for the nested type

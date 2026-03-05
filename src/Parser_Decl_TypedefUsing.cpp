@@ -455,8 +455,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			
 			// Register the struct type early
 			StringHandle struct_name = StringTable::getOrInternStringHandle(struct_name_view);
-			TypeInfo& struct_type_info = add_struct_type(struct_name);
-			TypeIndex struct_type_index = struct_type_info.type_index_;
+			TypeInfo& struct_type_info = add_struct_type(struct_name, gSymbolTable.get_current_namespace_handle());			TypeIndex struct_type_index = struct_type_info.type_index_;
 			// Create struct declaration node
 			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 			
@@ -677,7 +676,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the enum type early
-			TypeInfo& enum_type_info = add_enum_type(enum_name);
+			TypeInfo& enum_type_info = add_enum_type(enum_name, gSymbolTable.get_current_namespace_handle());
 			TypeIndex enum_type_index = enum_type_info.type_index_;
 			
 			// Create enum declaration node
@@ -1073,7 +1072,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// We need to manually parse the enum body since we already consumed the keyword and name
 
 		// Register the enum type early
-		TypeInfo& enum_type_info = add_enum_type(enum_name_for_typedef);
+		TypeInfo& enum_type_info = add_enum_type(enum_name_for_typedef, gSymbolTable.get_current_namespace_handle());
 		enum_type_index = enum_type_info.type_index_;
 
 		// Create enum declaration node
@@ -1230,7 +1229,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// We need to manually parse the struct body since we already consumed the keyword and name
 
 		// Register the struct type early
-		TypeInfo& struct_type_info = add_struct_type(struct_name_for_typedef);
+		TypeInfo& struct_type_info = add_struct_type(struct_name_for_typedef, gSymbolTable.get_current_namespace_handle());
 		struct_type_index = struct_type_info.type_index_;
 
 		// Create struct declaration node
@@ -1306,7 +1305,7 @@ ParseResult Parser::parse_typedef_declaration()
 						StringHandle anon_type_name_handle = StringTable::getOrInternStringHandle(anon_type_name);
 						
 						// Create the anonymous struct/union type
-						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle);
+						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 						
 						// Create StructTypeInfo
 						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public);

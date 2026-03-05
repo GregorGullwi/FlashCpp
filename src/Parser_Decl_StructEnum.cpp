@@ -108,7 +108,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		type_name = full_qualified_name;  // TypeInfo should also use fully qualified name
 	}
 
-	TypeInfo& struct_type_info = add_struct_type(type_name);
+	TypeInfo& struct_type_info = add_struct_type(type_name, current_namespace_handle);
 
 	// For nested classes, also register with the simple name so it can be referenced
 	// from within the nested class itself (e.g., in constructors)
@@ -196,8 +196,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	} else {
 		struct_info_name = struct_name;
 	}
-	auto struct_info = std::make_unique<StructTypeInfo>(struct_info_name, struct_ref.default_access());
-	struct_info->is_union = is_union;
+	auto struct_info = std::make_unique<StructTypeInfo>(struct_info_name, struct_ref.default_access(), is_union, current_namespace_handle);
 	
 	// Update the struct parsing context with the local_struct_info for static member lookup
 	if (!struct_parsing_context_stack_.empty()) {
@@ -784,7 +783,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						StringHandle anon_type_name_handle = StringTable::getOrInternStringHandle(anon_type_name);
 						
 						// Create the anonymous struct/union type
-						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle);
+						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 						
 						// Create StructTypeInfo
 						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public);
@@ -1948,7 +1947,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			auto [member_func_node, member_func_ref] =
 				emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_struct_name);
 
-			// Copy parameters from the parsed function
+			// Set namespace handle from the current struct context
+			if (!struct_parsing_context_stack_.empty()) {
+				member_func_ref.set_namespace_handle(struct_parsing_context_stack_.back().namespace_handle);
+			}
 			for (const auto& param : func_decl.parameter_nodes()) {
 				member_func_ref.add_parameter_node(param);
 			}
@@ -3414,7 +3416,8 @@ ParseResult Parser::parse_enum_declaration()
 	}
 
 	// Register the enum type in the global type system EARLY
-	TypeInfo& enum_type_info = add_enum_type(enum_name);
+	NamespaceHandle enum_namespace_handle = gSymbolTable.get_current_namespace_handle();
+	TypeInfo& enum_type_info = add_enum_type(enum_name, enum_namespace_handle);
 
 	// Create enum declaration node
 	auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
@@ -3702,7 +3705,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				StringHandle nested_anon_type_name_handle = StringTable::getOrInternStringHandle(nested_anon_type_name);
 				
 				// Create the nested anonymous struct/union type
-				TypeInfo& nested_anon_type_info = add_struct_type(nested_anon_type_name_handle);
+				TypeInfo& nested_anon_type_info = add_struct_type(nested_anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 				
 				// Create StructTypeInfo
 				auto nested_anon_struct_info_ptr = std::make_unique<StructTypeInfo>(nested_anon_type_name_handle, AccessSpecifier::Public);

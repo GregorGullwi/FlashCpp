@@ -4,6 +4,7 @@
 // Struct type information
 struct StructTypeInfo {
 	StringHandle name;
+	NamespaceHandle namespace_handle;  // Namespace this struct was declared in
 	std::vector<StructMember> members;
 	std::vector<StructStaticMember> static_members;  // Static members
 	std::vector<StructMemberFunction> member_functions;
@@ -62,11 +63,16 @@ struct StructTypeInfo {
 	// Avoids fragile gTypesByName lookups in isOwnTypeIndex().
 	std::optional<TypeIndex> own_type_index_;
 
-	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
-		: name(n), default_access(default_acc), is_union(union_type) {}
+	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false,
+	              NamespaceHandle ns = NamespaceHandle{0})
+		: name(n), namespace_handle(ns), default_access(default_acc), is_union(union_type) {}
 	
 	StringHandle getName() const {
 		return name;
+	}
+	
+	NamespaceHandle getNamespaceHandle() const {
+		return namespace_handle;
 	}
 
 	void addMember(StringHandle member_name, Type member_type, TypeIndex type_index,
@@ -700,7 +706,8 @@ struct TypeInfo
 	TypeInfo(StringHandle name, Type type, TypeIndex idx, int type_size) : name_(name), type_(type), type_index_(idx), type_size_(type_size) {
 	}
 
-	StringHandle name_;  // Pure StringHandle
+	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
+	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (preserves structured context)
 	Type type_;
 	TypeIndex type_index_;
 
@@ -756,6 +763,9 @@ struct TypeInfo
 		return name_;
 	};
 	
+	// Namespace this type was declared in
+	NamespaceHandle namespaceHandle() const { return namespace_handle_; }
+	void setNamespaceHandle(NamespaceHandle ns) { namespace_handle_ = ns; }
 	
 	// Helper methods for template instantiations
 	bool isTemplateInstantiation() const { return base_template_.valid(); }
@@ -812,13 +822,13 @@ extern std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTyp
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(StringHandle name, int size_in_bits);
+TypeInfo& add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{0});
 
-TypeInfo& add_function_type(StringHandle name, Type /*return_type*/);
+TypeInfo& add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{0});
 
-TypeInfo& add_struct_type(StringHandle name);
+TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{0});
 
-TypeInfo& add_enum_type(StringHandle name);
+TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{0});
 
 void initialize_native_types();
 
@@ -1087,7 +1097,7 @@ public:
 // reference_qualifier, and function_signature from the TypeSpecifierNode, then
 // registers it in gTypesByName.  Returns a reference for callers that need to
 // do additional work (e.g. namespace-qualified registration).
-TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec);
+TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns = NamespaceHandle{0});
 
 class DeclarationNode {
 public:
@@ -1375,6 +1385,10 @@ public:
 	DeclarationNode& decl_node() {
 		return decl_node_;
 	}
+
+	// Namespace this function was declared in
+	NamespaceHandle namespace_handle() const { return namespace_handle_; }
+	void set_namespace_handle(NamespaceHandle ns) { namespace_handle_ = ns; }
 	const std::vector<ASTNode>& parameter_nodes() const {
 		return parameter_nodes_;
 	}
@@ -1493,6 +1507,7 @@ private:
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
+	NamespaceHandle namespace_handle_;  // Namespace this function was declared in
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	bool has_template_body_ = false;

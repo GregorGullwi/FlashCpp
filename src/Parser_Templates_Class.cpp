@@ -1259,7 +1259,7 @@ ParseResult Parser::parse_template_declaration() {
 				);
 				
 				// Register the type so it can be referenced later
-				TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+				TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 				
 				// Store template instantiation metadata for O(1) lookup (Phase 6)
 				struct_type_info.setTemplateInstantiationInfo(
@@ -1296,7 +1296,7 @@ ParseResult Parser::parse_template_declaration() {
 			);
 
 			// Create struct type info first so we can reference it
-			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+			TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 			
 			// Store template instantiation metadata for O(1) lookup (Phase 6)
 			struct_type_info.setTemplateInstantiationInfo(
@@ -2615,7 +2615,7 @@ ParseResult Parser::parse_template_declaration() {
 			);
 			
 			// Create struct type info early so we can add base classes
-			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+			TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 			
 			// Mark as template instantiation with the base template name
 			// This allows constructor detection (e.g., template<typename U> allocator(const allocator<U>&))
