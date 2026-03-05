@@ -308,6 +308,93 @@
 			}
 		}
 
+		// Special handling for compound assignment to global/static local variables
+		// (e.g., static int n = 0; n += 21;)
+		if (compound_assignment_ops.count(op) > 0 &&
+		binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
+				std::string_view lhs_name = lhs_ident.name();
+
+				StringHandle lhs_handle = StringTable::getOrInternStringHandle(lhs_name);
+				auto static_local_it = static_local_names_.find(lhs_handle);
+				bool is_static_local = (static_local_it != static_local_names_.end());
+
+				const std::optional<ASTNode> local_symbol = symbol_table.lookup(lhs_name);
+				bool is_global = false;
+				if (!local_symbol.has_value() && global_symbol_table_) {
+					const std::optional<ASTNode> global_symbol = global_symbol_table_->lookup(lhs_name);
+					if (global_symbol.has_value() && global_symbol->is<VariableDeclarationNode>()) {
+						is_global = true;
+					}
+				}
+
+				if (is_global || is_static_local) {
+					// Load current value from global
+					StringHandle global_name = is_static_local ? static_local_it->second.mangled_name : lhs_handle;
+
+					// Determine the element type/size from the global variable
+					Type elem_type = Type::Int;
+					int elem_size = 32;
+					if (is_static_local) {
+						elem_type = static_local_it->second.type;
+						elem_size = static_local_it->second.size_in_bits;
+					} else if (global_symbol_table_) {
+						auto gs = global_symbol_table_->lookup(lhs_name);
+						if (gs.has_value() && gs->is<VariableDeclarationNode>()) {
+							const auto& var_decl = gs->as<VariableDeclarationNode>();
+							const auto& ts = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+							elem_type = ts.type();
+							elem_size = static_cast<int>(ts.size_in_bits());
+						}
+					}
+
+					TempVar loaded = var_counter.next();
+					GlobalLoadOp load_op;
+					load_op.result.type = elem_type;
+					load_op.result.size_in_bits = elem_size;
+					load_op.result.value = loaded;
+					load_op.global_name = global_name;
+					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
+
+					// Evaluate RHS
+					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+					// Map compound op to arithmetic opcode
+					static const std::unordered_map<std::string_view, IrOpcode> op_to_arith = {
+						{"+=", IrOpcode::Add}, {"-=", IrOpcode::Subtract},
+						{"*=", IrOpcode::Multiply}, {"/=", IrOpcode::Divide},
+						{"%=", IrOpcode::Modulo}, {"&=", IrOpcode::BitwiseAnd},
+						{"|=", IrOpcode::BitwiseOr}, {"^=", IrOpcode::BitwiseXor},
+						{"<<=", IrOpcode::ShiftLeft}, {">>=", IrOpcode::ShiftRight}
+					};
+					auto arith_it = op_to_arith.find(op);
+					if (arith_it == op_to_arith.end()) {
+						FLASH_LOG(Codegen, Error, "Unsupported compound assignment operator for global: ", op);
+						return {};
+					}
+
+					// Perform the operation
+					TempVar result_var = var_counter.next();
+					BinaryOp bin_op{
+						.lhs = {elem_type, elem_size, loaded},
+						.rhs = toTypedValue(rhsIrOperands),
+						.result = result_var,
+					};
+					ir_.addInstruction(IrInstruction(arith_it->second, std::move(bin_op), binaryOperatorNode.get_token()));
+
+					// Store result back to global
+					std::vector<IrOperand> store_operands;
+					store_operands.emplace_back(global_name);
+					store_operands.emplace_back(result_var);
+					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
+
+					return {elem_type, elem_size, result_var, 0ULL};
+				}
+			}
+		}
+
 		// Special handling for compound assignment to array subscript or member access
 		// Use LValueAddress context for the LHS, similar to regular assignment
 		// Helper lambda to check if operator is a compound assignment
