@@ -436,9 +436,9 @@ private:
         // Maps template parameter names to their substituted values (for non-type AND type parameters)
         struct TemplateParamSubstitution {
             StringHandle param_name;
-            bool is_value_param;  // true for non-type parameters
-            int64_t value;        // For non-type parameters
-            Type value_type;      // Type of the value
+            bool is_value_param = false;  // true for non-type parameters
+            int64_t value = 0;            // For non-type parameters
+            Type value_type = Type::Void; // Type of the value
             // For type parameters - the concrete type to substitute
             bool is_type_param = false;
             TemplateTypeArg substituted_type;  // The concrete type for type parameters

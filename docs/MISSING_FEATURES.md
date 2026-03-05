@@ -129,11 +129,12 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 
 ### Partially Implemented ⚠️
 
-**Variable Template Partial Specialization (95% complete)**
+**Variable Template Partial Specialization (97% complete)**
 - Structural pattern matching for multi-arg and dependent initializers/types: ✅ Works
 - Simple type, pointer, reference, rvalue-reference specializations: ✅ Works
 - Inner template argument deduction (e.g., `v<pair<T,U>>` deducing T and U): ✅ Works
-- *Known limitation*: Very deeply nested template patterns (e.g., `v<A<B<T,U>,C<V>>>`) are not yet supported
+- Deeply nested patterns with distinct templates (e.g., `v<A<B<T,U>,C<V>>>`): ✅ Works
+- *Known limitation*: Patterns where the same template appears in multiple nested positions with independent type params (e.g., `v<Pair<Pair<A,B>,Pair<C,D>>>`) may not deduce all inner params
 
 **Code Generation Edge Cases**
 - Complex template instantiations (90% complete)
@@ -339,7 +340,7 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 
 **Partially Implemented:**
 - Some complex template patterns may fail
-- Deeply nested variable template inner-type deduction (e.g., `v<A<B<T,U>,C<V>>>`)
+- Deeply nested variable template deduction where the same template appears in multiple positions (e.g., `v<Pair<Pair<A,B>,Pair<C,D>>>`)
 
 ---
 
