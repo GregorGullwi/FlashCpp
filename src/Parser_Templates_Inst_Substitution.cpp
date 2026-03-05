@@ -832,16 +832,29 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	
 	FLASH_LOG(Templates, Debug, "Instantiating full specialization: ", instantiated_name);
 	
+	// Resolve the namespace where the template was DECLARED, not where it's being instantiated.
+	NamespaceHandle decl_ns = gSymbolTable.get_current_namespace_handle();
+	{
+		if (template_name.find("::") != std::string_view::npos) {
+			decl_ns = QualifiedIdentifier::fromQualifiedName(template_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+		} else {
+			std::string_view decl_name = StringTable::getStringView(spec_struct.name());
+			if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
+				decl_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+			}
+		}
+	}
+
 	// Create TypeInfo for the specialization
-	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name), gSymbolTable.get_current_namespace_handle());
+	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name), decl_ns);
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	struct_type_info.setTemplateInstantiationInfo(
-		QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+		QualifiedIdentifier::fromQualifiedName(template_name, decl_ns),
 		convertToTemplateArgInfo(template_args)
 	);
 	
-	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access(), spec_struct.is_union(), gSymbolTable.get_current_namespace_handle());
+	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access(), spec_struct.is_union(), decl_ns);
 	
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {

@@ -700,12 +700,21 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		return existing_index;
 	}
 	
+	// Derive the declaration-site namespace from the qualified name.
+	NamespaceHandle decl_ns = gSymbolTable.get_current_namespace_handle();
+	{
+		std::string_view qname = StringTable::getStringView(lazy_info->qualified_name);
+		if (qname.find("::") != std::string_view::npos) {
+			decl_ns = QualifiedIdentifier::fromQualifiedName(qname, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+		}
+	}
+
 	// Create a new struct type for the nested class
-	TypeInfo& nested_type_info = add_struct_type(lazy_info->qualified_name, gSymbolTable.get_current_namespace_handle());
+	TypeInfo& nested_type_info = add_struct_type(lazy_info->qualified_name, decl_ns);
 	TypeIndex type_index = nested_type_info.type_index_;
 	
 	// Create StructTypeInfo for the nested type
-	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), gSymbolTable.get_current_namespace_handle());
+	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
 	
 	// Process members with template parameter substitution
 	for (const auto& member_decl : nested_struct.members()) {
