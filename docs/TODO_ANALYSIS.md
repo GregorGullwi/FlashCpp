@@ -50,13 +50,15 @@
 | `src/ConstExprEvaluator_Members.cpp` | 1473 | ✅ Fixed |
 | `src/ConstExprEvaluator_Core.cpp` | 1050 | ✅ Fixed |
 | `src/ConstExprEvaluator_Members.cpp` | 1144 | ✅ Fixed |
+| `src/ConstExprEvaluator_Members.cpp` | 1302 | ✅ Fixed |
 | `src/CodeGen_Stmt_Decl.cpp` | 203 | ✅ Fixed |
 
 - **FunctionOrVar.cpp:1005** ✅ Fixed — Replaced `is_struct_init_list` guard with a recursive `validate_single` lambda that iterates `InitializerListNode` elements individually. Now `constinit int arr[] = {1,2,3}` correctly validates each element, and `constinit Point p = {runtime_val, 2}` correctly fails when the element is non-constant. Tests: `test_constinit_aggregate_ret42.cpp`, `test_constinit_nonconstant_struct_fail.cpp`.
 - **Members.cpp:202** ✅ Fixed — `this->x = value` assignments in constexpr member functions now update `bindings[member_name]`. Test: `test_constexpr_this_member_ret42.cpp`.
 - **Members.cpp:1473** ✅ Fixed — `arr[0].member` in constexpr context now works via `evaluate_array_subscript_member_access()`. Test: `test_constexpr_array_subscript_member_ret42.cpp`.
 - **Core.cpp:1050** ✅ Fixed — Constexpr functor `operator()` calls now materialise member bindings and evaluate the operator body. Test: `test_constexpr_functor_call_ret42.cpp`.
-- **Members.cpp:1144** ✅ Fixed — `evaluate_member_access` now handles aggregate-initialized (brace-init) constexpr structs. Previously, `constexpr Point p = {10, 32}; constexpr int s = p.x + p.y;` failed with "Member access on non-struct constexpr variable not supported". Test: `test_constexpr_aggregate_member_access_ret42.cpp`.
+- **Members.cpp:1144** ✅ Fixed — `evaluate_member_access` now handles aggregate-initialized (brace-init) constexpr structs via direct member search. Previously, `constexpr Point p = {10, 32}; constexpr int s = p.x + p.y;` failed. Now scalar members are found directly without evaluating sibling struct-type elements. Test: `test_constexpr_aggregate_member_access_ret42.cpp`.
+- **Members.cpp:1302** ✅ Fixed — `evaluate_nested_member_access` now handles aggregate-initialized base structs. Previously, `constexpr Outer o = {{20}, 22}; constexpr int r = o.inner.val + o.extra;` failed. Now handles nested `InitializerListNode` members recursively. Test: `test_constexpr_nested_aggregate_member_ret42.cpp`.
 - **CodeGen_Stmt_Decl.cpp:203** ✅ Fixed — Global struct aggregate initialization with nested struct members (e.g., `Line l = {{1,2},{3,4}}`) now correctly fills bytes for nested members using a recursive `fillStructData` lambda. Test: `test_nested_struct_global_init_ret10.cpp`.
 
 ---

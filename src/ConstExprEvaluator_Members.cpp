@@ -1152,14 +1152,26 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		const StructTypeInfo* aggr_struct = gTypeInfo[aggr_idx].getStructInfo();
 		if (!aggr_struct)
 			return EvalResult::error("Aggregate-initialized constexpr variable is not a struct");
-		std::unordered_map<std::string_view, EvalResult> member_bindings;
-		auto bind_result = bind_members_from_initializer_list(
-			aggr_struct, initializer->as<InitializerListNode>(), member_bindings, context);
-		if (!bind_result.success()) return bind_result;
-		auto it = member_bindings.find(member_name);
-		if (it == member_bindings.end())
-			return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate initializer");
-		return it->second;
+		// Directly search for the requested member without evaluating struct-type elements.
+		// This avoids failures when sibling members are themselves struct-typed init lists.
+		const InitializerListNode& aggr_list = initializer->as<InitializerListNode>();
+		StringHandle req_handle = StringTable::getOrInternStringHandle(member_name);
+		size_t pos_idx = 0;
+		for (size_t mi = 0; mi < aggr_list.size(); ++mi) {
+			StringHandle mname = aggr_list.is_designated(mi)
+				? aggr_list.member_name(mi)
+				: (pos_idx < aggr_struct->members.size() ? aggr_struct->members[pos_idx].getName() : StringHandle{});
+			pos_idx++;
+			if (mname != req_handle) continue;
+			// Found the member – evaluate its element (must be scalar)
+			return evaluate(aggr_list.initializers()[mi], context);
+		}
+		// Check for default member initializer
+		for (const auto& m : aggr_struct->members) {
+			if (m.getName() == req_handle && m.default_initializer.has_value())
+				return evaluate(m.default_initializer.value(), context);
+		}
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate initializer");
 	}
 	
 	// Check if the initializer is a ConstructorCallNode (direct or wrapped in ExpressionNode)
@@ -1355,11 +1367,73 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	}
 	
 	const auto& initializer = var_decl.initializer();
-	if (!initializer.has_value() || !initializer->is<ConstructorCallNode>()) {
+	if (!initializer.has_value()) {
+		return EvalResult::error("Constexpr variable has no initializer in nested member access");
+	}
+	
+	// Handle aggregate initialization: constexpr Outer o = {{20}, 22};
+	if (initializer->is<InitializerListNode>()) {
+		const DeclarationNode& base_aggr_decl = var_decl.declaration();
+		if (!base_aggr_decl.type_node().is<TypeSpecifierNode>())
+			return EvalResult::error("Aggregate base variable has invalid type in nested member access");
+		const TypeSpecifierNode& base_aggr_type = base_aggr_decl.type_node().as<TypeSpecifierNode>();
+		const StructTypeInfo* base_aggr_struct = get_struct_info_from_type(base_aggr_type);
+		if (!base_aggr_struct)
+			return EvalResult::error("Aggregate base variable is not a struct in nested member access");
+		// Find the intermediate member by name
+		const InitializerListNode& outer_list = initializer->as<InitializerListNode>();
+		StringHandle inter_handle = StringTable::getOrInternStringHandle(intermediate_member);
+		const ASTNode* inter_init = nullptr;
+		size_t pos_idx = 0;
+		for (size_t ii = 0; ii < outer_list.size(); ++ii) {
+			StringHandle mname = outer_list.is_designated(ii)
+				? outer_list.member_name(ii)
+				: (pos_idx < base_aggr_struct->members.size() ? base_aggr_struct->members[pos_idx].getName() : StringHandle{});
+			pos_idx++;
+			if (mname == inter_handle) { inter_init = &outer_list.initializers()[ii]; break; }
+		}
+		if (!inter_init)
+			return EvalResult::error("Intermediate member '" + std::string(intermediate_member) + "' not found in aggregate init");
+		// Find the inner struct type for the intermediate member
+		const StructMember* inter_member_info = nullptr;
+		for (const auto& m : base_aggr_struct->members) {
+			if (m.getName() == inter_handle) { inter_member_info = &m; break; }
+		}
+		if (!inter_member_info || (inter_member_info->type != Type::Struct && inter_member_info->type != Type::UserDefined))
+			return EvalResult::error("Intermediate member is not a struct in aggregate nested access");
+		if (inter_member_info->type_index >= gTypeInfo.size())
+			return EvalResult::error("Invalid inner type index in aggregate nested access");
+		const StructTypeInfo* inner_aggr_struct = gTypeInfo[inter_member_info->type_index].getStructInfo();
+		if (!inner_aggr_struct)
+			return EvalResult::error("Inner member type is not a struct in aggregate nested access");
+		// inter_init is the initializer for the intermediate member
+		// It may be an InitializerListNode (nested aggregate) or a scalar expression
+		if (inter_init->is<InitializerListNode>()) {
+			// Nested aggregate: bind inner members and look up final_member_name
+			std::unordered_map<std::string_view, EvalResult> inner_bindings;
+			auto bind_r = bind_members_from_initializer_list(
+				inner_aggr_struct, inter_init->as<InitializerListNode>(), inner_bindings, context);
+			if (!bind_r.success()) return bind_r;
+			auto it = inner_bindings.find(final_member_name);
+			if (it == inner_bindings.end())
+				return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in nested aggregate init");
+			return it->second;
+		} else {
+			// Scalar inter_init: evaluate it and look up final member via scalar search
+			auto val = evaluate(*inter_init, context);
+			if (!val.success()) return val;
+			return val;
+		}
+	}
+	
+	// Constructor-initialized base
+	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
+	if (!ctor_call_ptr) {
 		return EvalResult::error("Nested member access requires a struct with constructor");
 	}
 	
-	const ConstructorCallNode& base_ctor = initializer->as<ConstructorCallNode>();
+	const ConstructorCallNode& base_ctor = *ctor_call_ptr;
+	
 	
 	// Get the base struct type info
 	const ASTNode& type_node = base_ctor.type_node();
