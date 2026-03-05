@@ -2007,7 +2007,14 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	EvaluationContext& context) {
 	// Bind members covered by the initializer list.
 	for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
-		std::string_view mname = StringTable::getStringView(struct_info->members[mi].getName());
+		std::string_view mname;
+		if (init_list.is_designated(mi)) {
+			// Designated initializer: use the member name from the designator
+			mname = StringTable::getStringView(init_list.member_name(mi));
+		} else {
+			// Positional initializer: use the struct member at this index
+			mname = StringTable::getStringView(struct_info->members[mi].getName());
+		}
 		auto val = evaluate(init_list.initializers()[mi], context);
 		if (!val.success()) return val;
 		bindings[mname] = val;
