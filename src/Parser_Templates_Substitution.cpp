@@ -1356,6 +1356,12 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 			return argsContain(std::get<ConstructorCallNode>(ev).arguments());
 		if (std::holds_alternative<StaticCastNode>(ev))
 			return exprContainsIdentifier(std::get<StaticCastNode>(ev).expr(), pack_name);
+		if (std::holds_alternative<DynamicCastNode>(ev))
+			return exprContainsIdentifier(std::get<DynamicCastNode>(ev).expr(), pack_name);
+		if (std::holds_alternative<ConstCastNode>(ev))
+			return exprContainsIdentifier(std::get<ConstCastNode>(ev).expr(), pack_name);
+		if (std::holds_alternative<ReinterpretCastNode>(ev))
+			return exprContainsIdentifier(std::get<ReinterpretCastNode>(ev).expr(), pack_name);
 	}
 
 	return false;
