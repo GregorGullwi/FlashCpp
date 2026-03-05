@@ -289,3 +289,28 @@ private:
 };
 
 extern NamespaceRegistry gNamespaceRegistry;
+
+// ============================================================================
+// Namespace Path Recovery Helper
+// ============================================================================
+// Recovers the namespace path from a NamespaceHandle by walking the parent chain.
+// Returns an empty vector if the handle is invalid or global.
+// Used by codegen and parser to recover declaration-site namespace when
+// current_namespace_stack_ is empty (e.g., template instantiated from another namespace).
+
+inline std::vector<std::string_view> buildNamespacePathFromHandle(NamespaceHandle ns) {
+	std::vector<std::string_view> result;
+	if (!ns.isValid() || ns.isGlobal()) {
+		return result;
+	}
+	std::vector<NamespaceHandle> ns_chain;
+	while (ns.isValid() && !ns.isGlobal()) {
+		ns_chain.push_back(ns);
+		ns = gNamespaceRegistry.getParent(ns);
+	}
+	result.reserve(ns_chain.size());
+	for (auto it = ns_chain.rbegin(); it != ns_chain.rend(); ++it) {
+		result.push_back(gNamespaceRegistry.getName(*it));
+	}
+	return result;
+}

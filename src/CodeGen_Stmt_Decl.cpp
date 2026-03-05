@@ -4,6 +4,31 @@
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+		auto prepare_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode*& ctor) {
+			std::string_view ctor_struct_name = StringTable::getStringView(type_info_ref.name());
+			bool is_nested_template_ctor = (ctor_struct_name.find("::") != std::string_view::npos) &&
+				(type_info_ref.isTemplateInstantiation() || ctor_struct_name.find('$') != std::string_view::npos);
+			if (!is_nested_template_ctor || !ctor) {
+				return;
+			}
+			if (!ctor->get_definition().has_value() && parser_) {
+				StringHandle ctor_name = ctor->name();
+				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(type_info_ref.name(), ctor_name)) {
+					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(type_info_ref.name(), ctor_name);
+					if (lazy_info_opt.has_value()) {
+						auto instantiated_ctor = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+						if (instantiated_ctor.has_value() && instantiated_ctor->is<ConstructorDeclarationNode>()) {
+							ctor = &instantiated_ctor->as<ConstructorDeclarationNode>();
+							LazyMemberInstantiationRegistry::getInstance().markInstantiated(type_info_ref.name(), ctor_name);
+						}
+					}
+				}
+			}
+			DeferredMemberFunctionInfo deferred_info;
+			deferred_info.struct_name = type_info_ref.name();
+			deferred_info.function_node = ASTNode(ctor);
+			deferred_member_functions_.push_back(std::move(deferred_info));
+		};
 
 		// Check if this is a global variable (declared at global scope)
 		bool is_global = (symbol_table.get_current_scope_type() == ScopeType::Global);
@@ -787,6 +812,8 @@
 							}
 
 							if (has_matching_constructor) {
+								prepare_nested_template_ctor(type_info, matching_ctor);
+
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = type_info.name();
@@ -1549,6 +1576,8 @@
 							}
 
 							if (!used_aggregate_paren_init) {
+								prepare_nested_template_ctor(type_info, matching_ctor);
+
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();

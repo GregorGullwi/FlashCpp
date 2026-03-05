@@ -294,6 +294,8 @@ fi
 if [ ${#LINK_FAIL[@]} -gt 0 ]; then
     echo -e "\n${YELLOW}Link failures (${#LINK_FAIL[@]}) - likely need C++ features:${NC}"
     echo "  (vtables, constructors, exceptions, etc.)"
+    printf '  %s\n' "${LINK_FAIL[@]}" | head -20
+    [ ${#LINK_FAIL[@]} -gt 20 ] && echo "  ... and $((${#LINK_FAIL[@]} - 20)) more"
 fi
 
 if [ ${#RUNTIME_CRASH[@]} -gt 0 ]; then

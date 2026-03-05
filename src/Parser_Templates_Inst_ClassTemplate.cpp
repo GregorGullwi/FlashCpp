@@ -1,3 +1,89 @@
+// Shared helper: register every member function of a nested struct for lazy instantiation.
+// Used by two paths that both create nested-class TypeInfos:
+//   1. try_instantiate_class_template (primary template path)
+//   2. instantiateLazyNestedType      (lazy nested type path, in Parser_Templates_Lazy.cpp)
+// Placing this helper here ensures it is textually visible to both files in the unity build
+// since Parser_Templates_Inst_ClassTemplate.cpp is #included before Parser_Templates_Lazy.cpp.
+template<typename TParams, typename TArgs>
+static void registerNestedMemberFunctionsForLazy(
+	const StructDeclarationNode& nested_struct,
+	StructTypeInfo& nested_struct_info,
+	StringHandle class_template_name,   // parent instantiated class (for self-type resolution in instantiateLazyMemberFunction)
+	StringHandle qualified_name,         // qualified nested class name  (e.g., "Container$hash::Inner")
+	const TParams& template_params,
+	const TArgs& template_args)
+{
+	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
+		if (mem_func.is_constructor || mem_func.is_destructor) {
+			if (mem_func.is_constructor)
+				nested_struct_info.addConstructor(mem_func.function_declaration, mem_func.access);
+			else
+				nested_struct_info.addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
+
+			// Also register constructors/destructors for lazy instantiation so nested types
+			// can materialize callable definitions on first use.
+			LazyMemberFunctionInfo lazy_mem_info;
+			lazy_mem_info.class_template_name = class_template_name;
+			lazy_mem_info.instantiated_class_name = qualified_name;
+			if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
+				lazy_mem_info.member_function_name = mem_func.function_declaration.as<ConstructorDeclarationNode>().name();
+				lazy_mem_info.is_constructor = true;
+				lazy_mem_info.is_destructor = false;
+			} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
+				lazy_mem_info.member_function_name = mem_func.function_declaration.as<DestructorDeclarationNode>().name();
+				lazy_mem_info.is_constructor = false;
+				lazy_mem_info.is_destructor = true;
+			}
+			lazy_mem_info.original_function_node = mem_func.function_declaration;
+			lazy_mem_info.template_params = template_params;
+			lazy_mem_info.template_args = template_args;
+			lazy_mem_info.access = mem_func.access;
+			lazy_mem_info.is_virtual = mem_func.is_virtual;
+			lazy_mem_info.is_pure_virtual = mem_func.is_pure_virtual;
+			lazy_mem_info.is_override = mem_func.is_override;
+			lazy_mem_info.is_final = mem_func.is_final;
+			lazy_mem_info.is_const_method = mem_func.is_const();
+			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
+		} else if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			const DeclarationNode& decl = func_decl.decl_node();
+
+			LazyMemberFunctionInfo lazy_mem_info;
+			lazy_mem_info.class_template_name    = class_template_name;
+			lazy_mem_info.instantiated_class_name = qualified_name;
+			lazy_mem_info.member_function_name   = decl.identifier_token().handle();
+			lazy_mem_info.original_function_node = mem_func.function_declaration;
+			lazy_mem_info.template_params        = template_params;
+			lazy_mem_info.template_args          = template_args;
+			lazy_mem_info.access                 = mem_func.access;
+			lazy_mem_info.is_virtual             = mem_func.is_virtual;
+			lazy_mem_info.is_pure_virtual        = mem_func.is_pure_virtual;
+			lazy_mem_info.is_override            = mem_func.is_override;
+			lazy_mem_info.is_final               = mem_func.is_final;
+			lazy_mem_info.is_const_method        = mem_func.is_const();
+			lazy_mem_info.is_constructor         = false;
+			lazy_mem_info.is_destructor          = false;
+
+			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
+
+			nested_struct_info.addMemberFunction(
+				decl.identifier_token().handle(),
+				mem_func.function_declaration,
+				mem_func.access,
+				mem_func.is_virtual,
+				mem_func.is_pure_virtual,
+				mem_func.is_override,
+				mem_func.is_final
+			);
+			if (!nested_struct_info.member_functions.empty())
+				nested_struct_info.member_functions.back().cv_qualifier = mem_func.cv_qualifier;
+
+			FLASH_LOG(Templates, Debug, "Registered lazy member function for nested type: ",
+			          qualified_name, "::", decl.identifier_token().value());
+		}
+	}
+}
+
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
@@ -4131,7 +4217,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
 			
 			// Create a new StructTypeInfo for the nested class
-			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access(), nested_struct.is_union(), gSymbolTable.get_current_namespace_handle());
+			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access(), nested_struct.is_union(), decl_ns);
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
@@ -4261,6 +4347,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				return std::nullopt;
 			}
 			
+			// Register member functions of the nested struct for lazy instantiation.
+			// These are the methods inside Inner (e.g., Inner::get()) — they are not
+			// top-level member functions of the parent template and would otherwise
+			// never be registered, causing link errors when called.
+			registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
+				instantiated_name, qualified_name, template_params, template_args_to_use);
+
 			// Register the nested class in the type system
 			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size(), 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
@@ -4322,7 +4415,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringTable::getStringView(instantiated_name),
 			nullptr,  // struct_node — not needed; parse_struct_declaration() creates its own
 			struct_info.get(),
-			gSymbolTable.get_current_namespace_handle(),
+			decl_ns,
 			{}
 		});
 		

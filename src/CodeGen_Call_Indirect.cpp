@@ -1062,13 +1062,24 @@
 						}
 					}
 					
+					// Build namespace path from the struct's declaration-site namespace
+					// so member function calls get the correct mangled name.
+					std::vector<std::string> namespace_for_mangling;
+					auto struct_name_view = StringTable::getStringView(struct_name);
+					if (struct_name_view.find("::") == std::string_view::npos) {
+						auto ns_views = buildNamespacePathFromHandle(struct_info->getNamespaceHandle());
+						namespace_for_mangling.reserve(ns_views.size());
+						for (auto sv : ns_views) namespace_for_mangling.emplace_back(sv);
+					}
+
 					// Generate proper mangled name including parameter types
 					std::string_view mangled = generateMangledNameForCall(
 						func_name,
 						return_type_node,
 						param_types,
 						func_for_mangling->is_variadic(),
-						StringTable::getStringView(struct_name)
+						struct_name_view,
+						namespace_for_mangling
 					);
 					function_name = StringTable::getOrInternStringHandle(mangled);
 				}
