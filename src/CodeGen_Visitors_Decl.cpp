@@ -211,6 +211,7 @@
 		// This avoids double-encoding the namespace in the mangled name
 		std::vector<std::string> namespace_for_mangling;
 		if (struct_name_for_function.find("::") == std::string_view::npos) {
+			bool struct_found = false;
 			if (node.is_member_function() && !struct_name_for_function.empty()) {
 				// Always derive namespace from the struct's declaration-site NamespaceHandle
 				// rather than current_namespace_stack_, which may be the instantiation-site
@@ -218,13 +219,16 @@
 				auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
 				auto type_it = gTypesByName.find(struct_name_handle);
 				if (type_it != gTypesByName.end()) {
+					struct_found = true;
 					auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
 					namespace_for_mangling.reserve(ns_views.size());
 					for (auto sv : ns_views) namespace_for_mangling.emplace_back(sv);
 				}
 			}
-			if (namespace_for_mangling.empty()) {
+			if (!struct_found && namespace_for_mangling.empty()) {
 				// Non-member functions, or struct not found: fall back to current stack.
+				// Do NOT fall back when the struct was found at global scope — an empty
+				// namespace_for_mangling is correct and must match the call-site mangling.
 				namespace_for_mangling = current_namespace_stack_;
 			}
 		}
