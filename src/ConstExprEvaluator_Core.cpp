@@ -1310,7 +1310,7 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 
 		if (context.current_depth >= context.max_recursion_depth)
-			return EvalResult::error("Constexpr recursion depth limit exceeded in brace-initialized callable object");
+			return EvalResult::error("Constexpr recursion depth limit exceeded");
 		context.current_depth++;
 		const ASTNode& body_node = definition.value();
 		if (!body_node.is<BlockNode>()) {
@@ -1321,7 +1321,7 @@ EvalResult Evaluator::evaluate_callable_object(
 		const auto& stmts = body.get_statements();
 		if (stmts.size() != 1) {
 			context.current_depth--;
-			return EvalResult::error("Constexpr operator() in brace-initialized callable must have a single return statement");
+			return EvalResult::error("Constexpr operator() in brace-initialized callable must have a single statement (complex bodies not yet supported)");
 		}
 		auto result = evaluate_statement_with_bindings(stmts[0], evaluation_bindings, context);
 		context.current_depth--;
