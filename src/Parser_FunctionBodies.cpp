@@ -515,10 +515,7 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 			auto struct_name_handle = StringTable::getOrInternStringHandle(parent_name);
 			auto type_it = gTypesByName.find(struct_name_handle);
 			if (type_it != gTypesByName.end()) {
-				auto recovered = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
-				for (auto& s : recovered) {
-					ns_path.push_back(s);
-				}
+				ns_path = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
 			}
 		}
 	}

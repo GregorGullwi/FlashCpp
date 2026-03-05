@@ -288,7 +288,9 @@
 							auto name_handle = StringTable::getOrInternStringHandle(struct_name);
 							auto type_it = gTypesByName.find(name_handle);
 							if (type_it != gTypesByName.end()) {
-								ns_path = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+								auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+								ns_path.reserve(ns_views.size());
+								for (auto sv : ns_views) ns_path.emplace_back(sv);
 							}
 						}
 						function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);

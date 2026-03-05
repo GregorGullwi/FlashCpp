@@ -298,8 +298,8 @@ extern NamespaceRegistry gNamespaceRegistry;
 // Used by codegen and parser to recover declaration-site namespace when
 // current_namespace_stack_ is empty (e.g., template instantiated from another namespace).
 
-inline std::vector<std::string> buildNamespacePathFromHandle(NamespaceHandle ns) {
-	std::vector<std::string> result;
+inline std::vector<std::string_view> buildNamespacePathFromHandle(NamespaceHandle ns) {
+	std::vector<std::string_view> result;
 	if (!ns.isValid() || ns.isGlobal()) {
 		return result;
 	}
@@ -310,7 +310,7 @@ inline std::vector<std::string> buildNamespacePathFromHandle(NamespaceHandle ns)
 	}
 	result.reserve(ns_chain.size());
 	for (auto it = ns_chain.rbegin(); it != ns_chain.rend(); ++it) {
-		result.emplace_back(gNamespaceRegistry.getName(*it));
+		result.push_back(gNamespaceRegistry.getName(*it));
 	}
 	return result;
 }

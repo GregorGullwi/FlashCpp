@@ -1067,7 +1067,9 @@
 					std::vector<std::string> namespace_for_mangling;
 					auto struct_name_view = StringTable::getStringView(struct_name);
 					if (struct_name_view.find("::") == std::string_view::npos) {
-						namespace_for_mangling = buildNamespacePathFromHandle(struct_info->getNamespaceHandle());
+						auto ns_views = buildNamespacePathFromHandle(struct_info->getNamespaceHandle());
+						namespace_for_mangling.reserve(ns_views.size());
+						for (auto sv : ns_views) namespace_for_mangling.emplace_back(sv);
 					}
 
 					// Generate proper mangled name including parameter types

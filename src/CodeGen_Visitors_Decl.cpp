@@ -220,7 +220,9 @@
 				auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
 				auto type_it = gTypesByName.find(struct_name_handle);
 				if (type_it != gTypesByName.end()) {
-					namespace_for_mangling = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+					auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+					namespace_for_mangling.reserve(ns_views.size());
+					for (auto sv : ns_views) namespace_for_mangling.emplace_back(sv);
 				}
 			}
 		}
