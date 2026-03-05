@@ -283,8 +283,10 @@
 					} else {
 						// Build namespace path from the struct's NamespaceHandle
 						// so calls to member functions include the correct namespace.
+						// Always recover from NamespaceHandle (not current_namespace_stack_)
+						// to handle template instantiations from a different namespace context.
 						std::vector<std::string> ns_path;
-						if (struct_name.find("::") == std::string_view::npos && current_namespace_stack_.empty()) {
+						if (struct_name.find("::") == std::string_view::npos) {
 							auto name_handle = StringTable::getOrInternStringHandle(struct_name);
 							auto type_it = gTypesByName.find(name_handle);
 							if (type_it != gTypesByName.end()) {

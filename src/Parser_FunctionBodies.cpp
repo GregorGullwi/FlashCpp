@@ -504,19 +504,24 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 	}
 	
 	if (should_get_namespace) {
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
-		ns_path = splitQualifiedNamespace(qualified_namespace);
-		// If namespace is empty but the function is a member of a struct with a namespace,
-		// recover the declaration-site namespace from the struct's NamespaceHandle.
-		// This handles template instantiations triggered from a different namespace.
-		if (ns_path.empty() && func_node.is_member_function()) {
+		if (func_node.is_member_function()) {
+			// For member functions, always derive namespace from the struct's
+			// declaration-site NamespaceHandle rather than the current symbol table
+			// state. This ensures correctness when instantiating from a different
+			// namespace (e.g., instantiating calc::Holder<int> from main()).
 			std::string_view parent_name = func_node.parent_struct_name();
 			auto struct_name_handle = StringTable::getOrInternStringHandle(parent_name);
 			auto type_it = gTypesByName.find(struct_name_handle);
 			if (type_it != gTypesByName.end()) {
 				ns_path = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
 			}
+		}
+		if (ns_path.empty()) {
+			// Free functions, or member functions whose struct wasn't found: fall back
+			// to the current symbol table namespace.
+			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+			std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
+			ns_path = splitQualifiedNamespace(qualified_namespace);
 		}
 	}
 	

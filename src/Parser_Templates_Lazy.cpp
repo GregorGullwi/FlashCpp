@@ -777,57 +777,12 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	// Finalize layout
 	nested_struct_info->finalize();
 	
-	// Process member functions: register for lazy instantiation and add signatures to StructTypeInfo
-	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
-		if (mem_func.is_constructor || mem_func.is_destructor) {
-			// Constructors and destructors — add directly to struct info
-			if (mem_func.is_constructor) {
-				nested_struct_info->addConstructor(mem_func.function_declaration, mem_func.access);
-			} else {
-				nested_struct_info->addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
-			}
-		} else if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
-			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
-			const DeclarationNode& decl = func_decl.decl_node();
-			
-			// Register for lazy instantiation so the body gets generated on demand
-			LazyMemberFunctionInfo lazy_mem_info;
-			lazy_mem_info.class_template_name = lazy_info->parent_class_name;
-			lazy_mem_info.instantiated_class_name = lazy_info->qualified_name;
-			lazy_mem_info.member_function_name = decl.identifier_token().handle();
-			lazy_mem_info.original_function_node = mem_func.function_declaration;
-			lazy_mem_info.template_params = lazy_info->parent_template_params;
-			lazy_mem_info.template_args = lazy_info->parent_template_args;
-			lazy_mem_info.access = mem_func.access;
-			lazy_mem_info.is_virtual = mem_func.is_virtual;
-			lazy_mem_info.is_pure_virtual = mem_func.is_pure_virtual;
-			lazy_mem_info.is_override = mem_func.is_override;
-			lazy_mem_info.is_final = mem_func.is_final;
-			lazy_mem_info.is_const_method = mem_func.is_const();
-			lazy_mem_info.is_constructor = false;
-			lazy_mem_info.is_destructor = false;
-			
-			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
-			
-			// Add a signature-only entry to StructTypeInfo for name lookup
-			StringHandle func_name_handle = decl.identifier_token().handle();
-			nested_struct_info->addMemberFunction(
-				func_name_handle,
-				mem_func.function_declaration,
-				mem_func.access,
-				mem_func.is_virtual,
-				mem_func.is_pure_virtual,
-				mem_func.is_override,
-				mem_func.is_final
-			);
-			if (!nested_struct_info->member_functions.empty()) {
-				nested_struct_info->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
-			}
-			
-			FLASH_LOG(Templates, Debug, "Registered lazy member function for nested type: ",
-			          qualified_name, "::", decl.identifier_token().value());
-		}
-	}
+	// Process member functions: register for lazy instantiation and add signatures to StructTypeInfo.
+	// Uses the shared helper defined in Parser_Templates_Inst_ClassTemplate.cpp (included first
+	// in the unity build, so it is visible here).
+	registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
+		lazy_info->parent_class_name, lazy_info->qualified_name,
+		lazy_info->parent_template_params, lazy_info->parent_template_args);
 	
 	// Set the struct info on the type
 	nested_type_info.struct_info_ = std::move(nested_struct_info);
