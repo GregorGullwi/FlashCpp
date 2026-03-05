@@ -709,7 +709,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		auto parent_it = gTypesByName.find(lazy_info->parent_class_name);
 		if (parent_it != gTypesByName.end()) {
 			NamespaceHandle parent_ns = parent_it->second->namespaceHandle();
-			if (parent_ns.isValid() && !parent_ns.isGlobal()) {
+			if (parent_ns.isValid()) {
 				decl_ns = parent_ns;
 			}
 		}
