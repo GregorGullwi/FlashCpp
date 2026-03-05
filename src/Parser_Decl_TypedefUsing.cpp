@@ -976,6 +976,7 @@ ParseResult Parser::parse_typedef_declaration()
 	// Check if this is an inline struct/class definition: typedef struct { ... } alias;
 	// or typedef struct Name { ... } alias;
 	bool is_inline_struct = false;
+	bool is_inline_union = false;  // true when keyword was 'union' (affects member layout)
 	StringHandle struct_name_for_typedef;
 	TypeIndex struct_type_index = 0;
 
@@ -1033,6 +1034,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// Pattern 2: typedef struct Name { ... } alias;
 		// Pattern 3: typedef union { ... } alias;
 		// Pattern 4: typedef union Name { ... } alias;
+		is_inline_union = (peek() == "union"_tok);
 		SaveHandle next_pos = save_token_position();
 		advance(); // consume 'struct', 'class', or 'union'
 
@@ -1246,7 +1248,7 @@ ParseResult Parser::parse_typedef_declaration()
 		});
 
 		// Create StructTypeInfo
-		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public, false, gSymbolTable.get_current_namespace_handle());
+		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public, is_inline_union, gSymbolTable.get_current_namespace_handle());
 		
 		// Update the struct parsing context with the local_struct_info for static member lookup
 		if (!struct_parsing_context_stack_.empty()) {
