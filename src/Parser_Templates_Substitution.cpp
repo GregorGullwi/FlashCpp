@@ -1321,8 +1321,8 @@ new_call.set_qualified_name(old_call.qualified_name());
 }
 
 // Return true if the expression tree contains an IdentifierNode whose name equals pack_name.
-// Recursively walks ExpressionNode, FunctionCallNode, BinaryOperatorNode, UnaryOperatorNode, and
-// ConstructorCallNode children so that complex patterns like `f(g(args))` are handled correctly.
+// Uses std::visit for exhaustive coverage of the ExpressionNode variant, including
+// TernaryOperatorNode, MemberAccessNode, ArraySubscriptNode, and all cast types.
 bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 	if (!expr.has_value() || pack_name.empty()) return false;
 
@@ -1340,28 +1340,35 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 		return argsContain(expr.as<FunctionCallNode>().arguments());
 
 	if (expr.is<ExpressionNode>()) {
-		const ExpressionNode& ev = expr.as<ExpressionNode>();
-		if (std::holds_alternative<IdentifierNode>(ev))
-			return std::get<IdentifierNode>(ev).name() == pack_name;
-		if (std::holds_alternative<FunctionCallNode>(ev))
-			return argsContain(std::get<FunctionCallNode>(ev).arguments());
-		if (std::holds_alternative<BinaryOperatorNode>(ev)) {
-			const auto& b = std::get<BinaryOperatorNode>(ev);
-			return exprContainsIdentifier(b.get_lhs(), pack_name) ||
-			       exprContainsIdentifier(b.get_rhs(), pack_name);
-		}
-		if (std::holds_alternative<UnaryOperatorNode>(ev))
-			return exprContainsIdentifier(std::get<UnaryOperatorNode>(ev).get_operand(), pack_name);
-		if (std::holds_alternative<ConstructorCallNode>(ev))
-			return argsContain(std::get<ConstructorCallNode>(ev).arguments());
-		if (std::holds_alternative<StaticCastNode>(ev))
-			return exprContainsIdentifier(std::get<StaticCastNode>(ev).expr(), pack_name);
-		if (std::holds_alternative<DynamicCastNode>(ev))
-			return exprContainsIdentifier(std::get<DynamicCastNode>(ev).expr(), pack_name);
-		if (std::holds_alternative<ConstCastNode>(ev))
-			return exprContainsIdentifier(std::get<ConstCastNode>(ev).expr(), pack_name);
-		if (std::holds_alternative<ReinterpretCastNode>(ev))
-			return exprContainsIdentifier(std::get<ReinterpretCastNode>(ev).expr(), pack_name);
+		return std::visit([&](const auto& node) -> bool {
+			using T = std::decay_t<decltype(node)>;
+			if constexpr (std::is_same_v<T, IdentifierNode>) {
+				return node.name() == pack_name;
+			} else if constexpr (std::is_same_v<T, FunctionCallNode> || std::is_same_v<T, ConstructorCallNode>) {
+				return argsContain(node.arguments());
+			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+				return exprContainsIdentifier(node.get_lhs(), pack_name) ||
+				       exprContainsIdentifier(node.get_rhs(), pack_name);
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				return exprContainsIdentifier(node.get_operand(), pack_name);
+			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+			                     std::is_same_v<T, DynamicCastNode> ||
+			                     std::is_same_v<T, ConstCastNode> ||
+			                     std::is_same_v<T, ReinterpretCastNode>) {
+				return exprContainsIdentifier(node.expr(), pack_name);
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				return exprContainsIdentifier(node.condition(), pack_name) ||
+				       exprContainsIdentifier(node.true_expr(), pack_name) ||
+				       exprContainsIdentifier(node.false_expr(), pack_name);
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				return exprContainsIdentifier(node.object(), pack_name);
+			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+				return exprContainsIdentifier(node.array_expr(), pack_name) ||
+				       exprContainsIdentifier(node.index_expr(), pack_name);
+			} else {
+				return false;
+			}
+		}, expr.as<ExpressionNode>());
 	}
 
 	return false;
