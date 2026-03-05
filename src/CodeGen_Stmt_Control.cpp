@@ -577,6 +577,23 @@
 
 		// Get array size
 		auto array_size_node = array_decl.array_size();
+		if (!array_size_node.has_value() && array_decl.is_unsized_array()) {
+			// For unsized arrays (int arr[] = {...}), infer size from the initializer
+			auto symbol = symbol_table.lookup(array_name);
+			if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
+				const auto& var_decl = symbol->as<VariableDeclarationNode>();
+				if (var_decl.initializer().has_value() && var_decl.initializer()->is<InitializerListNode>()) {
+					size_t inferred_size = var_decl.initializer()->as<InitializerListNode>().initializers().size();
+					StringBuilder sb;
+					sb.append(inferred_size);
+					StringHandle size_str = StringTable::createStringHandle(sb);
+					Token size_token(Token::Type::Literal, StringTable::getStringView(size_str), 0, 0, 0);
+					array_size_node = ASTNode::emplace_node<ExpressionNode>(
+						NumericLiteralNode(size_token, static_cast<unsigned long long>(inferred_size), Type::Int, TypeQualifier::None, 32)
+					);
+				}
+			}
+		}
 		if (!array_size_node.has_value()) {
 			FLASH_LOG(Codegen, Error, "Array must have a known size for range-based for loop");
 			return;
