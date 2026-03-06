@@ -149,6 +149,10 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 	for (size_t i = arg_idx; i < param_nodes.size(); ++i) {
 		if (!param_nodes[i].is<DeclarationNode>()) continue;
 		const auto& param_decl = param_nodes[i].as<DeclarationNode>();
+		if (param_decl.is_parameter_pack()) {
+			// A trailing function parameter pack may legally be omitted.
+			break;
+		}
 		if (!param_decl.has_default_value()) {
 			// Reaching a non-default parameter here means overload resolution
 			// accepted a call with too few arguments — that's a compiler bug.
@@ -184,6 +188,43 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 			}
 		} else {
 			throw InternalError("Unhandled default argument AST node type for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
+		}
+	}
+}
+
+void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx) {
+	for (size_t i = arg_idx; i < cached_params.size(); ++i) {
+		const auto& param = cached_params[i];
+		if (param.is_parameter_pack) {
+			break;
+		}
+		if (!param.has_default_value) {
+			throw InternalError("Missing default argument for parameter '" +
+				std::string(StringTable::getStringView(param.name)) +
+				"' (overload resolution should have rejected this call)");
+		}
+
+		const ASTNode& default_expr = param.default_value;
+		if (!param.type_node.is<TypeSpecifierNode>()) {
+			throw InternalError("Cached parameter type missing for default argument evaluation");
+		}
+		const auto& param_type_spec = param.type_node.as<TypeSpecifierNode>();
+
+		if (default_expr.is<ExpressionNode>()) {
+			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
+			TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
+			if (param_type_spec.is_reference() && tv.type == Type::Struct) {
+				tv.ref_qualifier = ReferenceQualifier::LValueReference;
+			}
+			call_op.args.push_back(std::move(tv));
+		} else if (default_expr.is<InitializerListNode>()) {
+			auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type_spec);
+			if (result.has_value()) {
+				if (param_type_spec.is_reference()) {
+					result->ref_qualifier = ReferenceQualifier::LValueReference;
+				}
+				call_op.args.push_back(std::move(*result));
+			}
 		}
 	}
 }

@@ -337,7 +337,9 @@
 				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
 				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}", 
 					(void*)overload_decl, (void*)&decl_node);
-				if (overload_decl == &decl_node) {
+				if (overload_decl == &decl_node ||
+					(has_precomputed_mangled && overload_func_decl->has_mangled_name() &&
+					 overload_func_decl->mangled_name() == functionCallNode.mangled_name())) {
 					// Found the matching overload
 					matched_func_decl = overload_func_decl;
 					resolveMangledName(matched_func_decl);
@@ -346,10 +348,27 @@
 				}
 			}
 		}
+
+		// For instantiated template calls, the concrete specialization is registered under its
+		// mangled name in the symbol table. Prefer that over falling back to the template pattern.
+		if (!matched_func_decl && has_precomputed_mangled) {
+			auto mangled_symbol = lookupSymbol(functionCallNode.mangled_name());
+			if (mangled_symbol.has_value()) {
+				if (mangled_symbol->is<FunctionDeclarationNode>()) {
+					matched_func_decl = &mangled_symbol->as<FunctionDeclarationNode>();
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched function by mangled symbol lookup: {}", function_name);
+				} else if (mangled_symbol->is<TemplateFunctionDeclarationNode>()) {
+					matched_func_decl = &mangled_symbol->as<TemplateFunctionDeclarationNode>().function_decl_node();
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched template function by mangled symbol lookup: {}", function_name);
+				}
+			}
+		}
 	
 		// Fallback: if pointer comparison failed (e.g., for template instantiations),
 		// try to find the function by checking if there's only one overload with this name
-		if (!matched_func_decl && scoped_overloads.size() == 1 &&
+		if (!matched_func_decl && !has_precomputed_mangled && scoped_overloads.size() == 1 &&
 		(scoped_overloads[0].is<FunctionDeclarationNode>() || scoped_overloads[0].is<TemplateFunctionDeclarationNode>())) {
 			matched_func_decl = scoped_overloads[0].is<FunctionDeclarationNode>()
 				? &scoped_overloads[0].as<FunctionDeclarationNode>()
@@ -359,7 +378,7 @@
 		}
 
 		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
-		if (!matched_func_decl && gSymbolTable_overloads.size() == 1 &&
+		if (!matched_func_decl && !has_precomputed_mangled && gSymbolTable_overloads.size() == 1 &&
 		(gSymbolTable_overloads[0].is<FunctionDeclarationNode>() || gSymbolTable_overloads[0].is<TemplateFunctionDeclarationNode>())) {
 			matched_func_decl = gSymbolTable_overloads[0].is<FunctionDeclarationNode>()
 				? &gSymbolTable_overloads[0].as<FunctionDeclarationNode>()
@@ -646,7 +665,7 @@
 		std::vector<ASTNode> param_nodes;
 		if (matched_func_decl) {
 			param_nodes = matched_func_decl->parameter_nodes();
-		} else {
+		} else if (!has_precomputed_mangled) {
 			// Try to get from the function declaration stored in FunctionCallNode
 			// Look up the function in symbol table to get full declaration with parameters
 			auto local_func_symbol = lookupSymbol(func_decl_node.identifier_token().value());
@@ -1203,6 +1222,8 @@
 		// Fill in default arguments for parameters that weren't explicitly provided
 		if (matched_func_decl) {
 			fillInDefaultArguments(call_op, param_nodes, arg_idx);
+			} else if (cached_param_list) {
+				fillInCachedDefaultArguments(call_op, *cached_param_list, arg_idx);
 		}
 
 		// Add the function call instruction with typed payload

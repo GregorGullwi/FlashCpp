@@ -331,9 +331,15 @@
 			var_counter.next();
 
 			CachedParamInfo cache_entry;
+				cache_entry.name = param_info.name;
 			cache_entry.is_reference = param_type.is_reference();
 			cache_entry.is_rvalue_reference = param_type.is_rvalue_reference();
 			cache_entry.is_parameter_pack = param_decl.is_parameter_pack();
+				cache_entry.type_node = param_decl.type_node();
+				if (param_decl.has_default_value()) {
+					cache_entry.has_default_value = true;
+					cache_entry.default_value = param_decl.default_value();
+				}
 			cached_params.push_back(cache_entry);
 		}
 
