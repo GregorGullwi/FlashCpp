@@ -2906,9 +2906,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						
 						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 						if (static_member) {
-							// Found static member! Create a simple identifier node
+							// Found static member - create an identifier with StaticMember binding.
 							// Static members are accessed directly, not via this->
-							result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+							IdentifierNode bound_ident = createBoundIdentifier(identifier_token);
+							bound_ident.set_binding(IdentifierBinding::StaticMember);
+							{
+								StringBuilder sb;
+								sb.append(owner_struct->getName());
+								sb.append("::"sv);
+								sb.append(identifier_token.value());
+								bound_ident.set_resolved_name(StringTable::getOrInternStringHandle(sb.commit()));
+							}
+							result = emplace_node<ExpressionNode>(bound_ident);
 							// Set identifierType to prevent "Missing identifier" error
 							identifierType = emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(

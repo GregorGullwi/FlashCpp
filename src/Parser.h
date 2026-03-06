@@ -1228,11 +1228,16 @@ public:  // Public methods for template instantiation
 
             // VariableDeclarationNode.
             if (sym->is<VariableDeclarationNode>()) {
+                const auto& var_decl = sym->as<VariableDeclarationNode>();
                 auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
                 if (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace) {
                     node.set_binding(IdentifierBinding::Global);
                 } else if (scope_type.has_value()) {
-                    node.set_binding(IdentifierBinding::Local);
+                    if (var_decl.storage_class() == StorageClass::Static) {
+                        node.set_binding(IdentifierBinding::StaticLocal);
+                    } else {
+                        node.set_binding(IdentifierBinding::Local);
+                    }
                 }
                 return node;
             }

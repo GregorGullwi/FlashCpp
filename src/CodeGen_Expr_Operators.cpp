@@ -1,59 +1,5 @@
 #include "CodeGen.h"
 
-AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view ident_name) {
-	GlobalStaticVarInfo info;
-	StringHandle ident_handle = StringTable::getOrInternStringHandle(ident_name);
-
-	// Check if it's found in the local symbol table — if so, it's a local variable
-	// and should not be treated as a global/static (even if a static local or static
-	// member with the same name exists).
-	const std::optional<ASTNode> local_sym = symbol_table.lookup(ident_name);
-
-	// Check if it's a static local variable (only when not shadowed by a local)
-	auto static_it = static_local_names_.find(ident_handle);
-	if (!local_sym.has_value() && static_it != static_local_names_.end()) {
-		info.is_global_or_static = true;
-		info.store_name = static_it->second.mangled_name;
-		info.type = static_it->second.type;
-		info.size_in_bits = static_it->second.size_in_bits;
-		return info;
-	}
-
-	// Check if it's a global variable (not found locally, found globally)
-	if (!local_sym.has_value() && global_symbol_table_) {
-		const std::optional<ASTNode> global_sym = global_symbol_table_->lookup(ident_name);
-		if (global_sym.has_value() && global_sym->is<VariableDeclarationNode>()) {
-			const auto& var_decl = global_sym->as<VariableDeclarationNode>();
-			const auto& ts = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			info.is_global_or_static = true;
-			info.store_name = ident_handle;
-			info.type = ts.type();
-			info.size_in_bits = static_cast<int>(ts.size_in_bits());
-			return info;
-		}
-	}
-
-	// Check if it's a static member of the current struct (only when not shadowed by a local)
-	if (!local_sym.has_value() && current_struct_name_.isValid()) {
-		auto struct_it = gTypesByName.find(current_struct_name_);
-		if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
-			const auto* static_member = struct_it->second->getStructInfo()->findStaticMember(ident_handle);
-			if (static_member) {
-				info.is_global_or_static = true;
-				StringBuilder sb;
-				sb.append(current_struct_name_);
-				sb.append("::"sv);
-				sb.append(ident_name);
-				info.store_name = StringTable::getOrInternStringHandle(sb.commit());
-				info.type = static_member->type;
-				info.size_in_bits = static_cast<int>(static_member->size * 8);
-				return info;
-			}
-		}
-	}
-
-	return info;
-}
 
 std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type) {
 	// Look up the struct type info
@@ -488,17 +434,21 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				// Use binding to skip detectGlobalOrStaticVar for known Global identifiers.
-				// For all other bindings (Unresolved, Local, etc.) fall back to detectGlobalOrStaticVar,
-				// because static locals have binding() == Local but still need global-storage treatment.
-				GlobalStaticVarInfo gsi;
+				struct { bool is_global_or_static = false; StringHandle store_name; } gsi;
 				if (lhs_ident.binding() == IdentifierBinding::Global) {
 					gsi.is_global_or_static = true;
 					StringHandle simple = lhs_ident.nameHandle();
 					auto mangle_it = global_variable_names_.find(simple);
 					gsi.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : simple;
-				} else {
-					gsi = detectGlobalOrStaticVar(lhs_ident.name());
+				} else if (lhs_ident.binding() == IdentifierBinding::StaticLocal) {
+					auto it = static_local_names_.find(lhs_ident.nameHandle());
+					if (it != static_local_names_.end()) {
+						gsi.is_global_or_static = true;
+						gsi.store_name = it->second.mangled_name;
+					}
+				} else if (lhs_ident.binding() == IdentifierBinding::StaticMember) {
+					gsi.store_name = lhs_ident.resolved_name();
+					gsi.is_global_or_static = gsi.store_name.isValid();
 				}
 
 				if (gsi.is_global_or_static) {
@@ -546,10 +496,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				// Use binding to skip detectGlobalOrStaticVar for known Global identifiers.
-				// For all other bindings (Unresolved, Local, etc.) fall back to detectGlobalOrStaticVar,
-				// because static locals have binding() == Local but still need global-storage treatment.
-				GlobalStaticVarInfo gsi;
+				struct { bool is_global_or_static = false; StringHandle store_name; Type type = Type::Void; int size_in_bits = 0; } gsi;
 				if (lhs_ident.binding() == IdentifierBinding::Global && global_symbol_table_) {
 					const auto fast_sym = global_symbol_table_->lookup(lhs_ident.name());
 					if (fast_sym.has_value()) {
@@ -569,11 +516,24 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							gsi.size_in_bits = static_cast<int>(ts.size_in_bits());
 						}
 					}
-					if (!gsi.is_global_or_static) {
-						gsi = detectGlobalOrStaticVar(lhs_ident.name());
+				} else if (lhs_ident.binding() == IdentifierBinding::StaticLocal) {
+					auto it = static_local_names_.find(lhs_ident.nameHandle());
+					if (it != static_local_names_.end()) {
+						gsi.is_global_or_static = true;
+						gsi.store_name = it->second.mangled_name;
+						gsi.type = it->second.type;
+						gsi.size_in_bits = it->second.size_in_bits;
 					}
-				} else {
-					gsi = detectGlobalOrStaticVar(lhs_ident.name());
+				} else if (lhs_ident.binding() == IdentifierBinding::StaticMember) {
+					gsi.store_name = lhs_ident.resolved_name();
+					gsi.is_global_or_static = gsi.store_name.isValid();
+					if (gsi.is_global_or_static && current_struct_name_.isValid()) {
+						auto struct_it = gTypesByName.find(current_struct_name_);
+						if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
+							const auto* sm = struct_it->second->getStructInfo()->findStaticMember(lhs_ident.nameHandle());
+							if (sm) { gsi.type = sm->type; gsi.size_in_bits = static_cast<int>(sm->size * 8); }
+						}
+					}
 				}
 				// Local/Function/etc: gsi.is_global_or_static stays false
 
