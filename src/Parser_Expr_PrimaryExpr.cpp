@@ -5059,53 +5059,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											// Fill in default arguments for missing parameters
 											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
 												const auto& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();
-												const auto& params = func_decl.parameter_nodes();
-												for (size_t i = args.size(); i < params.size(); ++i) {
-													if (params[i].is<DeclarationNode>() && params[i].as<DeclarationNode>().has_default_value()) {
-														const auto& def_val = params[i].as<DeclarationNode>().default_value();
-														// For braced-init-list defaults (e.g., Point p = {1, 2}),
-														// convert to ConstructorCallNode so codegen can handle it
-														if (def_val.is<InitializerListNode>()) {
-															const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-															if (param_type_node.type() == Type::Struct || param_type_node.type() == Type::UserDefined) {
-																auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
-																const InitializerListNode& init_list = def_val.as<InitializerListNode>();
-																ChunkedVector<ASTNode> ctor_args;
-																for (const auto& init : init_list.initializers()) {
-																	ctor_args.push_back(init);
-																}
-																args.push_back(emplace_node<ExpressionNode>(
-																	ConstructorCallNode(type_copy, std::move(ctor_args), idenfifier_token)));
-																continue;
-															}
-														}
-														// For non-struct InitializerListNode defaults (e.g., int x = {42}),
-													// extract the single scalar element. Pushing a raw InitializerListNode
-													// as an argument would crash codegen (.as<ExpressionNode>() fails since
-													// InitializerListNode is not a variant of ExpressionNode).
-													if (def_val.is<InitializerListNode>()) {
-														const InitializerListNode& il = def_val.as<InitializerListNode>();
-														if (il.size() == 1 && il.initializers()[0].is<ExpressionNode>()) {
-															args.push_back(il.initializers()[0]);
-															continue;
-														}
-														// Empty brace-init (value-initialization): push 0
-														if (il.size() == 0) {
-															Token zero_tok(Token::Type::Literal, "0"sv,
-																idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
-															args.push_back(emplace_node<ExpressionNode>(
-																NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
-															continue;
-														}
-														// Multi-element non-struct InitializerListNode: not valid C++20
-														// for scalar types. Pushing a raw InitializerListNode would crash
-														// codegen since it is not an ExpressionNode variant.
-														return ParseResult::error("Cannot use multi-element braced-init-list as default argument for non-aggregate parameter '"
-															+ std::string(params[i].as<DeclarationNode>().identifier_token().value()) + "'",
-															idenfifier_token);
-													}
-													args.push_back(def_val);
-													}
+												if (auto err = appendMissingDefaultArguments(func_decl); err.has_value()) {
+													return *err;
 												}
 											}
 
