@@ -247,9 +247,9 @@ function Write-DetailSnippet {
 }
 
 # ──────────────────────────────────────────────────────
-# Worker scriptblock for testing a single regular file
+# Worker function for testing a single regular file
 # ──────────────────────────────────────────────────────
-$testOneFileBlock = {
+function Invoke-TestOneFile {
 	param($filePath, $fileName, $baseName, $flashCppPath, $linkerPath, $libPath1, $libPath2, $libPath3, $hasMain, $expectedLinkFailures, $expectedCompileFailures, $expectedRuntimeCrashes, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
@@ -373,9 +373,9 @@ $testOneFileBlock = {
 }
 
 # ──────────────────────────────────────────────────────
-# Worker scriptblock for testing a single _fail file
+# Worker function for testing a single _fail file
 # ──────────────────────────────────────────────────────
-$testOneFailFileBlock = {
+function Invoke-TestOneFailFile {
 	param($filePath, $fileName, $baseName, $flashCppPath, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
@@ -413,6 +413,9 @@ $testOneFailFileBlock = {
 	Set-Content -Path $resultFile -Value $resultLine -NoNewline
 }
 
+$invokeTestOneFileDefinition = ${function:Invoke-TestOneFile}.ToString()
+$invokeTestOneFailFileDefinition = ${function:Invoke-TestOneFailFile}.ToString()
+
 # ──────────────────────────────────────────────────────
 # Run regular tests
 # ──────────────────────────────────────────────────────
@@ -420,10 +423,10 @@ if ($useParallel) {
 	Write-Host "Running $totalFiles tests with $Jobs parallel jobs (PowerShell $($PSVersionTable.PSVersion.Major))..."
 	$referenceFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
 		Set-Location $using:RepoRoot
+		${function:Invoke-TestOneFile} = $using:invokeTestOneFileDefinition
 		$file = $_
-		$block = $using:testOneFileBlock
 		$hasMain = ($using:mainFileCache)[$file.Name]
-		& $block $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:linkerPath $using:libPath1 $using:libPath2 $using:libPath3 $hasMain $using:expectedLinkFailures $using:expectedCompileFailures $using:expectedRuntimeCrashes $using:resultDir
+		Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:linkerPath $using:libPath1 $using:libPath2 $using:libPath3 $hasMain $using:expectedLinkFailures $using:expectedCompileFailures $using:expectedRuntimeCrashes $using:resultDir
 	}
 } else {
 	if ($Jobs -gt 1 -and $PSVersionTable.PSVersion.Major -lt 7 -and -not $TestFile) {
@@ -435,7 +438,7 @@ if ($useParallel) {
 		$currentFile++
 		Write-Host "[$currentFile/$totalFiles] Testing $($file.Name)... " -NoNewline
 		$hasMain = $mainFileCache[$file.Name]
-		& $testOneFileBlock $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $libPath1 $libPath2 $libPath3 $hasMain $expectedLinkFailures $expectedCompileFailures $expectedRuntimeCrashes $resultDir
+			Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $libPath1 $libPath2 $libPath3 $hasMain $expectedLinkFailures $expectedCompileFailures $expectedRuntimeCrashes $resultDir
 
 		# Read and display result inline for sequential mode
 		$resultFile = Join-Path $resultDir "$($file.Name).result"
@@ -476,16 +479,16 @@ Write-Host ""
 if ($useParallel -and $failFiles.Count -gt 0) {
 	$failFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
 		Set-Location $using:RepoRoot
+		${function:Invoke-TestOneFailFile} = $using:invokeTestOneFailFileDefinition
 		$file = $_
-		$block = $using:testOneFailFileBlock
-		& $block $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:resultDir
+		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:resultDir
 	}
 } else {
 	$currentFile = 0
 	foreach ($file in $failFiles) {
 		$currentFile++
 		Write-Host "[$currentFile/$totalFailFiles] Testing $($file.Name)... " -NoNewline
-		& $testOneFailFileBlock $file.FullName $file.Name $file.BaseName $flashCppPath $resultDir
+		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $flashCppPath $resultDir
 
 		$resultFile = Join-Path $resultDir "$($file.Name).result"
 		if (Test-Path $resultFile) {
