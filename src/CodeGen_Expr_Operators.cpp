@@ -14,8 +14,12 @@ AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view i
 		return info;
 	}
 
-	// Check if it's a global variable (not found locally, found globally)
+	// Check if it's found in the local symbol table — if so, it's a local variable
+	// and should not be treated as a global/static (even if a static member with the
+	// same name exists in the enclosing struct)
 	const std::optional<ASTNode> local_sym = symbol_table.lookup(ident_name);
+
+	// Check if it's a global variable (not found locally, found globally)
 	if (!local_sym.has_value() && global_symbol_table_) {
 		const std::optional<ASTNode> global_sym = global_symbol_table_->lookup(ident_name);
 		if (global_sym.has_value() && global_sym->is<VariableDeclarationNode>()) {
@@ -29,8 +33,8 @@ AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view i
 		}
 	}
 
-	// Check if it's a static member of the current struct
-	if (current_struct_name_.isValid()) {
+	// Check if it's a static member of the current struct (only when not shadowed by a local)
+	if (!local_sym.has_value() && current_struct_name_.isValid()) {
 		auto struct_it = gTypesByName.find(current_struct_name_);
 		if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
 			const auto* static_member = struct_it->second->getStructInfo()->findStaticMember(ident_handle);
