@@ -1043,8 +1043,7 @@
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);
 							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							load_copy_this.offset = copy_this_offset;
-							load_copy_this.is_reference = false;
-							load_copy_this.is_rvalue_reference = false;
+							load_copy_this.ref_qualifier = toCVReferenceQualifier(false, false);
 							load_copy_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
 
@@ -1072,8 +1071,7 @@
 							load_this.object = StringTable::getOrInternStringHandle("this"sv);
 							load_this.member_name = StringTable::getOrInternStringHandle("__this");
 							load_this.offset = this_member_offset;
-							load_this.is_reference = false;
-							load_this.is_rvalue_reference = false;
+							load_this.ref_qualifier = toCVReferenceQualifier(false, false);
 							load_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
 
@@ -1287,8 +1285,7 @@
 		member_load.offset = did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset);
 
 		// Add reference metadata (required for proper handling of reference members)
-		member_load.is_reference = member->is_reference();
-		member_load.is_rvalue_reference = member->is_rvalue_reference();
+		member_load.ref_qualifier = toCVReferenceQualifier(member->is_reference(), member->is_rvalue_reference());
 		member_load.struct_type_info = nullptr;
 		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 		member_load.bitfield_width = member->bitfield_width;

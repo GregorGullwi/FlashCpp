@@ -65,8 +65,7 @@ size_t bitfield_bit_offset) {
 	member_store.member_name = member_name;
 	member_store.offset = offset;
 	member_store.struct_type_info = nullptr;
-	member_store.is_reference = is_reference;
-	member_store.is_rvalue_reference = is_rvalue_reference;
+	member_store.ref_qualifier = toCVReferenceQualifier(is_reference, is_rvalue_reference);
 	member_store.vtable_symbol = StringHandle();
 	member_store.is_pointer_to_member = is_pointer_to_member;
 	member_store.bitfield_width = bitfield_width;

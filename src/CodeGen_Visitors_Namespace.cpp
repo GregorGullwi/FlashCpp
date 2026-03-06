@@ -152,7 +152,7 @@
 								
 								// Create TypedValue from operands
 								store_op.value = toTypedValue(init_operands);
-								store_op.is_reference = false;
+								store_op.ref_qualifier = CVReferenceQualifier::None;
 								
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), node.return_token()));
 							}
@@ -423,4 +423,3 @@
 			emitVoidReturn(node.return_token());
 		}
 	}
-

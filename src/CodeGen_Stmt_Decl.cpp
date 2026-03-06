@@ -504,8 +504,7 @@
 					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
-					decl_op.is_reference = type_node.is_reference();
-					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+					decl_op.ref_qualifier = toCVReferenceQualifier(type_node.is_reference(), type_node.is_rvalue_reference());
 					decl_op.is_array = false;
 					
 					// Set the compile-time evaluated initializer
@@ -626,8 +625,7 @@
 					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
-					decl_op.is_reference = type_node.is_reference();
-					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+					decl_op.ref_qualifier = toCVReferenceQualifier(type_node.is_reference(), type_node.is_rvalue_reference());
 					decl_op.is_array = decl.is_array();
 					if (operands.size() >= 10) {
 						TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
@@ -649,8 +647,7 @@
 					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
-					decl_op.is_reference = type_node.is_reference();
-					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+					decl_op.ref_qualifier = toCVReferenceQualifier(type_node.is_reference(), type_node.is_rvalue_reference());
 					decl_op.is_array = decl.is_array();
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
@@ -1059,8 +1056,7 @@
 									member_store.object = decl.identifier_token().handle();
 									member_store.member_name = member.getName();
 									member_store.offset = static_cast<int>(member.offset);
-									member_store.is_reference = member.is_reference();
-									member_store.is_rvalue_reference = member.is_rvalue_reference();
+									member_store.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 									member_store.struct_type_info = nullptr;
 									member_store.bitfield_width = member.bitfield_width;
 									member_store.bitfield_bit_offset = member.bitfield_bit_offset;
@@ -1311,8 +1307,7 @@
 		decl_op.size_in_bits = (type_node.pointer_depth() > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits());
 		decl_op.var_name = decl.identifier_token().handle();
 		decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
-		decl_op.is_reference = type_node.is_reference();
-		decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+		decl_op.ref_qualifier = toCVReferenceQualifier(type_node.is_reference(), type_node.is_rvalue_reference());
 		decl_op.is_array = decl.is_array();
 		if (decl.is_array() && operands.size() >= 10) {
 			decl_op.array_element_type = std::get<Type>(operands[7]);
@@ -1578,8 +1573,7 @@
 											store_op.offset = static_cast<int>(member.offset);
 											store_op.value = toTypedValue(arg_operands);
 											store_op.struct_type_info = nullptr;
-											store_op.is_reference = false;
-											store_op.is_rvalue_reference = false;
+											store_op.ref_qualifier = toCVReferenceQualifier(false, false);
 											store_op.is_pointer_to_member = false;
 											ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), decl.identifier_token()));
 										}
@@ -2102,8 +2096,7 @@
 			// to the original object, not a copy
 			hidden_decl_op.type = init_type;
 			hidden_decl_op.size_in_bits = 64;  // Reference is always 64-bit pointer
-			hidden_decl_op.is_reference = true;
-			hidden_decl_op.is_rvalue_reference = node.is_rvalue_reference();
+			hidden_decl_op.ref_qualifier = toCVReferenceQualifier(true, node.is_rvalue_reference());
 			
 			// Generate addressof for the initializer to get reference
 			if (initializer.is<ExpressionNode>()) {
@@ -2240,8 +2233,7 @@
 					binding_var_decl.var_name = binding_id;
 					binding_var_decl.type = array_element_type;
 					binding_var_decl.size_in_bits = 64;  // References are pointers (64-bit addresses)
-					binding_var_decl.is_reference = true;  // Mark as reference
-					binding_var_decl.is_rvalue_reference = node.is_rvalue_reference();
+					binding_var_decl.ref_qualifier = toCVReferenceQualifier(true, node.is_rvalue_reference());
 					binding_var_decl.initializer = TypedValue{array_element_type, 64, element_addr};
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
@@ -2656,8 +2648,7 @@
 				binding_var_decl.var_name = binding_id;
 				binding_var_decl.type = member.type;
 				binding_var_decl.size_in_bits = 64;  // References are pointers (64-bit addresses)
-				binding_var_decl.is_reference = true;  // Mark as reference
-				binding_var_decl.is_rvalue_reference = node.is_rvalue_reference();
+				binding_var_decl.ref_qualifier = toCVReferenceQualifier(true, node.is_rvalue_reference());
 				TypedValue init_val;
 				init_val.type = member.type;
 				init_val.size_in_bits = 64;
@@ -2679,8 +2670,7 @@
 				load_op.member_name = member.name;
 				load_op.offset = static_cast<int>(member.offset);
 				load_op.struct_type_info = &type_info;
-				load_op.is_reference = member.is_reference();
-				load_op.is_rvalue_reference = member.is_rvalue_reference();
+				load_op.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 				load_op.is_pointer_to_member = false;
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), binding_token));

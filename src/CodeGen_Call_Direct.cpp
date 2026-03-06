@@ -705,8 +705,8 @@
 				param_is_ref_like = param_type->is_reference() || param_type->is_rvalue_reference();
 				param_is_rvalue_ref = param_type->is_rvalue_reference();
 			} else if (cached_param) {
-				param_is_ref_like = cached_param->is_reference || cached_param->is_rvalue_reference;
-				param_is_rvalue_ref = cached_param->is_rvalue_reference;
+				param_is_ref_like = cached_param->is_reference() || cached_param->is_rvalue_reference();
+				param_is_rvalue_ref = cached_param->is_rvalue_reference();
 				param_is_pack = cached_param->is_parameter_pack;
 			}
 			
@@ -1196,16 +1196,16 @@
 			} else if (cached_param_list && !cached_param_list->empty()) {
 				if (arg_idx < cached_param_list->size()) {
 					const auto& cached = (*cached_param_list)[arg_idx];
-					if (cached.is_rvalue_reference) {
+					if (cached.is_rvalue_reference()) {
 						arg_ref_qual = ReferenceQualifier::RValueReference;
-					} else if (cached.is_reference) {
+					} else if (cached.is_reference()) {
 						arg_ref_qual = ReferenceQualifier::LValueReference;
 					}
 				} else if (cached_param_list->back().is_parameter_pack) {
 					const auto& cached = cached_param_list->back();
-					if (cached.is_rvalue_reference) {
+					if (cached.is_rvalue_reference()) {
 						arg_ref_qual = ReferenceQualifier::RValueReference;
-					} else if (cached.is_reference) {
+					} else if (cached.is_reference()) {
 						arg_ref_qual = ReferenceQualifier::LValueReference;
 					}
 				}

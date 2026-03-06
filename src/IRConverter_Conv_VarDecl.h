@@ -164,8 +164,8 @@
 		auto var_it = current_scope.variables.find(var_name_handle);
 		assert(var_it != current_scope.variables.end());
 
-		bool is_reference = op.is_reference;
-		bool is_rvalue_reference = op.is_rvalue_reference;
+		bool is_reference = op.is_reference();
+		bool is_rvalue_reference = op.is_rvalue_reference();
 		[[maybe_unused]] bool is_array = op.is_array;
 		bool is_initialized = op.initializer.has_value();
 
@@ -1437,7 +1437,7 @@
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 				// Reference parameters (including rvalue references) are passed as pointers,
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0 && !param.is_reference;
+				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0 && !param.is_reference();
 			
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -1470,10 +1470,10 @@
 				// Also track large struct parameters (> 64 bits) which are passed by pointer
 				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
 				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
-				bool is_passed_by_reference = param.is_reference ||
+				bool is_passed_by_reference = param.is_reference() ||
 				                              (param.type == Type::Struct && param.size_in_bits > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference);
+					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference());
 				}
 
 				// Add parameter to debug information
@@ -1520,7 +1520,7 @@
 						regAlloc.allocateSpecific(src_reg, offset);
 					}
 
-					parameters.push_back({param.type, param.size_in_bits, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth, param.is_reference});
+					parameters.push_back({param.type, param.size_in_bits, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth, param.is_reference()});
 				}
 			}
 		}
@@ -2448,4 +2448,3 @@
 		int stack_offset = current_scope.current_stack_offset;
 		current_scope.variables[instruction.getOperandAs<std::string_view>(2)].offset = stack_offset;*/
 	}
-

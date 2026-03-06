@@ -323,8 +323,7 @@
 				param_info.name = StringTable::getOrInternStringHandle(param_name);
 			}
 			
-			param_info.is_reference = param_type.is_reference();  // Tracks ANY reference (lvalue or rvalue)
-			param_info.is_rvalue_reference = param_type.is_rvalue_reference();  // Specific rvalue ref flag
+			param_info.ref_qualifier = toCVReferenceQualifier(param_type.is_reference(), param_type.is_rvalue_reference());
 			param_info.cv_qualifier = param_type.cv_qualifier();
 
 			func_decl_op.parameters.push_back(std::move(param_info));
@@ -332,8 +331,7 @@
 
 			CachedParamInfo cache_entry;
 				cache_entry.name = param_info.name;
-			cache_entry.is_reference = param_type.is_reference();
-			cache_entry.is_rvalue_reference = param_type.is_rvalue_reference();
+			cache_entry.ref_qualifier = toCVReferenceQualifier(param_type.is_reference(), param_type.is_rvalue_reference());
 			cache_entry.is_parameter_pack = param_decl.is_parameter_pack();
 				cache_entry.type_node = param_decl.type_node();
 				if (param_decl.has_default_value()) {
@@ -441,8 +439,7 @@
 								lhs_load.object = this_handle;
 								lhs_load.member_name = member.getName();
 								lhs_load.offset = static_cast<int>(member.offset);
-								lhs_load.is_reference = member.is_reference();
-								lhs_load.is_rvalue_reference = member.is_rvalue_reference();
+								lhs_load.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 								lhs_load.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
 
@@ -454,8 +451,7 @@
 								rhs_load.object = other_handle;
 								rhs_load.member_name = member.getName();
 								rhs_load.offset = static_cast<int>(member.offset);
-								rhs_load.is_reference = member.is_reference();
-								rhs_load.is_rvalue_reference = member.is_rvalue_reference();
+								rhs_load.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 								rhs_load.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
 
@@ -522,8 +518,7 @@
 						lhs_load.object = this_handle;
 						lhs_load.member_name = member.getName();
 						lhs_load.offset = static_cast<int>(member.offset);
-						lhs_load.is_reference = member.is_reference();
-						lhs_load.is_rvalue_reference = member.is_rvalue_reference();
+						lhs_load.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 						lhs_load.struct_type_info = nullptr;
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
 
@@ -535,8 +530,7 @@
 						rhs_load.object = other_handle;
 						rhs_load.member_name = member.getName();
 						rhs_load.offset = static_cast<int>(member.offset);
-						rhs_load.is_reference = member.is_reference();
-						rhs_load.is_rvalue_reference = member.is_rvalue_reference();
+						rhs_load.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 						rhs_load.struct_type_info = nullptr;
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
 
@@ -808,8 +802,7 @@
 							member_load.object = source_param_name_handle;  // Load from source parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
-							member_load.is_reference = member.is_reference();
-							member_load.is_rvalue_reference = member.is_rvalue_reference();
+							member_load.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 							member_load.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
@@ -823,8 +816,7 @@
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
-							member_store.is_reference = member.is_reference();
-							member_store.is_rvalue_reference = member.is_rvalue_reference();
+							member_store.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 							member_store.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
@@ -1289,8 +1281,7 @@
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
 			
-			func_param.is_reference = param_type.is_reference();
-			func_param.is_rvalue_reference = param_type.is_rvalue_reference();
+			func_param.ref_qualifier = toCVReferenceQualifier(param_type.is_reference(), param_type.is_rvalue_reference());
 			func_param.cv_qualifier = param_type.cv_qualifier();
 			ctor_decl_op.parameters.push_back(func_param);
 		}
@@ -1458,8 +1449,7 @@
 					vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");  // Virtual pointer (synthetic member)
 					vptr_store.offset = 0;  // vptr is always at offset 0
 					vptr_store.struct_type_info = struct_type_info;  // Use TypeInfo pointer
-					vptr_store.is_reference = false;
-					vptr_store.is_rvalue_reference = false;
+					vptr_store.ref_qualifier = toCVReferenceQualifier(false, false);
 					vptr_store.vtable_symbol = vtable_symbol;  // Store vtable symbol as string_view
 					
 					// The value is a vtable symbol reference
@@ -1556,8 +1546,7 @@
 							member_load.object = StringTable::getOrInternStringHandle("other"sv);  // Load from 'other' parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
-							member_load.is_reference = member.is_reference();
-							member_load.is_rvalue_reference = member.is_rvalue_reference();
+							member_load.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 							member_load.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), node.name_token()));
@@ -1571,8 +1560,7 @@
 							member_store.object = StringTable::getOrInternStringHandle("this"sv);
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
-							member_store.is_reference = member.is_reference();
-							member_store.is_rvalue_reference = member.is_rvalue_reference();
+							member_store.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 							member_store.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
@@ -1616,8 +1604,7 @@
 										combined_store.object = StringTable::getOrInternStringHandle("this");
 										combined_store.member_name = member.getName();
 										combined_store.offset = static_cast<int>(offset);
-										combined_store.is_reference = false;
-										combined_store.is_rvalue_reference = false;
+										combined_store.ref_qualifier = toCVReferenceQualifier(false, false);
 										combined_store.struct_type_info = nullptr;
 										ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(combined_store), node.name_token()));
 										break;
@@ -1754,8 +1741,7 @@
 													nested_member_store.member_name = nested_member.getName();
 													// Calculate offset: parent member offset + nested member offset
 													nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
-													nested_member_store.is_reference = nested_member.is_reference();
-													nested_member_store.is_rvalue_reference = nested_member.is_rvalue_reference();
+													nested_member_store.ref_qualifier = toCVReferenceQualifier(nested_member.is_reference(), nested_member.is_rvalue_reference());
 													nested_member_store.struct_type_info = nullptr;
 												
 													ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
@@ -1843,8 +1829,7 @@
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
-							member_store.is_reference = member.is_reference();
-							member_store.is_rvalue_reference = member.is_rvalue_reference();
+							member_store.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 							member_store.struct_type_info = nullptr;
 	
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
@@ -1989,8 +1974,7 @@
 						member_store.object = StringTable::getOrInternStringHandle("this");
 						member_store.member_name = member.getName();
 						member_store.offset = static_cast<int>(member.offset);
-						member_store.is_reference = member.is_reference();
-						member_store.is_rvalue_reference = member.is_rvalue_reference();
+						member_store.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
 						member_store.struct_type_info = nullptr;
 						member_store.bitfield_width = member.bitfield_width;
 						member_store.bitfield_bit_offset = member.bitfield_bit_offset;
@@ -2235,8 +2219,7 @@ std::vector<IrOperand> AstToIr::generateInitializerListConstructionIr(const Init
 		ptr_value.pointer_depth = 1;  // This is a pointer to the array
 		store_ptr.value = ptr_value;
 		store_ptr.struct_type_info = nullptr;
-		store_ptr.is_reference = false;
-		store_ptr.is_rvalue_reference = false;
+		store_ptr.ref_qualifier = toCVReferenceQualifier(false, false);
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_ptr), init_list.called_from()));
 	}
 	
@@ -2249,8 +2232,7 @@ std::vector<IrOperand> AstToIr::generateInitializerListConstructionIr(const Init
 		store_size.offset = static_cast<int>(size_member.offset);
 		store_size.value = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(array_size)};
 		store_size.struct_type_info = nullptr;
-		store_size.is_reference = false;
-		store_size.is_rvalue_reference = false;
+		store_size.ref_qualifier = toCVReferenceQualifier(false, false);
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));
 	}
 	
@@ -2407,8 +2389,7 @@ std::vector<IrOperand> AstToIr::generateConstructorCallIr(const ConstructorCallN
 							store_op.offset = static_cast<int>(member.offset);
 							store_op.value = *nested;
 							store_op.struct_type_info = nullptr;
-							store_op.is_reference = false;
-							store_op.is_rvalue_reference = false;
+							store_op.ref_qualifier = toCVReferenceQualifier(false, false);
 							store_op.is_pointer_to_member = false;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), constructorCallNode.called_from()));
 						} else {
@@ -2427,8 +2408,7 @@ std::vector<IrOperand> AstToIr::generateConstructorCallIr(const ConstructorCallN
 					store_op.offset = static_cast<int>(member.offset);
 					store_op.value = toTypedValue(arg_operands);
 					store_op.struct_type_info = nullptr;
-					store_op.is_reference = false;
-					store_op.is_rvalue_reference = false;
+					store_op.ref_qualifier = toCVReferenceQualifier(false, false);
 					store_op.is_pointer_to_member = false;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), constructorCallNode.called_from()));
 				}

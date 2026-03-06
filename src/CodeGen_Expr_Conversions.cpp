@@ -919,8 +919,7 @@
 				member_load.object = object_name;
 				member_load.member_name = member_name;
 				member_load.offset = static_cast<int>(adjusted_offset);
-				member_load.is_reference = true;
-				member_load.is_rvalue_reference = false;
+				member_load.ref_qualifier = toCVReferenceQualifier(true, false);
 				member_load.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 				
@@ -958,8 +957,7 @@
 				member_load.object = object_name;
 				member_load.member_name = member_name;
 				member_load.offset = static_cast<int>(adjusted_offset);
-				member_load.is_reference = false;
-				member_load.is_rvalue_reference = false;
+				member_load.ref_qualifier = toCVReferenceQualifier(false, false);
 				member_load.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 				
@@ -979,7 +977,7 @@
 				store_op.member_name = member_name;
 				store_op.offset = static_cast<int>(adjusted_offset);
 				store_op.value = { member->type, member_size_bits, result_var };
-				store_op.is_reference = false;
+				store_op.ref_qualifier = CVReferenceQualifier::None;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), token));
 				
 				TempVar return_val = is_prefix ? result_var : current_val;

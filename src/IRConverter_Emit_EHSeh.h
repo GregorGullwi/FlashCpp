@@ -70,8 +70,8 @@
 			handler.type_index = catch_op.type_index;
 			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
 			handler.is_const = catch_op.is_const;
-			handler.is_reference = catch_op.is_reference;
-			handler.is_rvalue_reference = catch_op.is_rvalue_reference;
+			handler.is_reference = catch_op.is_reference();
+			handler.is_rvalue_reference = catch_op.is_rvalue_reference();
 			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
 			
 			// Pre-compute stack offset for exception object during IR processing.
@@ -167,15 +167,15 @@
 				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
 				
 				if (g_enable_debug_output) {
-					std::cerr << "[DEBUG][Codegen] CatchBegin: is_ref=" << catch_op.is_reference
-					          << " is_rvalue_ref=" << catch_op.is_rvalue_reference
+					std::cerr << "[DEBUG][Codegen] CatchBegin: is_ref=" << catch_op.is_reference()
+					          << " is_rvalue_ref=" << catch_op.is_rvalue_reference()
 					          << " type_index=" << catch_op.type_index
 					          << " stack_offset=" << stack_offset << std::endl;
 				}
 				
 				// For POD types, dereference and copy the value
 				// For references, store the pointer itself
-				if (catch_op.is_reference || catch_op.is_rvalue_reference) {
+				if (catch_op.is_reference() || catch_op.is_rvalue_reference()) {
 					// Store the pointer (RAX) directly (64-bit pointer)
 					if (g_enable_debug_output) {
 						std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
@@ -1046,4 +1046,3 @@
 		// Record this jump for later patching (convert string_view to StringHandle)
 		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
 	}
-

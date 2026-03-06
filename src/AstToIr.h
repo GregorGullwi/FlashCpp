@@ -621,12 +621,15 @@ private:
 	
 	struct CachedParamInfo {
 		StringHandle name{};
-		bool is_reference = false;
-		bool is_rvalue_reference = false;
+		CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 		bool is_parameter_pack = false;
 		bool has_default_value = false;
 		ASTNode default_value;
 		ASTNode type_node;
+
+		bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
+		bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
+		bool is_lvalue_reference() const { return ref_qualifier == CVReferenceQualifier::LValueReference; }
 	};
 	// Cache parameter reference info by mangled function name to aid call-site lowering
 	std::unordered_map<StringHandle, std::vector<CachedParamInfo>> function_param_cache_;

@@ -1320,7 +1320,7 @@
 				std::string_view var_name = op.getVarName();
 				size_t custom_alignment = op.custom_alignment;
 
-				bool is_reference = op.is_reference;
+				bool is_reference = op.is_reference();
 				bool is_array = op.is_array;
 				int total_size_bits = size_in_bits;
 				if (is_reference) {
@@ -1642,4 +1642,3 @@
 	// Helper to generate and emit size-appropriate MOV to frame (legacy - prefer emitMovToFrameSized)
 
 #include "IRConverter_Emit_CompareBranch.h"
-

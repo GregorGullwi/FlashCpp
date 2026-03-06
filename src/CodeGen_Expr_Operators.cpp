@@ -131,8 +131,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		ms.member_name = member.name;
 		ms.offset = static_cast<int>(member.offset);
 		ms.struct_type_info = &type_info;
-		ms.is_reference = false;
-		ms.is_rvalue_reference = false;
+		ms.ref_qualifier = toCVReferenceQualifier(false, false);
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), Token()));
 	}
 
@@ -3450,8 +3449,7 @@ std::string_view op) {
 	load_op.object = lv_info.base;
 	load_op.member_name = lv_info.member_name.value();
 	load_op.offset = lv_info.offset;
-	load_op.is_reference = member_is_reference;
-	load_op.is_rvalue_reference = member_is_rvalue_reference;
+	load_op.ref_qualifier = toCVReferenceQualifier(member_is_reference, member_is_rvalue_reference);
 	load_op.struct_type_info = nullptr;
 	load_op.bitfield_width = lv_info.bitfield_width;
 	load_op.bitfield_bit_offset = lv_info.bitfield_bit_offset;
