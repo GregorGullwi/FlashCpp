@@ -1211,7 +1211,7 @@
 						if (default_expr.is<ExpressionNode>()) {
 							auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
 							TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
-							// For reference parameters (e.g., const Point& p = Point{1,2}),
+							// For reference parameters (e.g., const Point& p = Point{1, 2}),
 							// mark the default arg so the caller passes an address, not a value.
 							if (param_type_spec.is_reference() && tv.type == Type::Struct) {
 								tv.ref_qualifier = ReferenceQualifier::LValueReference;

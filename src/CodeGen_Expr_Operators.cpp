@@ -120,7 +120,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		// Skip MemberStore if the value was never set (prevents emitting IR with a
 		// default-constructed IrValue that may carry garbage into the callee).
 		if (!store_value_set) {
-			FLASH_LOG(Codegen, Error, "generateDefaultStructArg: skipping member '", member.name, "' — store value not set");
+			FLASH_LOG(Codegen, Error, "generateDefaultStructArg: skipping member '", member.name, "' - store value not set");
 			continue;
 		}
 
