@@ -275,6 +275,23 @@ public:
 		return true;
 	}
 
+	// Replace a non-function symbol in the current scope with a new node.
+	// Used to implement C++20 [basic.scope.pdecl]: a variable's name is visible in its own
+	// initializer, so a stub is pre-inserted before parsing the initializer and then replaced
+	// with the fully-initialised VariableDeclarationNode once parsing completes.
+	bool replace_variable(std::string_view identifier, ASTNode new_node) {
+		auto& current_scope = symbol_table_stack_.back();
+		auto it = current_scope.symbols.find(identifier);
+		if (it == current_scope.symbols.end() || it->second.empty()) {
+			return false;
+		}
+		if (is_function_or_template_function(it->second[0])) {
+			return false;
+		}
+		it->second[0] = new_node;
+		return true;
+	}
+
 	// Insert a symbol into the global scope (scope_level 0) regardless of current scope
 	// This is useful for variable template instantiations that happen during function parsing
 	bool insertGlobal(std::string_view identifier, ASTNode node) {

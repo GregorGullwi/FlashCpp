@@ -586,6 +586,14 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						auto struct_it = gTypesByName.find(tok_handle);
 						if (struct_it != gTypesByName.end() && struct_it->second->isStruct()) {
 							is_complete_type = false;
+						} else {
+							// If the identifier is a known variable in the symbol table (not a type),
+							// fall through to expression parsing so sizeof yields the variable's type
+							// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
+							auto sym_opt = gSymbolTable.lookup(tok_handle);
+							if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
+								is_complete_type = false;
+							}
 						}
 					}
 				}

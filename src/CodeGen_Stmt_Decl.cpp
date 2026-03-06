@@ -1142,6 +1142,10 @@
 
 
 				if (!is_copy_init_for_struct) {
+					// C++20 [basic.scope.pdecl]: Register the variable before evaluating its
+					// initializer so that sizeof(x) in "int x = sizeof(x)" can look up x's type.
+					symbol_table.insert(decl.identifier_token().value(), ast_node);
+
 					// For reference types, use LValueAddress context to get the address of the initializer
 					ExpressionContext ref_context = (type_node.is_reference() || type_node.is_rvalue_reference())
 						? ExpressionContext::LValueAddress
@@ -1298,7 +1302,9 @@
 		}
 
 		if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-			throw InternalError("Expected identifier to be unique");
+			// Variable was pre-registered before its initializer was evaluated
+			// (C++20 point-of-declaration).  Replace the stub with the final declaration.
+			symbol_table.replace_variable(decl.identifier_token().value(), ast_node);
 		}
 
 		VariableDeclOp decl_op;

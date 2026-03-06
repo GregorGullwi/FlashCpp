@@ -515,6 +515,13 @@ ParseResult Parser::parse_variable_declaration()
 	DeclarationNode& first_decl = type_and_name_result.node()->as<DeclarationNode>();
 	TypeSpecifierNode& type_specifier = first_decl.type_node().as<TypeSpecifierNode>();
 
+	// C++20 [basic.scope.pdecl]: the variable name is visible from the point immediately
+	// after its declarator, before the initializer.  When we are in block scope we
+	// pre-insert a stub VariableDeclarationNode (no init) so that unevaluated operands
+	// such as sizeof(x) in the initializer can find the variable's type.  The stub is
+	// replaced with the real node once the initializer has been parsed.
+	bool pre_inserted_first_var = false;
+
 	// Helper lambda to create a single variable declaration
 	auto create_var_decl = [&](DeclarationNode& decl, std::optional<ASTNode> init_expr) -> ParseResult {
 
@@ -533,7 +540,11 @@ ParseResult Parser::parse_variable_declaration()
 		// Add the VariableDeclarationNode to the symbol table
 		// This preserves the is_constexpr flag and initializer for constant expression evaluation
 		const Token& identifier_token = decl.identifier_token();
-		if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
+		if (pre_inserted_first_var) {
+			// Replace the stub that was pre-inserted before the initializer was parsed.
+			gSymbolTable.replace_variable(identifier_token.value(), var_decl_node);
+			pre_inserted_first_var = false;
+		} else if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
 			// Duplicate variable declaration in the same scope
 			FLASH_LOG(Parser, Warning, "Variable '", identifier_token.value(), 
 					  "' is being redeclared in the same scope");
@@ -646,6 +657,23 @@ ParseResult Parser::parse_variable_declaration()
 			}
 			// If function parsing fails, fall through to try direct initialization
 		}
+	}
+
+	// C++20 [basic.scope.pdecl]: Pre-insert a stub for block-scope variables so the
+	// variable name is already visible when the initializer is parsed.  This allows
+	// unevaluated operands such as sizeof(x) in "int x = sizeof(x)" to resolve
+	// correctly.  Global-scope declarations are excluded (their initializers are
+	// evaluated at a later phase where the variable is already registered).
+	if (gSymbolTable.get_current_scope_type() != ScopeType::Global) {
+		ASTNode stub = emplace_node<VariableDeclarationNode>(
+			emplace_node<DeclarationNode>(first_decl),
+			std::nullopt,
+			storage_class
+		);
+		VariableDeclarationNode& stub_var = stub.as<VariableDeclarationNode>();
+		stub_var.set_is_constexpr(is_constexpr);
+		stub_var.set_is_constinit(is_constinit);
+		pre_inserted_first_var = gSymbolTable.insert(first_decl.identifier_token().value(), stub);
 	}
 
 	// Phase 3 Consolidation: Use shared initialization helpers
