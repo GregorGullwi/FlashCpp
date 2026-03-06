@@ -126,7 +126,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 		// Emit MemberStoreOp
 		MemberStoreOp ms;
-		ms.value = TypedValue{store_type, store_size, store_value, .type_index = member.type_index};
+		ms.value = TypedValue{ .type = store_type, .size_in_bits = store_size, .value = store_value, .type_index = member.type_index};
 		ms.object = temp;
 		ms.member_name = member.name;
 		ms.offset = static_cast<int>(member.offset);
