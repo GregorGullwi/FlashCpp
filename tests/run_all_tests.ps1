@@ -215,16 +215,19 @@ $testOneFileBlock = {
 	param($filePath, $fileName, $baseName, $flashCppPath, $linkerPath, $libPath1, $libPath2, $libPath3, $hasMain, $expectedLinkFailures, $expectedCompileFailures, $expectedRuntimeCrashes, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
-	$objFile = "$baseName.obj"
-	$exeFile = "$baseName.exe"
-	$ilkFile = "$baseName.ilk"
-	$pdbFile = "$baseName.pdb"
 
-	# Clean up previous artifacts
-	if (Test-Path $objFile) { Remove-Item $objFile -Force }
-	if (Test-Path $exeFile) { Remove-Item $exeFile -Force }
-	if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
-	if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force }
+	# Use unique per-job paths in the system temp dir to avoid race conditions
+	# when parallel workers process tests that share the same base name.
+	$tempDir = [System.IO.Path]::GetTempPath()
+	$objFile = Join-Path $tempDir "${baseName}_$PID.obj"
+	$exeFile = Join-Path $tempDir "${baseName}_$PID.exe"
+	$ilkFile = Join-Path $tempDir "${baseName}_$PID.ilk"
+	$pdbFile = Join-Path $tempDir "${baseName}_$PID.pdb"
+
+	# Clean up any stale artifacts from a previous run with the same PID
+	foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile)) {
+		if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+	}
 
 	# Parse expected return value from filename
 	$expectedReturnValue = $null
@@ -232,99 +235,101 @@ $testOneFileBlock = {
 		$expectedReturnValue = [int]$matches[1]
 	}
 
-	# Compile with FlashCpp
-	$flashCppArgs = @("--log-level=1", $filePath)
-	if ($fileName -match "^test_no_access_control_flag_ret100.*\.cpp$") {
-		$flashCppArgs = @("-fno-access-control") + $flashCppArgs
-	}
+	# Fallback: if the worker dies unexpectedly the result file still gets written
+	$resultLine = "COMPILE_FAIL|$fileName|WORKER ERROR: unknown"
+	try {
+		# Compile with FlashCpp; -o directs the object file to the unique temp path
+		$flashCppArgs = @("--log-level=1", "-o", $objFile, $filePath)
+		if ($fileName -match "^test_no_access_control_flag_ret100.*\.cpp$") {
+			$flashCppArgs = @("-fno-access-control") + $flashCppArgs
+		}
 
-	$compileOutput = & $flashCppPath $flashCppArgs 2>&1 | Out-String
-	$compileExitCode = $LASTEXITCODE
+		$compileOutput = & $flashCppPath $flashCppArgs 2>&1 | Out-String
+		$compileExitCode = $LASTEXITCODE
 
-	$resultLine = ""
-
-	if (Test-Path $objFile) {
-		if (-not $hasMain) {
-			$resultLine = "COMPILE_LINK_OK|$fileName|0|no main"
-		} else {
-			# Link
-			$linkArgs = @(
-				"/LIBPATH:$libPath1",
-				"/SUBSYSTEM:CONSOLE",
-				"/OUT:$exeFile",
-				"/PDB:$pdbFile",
-				$objFile,
-				"kernel32.lib",
-				"libucrt.lib",
-				"legacy_stdio_definitions.lib"
-			)
-			if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
-			if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
-
-			$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
-
-			if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
-				$exeFullPath = (Resolve-Path $exeFile).Path
-				$stdErrOutput = & $exeFullPath 2>&1 | Out-String
-				$returnValue = $LASTEXITCODE
-
-				$windowsExceptionCodes = @(
-					-1073741819, -1073740791, -1073741571, -1073740940, -1073741795
+		if (Test-Path $objFile) {
+			if (-not $hasMain) {
+				$resultLine = "COMPILE_LINK_OK|$fileName|0|no main"
+			} else {
+				# Link
+				$linkArgs = @(
+					"/LIBPATH:$libPath1",
+					"/SUBSYSTEM:CONSOLE",
+					"/OUT:$exeFile",
+					"/PDB:$pdbFile",
+					$objFile,
+					"kernel32.lib",
+					"libucrt.lib",
+					"legacy_stdio_definitions.lib"
 				)
-				$isWindowsCrash = $windowsExceptionCodes -contains $returnValue
+				if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
+				if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
 
-				if ($isWindowsCrash) {
-					if ($expectedRuntimeCrashes -contains $fileName) {
-						$resultLine = "EXPECTED_CRASH|$fileName|"
+				$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
+
+				if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
+					$stdErrOutput = & $exeFile 2>&1 | Out-String
+					$returnValue = $LASTEXITCODE
+
+					$windowsExceptionCodes = @(
+						-1073741819, -1073740791, -1073741571, -1073740940, -1073741795
+					)
+					$isWindowsCrash = $windowsExceptionCodes -contains $returnValue
+
+					if ($isWindowsCrash) {
+						if ($expectedRuntimeCrashes -contains $fileName) {
+							$resultLine = "EXPECTED_CRASH|$fileName|"
+						} else {
+							$signal = if ($returnValue -lt 0) { $returnValue + 4294967296 } else { $returnValue }
+							$resultLine = "RUNTIME_CRASH|$fileName|0x$($signal.ToString('X8'))"
+						}
 					} else {
-						$signal = if ($returnValue -lt 0) { $returnValue + 4294967296 } else { $returnValue }
-						$resultLine = "RUNTIME_CRASH|$fileName|0x$($signal.ToString('X8'))"
-					}
-				} else {
-					# Linux truncates exit codes to 8 bits (0-255); apply the same
-					# truncation here so return-value checks are consistent across platforms.
-					$returnValue = $returnValue -band 0xFF
-					if ($expectedReturnValue -ne $null) {
-						if ($returnValue -ne $expectedReturnValue) {
-							$resultLine = "RETURN_MISMATCH|$fileName|$expectedReturnValue|$returnValue"
+						# Linux truncates exit codes to 8 bits (0-255); apply the same
+						# truncation here so return-value checks are consistent across platforms.
+						$returnValue = $returnValue -band 0xFF
+						if ($expectedReturnValue -ne $null) {
+							if ($returnValue -ne $expectedReturnValue) {
+								$resultLine = "RETURN_MISMATCH|$fileName|$expectedReturnValue|$returnValue"
+							} else {
+								$resultLine = "RETURN_OK|$fileName|$returnValue|"
+							}
 						} else {
 							$resultLine = "RETURN_OK|$fileName|$returnValue|"
 						}
+					}
+				} else {
+					if ($expectedLinkFailures -contains $fileName) {
+						$resultLine = "EXPECTED_LINK_FAIL|$fileName|"
 					} else {
-						$resultLine = "RETURN_OK|$fileName|$returnValue|"
+						$errors = ($linkOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -Last 5) -join "`n"
+						$resultLine = "LINK_FAIL|$fileName|$errors"
 					}
 				}
-
-				if (Test-Path $exeFile) { Remove-Item $exeFile -Force -ErrorAction SilentlyContinue }
-				if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
-				if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force -ErrorAction SilentlyContinue }
+			}
+		} else {
+			if ($expectedCompileFailures -contains $fileName) {
+				$resultLine = "EXPECTED_COMPILE_FAIL|$fileName|"
 			} else {
-				if ($expectedLinkFailures -contains $fileName) {
-					$resultLine = "EXPECTED_LINK_FAIL|$fileName|"
-				} else {
-					$errors = ($linkOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -Last 5) -join "`n"
-					$resultLine = "LINK_FAIL|$fileName|$errors"
+				$allLines = $compileOutput -split "`n" | Where-Object {
+					$_.Trim() -ne "" -and
+					$_ -notmatch "===== FLASHCPP VERSION" -and
+					$_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL|\|)"
 				}
+				$errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
+				$detail = if ($errorLines) { ($errorLines | Select-Object -Last 3) -join "`n" } else { ($allLines | Select-Object -Last 3) -join "`n" }
+				$resultLine = "COMPILE_FAIL|$fileName|$detail"
 			}
 		}
-	} else {
-		if ($expectedCompileFailures -contains $fileName) {
-			$resultLine = "EXPECTED_COMPILE_FAIL|$fileName|"
-		} else {
-			$allLines = $compileOutput -split "`n" | Where-Object {
-				$_.Trim() -ne "" -and
-				$_ -notmatch "===== FLASHCPP VERSION" -and
-				$_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL|\|)"
-			}
-			$errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
-			$detail = if ($errorLines) { ($errorLines | Select-Object -Last 3) -join "`n" } else { ($allLines | Select-Object -Last 3) -join "`n" }
-			$resultLine = "COMPILE_FAIL|$fileName|$detail"
+	} catch {
+		$resultLine = "COMPILE_FAIL|$fileName|WORKER ERROR: $_"
+	} finally {
+		# Always clean up temp artifacts
+		foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile)) {
+			if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 		}
 	}
 
-	if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
-
-	# Write result
+	# Write result (always executes, even if the worker threw)
 	$resultFile = Join-Path $resultDir "$fileName.result"
 	Set-Content -Path $resultFile -Value $resultLine -NoNewline
 }
@@ -336,27 +341,35 @@ $testOneFailFileBlock = {
 	param($filePath, $fileName, $baseName, $flashCppPath, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
-	$objFile = "$baseName.obj"
-	$ilkFile = "$baseName.ilk"
-	$pdbFile = "$baseName.pdb"
 
-	if (Test-Path $objFile) { Remove-Item $objFile -Force }
-	if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
-	if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force }
+	# Use unique per-job paths in the system temp dir to avoid race conditions.
+	$tempDir = [System.IO.Path]::GetTempPath()
+	$objFile = Join-Path $tempDir "${baseName}_$PID.obj"
+	$ilkFile = Join-Path $tempDir "${baseName}_$PID.ilk"
+	$pdbFile = Join-Path $tempDir "${baseName}_$PID.pdb"
 
-	$failOutput = & $flashCppPath --log-level=1 $filePath 2>&1 | Out-String
-
-	$resultLine = ""
-	if (Test-Path $objFile) {
-		$resultLine = "FAIL_BAD|$fileName|should have failed"
-	} else {
-		$resultLine = "FAIL_OK|$fileName|"
+	foreach ($f in @($objFile, $ilkFile, $pdbFile)) {
+		if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 	}
 
-	# Clean up any artifacts
-	if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
-	if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
-	if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force -ErrorAction SilentlyContinue }
+	# Fallback result in case the worker encounters a terminating error
+	$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: unknown"
+	try {
+		$failOutput = & $flashCppPath --log-level=1 -o $objFile $filePath 2>&1 | Out-String
+
+		if (Test-Path $objFile) {
+			$resultLine = "FAIL_BAD|$fileName|should have failed"
+		} else {
+			$resultLine = "FAIL_OK|$fileName|"
+		}
+	} catch {
+		$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: $_"
+	} finally {
+		# Always clean up temp artifacts
+		foreach ($f in @($objFile, $ilkFile, $pdbFile)) {
+			if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+		}
+	}
 
 	$resultFile = Join-Path $resultDir "$fileName.result"
 	Set-Content -Path $resultFile -Value $resultLine -NoNewline
