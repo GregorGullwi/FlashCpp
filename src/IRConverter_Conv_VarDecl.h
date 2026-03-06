@@ -954,6 +954,7 @@
 		current_function_is_variadic_ = is_variadic;
 		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 		current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
+		current_function_this_offset_ = 0;
 
 		// Patch pending branches from previous function before clearing
 		if (!pending_branches_.empty()) {
@@ -1260,6 +1261,7 @@
 			// 'this' offset depends on whether there's a hidden return parameter
 			int this_offset = (param_offset_adjustment + 1) * -8;
 			this_offset_saved = this_offset;  // Save for later reference_stack_info_ registration
+			current_function_this_offset_ = this_offset;
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
 
 			// Add 'this' parameter to debug information
@@ -1804,11 +1806,15 @@
 								int base_offset = 0;
 								if (std::holds_alternative<StringHandle>(base)) {
 									auto base_name = std::get<StringHandle>(base);
-									auto offset_opt = findIdentifierStackOffset(base_name);
-									if (!offset_opt.has_value()) {
-										return false;
+									if (base_name == StringTable::getOrInternStringHandle("this") && current_function_this_offset_ != 0) {
+										base_offset = current_function_this_offset_;
+									} else {
+										auto offset_opt = findIdentifierStackOffset(base_name);
+										if (!offset_opt.has_value()) {
+											return false;
+										}
+										base_offset = offset_opt.value();
 									}
-									base_offset = offset_opt.value();
 								} else {
 									base_offset = getStackOffsetFromTempVar(std::get<TempVar>(base));
 								}
@@ -1849,6 +1855,19 @@
 											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
 										}
 										handled_reference_return = true;
+									} else if (std::holds_alternative<StringHandle>(lv_info.base)) {
+										auto this_it = current_scope.variables.find(StringTable::getOrInternStringHandle("this"));
+										if (this_it != current_scope.variables.end()) {
+											if (base_is_pointer) {
+												emitMovFromFrame(X64Register::RAX, this_it->second.offset);
+											} else {
+												emitLeaFromFrame(X64Register::RAX, this_it->second.offset);
+											}
+											if (lv_info.offset != 0) {
+												emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+											}
+											handled_reference_return = true;
+										}
 									}
 									break;
 								}

@@ -1118,7 +1118,7 @@
 		call_op.return_type = return_type.type();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
-		call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference()) 
+		call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64 
 			: static_cast<int>(return_type.size_in_bits());
 		call_op.return_type_index = return_type.type_index();
@@ -1241,17 +1241,42 @@
 		// Add the function call instruction with typed payload
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-		// For functions returning rvalue references, mark the result as an xvalue
-		// This prevents taking the address of the result when passing to another function
-		if (return_type.is_rvalue_reference()) {
-			// Create lvalue info indicating this is a Direct value (the function returns the address directly)
-			LValueInfo lvalue_info(LValueInfo::Kind::Direct, ret_var, 0);
-			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), static_cast<int>(return_type.size_in_bits())));
+		auto getReferencedSizeBits = [&](const TypeSpecifierNode& type_spec) {
+			int size_bits = 0;
+			if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+				if (type_spec.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+						size_bits = static_cast<int>(struct_info->total_size * 8);
+					} else {
+						size_bits = static_cast<int>(type_info.type_size_);
+					}
+				}
+			} else {
+				size_bits = get_type_size_bits(type_spec.type());
+			}
+			if (size_bits == 0) {
+				size_bits = static_cast<int>(type_spec.size_in_bits());
+			}
+			return size_bits;
+		};
+
+		// Reference-returning functions produce glvalues that refer to the object behind
+		// the returned address. Model them as indirect lvalues/xvalues so assignment and
+		// compound assignment store through the reference target instead of a temporary.
+		if (return_type.is_reference() || return_type.is_rvalue_reference()) {
+			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
+			int referenced_size_bits = getReferencedSizeBits(return_type);
+			if (return_type.is_rvalue_reference()) {
+				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), referenced_size_bits));
+			} else {
+				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.type(), referenced_size_bits));
+			}
 		}
 
 		// Return the result variable with its type and size
 		// For references, return 64-bit size (address size)
-		int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference())
+		int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
 		// Return type_index for struct types so structured bindings can decompose the result

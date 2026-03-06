@@ -19,6 +19,7 @@ Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workfl
 Try to reuse as much code as possible. Look in the same PR for similar code patterns and try to extract it into a function or a local lambda.
 For patterns that are used in different places in a compiler, like parsing attributes, skipping balanced braces, brackets, etc, search for existing helper functions and try to use those.
 Target warning-clean builds under both MSVC and clang. Use tab indentation, same-line braces, and keep includes grouped `<system>` before quotes.
+When checking indentation in touched lines, prefer explicit tab rendering or `git diff --check`; normal file views can hide off-by-one tab mistakes.
 Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase.
 Prefer StringHandle primarily or `std::string_view` secondary for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
 Prefer StringBuilder instead of using std::string concatination.
@@ -26,6 +27,7 @@ Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do
 
 ## Workspace Hygiene
 Delete binaries, dumps, and logs before you summarize your work. Feel free to leave debug output in the source code. Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
+Also remove temporary audit artifacts such as indentation reports, diff snapshots, and one-off scratch files created while debugging or reviewing changes.
 
 ## Debugging & Reference Tips
 Use `dumpbin.exe`, locate the path with `where.exe`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `x64/Debug/FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source. Output file will end up in the working folder.

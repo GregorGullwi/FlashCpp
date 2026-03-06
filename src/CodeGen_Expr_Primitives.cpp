@@ -554,7 +554,16 @@
 							static_cast<int>(result.adjusted_offset)
 						);
 						lvalue_info.member_name = member->getName();
+						lvalue_info.is_pointer_to_member = true;
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
+							LValueInfo reference_lvalue_info(
+								LValueInfo::Kind::Indirect,
+								result_temp,
+								0
+							);
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
+						}
 						
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
 						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };

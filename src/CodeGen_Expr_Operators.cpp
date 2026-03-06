@@ -2900,6 +2900,7 @@ const Token& token) {
 
 	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
 	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+	TempVarMetadata lhs_meta = getTempVarMetadata(lhs_temp);
 	
 	if (!lvalue_info_opt.has_value()) {
 		FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - no lvalue metadata for temp=", lhs_temp.var_number);
@@ -2907,6 +2908,32 @@ const Token& token) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
+	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : std::get<Type>(lhs_operands[0]);
+	auto inferLValueSizeBits = [&]() {
+		int inferred_size_bits = 0;
+		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
+			if (lhs_operands.size() > 3 && std::holds_alternative<unsigned long long>(lhs_operands[3])) {
+				TypeIndex type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhs_operands[3]));
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+						inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
+					} else {
+						inferred_size_bits = static_cast<int>(type_info.type_size_);
+					}
+				}
+			}
+		} else {
+			inferred_size_bits = get_type_size_bits(lvalue_type);
+		}
+		if (inferred_size_bits == 0 && lhs_meta.value_size_bits > 0) {
+			inferred_size_bits = lhs_meta.value_size_bits;
+		}
+		if (inferred_size_bits == 0) {
+			inferred_size_bits = std::get<int>(lhs_operands[1]);
+		}
+		return inferred_size_bits;
+	};
 	
 	FLASH_LOG(Codegen, Debug, "handleLValueAssignment: kind=", static_cast<int>(lv_info.kind));
 
@@ -2996,12 +3023,18 @@ const Token& token) {
 			// Dereference assignment: *ptr = value
 			// This case works because we have all needed info in LValueInfo
 			FLASH_LOG(Codegen, Debug, "  -> DereferenceStore (handled via metadata)");
+			Type pointee_type = lvalue_type;
+			int pointee_size_bits = inferLValueSizeBits();
+			TypedValue value_tv;
+			value_tv.type = pointee_type;
+			value_tv.size_in_bits = pointee_size_bits;
+			value_tv.value = toIrValue(rhs_operands[2]);
 			
 			// Emit the store using helper
 			emitDereferenceStore(
-				toTypedValue(rhs_operands),     // value
-				std::get<Type>(lhs_operands[0]), // pointee_type
-				std::get<int>(lhs_operands[1]),  // pointee_size_in_bits
+				value_tv,
+				pointee_type,
+				pointee_size_bits,
 				lv_info.base,                    // pointer
 				token
 			);
@@ -3040,6 +3073,7 @@ std::string_view op) {
 	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
 	FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: Checking TempVar {} for metadata", lhs_temp.var_number);
 	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+		TempVarMetadata lhs_meta = getTempVarMetadata(lhs_temp);
 	
 	if (!lvalue_info_opt.has_value()) {
 		FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: FAIL - no lvalue metadata for TempVar {}", lhs_temp.var_number);
@@ -3047,6 +3081,33 @@ std::string_view op) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
+	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : std::get<Type>(lhs_operands[0]);
+	auto inferLValueSizeBits = [&]() {
+		int inferred_size_bits = 0;
+		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
+			if (lhs_operands.size() > 3 && std::holds_alternative<unsigned long long>(lhs_operands[3])) {
+				TypeIndex type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhs_operands[3]));
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+						inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
+					} else {
+						inferred_size_bits = static_cast<int>(type_info.type_size_);
+					}
+				}
+			}
+		} else {
+			inferred_size_bits = get_type_size_bits(lvalue_type);
+		}
+		if (inferred_size_bits == 0 && lhs_meta.value_size_bits > 0) {
+			inferred_size_bits = lhs_meta.value_size_bits;
+		}
+		if (inferred_size_bits == 0) {
+			inferred_size_bits = std::get<int>(lhs_operands[1]);
+		}
+		return inferred_size_bits;
+	};
+	int lvalue_size_bits = inferLValueSizeBits();
 	
 	FLASH_LOG(Codegen, Debug, "handleLValueCompoundAssignment: kind=", static_cast<int>(lv_info.kind), " op=", op);
 
@@ -3088,7 +3149,7 @@ std::string_view op) {
 		// Generate a Dereference instruction to load the current value
 		DereferenceOp deref_op;
 		deref_op.result = current_value_temp;
-		deref_op.pointer.type = std::get<Type>(lhs_operands[0]);
+		deref_op.pointer.type = lvalue_type;
 		deref_op.pointer.size_in_bits = 64;  // pointer size
 		deref_op.pointer.pointer_depth = 1;
 		
@@ -3112,8 +3173,8 @@ std::string_view op) {
 		
 		// Create the binary operation
 		BinaryOp bin_op;
-		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
-		bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+		bin_op.lhs.type = lvalue_type;
+		bin_op.lhs.size_in_bits = lvalue_size_bits;
 		bin_op.lhs.value = current_value_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
 		bin_op.result = result_temp;
@@ -3122,19 +3183,24 @@ std::string_view op) {
 		
 		// Store result back through the pointer using DereferenceStore
 		TypedValue result_tv;
-		result_tv.type = std::get<Type>(lhs_operands[0]);
-		result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+		result_tv.type = lvalue_type;
+		result_tv.size_in_bits = lvalue_size_bits;
 		result_tv.value = result_temp;
 		
 		// Handle both TempVar and StringHandle bases for DereferenceStore
 		if (std::holds_alternative<TempVar>(base_value)) {
-			emitDereferenceStore(result_tv, std::get<Type>(lhs_operands[0]), std::get<int>(lhs_operands[1]),
-			std::get<TempVar>(base_value), token);
+			emitDereferenceStore(
+				result_tv,
+				lvalue_type,
+				lvalue_size_bits,
+				std::get<TempVar>(base_value),
+				token
+			);
 		} else {
 			// StringHandle base: emitDereferenceStore expects a TempVar, so we pass the StringHandle as the pointer
 			// Generate DereferenceStore with StringHandle directly
 			DereferenceStoreOp store_op;
-			store_op.pointer.type = std::get<Type>(lhs_operands[0]);
+			store_op.pointer.type = lvalue_type;
 			store_op.pointer.size_in_bits = 64;
 			store_op.pointer.pointer_depth = 1;
 			store_op.pointer.value = std::get<StringHandle>(base_value);
