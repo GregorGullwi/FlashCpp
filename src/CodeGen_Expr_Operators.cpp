@@ -1,5 +1,56 @@
 #include "CodeGen.h"
 
+AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view ident_name) {
+	GlobalStaticVarInfo info;
+	StringHandle ident_handle = StringTable::getOrInternStringHandle(ident_name);
+
+	// Check if it's a static local variable
+	auto static_it = static_local_names_.find(ident_handle);
+	if (static_it != static_local_names_.end()) {
+		info.is_global_or_static = true;
+		info.store_name = static_it->second.mangled_name;
+		info.type = static_it->second.type;
+		info.size_in_bits = static_it->second.size_in_bits;
+		return info;
+	}
+
+	// Check if it's a global variable (not found locally, found globally)
+	const std::optional<ASTNode> local_sym = symbol_table.lookup(ident_name);
+	if (!local_sym.has_value() && global_symbol_table_) {
+		const std::optional<ASTNode> global_sym = global_symbol_table_->lookup(ident_name);
+		if (global_sym.has_value() && global_sym->is<VariableDeclarationNode>()) {
+			const auto& var_decl = global_sym->as<VariableDeclarationNode>();
+			const auto& ts = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			info.is_global_or_static = true;
+			info.store_name = ident_handle;
+			info.type = ts.type();
+			info.size_in_bits = static_cast<int>(ts.size_in_bits());
+			return info;
+		}
+	}
+
+	// Check if it's a static member of the current struct
+	if (current_struct_name_.isValid()) {
+		auto struct_it = gTypesByName.find(current_struct_name_);
+		if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
+			const auto* static_member = struct_it->second->getStructInfo()->findStaticMember(ident_handle);
+			if (static_member) {
+				info.is_global_or_static = true;
+				StringBuilder sb;
+				sb.append(current_struct_name_);
+				sb.append("::"sv);
+				sb.append(ident_name);
+				info.store_name = StringTable::createStringHandle(sb);
+				info.type = static_member->type;
+				info.size_in_bits = static_cast<int>(static_member->size * 8);
+				return info;
+			}
+		}
+	}
+
+	return info;
+}
+
 	std::vector<IrOperand> AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
 		// Ternary operator: condition ? true_expr : false_expr
 		// Generate IR:
@@ -246,38 +297,16 @@
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				std::string_view lhs_name = lhs_ident.name();
-
-				// Check if this is a static local variable
-				StringHandle lhs_handle = StringTable::getOrInternStringHandle(lhs_name);
-				auto static_local_it = static_local_names_.find(lhs_handle);
-				bool is_static_local = (static_local_it != static_local_names_.end());
+				auto gsi = detectGlobalOrStaticVar(lhs_ident.name());
 				
-				// Check if this is a global variable (not found in local symbol table, but found in global)
-				const std::optional<ASTNode> local_symbol = symbol_table.lookup(lhs_name);
-				bool is_global = false;
-				
-				if (!local_symbol.has_value() && global_symbol_table_) {
-					// Not found locally - check global symbol table
-					const std::optional<ASTNode> global_symbol = global_symbol_table_->lookup(lhs_name);
-					if (global_symbol.has_value() && global_symbol->is<VariableDeclarationNode>()) {
-						is_global = true;
-					}
-				}
-				
-				if (is_global || is_static_local) {
+				if (gsi.is_global_or_static) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
 					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
-					// For static locals, use the mangled name; for globals, use the simple name
-					if (is_static_local) {
-						store_operands.emplace_back(static_local_it->second.mangled_name);  // mangled name for static local
-					} else {
-						store_operands.emplace_back(StringTable::getOrInternStringHandle(lhs_name));  // simple name for global
-					}
+					store_operands.emplace_back(gsi.store_name);
 					
 					// Extract the value from RHS (rhsIrOperands[2])
 					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
@@ -315,47 +344,16 @@
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				std::string_view lhs_name = lhs_ident.name();
+				auto gsi = detectGlobalOrStaticVar(lhs_ident.name());
 
-				StringHandle lhs_handle = StringTable::getOrInternStringHandle(lhs_name);
-				auto static_local_it = static_local_names_.find(lhs_handle);
-				bool is_static_local = (static_local_it != static_local_names_.end());
-
-				const std::optional<ASTNode> local_symbol = symbol_table.lookup(lhs_name);
-				bool is_global = false;
-				if (!local_symbol.has_value() && global_symbol_table_) {
-					const std::optional<ASTNode> global_symbol = global_symbol_table_->lookup(lhs_name);
-					if (global_symbol.has_value() && global_symbol->is<VariableDeclarationNode>()) {
-						is_global = true;
-					}
-				}
-
-				if (is_global || is_static_local) {
+				if (gsi.is_global_or_static) {
 					// Load current value from global
-					StringHandle global_name = is_static_local ? static_local_it->second.mangled_name : lhs_handle;
-
-					// Determine the element type/size from the global variable
-					Type elem_type = Type::Int;
-					int elem_size = 32;
-					if (is_static_local) {
-						elem_type = static_local_it->second.type;
-						elem_size = static_local_it->second.size_in_bits;
-					} else if (global_symbol_table_) {
-						auto gs = global_symbol_table_->lookup(lhs_name);
-						if (gs.has_value() && gs->is<VariableDeclarationNode>()) {
-							const auto& var_decl = gs->as<VariableDeclarationNode>();
-							const auto& ts = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-							elem_type = ts.type();
-							elem_size = static_cast<int>(ts.size_in_bits());
-						}
-					}
-
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
-					load_op.result.type = elem_type;
-					load_op.result.size_in_bits = elem_size;
+					load_op.result.type = gsi.type;
+					load_op.result.size_in_bits = gsi.size_in_bits;
 					load_op.result.value = loaded;
-					load_op.global_name = global_name;
+					load_op.global_name = gsi.store_name;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
 
 					// Evaluate RHS
@@ -378,7 +376,7 @@
 					// Perform the operation
 					TempVar result_var = var_counter.next();
 					BinaryOp bin_op{
-						.lhs = {elem_type, elem_size, loaded},
+						.lhs = {gsi.type, gsi.size_in_bits, loaded},
 						.rhs = toTypedValue(rhsIrOperands),
 						.result = result_var,
 					};
@@ -386,11 +384,11 @@
 
 					// Store result back to global
 					std::vector<IrOperand> store_operands;
-					store_operands.emplace_back(global_name);
+					store_operands.emplace_back(gsi.store_name);
 					store_operands.emplace_back(result_var);
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					return {elem_type, elem_size, result_var, 0ULL};
+					return {gsi.type, gsi.size_in_bits, result_var, 0ULL};
 				}
 			}
 		}

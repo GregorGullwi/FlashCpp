@@ -498,15 +498,24 @@ public:
 		}
 
 		// Multiple overloads - find the best match based on argument types
-		// Phase 1: Try exact parameter count and full type match
+		// Phase 1: Try exact type match (accounting for default arguments)
 		for (const auto& overload : overloads) {
 			if (!overload.is<FunctionDeclarationNode>()) continue;
 			const auto& func_decl = overload.as<FunctionDeclarationNode>();
 			const auto& params = func_decl.parameter_nodes();
-			if (params.size() != arg_types.size()) continue;
+			// Count minimum required args (excluding trailing defaults)
+			size_t min_required = params.size();
+			for (size_t i = params.size(); i > 0; --i) {
+				if (params[i-1].is<DeclarationNode>() && params[i-1].as<DeclarationNode>().has_default_value()) {
+					min_required--;
+				} else {
+					break;
+				}
+			}
+			if (arg_types.size() < min_required || arg_types.size() > params.size()) continue;
 
 			bool exact_match = true;
-			for (size_t i = 0; i < params.size(); ++i) {
+			for (size_t i = 0; i < arg_types.size(); ++i) {
 				if (!parameterMatchesType(params[i], arg_types[i])) {
 					exact_match = false;
 					break;
@@ -521,7 +530,6 @@ public:
 			if (!overload.is<FunctionDeclarationNode>()) continue;
 			const auto& func_decl = overload.as<FunctionDeclarationNode>();
 			const auto& params = func_decl.parameter_nodes();
-			// Count minimum required args (excluding trailing defaults)
 			size_t min_required = params.size();
 			for (size_t i = params.size(); i > 0; --i) {
 				if (params[i-1].is<DeclarationNode>() && params[i-1].as<DeclarationNode>().has_default_value()) {
