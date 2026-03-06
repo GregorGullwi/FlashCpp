@@ -517,6 +517,20 @@ public:
 		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
 	}
 
+	// Register a symbol directly into a namespace's persistent symbol table.
+	// Used for hidden friend functions defined inside class bodies so that
+	// lookup_adl() can find them even though the current scope is the struct scope.
+	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node) {
+		if (!ns.isValid()) return;
+		auto& ns_map = namespace_symbols_[ns];
+		auto it = ns_map.find(name_handle);
+		if (it == ns_map.end()) {
+			ns_map[name_handle] = std::vector<ASTNode>{node};
+		} else {
+			it->second.push_back(node);
+		}
+	}
+
 	// Collect ADL candidates per C++20 [basic.lookup.argdep].
 	// For each argument type that is a struct/class, searches the namespace in which
 	// the struct was declared, plus namespaces of all its direct base classes.

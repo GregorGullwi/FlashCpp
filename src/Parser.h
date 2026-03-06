@@ -408,6 +408,7 @@ private:
                 InlineVector<StringHandle, 4> template_param_names; // For template member functions
                 bool is_member_function_template = false; // True when this is a member function template (template<T> void f())
                                                           // as opposed to a regular member of a template class
+                bool is_free_function = false;            // True for non-member friend functions defined inside a class body
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
@@ -597,6 +598,11 @@ private:
 
         // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
         std::vector<ASTNode> pending_struct_variables_;
+
+        // Pending hidden friend function definitions from inline friend bodies inside class/struct.
+        // These need to be added to the enclosing namespace's declaration list (or the top-level
+        // AST) so the IR converter generates code for them, since they are not regular members.
+        std::vector<ASTNode> pending_hidden_friend_defs_;
 
         template <typename T>
         std::pair<ASTNode, T&> create_node_ref(T&& node) {

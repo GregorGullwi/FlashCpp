@@ -15,19 +15,34 @@ cross-referenced rather than duplicated.
 
 ## 1. Name Lookup & Overload Resolution
 
-### 1.1 Argument-Dependent Lookup (ADL) Not Implemented ❌
+### 1.1 Argument-Dependent Lookup (ADL) ✅ (Phase 4A + 4B implemented)
 
 **Standard (C++20 [basic.lookup.argdep]):** For an unqualified call `f(args…)` whose arguments
 have class or enumeration type, lookup must also search the *associated namespaces* of the
-argument types (Koenig lookup).  This is essential for `std::swap`, range-based `begin`/`end`,
-user-defined operators, and generic programming in general.
+argument types (Koenig lookup).
 
-**FlashCpp:** `SymbolTable::lookup()` performs a straight scope-chain walk only; there is no
-ADL phase anywhere in the compiler.  Calls that rely on ADL (e.g., `run(Lib::X{})` where
-`run` is declared in `namespace Lib`) fail with "undefined function".
+**FlashCpp:** ADL is implemented via `SymbolTable::lookup_adl()`.  Both ordinary namespace-scope
+functions and inline friend functions (hidden friends) are findable via ADL.
 
-**Location:** `src/SymbolTable.h:334–400`
-**Plan:** Phase 4 of the Identifier Resolution Plan (`docs/2026-03-06_IdentifierResolutionPlan.md`).
+**Location:** `src/SymbolTable.h` — `lookup_adl()`, `insert_into_namespace()`
+
+---
+
+### 1.1a Hidden Friends Also Visible via Ordinary Lookup ⚠️
+
+**Standard (C++20 [basic.lookup.argdep]):** A *hidden friend* (a friend function defined inside a
+class body) is deliberately **not** introduced into the enclosing namespace scope for ordinary
+unqualified lookup.  It should only be found via ADL.
+
+**FlashCpp:** When an inline friend function definition is parsed (e.g.,
+`friend int getVal(X x) { return x.val; }`), FlashCpp registers it in
+`SymbolTable::namespace_symbols_` via `insert_into_namespace()`.  This makes the function also
+findable by ordinary unqualified lookup — not just ADL — which is **non-standard**.
+
+In practice this widens rather than narrows what compiles, so no correct program is rejected.
+All standard ADL usage still works correctly.
+
+**Location:** `src/Parser_Decl_StructEnum.cpp` — `parse_friend_declaration()`
 
 ---
 

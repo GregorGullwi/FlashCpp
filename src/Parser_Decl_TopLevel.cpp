@@ -172,6 +172,12 @@ ParseResult Parser::parse_top_level_node()
 				ast_nodes_.push_back(var_node);
 			}
 			pending_struct_variables_.clear();
+			// Add hidden friend function definitions after the struct node so the
+			// IR converter sees the struct type before compiling the friend bodies.
+			for (auto& fn : pending_hidden_friend_defs_) {
+				ast_nodes_.push_back(fn);
+			}
+			pending_hidden_friend_defs_.clear();
 			return saved_position.success();
 		}
 		return saved_position.propagate(std::move(result));
@@ -721,6 +727,13 @@ ParseResult Parser::parse_namespace() {
 		if (auto node = decl_result.node()) {
 			namespace_ref.add_declaration(*node);
 		}
+		// Add any hidden friend function definitions queued during struct parsing.
+		// These need to be in the enclosing namespace's declaration list so the
+		// IR converter generates code for them.
+		for (auto& fn : pending_hidden_friend_defs_) {
+			namespace_ref.add_declaration(fn);
+		}
+		pending_hidden_friend_defs_.clear();
 	}
 
 	// Expect closing brace
