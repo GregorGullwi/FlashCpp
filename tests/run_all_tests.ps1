@@ -342,13 +342,11 @@ $testOneFailFileBlock = {
 	$resultLine = ""
 	if (Test-Path $objFile) {
 		$resultLine = "FAIL_BAD|$fileName|should have failed"
-		Remove-Item $objFile -Force -ErrorAction SilentlyContinue
-		Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue
-		if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force -ErrorAction SilentlyContinue }
 	} else {
 		$resultLine = "FAIL_OK|$fileName|"
 	}
 
+	# Clean up any artifacts
 	if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
 	if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
 	if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force -ErrorAction SilentlyContinue }
