@@ -102,7 +102,6 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			// parse_expression doesn't handle braces outside of a function body,
 			// so we use parse_brace_initializer directly when the parameter type is known
 			ParseResult default_value = ParseResult::error("", Token());
-			ParseResult default_value = ParseResult::error("", Token());
 			if (peek() == "{"_tok && !out_params.parameters.empty()) {
 				auto& last_param = out_params.parameters.back();
 				if (last_param.is<DeclarationNode>()) {
