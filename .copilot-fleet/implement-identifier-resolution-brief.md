@@ -43,9 +43,9 @@ Progress (branch: `copilot/identifier-refactor`, rebased on origin/main `3e4c591
 - Phase 0B — **DONE** (`c264c2f3`): Fixed point-of-declaration for local variables. Test: `test_initializer_point_of_declaration_ret4.cpp`.
 - Phase 1A — **DONE** (`b8ca5961`): `IdentifierBinding` enum (12 variants), extended `IdentifierNode`, `createBoundIdentifier()` in `Parser.h`, 16 creation sites updated, `StaticLocal`/`StaticMember` detected, typo `idenfifier_token` fixed.
 - Phase 1B — **DONE** (`ecb1ddf6`, `77ab43db`): `GlobalStaticVarInfo` and `detectGlobalOrStaticVar()` fully deleted; all codegen paths switch on `binding()`; grep = 0. All 1327 tests pass.
-- Phase 2 — **NEXT**: Lambda capture bindings.
-- Phase 3 — Pending. Key gaps documented: `parsing_template_body_` bool needs depth counter; `has_deferred_base_classes` not checked in `createBoundIdentifier()`; substitution files don't create new IdentifierNodes — re-bind via post-instantiation AST walk instead. New regression tests listed in docs.
+- Phase 2 — **DONE** (`1abfe6cd` docs, `5c7437db` impl): `lambda_capture_stack_` added to `Parser`; `createBoundIdentifier()` sets `CapturedByValue`/`CapturedByRef` for explicit named captures; codegen uses `binding()` first with runtime fallback for `[=]`/`[&]` capture-all. Test: `test_lambda_this_implicit_member_ret0.cpp`. All 1328 tests pass.
+- Phase 3 — **NEXT**. Key gaps: `parsing_template_body_` bool needs depth counter; `has_deferred_base_classes` not checked in `createBoundIdentifier()`; substitution files don't create new IdentifierNodes — re-bind via post-instantiation AST walk instead. New regression tests listed in docs.
 - Phases 4-5 — Pending.
 
 Next action
-- Phase 2: Bind `CapturedByValue`/`CapturedByRef`/`CapturedThis`/`CapturedCopyThis` in `Parser_Expr_PrimaryExpr.cpp` when parsing lambda bodies; remove ad-hoc capture checks in `CodeGen_Expr_Operators.cpp`. Add `test_lambda_this_implicit_member_ret0.cpp` first.
+- Phase 3: Replace `parsing_template_body_` bool with `parsing_template_depth_` counter (RAII guards in `Parser_Templates_Class.cpp` and `Parser_Templates_Function.cpp`); add `TemplateParameter` binding variant to `createBoundIdentifier()`; add dependent-base guard before `NonStaticMember` check. Add regression tests listed in `docs/2026-03-06_IdentifierResolutionPlan.md`.
