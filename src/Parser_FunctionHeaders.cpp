@@ -143,8 +143,13 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		} else if (seen_default_param && !out_params.parameters.empty() &&
 			out_params.parameters.back().is<DeclarationNode>()) {
 			const auto& param = out_params.parameters.back().as<DeclarationNode>();
-			return ParseResult::error("Missing default argument on parameter '" +
-				std::string(param.identifier_token().value()) + "'", param.identifier_token());
+			// C++20 [dcl.fct.default]/4: parameter packs are exempt from the
+			// trailing-default requirement ("unless the parameter was expanded
+			// from a parameter pack or is a function parameter pack").
+			if (!param.is_parameter_pack()) {
+				return ParseResult::error("Missing default argument on parameter '" +
+					std::string(param.identifier_token().value()) + "'", param.identifier_token());
+			}
 		}
 
 		// Skip GCC attributes on parameters (e.g., __attribute__((__unused__)))
