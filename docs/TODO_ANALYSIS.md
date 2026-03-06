@@ -1,7 +1,7 @@
 # TODO / FIXME Analysis
 
-**Date**: 2026-03-01 (last updated 2026-03-05)
-**Total items found**: 52 (44 TODO + 4 FIXME/minor + 1 discovered + 3 newly fixed)
+**Date**: 2026-03-01 (last updated 2026-03-06)
+**Total items found**: 52 (44 TODO + 4 FIXME/minor + 1 discovered + 6 newly fixed)
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
 ---
@@ -178,12 +178,12 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 | Status | Count |
 |--------|-------|
-| ✅ Fixed | 51 |
+| ✅ Fixed | 54 |
 | ✅ Verified / Already works | 9 |
 | ✅ Valid (open) | 2 |
 | **Total** | **52** (+ several post-analysis fixes) |
 
-**Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21). All item #8 constexpr evaluation gaps have been resolved.
+**Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21), assignment through reference-returning methods (#29). All item #8 constexpr evaluation gaps have been resolved.
 
 ---
 
@@ -215,3 +215,13 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 ## 29. Assignment Through Reference-Returning Methods (Open)
 Assigning through a reference returned by a member function (e.g., `h.getRef() = 42;`) does not update the underlying member. The returned reference is treated as an rvalue rather than as an lvalue. Workaround: assign directly to the member.
+
+---
+
+## 30. Default Arguments for Member Functions ✅ Fixed (2026-03-06)
+`src/CodeGen_Call_Indirect.cpp` — Member function calls with omitted trailing default arguments now work. Default argument fill-in added at the CodeGen level after argument processing, using the resolved function declaration's parameter list. Test: `test_default_args_extended_ret42.cpp`.
+
+---
+
+## 31. Default Arguments for Template Functions ✅ Fixed (2026-03-06)
+`src/Parser_Templates_Inst_Deduction.cpp`, `src/CodeGen_Call_Direct.cpp` — Template function instantiation now preserves default argument values from the original template declaration when creating substituted parameter nodes. CodeGen-level default fill-in also added for direct calls. Test: `test_default_args_extended_ret42.cpp`.
