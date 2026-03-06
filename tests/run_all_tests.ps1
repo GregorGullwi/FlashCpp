@@ -245,7 +245,7 @@ $testOneFileBlock = {
 
 	if (Test-Path $objFile) {
 		if (-not $hasMain) {
-			$resultLine = "RETURN_OK|$fileName|0|no main"
+			$resultLine = "COMPILE_LINK_OK|$fileName|0|no main"
 		} else {
 			# Link
 			$linkArgs = @(
