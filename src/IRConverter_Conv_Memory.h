@@ -907,6 +907,8 @@
 		
 		// Step 1: Load base address into RAX
 		int64_t base_offset = 0;
+		bool base_is_global = false;
+		StringHandle base_global_name;
 		bool base_is_reference = false;
 		bool base_is_pointer = false;  // For 'this' and other pointers
 		if (std::holds_alternative<StringHandle>(op.base)) {
@@ -915,22 +917,28 @@
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(base_name);
 			if (it == current_scope.variables.end()) {
-				throw InternalError("Base variable not found in scope for ComputeAddress");
-				return;
+				if (isGlobalVariable(base_name)) {
+					base_is_global = true;
+					base_global_name = base_name;
+				} else {
+					throw InternalError("Base variable not found in scope for ComputeAddress");
+					return;
+				}
+			} else {
+				base_offset = it->second.offset;
+
+				// Check if base is 'this' - it's a pointer, so we need to load its value
+				// instead of computing the address of the 'this' variable
+				std::string_view base_name_str = StringTable::getStringView(base_name);
+				if (base_name_str == "this") {
+					base_is_pointer = true;
+				}
+
+				// Check if base is a reference - if so, we need to load the address it contains
+				// instead of computing the address of the variable itself
+				auto ref_it = reference_stack_info_.find(static_cast<int32_t>(base_offset));
+				base_is_reference = (ref_it != reference_stack_info_.end());
 			}
-			base_offset = it->second.offset;
-			
-			// Check if base is 'this' - it's a pointer, so we need to load its value
-			// instead of computing the address of the 'this' variable
-			std::string_view base_name_str = StringTable::getStringView(base_name);
-			if (base_name_str == "this") {
-				base_is_pointer = true;
-			}
-			
-			// Check if base is a reference - if so, we need to load the address it contains
-			// instead of computing the address of the variable itself
-			auto ref_it = reference_stack_info_.find(static_cast<int32_t>(base_offset));
-			base_is_reference = (ref_it != reference_stack_info_.end());
 		} else {
 			// TempVar - get its stack offset
 			TempVar base_temp = std::get<TempVar>(op.base);
@@ -941,7 +949,10 @@
 			base_is_reference = (ref_it != reference_stack_info_.end());
 		}
 		
-		if (base_is_reference || base_is_pointer) {
+		if (base_is_global) {
+			uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+			pending_global_relocations_.push_back({reloc_offset, base_global_name, IMAGE_REL_AMD64_REL32});
+		} else if (base_is_reference || base_is_pointer) {
 			// Base is a reference or pointer - load the address it contains (MOV, not LEA)
 			emitMovFromFrame(X64Register::RAX, base_offset);
 		} else {

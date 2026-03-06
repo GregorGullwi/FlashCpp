@@ -186,6 +186,18 @@
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
+
+			// Static locals and globals live in static storage, so preserve the
+			// actual storage symbol here for downstream ComputeAddress handling.
+			auto global_static_info = detectGlobalOrStaticVar(identifier.name());
+			if (global_static_info.is_global_or_static) {
+				AddressComponents result;
+				result.base = global_static_info.store_name;
+				result.total_member_offset = accumulated_offset;
+				result.final_type = global_static_info.type;
+				result.final_size_bits = global_static_info.size_in_bits;
+				return result;
+			}
 			
 			// Look up the identifier
 			const DeclarationNode* decl = lookupDeclaration(identifier_handle);
