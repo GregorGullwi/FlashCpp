@@ -3073,7 +3073,7 @@ std::string_view op) {
 	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
 	FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: Checking TempVar {} for metadata", lhs_temp.var_number);
 	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
-		TempVarMetadata lhs_meta = getTempVarMetadata(lhs_temp);
+	TempVarMetadata lhs_meta = getTempVarMetadata(lhs_temp);
 	
 	if (!lvalue_info_opt.has_value()) {
 		FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: FAIL - no lvalue metadata for TempVar {}", lhs_temp.var_number);
