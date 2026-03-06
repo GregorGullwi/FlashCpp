@@ -1394,6 +1394,23 @@
 			
 				arg_index++;
 			});
+
+			// Fill in default arguments for parameters that weren't explicitly provided
+			if (actual_func_decl) {
+				const auto& params = actual_func_decl->parameter_nodes();
+				for (size_t i = arg_index; i < params.size(); ++i) {
+					if (params[i].is<DeclarationNode>()) {
+						const auto& param_decl = params[i].as<DeclarationNode>();
+						if (param_decl.has_default_value()) {
+							const ASTNode& default_expr = param_decl.default_value();
+							if (default_expr.is<ExpressionNode>()) {
+								auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
+								call_op.args.push_back(toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size())));
+							}
+						}
+					}
+				}
+			}
 			
 			// Add the function call instruction with typed payload
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));

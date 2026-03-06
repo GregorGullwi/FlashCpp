@@ -606,6 +606,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
 
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+			// Preserve default argument value from the original template declaration
+			if (param_decl.has_default_value()) {
+				new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+			}
 			new_func_ref.add_parameter_node(new_param_decl);
 		}
 	}
