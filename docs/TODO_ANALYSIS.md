@@ -1,7 +1,7 @@
 # TODO / FIXME Analysis
 
 **Date**: 2026-03-01 (last updated 2026-03-06)
-**Total items found**: 52 (44 TODO + 4 FIXME/minor + 1 discovered + 6 newly fixed)
+**Total items found**: 55 (44 TODO + 4 FIXME/minor + 1 discovered + 9 newly fixed)
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
 ---
@@ -225,3 +225,23 @@ Assigning through a reference returned by a member function (e.g., `h.getRef() =
 
 ## 31. Default Arguments for Template Functions ✅ Fixed (2026-03-06)
 `src/Parser_Templates_Inst_Deduction.cpp`, `src/CodeGen_Call_Direct.cpp` — Template function instantiation now preserves default argument values from the original template declaration when creating substituted parameter nodes. CodeGen-level default fill-in also added for direct calls. Test: `test_default_args_extended_ret42.cpp`.
+
+---
+
+## 32. Nested Struct Aggregate Init in generateDefaultStructArg ✅ Fixed (2026-03-06)
+`src/CodeGen_Expr_Operators.cpp`, `src/CodeGen_Visitors_Decl.cpp` — When a default argument is a braced initializer list whose members include nested struct initializers (e.g., `Outer o = {10, {12, 20}}`), the `generateDefaultStructArg` helper and the aggregate-init path of `generateConstructorCallIr` now recursively construct nested sub-aggregates. Previously, the nested `InitializerListNode` was incorrectly cast to `ExpressionNode`, causing `bad_any_cast`. Added `store_value_set` guard to prevent emitting `MemberStoreOp` with a default-initialised `IrValue`. Test: `test_nested_struct_default_arg_ret42.cpp`.
+
+---
+
+## 33. Silent Drop in generateDefaultStructArg Error Path ✅ Fixed (2026-03-06)
+`src/CodeGen_Call_Direct.cpp`, `src/CodeGen_Call_Indirect.cpp` — When `generateDefaultStructArg` returns `nullopt` (type lookup failure), the argument was silently dropped with no diagnostic. Now emits a `FLASH_LOG(Codegen, Error, ...)` message so failures are visible in logs.
+
+---
+
+## 34. 9–16 Byte Struct Caller/Callee ABI Mismatch ✅ Fixed (2026-03-06)
+`src/IRConverter_Emit_CompareBranch.h` — For structs 9–16 bytes on Linux, the caller was using the System V AMD64 two-register convention (values in RDI + RSI) while the callee always used the pointer convention (RDI = pointer, dereferences with `mov (%rcx),%eax`). FlashCpp now uses the pointer convention for all structs > 8 bytes on both Linux and Windows, matching the existing callee prologue. `isTwoRegisterStruct` always returns `false`; `shouldPassStructByAddress` returns `true` for `size_in_bits > 64` on all platforms. Test: `test_struct_const_ref_args_ret42.cpp`.
+
+---
+
+## 35. const& Struct Default Arguments Pass Value Instead of Pointer ✅ Fixed (2026-03-06)
+`src/CodeGen_Call_Direct.cpp`, `src/CodeGen_Call_Indirect.cpp` — When a struct parameter declared as `const T&` has a braced-init default (e.g., `void f(const Point& p = {1, 2})`), the generated default argument TypedValue was not marked as a reference. The caller therefore passed the struct bytes by value rather than by pointer, causing the callee (which dereferences the pointer) to segfault. Both the `InitializerListNode` and `ExpressionNode` default fill-in paths now check `param_type.is_reference()` and set `ref_qualifier = ReferenceQualifier::LValueReference` on the resulting TypedValue. Test: `test_struct_const_ref_args_ret42.cpp`.

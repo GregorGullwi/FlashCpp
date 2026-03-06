@@ -1223,19 +1223,22 @@
 
 	/// Check if an argument is a two-register struct under System V AMD64 ABI (9-16 bytes, by value).
 	bool isTwoRegisterStruct(const TypedValue& arg) const {
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			return arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference();
-		}
+		// FlashCpp uses pass-by-pointer for all structs > 64 bits on both Linux and Windows.
+		// The System V AMD64 ABI two-register convention (9-16 bytes in two integer registers)
+		// is NOT implemented in the callee prologue (IRConverter_Conv_VarDecl.h marks all
+		// structs > 64 bits as pass-by-pointer and dereferences them).  The caller must use
+		// the same convention, so two-register pass is disabled here.
+		// TODO: implement the full SysV two-register prologue to be ABI-compatible.
+		(void)arg;
 		return false;
 	}
 
 	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
 	bool shouldPassStructByAddress(const TypedValue& arg) const {
 		if (arg.type != Type::Struct || arg.is_reference()) return false;
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			return arg.size_in_bits > 128;  // Linux: structs > 16 bytes pass by pointer
-		} else {
-			return arg.size_in_bits > 64;   // Windows: structs > 8 bytes pass by pointer
-		}
+		// FlashCpp passes all structs > 64 bits by pointer on both Linux and Windows,
+		// matching the callee prologue which always dereferences the incoming pointer for
+		// structs whose size exceeds one general-purpose register.
+		return arg.size_in_bits > 64;
 	}
 

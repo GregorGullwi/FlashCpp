@@ -63,6 +63,37 @@ assignments silently lost the store.
 Range-based for loops over unsized arrays (`int arr[] = {1,2,3}`) now work.
 The array size is inferred from the initializer list when not explicitly declared.
 
+## 9–16 Byte Struct Caller/Callee ABI Mismatch
+
+### Status: FIXED (2026-03-06)
+
+Structs of 9–16 bytes (e.g., `struct ThreeInt { int a, b, c; }`) previously crashed
+at runtime. The caller used the System V AMD64 two-register convention (values in
+RDI + RSI) while the callee used the pointer convention (RDI = pointer to struct).
+
+Fix: `isTwoRegisterStruct` now always returns `false` and `shouldPassStructByAddress`
+returns `true` for any struct > 64 bits. FlashCpp uses the pointer convention for all
+structs larger than one register on both Linux and Windows, consistent with the existing
+callee prologue.
+
+Note: This is not fully ABI-compatible with the System V AMD64 spec (which mandates
+two-register pass for 9–16 byte structs). A TODO item exists to implement the full
+two-register callee prologue for proper external ABI compatibility.
+
+## const& Struct Default Arguments
+
+### Status: FIXED (2026-03-06)
+
+`const T&` struct parameters with braced-init default values (e.g.,
+`void f(const Point& p = {1, 2})`) previously caused a segfault. The default
+argument TypedValue was not marked as a reference, so the caller passed the struct
+bytes by value instead of by pointer, and the callee dereferenced garbage.
+
+Fix: Both the `InitializerListNode` and `ExpressionNode` default fill-in paths in
+`CodeGen_Call_Direct.cpp` and `CodeGen_Call_Indirect.cpp` now set
+`ref_qualifier = ReferenceQualifier::LValueReference` when the parameter type is
+a reference, ensuring the caller passes the address of the temporary.
+
 ## Assignment Through Reference-Returning Methods
 
 ### Status: Open
@@ -91,3 +122,15 @@ Workaround: use explicit assignment (`count = count + 1;`).
 Initializing an array of structs with nested brace initializers
 (e.g., `Pair arr[3] = {{1, 2}, {3, 4}, {5, 6}};`) fails to parse.
 The parser does not handle nested initializer lists for array elements.
+
+## System V AMD64 ABI: Two-Register Struct Passing (Partial)
+
+### Status: Open (documented, not yet implemented)
+
+FlashCpp uses a pointer convention for all structs > 8 bytes for both caller and
+callee, which is consistent internally but deviates from the System V AMD64 ABI
+for 9–16 byte structs. External C libraries or compiler-generated code that passes
+such structs in two registers (per the spec) will be incompatible. Implementing the
+full two-register callee prologue (unpack RDI + RSI into a local stack slot) is
+needed for full ABI compatibility with external code.
+

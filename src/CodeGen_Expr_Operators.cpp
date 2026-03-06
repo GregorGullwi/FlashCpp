@@ -83,6 +83,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		IrValue store_value;
 		Type store_type = member.type;
 		int store_size = static_cast<int>(member.size * 8);
+		bool store_value_set = false;
 
 		if (init_expr.is<ExpressionNode>()) {
 			auto operands = visitExpressionNode(init_expr.as<ExpressionNode>());
@@ -90,6 +91,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 				store_type = std::get<Type>(operands[0]);
 				store_size = std::get<int>(operands[1]);
 				store_value = toIrValue(operands[2]);
+				store_value_set = true;
 			}
 		} else if (init_expr.is<InitializerListNode>() && member.type == Type::Struct &&
 				   member.type_index > 0 && member.type_index < gTypeInfo.size()) {
@@ -106,12 +108,20 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 					store_type = nested_result->type;
 					store_size = nested_result->size_in_bits;
 					store_value = nested_result->value;
+					store_value_set = true;
 				} else {
 					FLASH_LOG(Codegen, Error, "generateDefaultStructArg: failed to recursively init nested struct member");
 				}
 			}
 		} else if (!init_expr.is<ExpressionNode>()) {
 			FLASH_LOG(Codegen, Error, "generateDefaultStructArg: unhandled initializer type for member");
+		}
+
+		// Skip MemberStore if the value was never set (prevents emitting IR with a
+		// default-constructed IrValue that may carry garbage into the callee).
+		if (!store_value_set) {
+			FLASH_LOG(Codegen, Error, "generateDefaultStructArg: skipping member '", member.name, "' — store value not set");
+			continue;
 		}
 
 		// Emit MemberStoreOp

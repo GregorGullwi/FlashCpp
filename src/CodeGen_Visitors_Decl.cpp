@@ -2381,6 +2381,38 @@ std::vector<IrOperand> AstToIr::generateConstructorCallIr(const ConstructorCallN
 					return;
 				}
 				const StructMember& member = struct_info->members[member_idx];
+
+				// Handle nested struct members initialised with a braced list
+				// (e.g. Outer o = {10, {12, 20}} — the second arg arrives here as
+				// InitializerListNode, not ExpressionNode, and must be handled
+				// recursively rather than cast directly).
+				if (argument.is<InitializerListNode>() &&
+					member.type == Type::Struct &&
+					member.type_index > 0 && member.type_index < gTypeInfo.size()) {
+					const TypeInfo& nested_ti = gTypeInfo[member.type_index];
+					if (nested_ti.getStructInfo()) {
+						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);
+						TypeSpecifierNode nested_spec(member.type, member.type_index, nested_bits);
+						auto nested = generateDefaultStructArg(argument.as<InitializerListNode>(), nested_spec);
+						if (nested.has_value()) {
+							MemberStoreOp store_op;
+							store_op.object = ret_var;
+							store_op.member_name = member.getName();
+							store_op.offset = static_cast<int>(member.offset);
+							store_op.value = *nested;
+							store_op.struct_type_info = nullptr;
+							store_op.is_reference = false;
+							store_op.is_rvalue_reference = false;
+							store_op.is_pointer_to_member = false;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), constructorCallNode.called_from()));
+						} else {
+							FLASH_LOG(Codegen, Error, "Aggregate init: failed to generate nested struct arg for member '", member.name, "'");
+						}
+					}
+					member_idx++;
+					return;
+				}
+
 				auto arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
 				if (arg_operands.size() >= 3) {
 					MemberStoreOp store_op;
