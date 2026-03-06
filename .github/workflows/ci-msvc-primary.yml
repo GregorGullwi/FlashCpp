@@ -25,11 +25,10 @@ jobs:
           msbuild FlashCppMSVC.vcxproj /p:Configuration=Debug /p:Platform=x64 /m
 
       - name: Test Reference Files (Compile & Link)
-        shell: powershell
+        shell: pwsh
         run: |
-          # Run the reference files test script
-          # This compiles and links all .cpp files in tests/
-          # and fails the build if any compilation or linking errors occur
+          # Run the reference files test script with parallel execution (default: all logical cores)
+          # Requires PowerShell 7+ (pwsh) for ForEach-Object -Parallel support
           .\tests\run_all_tests.ps1
           if ($LASTEXITCODE -ne 0) {
             Write-Host "Reference files test failed!" -ForegroundColor Red
