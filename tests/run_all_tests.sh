@@ -1,6 +1,7 @@
 #!/bin/bash
 # FlashCpp ELF Test Runner - Port of run_all_tests.ps1 for Linux
 # Tests compilation and linking of all test files
+# Supports parallel execution with -j N (default: number of CPU cores)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -12,18 +13,18 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Verbosity: off by default; enabled by GITHUB_ACTIONS env var or -v/--verbose flag
+# Defaults
 VERBOSE=0
+JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 [ "${GITHUB_ACTIONS:-}" = "true" ] && VERBOSE=1
+
 for arg in "$@"; do
     case "$arg" in
         --verbose|-v) VERBOSE=1 ;;
+        -j[0-9]*) JOBS="${arg#-j}" ;;
+        --jobs=*) JOBS="${arg#--jobs=}" ;;
     esac
 done
-
-# Helpers: vecho prints only when verbose
-vecho()   { [[ "$VERBOSE" = "1" ]] && echo   "$@" >&2; return 0; }
-vecho_n() { [[ "$VERBOSE" = "1" ]] && echo -n "$@" >&2; return 0; }
 
 echo "FlashCpp ELF Test Runner"
 echo "========================"
@@ -54,16 +55,6 @@ EXPECTED_LINK_FAIL=(
 EXPECTED_RUNTIME_CRASH=(
 )
 
-# Results
-declare -a COMPILE_OK=()
-declare -a COMPILE_FAIL=()
-declare -a LINK_OK=()
-declare -a LINK_FAIL=()
-declare -a FAIL_OK=()
-declare -a FAIL_BAD=()
-declare -a RUNTIME_CRASH=()
-declare -a RETURN_MISMATCH=()
-
 contains() {
     local e match="$1"
     shift
@@ -82,7 +73,6 @@ for f in tests/*.cpp; do
     # Skip Windows-only SEH tests on Linux
     if [[ "$base" == test_seh_*.cpp ]]; then
         ((SEH_SKIPPED++))
-        vecho "Skipping Windows-only SEH test: $base"
         continue
     fi
 
@@ -94,191 +84,242 @@ done
 TOTAL=${#TEST_FILES[@]}
 TOTAL_FAIL=${#FAIL_FILES[@]}
 [ "$SEH_SKIPPED" -gt 0 ] && echo "Skipped $SEH_SKIPPED Windows-only SEH tests"
-echo "Testing $TOTAL files..."
+echo "Testing $TOTAL files ($JOBS parallel jobs)..."
 echo ""
 
-# Test regular files
-N=0
-for base in "${TEST_FILES[@]}"; do
-    ((N++))
-    f="tests/$base"
-    obj="${base%.cpp}.obj"
-    exe="/tmp/${base%.cpp}_exe"
-    
-    # Print current file being tested (for debugging hangs)
-    vecho_n "[$N/$TOTAL] Testing $base... "
-    
+# Create temp directory for results
+RESULT_DIR=$(mktemp -d)
+trap "rm -rf '$RESULT_DIR'" EXIT
+
+# ──────────────────────────────────────────────────────
+# Worker: test one regular file
+#   Writes a single result line to $RESULT_DIR/<base>.result
+#   Format:  STATUS|filename|detail
+#   STATUS: COMPILE_OK, COMPILE_FAIL, LINK_OK, LINK_FAIL,
+#           RUNTIME_CRASH, RETURN_MISMATCH, RETURN_OK, EXPECTED_LINK_FAIL, EXPECTED_FAIL
+# ──────────────────────────────────────────────────────
+test_one_file() {
+    local base="$1"
+    local repo_root="$2"
+    local result_dir="$3"
+    local f="tests/$base"
+    local obj="${base%.cpp}.obj"
+    local exe="/tmp/${base%.cpp}_$$_exe"
+    local result_file="$result_dir/$base.result"
+
+    cd "$repo_root"
     rm -f "$obj" "$exe"
-    
-    # Clean up any old crash logs for this test
-    rm -f flashcpp_crash_*.log
-    
+
     # Compile (with 30 second timeout to avoid hangs)
-    extra_flags=()
+    local extra_flags=()
     if [ "$base" == "test_no_access_control_flag_ret100.cpp" ]; then
         extra_flags+=("-fno-access-control")
     fi
+    local compile_output
     compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "${extra_flags[@]}" "$f" 2>&1)
-    compile_exit=$?
-    
+    local compile_exit=$?
+
     # Check if compiler crashed (exit code 134 = SIGABRT, 136 = SIGFPE, 139 = SIGSEGV)
     if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
-        vecho ""
-        echo -e "${RED}[COMPILER CRASH]${NC} $base (signal: $compile_exit)"
-        # Find and display the most recent crash log
-        latest_crash=$(ls -t flashcpp_crash_*.log 2>/dev/null | head -1)
-        if [ -n "$latest_crash" ]; then
-            echo "=== Crash Stack Trace ===" >&2
-            grep -A 50 "=== Stack Trace ===" "$latest_crash" | head -20 >&2
-            rm -f "$latest_crash"
-        fi
-        COMPILE_FAIL+=("$base (CRASHED)")
+        echo "COMPILE_FAIL|$base|CRASHED (signal: $compile_exit)" > "$result_file"
         rm -f "$obj"
-        continue
+        return
     fi
-    
+
     if [ -f "$obj" ]; then
-        COMPILE_OK+=("$base")
-        
-        # Choose linker based on file type
+        # Link
+        local link_output
         link_output=$(clang++ -no-pie -o "$exe" "$obj" -lstdc++ -lc 2>&1)
-        link_exit_code=$?
-        
+        local link_exit_code=$?
+
         if [ $link_exit_code -eq 0 ]; then
-            LINK_OK+=("$base")
-            
             # Run the executable to validate return value
+            local stderr_output
             stderr_output=$(timeout 5 "$exe" 2>&1 > /dev/null)
-            return_value=$?
-            
+            local return_value=$?
+
             # Check for timeout (exit code 124)
             if [ $return_value -eq 124 ]; then
-                vecho ""
-                echo -e "${RED}[RUNTIME TIMEOUT]${NC} $base"
-                RUNTIME_CRASH+=("$base")
-                rm -f "$exe"
-                continue
+                echo "RUNTIME_CRASH|$base|TIMEOUT" > "$result_file"
+                rm -f "$exe" "$obj"
+                return
             fi
-            
+
             # Check for actual crashes by looking for crash indicators in stderr
             if echo "$stderr_output" | grep -qiE "(segmentation fault|illegal instruction|aborted|bus error|floating point exception|killed|dumped core|terminate called)"; then
-                # Check if this is an expected runtime crash
-                if contains "$base" "${EXPECTED_RUNTIME_CRASH[@]}"; then
-                    vecho "OK (expected runtime crash)"
-                else
-                    signal=$((return_value - 128))
-                    vecho ""
-                    echo -e "${RED}[RUNTIME CRASH]${NC} $base (signal: $signal)"
-                    RUNTIME_CRASH+=("$base")
-                fi
-                rm -f "$exe"
-                continue
+                local signal=$((return_value - 128))
+                echo "RUNTIME_CRASH|$base|signal $signal" > "$result_file"
+                rm -f "$exe" "$obj"
+                return
             fi
-            
-            # Check if the filename indicates an expected return value (e.g., test_name_ret42.cpp expects 42)
+
+            # Check if the filename indicates an expected return value
             if [[ "$base" =~ _ret([0-9]+)\.cpp$ ]]; then
-                expected_value="${BASH_REMATCH[1]}"
+                local expected_value="${BASH_REMATCH[1]}"
                 if [ "$return_value" -ne "$expected_value" ]; then
-                    vecho ""
-                    echo -e "${RED}[RETURN MISMATCH]${NC} $base (expected $expected_value, got $return_value)"
-                    RETURN_MISMATCH+=("$base")
+                    echo "RETURN_MISMATCH|$base|expected $expected_value got $return_value" > "$result_file"
                 else
-                    vecho "OK (returned $expected_value)"
+                    echo "RETURN_OK|$base|$expected_value" > "$result_file"
                 fi
             else
-                # No expected return value in filename, just report OK
-                vecho "OK (returned $return_value)"
+                echo "RETURN_OK|$base|$return_value" > "$result_file"
             fi
-            
             rm -f "$exe"
         else
-            # Check if this is an expected link failure
-            if contains "$base" "${EXPECTED_LINK_FAIL[@]}"; then
-                # Expected link failure - don't print
-                LINK_OK+=("$base")  # Count as OK since compile succeeded
-                vecho "OK (expected link fail)"
-            else
-                # Only print unexpected link failures
-                vecho ""
-                echo -e "${RED}[LINK FAIL]${NC} $base"
-                # Show link errors (undefined references and linker errors)
-                link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed" | head -5)
-                if [ -n "$link_errors" ]; then
-                    echo "$link_errors" | sed 's/^/  /' >&2
-                fi
-                LINK_FAIL+=("$base")
-            fi
+            # Link failure
+            local link_errors
+            link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed" | head -5)
+            echo "LINK_FAIL|$base|$link_errors" > "$result_file"
         fi
     else
-        if contains "$base" "${EXPECTED_FAIL[@]}"; then
-            # Expected failure - don't print
-            vecho "OK (expected fail)"
-        else
-            # Print unexpected compile failures
-            vecho ""
-            echo -e "${RED}[COMPILE FAIL]${NC} $base"
-            COMPILE_FAIL+=("$base")
-            # Show first error line
-            first_error=$(echo "$compile_output" | grep -i "error" | head -1)
-            [ -n "$first_error" ] && echo "  $first_error"
-        fi
+        local first_error
+        first_error=$(echo "$compile_output" | grep -i "error" | head -1)
+        echo "COMPILE_FAIL|$base|$first_error" > "$result_file"
     fi
     rm -f "$obj"
+}
+export -f test_one_file
+
+# ──────────────────────────────────────────────────────
+# Worker: test one _fail file
+# ──────────────────────────────────────────────────────
+test_one_fail_file() {
+    local base="$1"
+    local repo_root="$2"
+    local result_dir="$3"
+    local f="tests/$base"
+    local obj="${base%.cpp}.obj"
+    local result_file="$result_dir/$base.result"
+
+    cd "$repo_root"
+    rm -f "$obj"
+
+    local compile_output
+    compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "$f" 2>&1)
+    local compile_exit=$?
+
+    # Check if compiler crashed
+    if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
+        echo "FAIL_BAD|$base|CRASHED (signal: $compile_exit)" > "$result_file"
+        rm -f "$obj"
+        return
+    fi
+
+    if [ -f "$obj" ]; then
+        echo "FAIL_BAD|$base|should have failed" > "$result_file"
+        rm -f "$obj"
+    else
+        echo "FAIL_OK|$base|" > "$result_file"
+    fi
+}
+export -f test_one_fail_file
+
+# ──────────────────────────────────────────────────────
+# Run regular tests in parallel
+# ──────────────────────────────────────────────────────
+printf '%s\n' "${TEST_FILES[@]}" | \
+    xargs -P "$JOBS" -I {} bash -c 'test_one_file "$@"' _ {} "$REPO_ROOT" "$RESULT_DIR"
+
+# ──────────────────────────────────────────────────────
+# Run _fail tests in parallel
+# ──────────────────────────────────────────────────────
+if [ ${#FAIL_FILES[@]} -gt 0 ]; then
+    printf '%s\n' "${FAIL_FILES[@]}" | \
+        xargs -P "$JOBS" -I {} bash -c 'test_one_fail_file "$@"' _ {} "$REPO_ROOT" "$RESULT_DIR"
+fi
+
+# ──────────────────────────────────────────────────────
+# Collect results
+# ──────────────────────────────────────────────────────
+declare -a COMPILE_OK=()
+declare -a COMPILE_FAIL=()
+declare -a LINK_OK=()
+declare -a LINK_FAIL=()
+declare -a FAIL_OK=()
+declare -a FAIL_BAD=()
+declare -a RUNTIME_CRASH=()
+declare -a RETURN_MISMATCH=()
+
+for base in "${TEST_FILES[@]}"; do
+    result_file="$RESULT_DIR/$base.result"
+    if [ ! -f "$result_file" ]; then
+        COMPILE_FAIL+=("$base (no result)")
+        continue
+    fi
+    IFS='|' read -r status file detail < "$result_file"
+    case "$status" in
+        RETURN_OK)
+            COMPILE_OK+=("$base")
+            LINK_OK+=("$base")
+            [ "$VERBOSE" = "1" ] && echo "  $base ... OK (returned ${detail})" >&2
+            ;;
+        RETURN_MISMATCH)
+            COMPILE_OK+=("$base")
+            LINK_OK+=("$base")
+            RETURN_MISMATCH+=("$base")
+            echo -e "${RED}[RETURN MISMATCH]${NC} $base ($detail)"
+            ;;
+        RUNTIME_CRASH)
+            COMPILE_OK+=("$base")
+            LINK_OK+=("$base")
+            # Check if this is an expected runtime crash
+            if contains "$base" "${EXPECTED_RUNTIME_CRASH[@]}"; then
+                [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected runtime crash)" >&2
+            else
+                RUNTIME_CRASH+=("$base")
+                echo -e "${RED}[RUNTIME CRASH]${NC} $base ($detail)"
+            fi
+            ;;
+        LINK_FAIL)
+            COMPILE_OK+=("$base")
+            # Check if this is an expected link failure
+            if contains "$base" "${EXPECTED_LINK_FAIL[@]}"; then
+                LINK_OK+=("$base")
+                [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected link fail)" >&2
+            else
+                LINK_FAIL+=("$base")
+                echo -e "${RED}[LINK FAIL]${NC} $base"
+                [ -n "$detail" ] && echo "  $detail" | sed 's/^/  /'
+            fi
+            ;;
+        COMPILE_FAIL)
+            # Check if this is an expected failure
+            if contains "$base" "${EXPECTED_FAIL[@]}"; then
+                [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected fail)" >&2
+            else
+                COMPILE_FAIL+=("$base")
+                echo -e "${RED}[COMPILE FAIL]${NC} $base"
+                [ -n "$detail" ] && echo "  $detail"
+            fi
+            ;;
+    esac
 done
 
-# Test _fail files
-if [ ${#FAIL_FILES[@]} -gt 0 ]; then
-    vecho ""
-    vecho "Testing _fail files (expected to fail compilation)..."
-    N=0
-    for base in "${FAIL_FILES[@]}"; do
-        ((N++))
-        f="tests/$base"
-        obj="${base%.cpp}.obj"
-        
-        vecho_n "[$N/$TOTAL_FAIL] Testing $base... "
-        
-        rm -f "$obj"
-        
-        # Clean up any old crash logs for this test
-        rm -f flashcpp_crash_*.log
-        
-        compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "$f" 2>&1)
-        compile_exit=$?
-        
-        # Check if compiler crashed
-        if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
-            vecho ""
-            echo -e "${RED}[COMPILER CRASH]${NC} $base (should fail cleanly, not crash!)"
-            latest_crash=$(ls -t flashcpp_crash_*.log 2>/dev/null | head -1)
-            if [ -n "$latest_crash" ]; then
-                echo "=== Crash Stack Trace ===" >&2
-                grep -A 50 "=== Stack Trace ===" "$latest_crash" | head -20 >&2
-                rm -f "$latest_crash"
-            fi
-            FAIL_BAD+=("$base (CRASHED)")
-            rm -f "$obj"
-            continue
-        fi
-        
-        if [ -f "$obj" ]; then
-            vecho ""
-            echo -e "${RED}[UNEXPECTED PASS]${NC} $base (should have failed)"
-            FAIL_BAD+=("$base")
-            rm -f "$obj"
-        else
+for base in "${FAIL_FILES[@]}"; do
+    result_file="$RESULT_DIR/$base.result"
+    if [ ! -f "$result_file" ]; then
+        FAIL_BAD+=("$base (no result)")
+        continue
+    fi
+    IFS='|' read -r status file detail < "$result_file"
+    case "$status" in
+        FAIL_OK)
             FAIL_OK+=("$base")
-            vecho "OK (failed as expected)"
-        fi
-    done
-fi
+            [ "$VERBOSE" = "1" ] && echo "  $base ... OK (failed as expected)" >&2
+            ;;
+        FAIL_BAD)
+            FAIL_BAD+=("$base")
+            echo -e "${RED}[UNEXPECTED PASS]${NC} $base ($detail)"
+            ;;
+    esac
+done
 
 # Summary
 echo ""
 echo "========================"
 echo "SUMMARY"
 echo "========================"
-echo "Total: $TOTAL files tested"
+echo "Total: $TOTAL files tested (with $JOBS parallel jobs)"
 printf "Compile: ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#COMPILE_OK[@]}" "${#COMPILE_FAIL[@]}"
 printf "Link:    ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#LINK_OK[@]}" "${#LINK_FAIL[@]}"
 printf "Runtime: ${GREEN}%d pass${NC} / ${RED}%d crash${NC} / ${RED}%d mismatch${NC}\n" "$((${#LINK_OK[@]} - ${#RUNTIME_CRASH[@]} - ${#RETURN_MISMATCH[@]}))" "${#RUNTIME_CRASH[@]}" "${#RETURN_MISMATCH[@]}"
