@@ -38,14 +38,15 @@ Reviewer checklist (short)
 - parsing_template_body_ assignments removed (replaced with depth counter) after Phase 3.
 - `make` / MSVC build succeeds and tests pass.
 
-Progress (branch: `copilot/identifier-refactor`, rebased on origin/main `3e4c591c`)
+Progress (branch: `copilot/identifier-refactor`, rebased on origin/main `1cfb06a8`)
 - Phase 0A — **DONE** (no code change needed; using/overload-set semantics already correct in SymbolTable)
 - Phase 0B — **DONE** (`c264c2f3`): Fixed point-of-declaration for local variables. Test: `test_initializer_point_of_declaration_ret4.cpp`.
 - Phase 1A — **DONE** (`b8ca5961`): `IdentifierBinding` enum (12 variants), extended `IdentifierNode`, `createBoundIdentifier()` in `Parser.h`, 16 creation sites updated, `StaticLocal`/`StaticMember` detected, typo `idenfifier_token` fixed.
 - Phase 1B — **DONE** (`ecb1ddf6`, `77ab43db`): `GlobalStaticVarInfo` and `detectGlobalOrStaticVar()` fully deleted; all codegen paths switch on `binding()`; grep = 0. All 1327 tests pass.
-- Phase 2 — **DONE** (`1abfe6cd` docs, `5c7437db` impl): `lambda_capture_stack_` added to `Parser`; `createBoundIdentifier()` sets `CapturedByValue`/`CapturedByRef` for explicit named captures; codegen uses `binding()` first with runtime fallback for `[=]`/`[&]` capture-all. Test: `test_lambda_this_implicit_member_ret0.cpp`. All 1328 tests pass.
-- Phase 3 — **NEXT**. Key gaps: `parsing_template_body_` bool needs depth counter; `has_deferred_base_classes` not checked in `createBoundIdentifier()`; substitution files don't create new IdentifierNodes — re-bind via post-instantiation AST walk instead. New regression tests listed in docs.
-- Phases 4-5 — Pending.
+- Phase 2 — **DONE** (`5c7437db`): Lambda capture bindings at parse time; `createBoundIdentifier()` sets `CapturedByValue`/`CapturedByRef`. All 1328 tests pass.
+- Phase 3 — **DONE** (`83d2c2af`): `parsing_template_depth_` counter + `TemplateDepthGuard`; `TemplateParameter` binding; template base constructor and default-arg fixes; 6 new tests. All 1334 tests pass.
+- Phase 4A — **DONE** (`982814b1`): `lookup_adl()` in `SymbolTable.h`; ADL integrated at two call sites; 2 new ADL tests. All 1336 tests pass.
+- Phase 4B — **DONE** (`4e65238d`): `insert_into_namespace()` in `SymbolTable.h`; inline friend functions parsed and registered in enclosing namespace for ADL; `pending_hidden_friend_defs_` delayed body queue. Test: `test_adl_hidden_friend_ret0.cpp`. All 1337 tests pass.
+- Phase 5 — **DONE** (`61d1bd1b`): `Local`-binding fast paths in `ConstExprEvaluator_Members.cpp`. All 1337 tests pass.
 
-Next action
-- Phase 3: Replace `parsing_template_body_` bool with `parsing_template_depth_` counter (RAII guards in `Parser_Templates_Class.cpp` and `Parser_Templates_Function.cpp`); add `TemplateParameter` binding variant to `createBoundIdentifier()`; add dependent-base guard before `NonStaticMember` check. Add regression tests listed in `docs/2026-03-06_IdentifierResolutionPlan.md`.
+**All phases complete. ✅**
