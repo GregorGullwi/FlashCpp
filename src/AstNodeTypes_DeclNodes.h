@@ -1101,6 +1101,10 @@ public:
 // Final fallback: type_spec.size_in_bits() (set during parsing).
 // Returns 0 only for genuinely incomplete or void types.
 inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
+	// Pointers are always 64 bits on x64 regardless of the pointee type
+	if (type_spec.pointer_depth() > 0) {
+		return 64;
+	}
 	Type t = type_spec.type();
 	if (t == Type::Struct || t == Type::UserDefined) {
 		TypeIndex idx = type_spec.type_index();
