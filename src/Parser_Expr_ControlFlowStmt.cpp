@@ -917,7 +917,20 @@ ParseResult Parser::parse_lambda_expression() {
         }
     }
 
+    // Push explicit captures onto the stack so createBoundIdentifier() can classify them.
+    {
+        std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_map;
+        for (const auto& capture : captures) {
+            if (capture.kind() == LambdaCaptureNode::CaptureKind::ByValue ||
+                capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+                capture_map[capture.identifier_token().handle()] = capture.kind();
+            }
+            // AllByValue, AllByReference, This, CopyThis are not identifier-based; skip here.
+        }
+        lambda_capture_stack_.push_back(std::move(capture_map));
+    }
     ParseResult body_result = parse_block();
+    lambda_capture_stack_.pop_back();
 
     // Remove parameters from symbol table after parsing body
     gSymbolTable.exit_scope();

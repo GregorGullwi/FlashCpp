@@ -581,6 +581,11 @@ private:
         };
         std::vector<DeferredLambdaDeduction> deferred_lambda_deductions_;
 
+        // Stack tracking explicit lambda capture kinds while parsing lambda bodies.
+        // Each entry maps a captured variable's StringHandle to its CaptureKind.
+        // Pushed before parse_block() and popped after.
+        std::vector<std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind>> lambda_capture_stack_;
+
         // Track ASTNode addresses currently being processed in get_expression_type to prevent infinite recursion
         mutable std::unordered_set<const void*> expression_type_resolution_stack_;
 
@@ -1222,6 +1227,16 @@ public:  // Public methods for template instantiation
                     node.set_binding(IdentifierBinding::Global);
                 } else if (scope_type.has_value()) {
                     node.set_binding(IdentifierBinding::Local);
+                    // If we're inside a lambda body and this name is an explicit capture, upgrade binding.
+                    if (!lambda_capture_stack_.empty()) {
+                        auto cap_it = lambda_capture_stack_.back().find(token.handle());
+                        if (cap_it != lambda_capture_stack_.back().end()) {
+                            if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
+                                node.set_binding(IdentifierBinding::CapturedByValue);
+                            else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
+                                node.set_binding(IdentifierBinding::CapturedByRef);
+                        }
+                    }
                 }
                 return node;
             }
@@ -1237,6 +1252,16 @@ public:  // Public methods for template instantiation
                         node.set_binding(IdentifierBinding::StaticLocal);
                     } else {
                         node.set_binding(IdentifierBinding::Local);
+                        // If we're inside a lambda body and this name is an explicit capture, upgrade binding.
+                        if (!lambda_capture_stack_.empty()) {
+                            auto cap_it = lambda_capture_stack_.back().find(token.handle());
+                            if (cap_it != lambda_capture_stack_.back().end()) {
+                                if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
+                                    node.set_binding(IdentifierBinding::CapturedByValue);
+                                else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
+                                    node.set_binding(IdentifierBinding::CapturedByRef);
+                            }
+                        }
                     }
                 }
                 return node;

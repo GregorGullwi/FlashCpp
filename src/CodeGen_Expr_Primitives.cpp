@@ -238,10 +238,16 @@
 
 	std::vector<IrOperand> AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context) {
-		// Check if this is a captured variable in a lambda
+		// Check if this is a captured variable in a lambda.
+		// Explicit captures ([x], [&x]) have binding set at parse time.
+		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
+		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
-		if (current_lambda_context_.isActive() &&
-		current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
+		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
+		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
+		bool is_implicit_capture = !is_explicit_capture && current_lambda_context_.isActive() &&
+		    current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end();
+		if (is_explicit_capture || is_implicit_capture) {
 			// This is a captured variable - generate member access (this->x)
 			// Look up the closure struct type
 			auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
@@ -251,10 +257,13 @@
 				auto result = FlashCpp::gLazyMemberResolver.resolve(closure_type_index, var_name_str);
 				if (result) {
 					const StructMember* member = result.member;
-					// Check if this is a by-reference capture
-					auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
-					bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
-					kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+					// Explicit captures: use binding. Implicit (capture-all): check the runtime map.
+					bool is_reference = (identifierNode.binding() == IdentifierBinding::CapturedByRef);
+					if (!is_reference && is_implicit_capture) {
+						auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
+						is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
+						    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+					}
 
 					if (is_reference) {
 						// By-reference capture: member is a pointer, need to dereference

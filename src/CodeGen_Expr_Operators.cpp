@@ -358,37 +358,33 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			}
 		}
 
-		// Special handling for assignment to captured-by-reference variable inside lambda
-		// Now that captured-by-reference identifiers are marked with lvalue metadata, use unified handler
-		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_lambda_context_.isActive()) {
+		// Captured-by-reference assignment.
+		// Explicit [&x] captures have CapturedByRef binding set at parse time.
+		// Capture-all [&] variables keep Local binding but appear in current_lambda_context_.capture_kinds.
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				std::string_view lhs_name = lhs_ident.name();
-				StringHandle lhs_name_str = StringTable::getOrInternStringHandle(lhs_name);
-
-				// Check if this is a captured-by-reference variable
-				auto capture_it = current_lambda_context_.captures.find(lhs_name_str);
-				if (capture_it != current_lambda_context_.captures.end()) {
-					auto kind_it = current_lambda_context_.capture_kinds.find(lhs_name_str);
-					if (kind_it != current_lambda_context_.capture_kinds.end() &&
-					kind_it->second == LambdaCaptureNode::CaptureKind::ByReference) {
-						// This is assignment to a captured-by-reference variable
-						// Handle via unified handler (identifiers are now marked as lvalues)
-						auto lhsIrOperands = visitExpressionNode(lhs_expr);
-						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-						
-						// Handle assignment using unified lvalue metadata handler
-						if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
-							// Assignment was handled successfully via metadata
-							FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
-							return rhsIrOperands;
-						}
-						
-						// This shouldn't happen with proper metadata, but log for debugging
-						FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
-						return { Type::Int, 32, TempVar{0} };
+				bool is_captured_by_ref = (lhs_ident.binding() == IdentifierBinding::CapturedByRef);
+				if (!is_captured_by_ref && current_lambda_context_.isActive()) {
+					StringHandle lhs_name_str = StringTable::getOrInternStringHandle(lhs_ident.name());
+					auto capture_it = current_lambda_context_.captures.find(lhs_name_str);
+					if (capture_it != current_lambda_context_.captures.end()) {
+						auto kind_it = current_lambda_context_.capture_kinds.find(lhs_name_str);
+						is_captured_by_ref = (kind_it != current_lambda_context_.capture_kinds.end() &&
+						    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 					}
+				}
+				if (is_captured_by_ref) {
+					std::string_view lhs_name = lhs_ident.name();
+					auto lhsIrOperands = visitExpressionNode(lhs_expr);
+					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+						FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
+						return rhsIrOperands;
+					}
+					FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
+					return { Type::Int, 32, TempVar{0} };
 				}
 			}
 		}
