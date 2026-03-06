@@ -34,3 +34,20 @@ Linux now correctly use the two-register convention, matching what `va_arg` expe
 
 Implementing the full two-register callee prologue (unpack RDI + RSI into a local
 stack slot) is needed for full ABI compatibility with non-variadic external code.
+
+## Default Argument Codegen Silently Skips Unrecognized Expression Types
+
+### Status: Open (verified 2026-03-06)
+
+In both `CodeGen_Call_Direct.cpp` and `CodeGen_Call_Indirect.cpp`, the default
+argument fill-in code only handles `ExpressionNode` and `InitializerListNode`
+default values. If a parameter's default value is stored as any other AST node
+type, no argument is added to `call_op.args` and no error is reported — the
+parameter is silently dropped, causing argument misalignment for subsequent
+parameters.
+
+Currently all supported default value forms (literals, identifiers, constructor
+calls, braced init lists) produce one of these two node types, so this is not
+triggered in practice. However, future additions (e.g., lambda defaults, fold
+expressions) could hit this path silently. An `else` branch should emit an
+`InternalError` or `CompileError` to catch unexpected default value types.
