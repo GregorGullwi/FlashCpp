@@ -488,8 +488,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				auto gsi = detectGlobalOrStaticVar(lhs_ident.name());
-				
+				// Use binding to skip detectGlobalOrStaticVar for known Global identifiers.
+				// For all other bindings (Unresolved, Local, etc.) fall back to detectGlobalOrStaticVar,
+				// because static locals have binding() == Local but still need global-storage treatment.
+				GlobalStaticVarInfo gsi;
+				if (lhs_ident.binding() == IdentifierBinding::Global) {
+					gsi.is_global_or_static = true;
+					StringHandle simple = lhs_ident.nameHandle();
+					auto mangle_it = global_variable_names_.find(simple);
+					gsi.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : simple;
+				} else {
+					gsi = detectGlobalOrStaticVar(lhs_ident.name());
+				}
+
 				if (gsi.is_global_or_static) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
@@ -535,7 +546,36 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				auto gsi = detectGlobalOrStaticVar(lhs_ident.name());
+				// Use binding to skip detectGlobalOrStaticVar for known Global identifiers.
+				// For all other bindings (Unresolved, Local, etc.) fall back to detectGlobalOrStaticVar,
+				// because static locals have binding() == Local but still need global-storage treatment.
+				GlobalStaticVarInfo gsi;
+				if (lhs_ident.binding() == IdentifierBinding::Global && global_symbol_table_) {
+					const auto fast_sym = global_symbol_table_->lookup(lhs_ident.name());
+					if (fast_sym.has_value()) {
+						const DeclarationNode* decl_ptr = nullptr;
+						if (fast_sym->is<VariableDeclarationNode>()) {
+							decl_ptr = &fast_sym->as<VariableDeclarationNode>().declaration();
+						} else if (fast_sym->is<DeclarationNode>()) {
+							decl_ptr = &fast_sym->as<DeclarationNode>();
+						}
+						if (decl_ptr) {
+							const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
+							gsi.is_global_or_static = true;
+							StringHandle simple = lhs_ident.nameHandle();
+							auto mangle_it = global_variable_names_.find(simple);
+							gsi.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : simple;
+							gsi.type = ts.type();
+							gsi.size_in_bits = static_cast<int>(ts.size_in_bits());
+						}
+					}
+					if (!gsi.is_global_or_static) {
+						gsi = detectGlobalOrStaticVar(lhs_ident.name());
+					}
+				} else {
+					gsi = detectGlobalOrStaticVar(lhs_ident.name());
+				}
+				// Local/Function/etc: gsi.is_global_or_static stays false
 
 				if (gsi.is_global_or_static) {
 					// Load current value from global

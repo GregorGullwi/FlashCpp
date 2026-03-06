@@ -391,6 +391,90 @@
 			return { info.type, info.size_in_bits, result_temp, 0ULL };
 		}
 
+		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the
+		// multi-table cascade. Handles the common case (simple global variables).
+		// Falls through when using-declarations override the name (e.g., using ::globalValue
+		// inside a namespace with its own globalValue), or when the direct lookup fails.
+		if (identifierNode.binding() == IdentifierBinding::Global && global_symbol_table_) {
+			// If any local using-declaration overrides this identifier's resolution,
+			// the cascade (not this fast-path) is needed to get the correct qualified name.
+			bool has_using_override = false;
+			for (const auto& [local_name, target_info] : symbol_table.get_current_using_declaration_handles()) {
+				if (local_name == identifierNode.name()) {
+					has_using_override = true;
+					break;
+				}
+			}
+
+			if (!has_using_override) {
+				const std::optional<ASTNode> fast_sym = global_symbol_table_->lookup(identifierNode.name());
+				if (fast_sym.has_value()) {
+					StringHandle effective_name;
+					auto mangle_it = global_variable_names_.find(identifier_handle);
+					effective_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : identifier_handle;
+
+					if (fast_sym->is<VariableDeclarationNode>()) {
+						const auto& vd = fast_sym->as<VariableDeclarationNode>();
+						const auto& decl_n = vd.declaration();
+						const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
+						bool is_array_type = decl_n.is_array() || type_n.is_array();
+						bool is_ptr_or_ref = type_n.is_pointer() || type_n.is_reference() || type_n.is_function_pointer();
+						int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
+						TempVar result_temp = var_counter.next();
+						GlobalLoadOp op;
+						op.result.type = type_n.type();
+						op.result.size_in_bits = size_bits;
+						op.result.value = result_temp;
+						op.global_name = effective_name;
+						op.is_array = is_array_type;
+						StringHandle saved_name = op.global_name;
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+						if (!is_array_type) {
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+								LValueInfo(LValueInfo::Kind::Global, saved_name),
+								type_n.type(), size_bits));
+						}
+						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
+						return { type_n.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+					}
+
+					if (fast_sym->is<DeclarationNode>()) {
+						const auto& decl_n = fast_sym->as<DeclarationNode>();
+						const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
+						// Check for enum constant
+						if (type_n.type() == Type::Enum && !type_n.is_reference() && type_n.pointer_depth() == 0) {
+							size_t enum_idx = type_n.type_index();
+							if (enum_idx < gTypeInfo.size()) {
+								const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
+								if (enum_info) {
+									const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
+									if (enumerator) {
+										return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+											static_cast<unsigned long long>(enumerator->value) };
+									}
+								}
+							}
+						}
+						bool is_array_type = decl_n.is_array() || type_n.is_array();
+						int size_bits = (type_n.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
+						TempVar result_temp = var_counter.next();
+						GlobalLoadOp op;
+						op.result.type = type_n.type();
+						op.result.size_in_bits = size_bits;
+						op.result.value = result_temp;
+						op.global_name = effective_name;
+						op.is_array = is_array_type;
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
+						return { type_n.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+					}
+					// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
+				}
+				// Not found by direct lookup: fall through to cascade (handles namespace-scoped globals)
+			}
+			// Has using override: fall through to cascade for correct qualified name resolution
+		}
+
 		// Check using declarations from local scope FIRST, before local symbol table lookup
 		// This handles cases like: using ::globalValue; return globalValue;
 		// where globalValue should resolve to the global namespace version even if there's

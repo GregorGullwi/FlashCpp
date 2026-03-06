@@ -1696,12 +1696,24 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 		IrOpcode pre_opcode = is_increment ? IrOpcode::PreIncrement : IrOpcode::PreDecrement;
 		IrOpcode post_opcode = is_increment ? IrOpcode::PostIncrement : IrOpcode::PostDecrement;
 
-		// Check if the operand is a global/static variable that needs GlobalStore
+		// Check if the operand is a global/static variable that needs GlobalStore.
+		// Use binding to skip detectGlobalOrStaticVar for known Global identifiers;
+		// for all other bindings fall back to detectGlobalOrStaticVar because static
+		// locals have binding() == Local but still need global-storage treatment.
 		GlobalStaticVarInfo gsi;
 		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
-				gsi = detectGlobalOrStaticVar(std::get<IdentifierNode>(operandExpr).name());
+				const IdentifierNode& operand_ident = std::get<IdentifierNode>(operandExpr);
+				if (operand_ident.binding() == IdentifierBinding::Global) {
+					gsi.is_global_or_static = true;
+					StringHandle simple = operand_ident.nameHandle();
+					auto mangle_it = global_variable_names_.find(simple);
+					gsi.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : simple;
+				} else {
+					gsi = detectGlobalOrStaticVar(operand_ident.name());
+				}
+				// Local/Function/etc: gsi.is_global_or_static stays false (detectGlobalOrStaticVar handles them)
 			}
 		}
 
