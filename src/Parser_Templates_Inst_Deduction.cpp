@@ -498,11 +498,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// The re-parse with concrete template arguments will fail if substitution is invalid.
 	if (func_decl.has_trailing_return_type_position()) {
 		bool prev_sfinae_context = in_sfinae_context_;
-		bool prev_parsing_template_body = parsing_template_body_;
+		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 		FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 		in_sfinae_context_ = true;
-		parsing_template_body_ = false;  // Prevent dependent-type fallback during SFINAE
+		parsing_template_depth_ = 0;  // suppress template body context during SFINAE
 		current_template_param_names_.clear();  // No dependent names during SFINAE
 		sfinae_type_map_.clear();
 
@@ -521,8 +521,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		gSymbolTable.exit_scope();
 		restore_lexer_position_only(sfinae_pos);
 		in_sfinae_context_ = prev_sfinae_context;
-		parsing_template_body_ = prev_parsing_template_body;
-		// guard_param_names and guard_sfinae_map restore their fields automatically
+		// guard_ptb, guard_param_names and guard_sfinae_map restore their fields automatically
 
 		if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);

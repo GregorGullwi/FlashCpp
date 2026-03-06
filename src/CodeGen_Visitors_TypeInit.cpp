@@ -948,10 +948,13 @@
 				for (const auto& base : struct_info->base_classes) {
 					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
 					if (base_type_it != gTypesByName.end()) {
-						// Only call base constructor if the base class actually has constructors
-						// This avoids link errors when inheriting from classes without constructors
+						// Call base constructor if the base has user-defined constructors OR needs a trivial
+						// default constructor (e.g., template-instantiated class with member default-
+						// initializers but no explicit constructors). hasConstructor() covers the trivial
+						// constructor case (needs_default_constructor==true) that arises with template
+						// base classes like Base<T> resolved to a concrete type.
 						const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
-						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
+						if (base_struct_info && base_struct_info->hasConstructor()) {
 							ConstructorCallOp call_op;
 							call_op.struct_name = base_type_it->second->name();
 							call_op.object = StringTable::getOrInternStringHandle("this");

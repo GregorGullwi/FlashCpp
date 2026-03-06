@@ -448,8 +448,11 @@ private:
         };
         InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 
-        // Track if we're parsing a template body (for template parameter reference recognition)
-        bool parsing_template_body_ = false;
+        // Track nesting depth of template body parsing (for template parameter reference recognition).
+        // A value > 0 means we are inside one or more template definitions.
+        // Use FlashCpp::TemplateDepthGuard to increment/decrement; use ScopedState to temporarily
+        // suppress (set to 0) during SFINAE and lazy instantiation.
+        size_t parsing_template_depth_ = 0;
         
         // Add parsing depth counter to detect infinite loops
         // This is incremented/decremented in critical parsing functions
@@ -1154,7 +1157,7 @@ public:  // Public methods for template instantiation
 
         // Unified symbol lookup that automatically provides template parameters when parsing templates
         std::optional<ASTNode> lookup_symbol(StringHandle identifier) const {
-            if (parsing_template_body_ && !current_template_param_names_.empty()) {
+            if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
                 return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
             } else {
                 return gSymbolTable.lookup(identifier);
@@ -1163,7 +1166,7 @@ public:  // Public methods for template instantiation
 
         // Overload for qualified lookups with vector of strings
         std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
-            if (parsing_template_body_ && !current_template_param_names_.empty()) {
+            if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
                 // For qualified lookups, we still need template params for the base lookup
                 // But qualified lookups are less common in template bodies
                 return gSymbolTable.lookup_qualified(namespaces, identifier);
@@ -1202,8 +1205,10 @@ public:  // Public methods for template instantiation
                 return node; // Unresolved
             }
 
-            // Template parameter reference - leave Unresolved; resolved at instantiation time.
+            // Template parameter reference - set TemplateParameter binding so consumers
+            // can distinguish "deferred for instantiation" from "genuinely unknown".
             if (sym->is<TemplateParameterReferenceNode>()) {
+                node.set_binding(IdentifierBinding::TemplateParameter);
                 return node;
             }
 

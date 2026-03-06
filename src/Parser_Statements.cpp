@@ -1179,7 +1179,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// struct_info_ yet but could resolve to structs at instantiation time. Treat them as struct-like
 	// to allow multi-element brace-init lists like: return { expr1, expr2 };
 	if (!is_struct_like_type && type_specifier.type() == Type::UserDefined &&
-		(parsing_template_body_ || !struct_parsing_context_stack_.empty())) {
+		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_struct_like_type = true;
 	}
 	if (!is_struct_like_type) {
@@ -1233,7 +1233,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	if (type_index >= gTypeInfo.size() ||
 		(type_index < gTypeInfo.size() && !gTypeInfo[type_index].struct_info_)) {
 		const bool invalid_struct_type_index = type_index >= gTypeInfo.size();
-		if (!parsing_template_body_ && struct_parsing_context_stack_.empty()) {
+		if (!(parsing_template_depth_ > 0) && struct_parsing_context_stack_.empty()) {
 			return ParseResult::error(
 				invalid_struct_type_index ? "Invalid struct type index" : "Type is not a struct",
 				current_token_

@@ -994,7 +994,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If still not found, create a forward declaration
 			if (!identifierType) {
 				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
-				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_body_)) {
+				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_depth_ > 0)) {
 					return ParseResult::error(
 						std::string(StringBuilder().append("Use of undeclared identifier '")
 							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
@@ -1746,7 +1746,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If still not found, create a forward declaration
 			if (!identifierType) {
 				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
-				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_body_)) {
+				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_depth_ > 0)) {
 					return ParseResult::error(
 						std::string(StringBuilder().append("Use of undeclared identifier '")
 							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
@@ -4283,7 +4283,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							break;
 						}
 					}
-					if (parsing_template_body_ || !current_template_param_names_.empty() || !struct_parsing_context_stack_.empty() || is_pack_param) {
+					if (parsing_template_depth_ > 0 || !current_template_param_names_.empty() || !struct_parsing_context_stack_.empty() || is_pack_param) {
 						FLASH_LOG(Parser, Debug, "Treating unknown identifier '", identifier_token.value(), "' as dependent in template context");
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						// Don't return error - let it continue as a dependent expression

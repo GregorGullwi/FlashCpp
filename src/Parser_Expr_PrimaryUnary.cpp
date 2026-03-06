@@ -197,7 +197,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				if (type_spec.type() == Type::UserDefined && type_spec.type_index() == 0) {
 					// Check if the token looks like a known type or is in a template context
 					// In template bodies, UserDefined with index 0 can be a valid template parameter placeholder
-					if (!parsing_template_body_) {
+					if (!(parsing_template_depth_ > 0)) {
 						// Not in a template body, so this is likely a variable, not a type
 						is_valid_type = false;
 					}

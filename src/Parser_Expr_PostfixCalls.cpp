@@ -858,7 +858,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Validate that the namespace path actually exists before creating a forward declaration.
 					// This catches errors like f2::func() when only namespace f exists.
 					NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-					if (!validateQualifiedNamespace(ns_handle, final_identifier, parsing_template_body_)) {
+					if (!validateQualifiedNamespace(ns_handle, final_identifier, (parsing_template_depth_ > 0))) {
 						return ParseResult::error(
 							std::string(StringBuilder().append("Use of undeclared identifier '")
 								.append(buildQualifiedNameFromStrings(namespaces, final_identifier.value()))

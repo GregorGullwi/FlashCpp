@@ -1205,6 +1205,7 @@ enum class IdentifierBinding : uint8_t {
 	CapturedCopyThis, // Lambda [*this] capture
 	EnumConstant,     // Enumerator value
 	Function,         // Function name (not a variable; overload resolution deferred)
+	TemplateParameter, // Non-type or type template parameter reference (new)
 };
 
 class IdentifierNode {

@@ -332,10 +332,10 @@ if (param_decl.has_default_value()) {
 		const FunctionDeclarationNode* saved_current_function = current_function_;
 		
 		// When re-parsing a lazy member function body with concrete types,
-		// we're no longer in a dependent template context. Set parsing_template_body_
+		// we're no longer in a dependent template context. Set parsing_template_depth_
 		// to false so that constant expressions like sizeof(int) are evaluated.
-		FlashCpp::ScopedState guard_ptb(parsing_template_body_);
-		parsing_template_body_ = false;
+		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);  // saves depth, restores on exit
+		parsing_template_depth_ = 0;  // suppress template body context during lazy instantiation
 
 		// Restore to the function body start
 		restore_lexer_position_only(func_decl.template_body_position());

@@ -31,12 +31,12 @@ Move identifier name resolution from codegen (runtime multi-table lookups on eve
 | Phase 1A — IdentifierBinding + IdentifierNode + createBoundIdentifier | ✅ Done | `b8ca5961` | `IdentifierBinding` enum (12 variants) added to `AstNodeTypes_DeclNodes.h`; `IdentifierNode` extended; `createBoundIdentifier()` added to `Parser.h`; 16 creation sites in `Parser_Expr_PrimaryExpr.cpp` updated; `get_scope_type_of_symbol()` added to `SymbolTable.h`; typo `idenfifier_token` → `identifier_token` fixed (308 occurrences) |
 | Phase 1B — Remove detectGlobalOrStaticVar, migrate codegen | ✅ Done | `ecb1ddf6`, `77ab43db` | `GlobalStaticVarInfo` and `detectGlobalOrStaticVar()` deleted; `StaticLocal`/`StaticMember` bindings set in `createBoundIdentifier()`; all codegen paths (`generateIdentifierIr`, assignment, compound-assignment, inc/dec, `analyzeAddressExpression`) switch on `binding()`; grep for `detectGlobalOrStaticVar` = 0 |
 | Phase 2 — Lambda capture bindings | ⬜ Pending | — | |
-| Phase 3 — Template two-phase lookup | ⬜ Pending | — | See expanded section below for newly identified gaps |
+| Phase 3 — Template two-phase lookup | ✅ Done | (current branch) | `parsing_template_body_` → `size_t parsing_template_depth_` counter; `TemplateDepthGuard` RAII in `ParserScopeGuards.h`; `IdentifierBinding::TemplateParameter` added; `createBoundIdentifier()` sets it for `TemplateParameterReferenceNode`; template base constructor bug fixed (`hasAnyConstructor` → `hasConstructor`); template default-arg name-mismatch bug fixed in `Parser_TypeSpecifiers.cpp`; 6 new tests added |
 | Phase 4 — Unqualified function lookup + ADL | ⬜ Pending | — | |
 | Phase 5 — ConstExprEvaluator fast paths | ⬜ Pending | — | |
 
 > [!NOTE]
-> All 1327 tests pass on branch `copilot/identifier-refactor` after Phase 1B (rebased on `3e4c591c`).
+> All 1334 tests pass after Phase 3 (1332 runtime, 0 crashes, 0 mismatches, 26/26 _fail).
 
 ## Recommended Session Breakdown
 

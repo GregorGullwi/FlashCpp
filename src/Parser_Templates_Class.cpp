@@ -212,18 +212,17 @@ ParseResult Parser::parse_template_declaration() {
 	// This includes variable template detection below which needs to recognize template params
 	// like _Int in return types: typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
 	current_template_param_names_ = template_param_names;
-	parsing_template_body_ = true;
+	FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
 
 	// Check if this is a nested template (member function template of a class template)
 	// Pattern: template<typename T> template<typename U> ReturnType Class<T>::method(U u) { ... }
 	// At this point, outer template params are registered, so the inner parse can see them.
 	if (peek() == "template"_tok) {
 		// Helper to clean up template state before early returns from this block.
-		// parsing_template_body_, current_template_param_names_, and has_parameter_packs_
+		// parsing_template_depth_, current_template_param_names_, and has_parameter_packs_
 		// were set above and would normally be cleaned up at end-of-function (~line 3805).
 		auto cleanup_template_state = [this, saved_has_packs]() {
 			current_template_param_names_.clear();
-			parsing_template_body_ = false;
 			has_parameter_packs_ = saved_has_packs;
 		};
 
@@ -566,7 +565,7 @@ ParseResult Parser::parse_template_declaration() {
 		restore_token_position(var_check_pos);
 	}
 
-	// Note: current_template_param_names_ and parsing_template_body_ were set earlier
+	// Note: current_template_param_names_ and parsing_template_depth_ were set earlier
 	// (after template_param_names was populated) so that variable template detection
 	// can recognize template parameters in type specifiers.
 
@@ -582,7 +581,6 @@ ParseResult Parser::parse_template_declaration() {
 		if (constraint_result.is_error()) {
 			// Clean up template parameter context before returning
 			current_template_param_names_.clear();
-			parsing_template_body_ = false;
 			return constraint_result;
 		}
 		
@@ -707,7 +705,7 @@ ParseResult Parser::parse_template_declaration() {
 		}
 		
 		// Clean up template parameter context before returning
-		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		current_template_param_names_.clear();
 		
 		return saved_position.success(concept_node);
@@ -898,7 +896,7 @@ ParseResult Parser::parse_template_declaration() {
 			alias_node);
 		
 		// Clean up template parameter context before returning
-		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		current_template_param_names_.clear();
 		
 		return saved_position.success(alias_node);
@@ -1109,7 +1107,7 @@ ParseResult Parser::parse_template_declaration() {
 		gSymbolTable.insert(var_name, template_var_node);
 		
 		// Clean up template parameter context before returning
-		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		// to avoid breaking template argument resolution in subsequent code
 		current_template_param_names_.clear();
 		
@@ -1152,7 +1150,6 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Set parsing context flags
 			parsing_template_class_ = true;
-			parsing_template_body_ = true;
 
 			// Save position before struct/class keyword — used if this turns out to be an
 			// out-of-line nested class definition so parse_struct_declaration() can re-parse it
@@ -1231,7 +1228,6 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Reset parsing context flags
 					parsing_template_class_ = false;
-					parsing_template_body_ = false;
 					
 					return saved_position.success();
 				}
@@ -1279,7 +1275,6 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Reset parsing context flags
 				parsing_template_class_ = false;
-				parsing_template_body_ = false;
 				
 				return saved_position.success(struct_node);
 			}
@@ -2374,10 +2369,10 @@ ParseResult Parser::parse_template_declaration() {
 				// Set up template parameter names if this is a template member
 				const bool has_template_params = !delayed.template_param_names.empty();
 				FlashCpp::ScopedState guard_delay_param_names(current_template_param_names_, has_template_params);
-				FlashCpp::ScopedState guard_delay_ptb(parsing_template_body_, has_template_params);
+				FlashCpp::ScopedState guard_delay_ptb(parsing_template_depth_, has_template_params);
 				if (has_template_params) {
 					current_template_param_names_ = delayed.template_param_names;
-					parsing_template_body_ = true;
+						parsing_template_depth_++;
 				}
 
 				// Add function parameters to scope (handling constructors, destructors, and regular functions)
@@ -2460,7 +2455,6 @@ ParseResult Parser::parse_template_declaration() {
 		
 			// Reset parsing context flags
 			parsing_template_class_ = false;
-			parsing_template_body_ = false;
 			current_template_param_names_.clear();
 		
 			// Don't add specialization to AST - it's stored in the template registry
@@ -2547,7 +2541,6 @@ ParseResult Parser::parse_template_declaration() {
 					// Clean up template parameter context
 					current_template_param_names_.clear();
 					parsing_template_class_ = false;
-					parsing_template_body_ = false;
 					
 					return saved_position.success();
 				}
@@ -2782,7 +2775,6 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Clean up template parameter context
 				current_template_param_names_.clear();
-				parsing_template_body_ = false;
 				
 				return saved_position.success(template_class_node);
 			}
@@ -2810,7 +2802,6 @@ ParseResult Parser::parse_template_declaration() {
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization (after extra tokens): {}", template_name);
 				
 				current_template_param_names_.clear();
-				parsing_template_body_ = false;
 				
 				return saved_position.success(template_class_node);
 			}
@@ -3823,7 +3814,6 @@ if (struct_type_info.getStructInfo()) {
 		// Set flag to indicate we're parsing a template class
 		// This will prevent delayed function bodies from being parsed immediately
 		parsing_template_class_ = true;
-		parsing_template_body_ = true;
 		template_param_names_.clear();
 		for (const auto& param : template_params) {
 			if (param.is<TemplateParameterNode>()) {
@@ -3876,7 +3866,6 @@ if (struct_type_info.getStructInfo()) {
 
 		// Reset flag
 		parsing_template_class_ = false;
-		parsing_template_body_ = false;
 		template_param_names_.clear();
 		current_template_param_names_.clear();
 	} else {
@@ -4297,7 +4286,6 @@ if (struct_type_info.getStructInfo()) {
 		
 		// Clean up template parameter context
 		current_template_param_names_.clear();
-		parsing_template_body_ = false;
 		has_parameter_packs_ = saved_has_packs;
 		
 		if (body_result.is_error()) {
@@ -4713,8 +4701,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		for (const auto& name : template_param_names) {
 			current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
 		}
-		FlashCpp::ScopedState guard_ptb_partial(parsing_template_body_);
-		parsing_template_body_ = true;
+		FlashCpp::TemplateDepthGuard guard_ptb_partial(parsing_template_depth_);
 		
 		while (!peek().is_eof() && peek() != "}"_tok) {
 			// Skip empty declarations (bare ';' tokens) - valid in C++
@@ -5130,8 +5117,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	for (const auto& name : template_param_names) {
 		current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
 	}
-	FlashCpp::ScopedState guard_ptb_body(parsing_template_body_);
-	parsing_template_body_ = true;
+	FlashCpp::TemplateDepthGuard guard_ptb_body(parsing_template_depth_);
 	
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		// Skip empty declarations (bare ';' tokens) - valid in C++

@@ -2145,7 +2145,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// (self-referential templates like __ratio_add_impl). In this case, the template
 			// hasn't been registered yet because we're still parsing its body.
 			// Check if the name matches the struct currently being defined.
-			if (parsing_template_body_ || !current_template_param_names_.empty()) {
+			if (parsing_template_depth_ > 0 || !current_template_param_names_.empty()) {
 				// Check struct_parsing_context_stack_ for self-reference
 				for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
 					std::string_view struct_name = it->struct_name;
@@ -4400,8 +4400,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		SaveHandle saved_pos = save_token_position();
 		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 		current_template_param_names_ = ool_nested.template_param_names;
-		FlashCpp::ScopedState guard_template_body(parsing_template_body_);
-		parsing_template_body_ = true;
+		FlashCpp::TemplateDepthGuard guard_template_body(parsing_template_depth_);
 		FlashCpp::ScopedState guard_template_class(parsing_template_class_);
 		parsing_template_class_ = true;
 		FlashCpp::ScopedState guard_delayed_bodies(delayed_function_bodies_);

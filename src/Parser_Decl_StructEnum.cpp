@@ -509,7 +509,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			// Also check the AST nodes for template arguments - they may contain
 			// TemplateParameterReferenceNode which indicates dependent types
-			if (!has_dependent_args && parsing_template_body_) {
+			if (!has_dependent_args && (parsing_template_depth_ > 0)) {
 				for (const auto& arg_node : template_arg_nodes) {
 					if (arg_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
@@ -1872,7 +1872,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			member_result = parse_type_and_name();
 			if (member_result.is_error()) {
 				// In template body, recover from member parse errors by skipping to next ';' or '}'
-				if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+				if ((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty()) {
 					FLASH_LOG(Parser, Warning, "Template struct body (", StringTable::getStringView(struct_name), "): skipping unparseable member declaration at ", peek_info().value(), " line=", peek_info().line());
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						if (peek() == ";"_tok) {
@@ -1895,7 +1895,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Get the member node - we need to check this exists before proceeding
 		if (!member_result.node().has_value()) {
 			// In template body, recover from missing member declaration
-			if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+			if ((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty()) {
 				FLASH_LOG(Parser, Warning, "Template struct body: skipping unparseable member declaration at ", peek_info().value());
 				while (!peek().is_eof() && peek() != "}"_tok) {
 					if (peek() == ";"_tok) {

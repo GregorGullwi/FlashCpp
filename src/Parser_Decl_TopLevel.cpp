@@ -340,12 +340,12 @@ ParseResult Parser::parse_static_assert()
 	// defer static_assert evaluation until instantiation.
 	// However, if we can evaluate it now (non-dependent expression), we should do so to catch errors early.
 	// The expression may depend on template parameters that are not yet known
-	bool is_in_template_definition = parsing_template_body_ && !current_template_param_names_.empty();
+	bool is_in_template_definition = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
 	
 	// Also consider struct parsing context - if we're inside a template struct body,
 	// member function bodies may be parsed later but still contain template-dependent expressions
 	bool is_in_template_struct = !struct_parsing_context_stack_.empty() && 
-		(parsing_template_body_ || !current_template_param_names_.empty());
+		(parsing_template_depth_ > 0 || !current_template_param_names_.empty());
 	
 	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
@@ -1005,14 +1005,14 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					return ParseResult::error("Expected ';' after type alias", current_token_);
 				}
 				return saved_position.success();
-			} else if (parsing_template_body_ || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
+			} else if (parsing_template_depth_ > 0 || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
 				// If we're in a template body OR function body and type parsing failed, it's likely a template-dependent type
 				// or a complex type expression during template instantiation.
 				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now).
 				// For function-local type aliases (like in template instantiations), they're often not needed
 				// for code generation as the actual type is already known from the return type.
 				FLASH_LOG(Parser, Debug, "Skipping unparseable using declaration in ", 
-				          parsing_template_body_ ? "template body" : "function body");
+				          parsing_template_depth_ > 0 ? "template body" : "function body");
 				while (!peek().is_eof() && peek() != ";"_tok) {
 					advance();
 				}
