@@ -87,17 +87,39 @@ inline bool signaturesMatch(const std::vector<Type>& sig1, const std::vector<Typ
 	return true;
 }
 
-// Count the minimum required arguments for a function (excluding trailing default arguments)
+// Count the minimum required arguments for a function.
+//
+// C++ permits a defaulted parameter to be followed by a function parameter pack,
+// so we must ignore any trailing pack first and then discount trailing defaults.
 inline size_t countMinRequiredArgs(const FunctionDeclarationNode& func) {
 	const auto& params = func.parameter_nodes();
 	size_t min_required = params.size();
-	// Walk from the end - default arguments must be trailing
-	for (size_t i = params.size(); i > 0; --i) {
-		if (params[i-1].is<DeclarationNode>() && params[i-1].as<DeclarationNode>().has_default_value()) {
-			min_required--;
-		} else {
+	size_t i = params.size();
+
+	// A trailing function parameter pack may follow a defaulted parameter.
+	while (i > 0) {
+		if (!params[i - 1].is<DeclarationNode>()) {
 			break;
 		}
+		const auto& param_decl = params[i - 1].as<DeclarationNode>();
+		if (!param_decl.is_parameter_pack()) {
+			break;
+		}
+		min_required--;
+		--i;
+	}
+
+	// Walk the remaining suffix of trailing default arguments.
+	while (i > 0) {
+		if (!params[i - 1].is<DeclarationNode>()) {
+			break;
+		}
+		const auto& param_decl = params[i - 1].as<DeclarationNode>();
+		if (!param_decl.has_default_value()) {
+			break;
+		}
+		min_required--;
+		--i;
 	}
 	return min_required;
 }
