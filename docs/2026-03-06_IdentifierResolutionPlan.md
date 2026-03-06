@@ -22,6 +22,22 @@ Move identifier name resolution from codegen (runtime multi-table lookups on eve
 > [!NOTE]
 > The phases below are **dependency and review boundaries**, not evenly sized implementation sessions. Some phases are small enough for one session (`Phase 2`, `Phase 5`), while others are better split across multiple sessions (`Phase 0`, `Phase 1`, `Phase 4`).
 
+## Implementation Progress
+
+| Phase | Status | Branch commit(s) | Notes |
+|-------|--------|-----------------|-------|
+| Phase 0A — using/overload-set semantics | ✅ Done | (no code change needed) | Tests `test_using_directive_overload_merge_ret0` and `test_using_declaration_overload_set_ret0` already pass |
+| Phase 0B — point-of-declaration fix | ✅ Done | `c264c2f3` | `sizeof(x)` in own initializer now returns 4; pre-inserts stub VarDecl before parsing initializer; `sizeof` disambiguation fixed; codegen registers var before evaluating initializer |
+| Phase 1A — IdentifierBinding + IdentifierNode + createBoundIdentifier | ✅ Done | `b8ca5961` | `IdentifierBinding` enum (12 variants) added to `AstNodeTypes_DeclNodes.h`; `IdentifierNode` extended; `createBoundIdentifier()` added to `Parser.h`; 16 creation sites in `Parser_Expr_PrimaryExpr.cpp` updated; `get_scope_type_of_symbol()` added to `SymbolTable.h`; typo `idenfifier_token` → `identifier_token` fixed (308 occurrences) |
+| Phase 1B — Remove detectGlobalOrStaticVar, migrate codegen | ✅ Done | `ecb1ddf6`, `77ab43db` | `GlobalStaticVarInfo` and `detectGlobalOrStaticVar()` deleted; `StaticLocal`/`StaticMember` bindings set in `createBoundIdentifier()`; all codegen paths (`generateIdentifierIr`, assignment, compound-assignment, inc/dec, `analyzeAddressExpression`) switch on `binding()`; grep for `detectGlobalOrStaticVar` = 0 |
+| Phase 2 — Lambda capture bindings | ⬜ Pending | — | |
+| Phase 3 — Template two-phase lookup | ⬜ Pending | — | See expanded section below for newly identified gaps |
+| Phase 4 — Unqualified function lookup + ADL | ⬜ Pending | — | |
+| Phase 5 — ConstExprEvaluator fast paths | ⬜ Pending | — | |
+
+> [!NOTE]
+> All 1327 tests pass on branch `copilot/identifier-refactor` after Phase 1B (rebased on `3e4c591c`).
+
 ## Recommended Session Breakdown
 
 If implementation is done over multiple focused sessions, use the phases as milestones but split the larger ones like this:
@@ -87,20 +103,24 @@ Add enum and extend `IdentifierNode`:
 
 ```cpp
 enum class IdentifierBinding : uint8_t {
-    Unresolved,       // Not yet resolved (default, templates, deferred)
-    Local,            // Local variable or function parameter
-    Global,           // Global variable (file scope / namespace scope)
-    StaticLocal,      // static local variable inside a function
-    StaticMember,     // static data member of a struct/class
-    NonStaticMember,  // non-static data member (implicit this->member)
-    CapturedByValue,  // Lambda [x] capture
-    CapturedByRef,    // Lambda [&x] capture
-    CapturedThis,     // Lambda [this] capture
-    CapturedCopyThis, // Lambda [*this] capture
-    EnumConstant,     // Enumerator value
-    Function,         // Function name (not a variable)
+    Unresolved,         // Not yet resolved (default, templates, deferred)
+    Local,              // Local variable or function parameter
+    Global,             // Global variable (file scope / namespace scope)
+    StaticLocal,        // static local variable inside a function
+    StaticMember,       // static data member of a struct/class
+    NonStaticMember,    // non-static data member (implicit this->member)
+    CapturedByValue,    // Lambda [x] capture
+    CapturedByRef,      // Lambda [&x] capture
+    CapturedThis,       // Lambda [this] capture
+    CapturedCopyThis,   // Lambda [*this] capture
+    EnumConstant,       // Enumerator value
+    Function,           // Function name (not a variable)
+    TemplateParameter,  // Non-type or type template parameter reference
 };
 ```
+
+> [!NOTE]
+> `TemplateParameter` is separate from `Unresolved` so that call sites can distinguish "genuinely unknown" from "known to be a template parameter, defer to instantiation". Currently `lookup_symbol()` already returns `TemplateParameterReferenceNode` for both type and non-type template parameters (guarded by `parsing_template_body_` + `current_template_param_names_`), so `createBoundIdentifier()` leaves these as `Unresolved`. Adding a dedicated variant makes the intent explicit and allows codegen to assert correctly.
 
 > [!NOTE]
 > `Function` must mean **"ordinary lookup found one or more callable declarations"**, not "overload resolution is finished". Do **not** use `resolved_name_` to pretend an overloaded callee has already been selected. ADL and overload resolution still happen later at the call site.
@@ -206,27 +226,68 @@ This helper performs the binding lookup once:
 ## Phase 3 — Template Two-Phase Lookup (C++20 [temp.res])
 
 > [!CAUTION]
-> **Dependent names cannot be bound at parse time.** In template definitions, names that depend on template parameters must remain `Unresolved` until instantiation.
+> **Dependent names cannot be bound at parse time.** In template definitions, names that depend on template parameters must remain `Unresolved` (or `TemplateParameter`) until instantiation.
 
 ```cpp
 template<typename T>
 void foo(T& obj) {
     obj.x = 42;    // dependent — leave Unresolved
-    n += 7;        // non-dependent — CAN bind at parse time (Phase 1)
+    n += 7;        // non-dependent — CAN bind at parse time
     static int s;  // non-dependent — CAN bind as StaticLocal
 }
 ```
 
-#### [MODIFY] [Parser_Templates_Substitution.cpp](file:///c:/Projects/FlashCpp2/src/Parser_Templates_Substitution.cpp)
-- When creating `IdentifierNode`s during template instantiation (lines 57, 96, 171, 493, 1226), call `createBoundIdentifier()` which now has the concrete types available and can fully resolve
+### How the current parser tracks template context
 
-#### No change needed for dependent names
-- The `Unresolved` default already handles this — codegen falls through to its existing multi-lookup logic, which remains as the **safe fallback** for any identifier the parser couldn't bind
+`Parser.h` uses two state fields together:
+- `bool parsing_template_body_` (line 452) — set to `true` while inside a template definition.
+- `InlineVector<StringHandle, 4> current_template_param_names_` (line 433) — holds the names of all active template parameters (both type parameters like `typename T` and non-type parameters like `int N`).
+
+`lookup_symbol()` (line 1151) passes `current_template_param_names_` to `gSymbolTable.lookup()`, which returns a `TemplateParameterReferenceNode` when the name matches a template parameter. `createBoundIdentifier()` checks for this and leaves those names `Unresolved`. This correctly handles both type and non-type template parameters.
+
+### Known gaps and required work
+
+#### [RISK] `parsing_template_body_` is a `bool`, not a depth counter
+
+Setting/clearing happens at many call sites across `Parser_Templates_Class.cpp`, `Parser_Templates_Function.cpp`, `Parser_Templates_Lazy.cpp`, and others. With nested class templates (a template defined inside another template), a naive set/clear pattern can leave the flag in the wrong state after backtracking.
+
+**Fix**: Replace with a `size_t parsing_template_depth_` counter (increment on enter, decrement on exit via RAII guard). `parsing_template_body_` becomes `parsing_template_depth_ > 0`. This ensures correctness for arbitrarily nested templates.
+
+#### [MODIFY] `createBoundIdentifier()` — add `TemplateParameter` variant
+
+Currently `TemplateParameterReferenceNode` hits the catch-all `return node` (Unresolved). Change to set `IdentifierBinding::TemplateParameter` explicitly so consumers can distinguish "deferred — instantiation will resolve" from "genuinely unknown". Update `AstNodeTypes_DeclNodes.h` with the new enum variant (see Phase 1 section).
+
+#### [RISK] Dependent base classes — `has_deferred_base_classes` not checked
+
+`StructTypeInfo` has a `has_deferred_base_classes` flag (set in `Parser_Templates_Class.cpp`). When a class template has a dependent base (e.g., `template<T> struct D : T`), unqualified names in its member-function bodies might be provided by `T`. `createBoundIdentifier()` does **not** currently check `has_deferred_base_classes`. If an unqualified name fails local lookup and ordinary lookup also misses, the helper should check this flag before falling through to `NonStaticMember` or `Unresolved` — and stay `Unresolved` so codegen's lookup-at-instantiation fallback can find the name in the concrete base.
+
+**Fix**: Before the `NonStaticMember` check in `createBoundIdentifier()`, if the current struct has `has_deferred_base_classes == true`, skip the implicit member search and return `Unresolved`.
+
+#### [MODIFY] Re-binding after instantiation — substitution files do not create new IdentifierNodes
+
+`Parser_Templates_Inst_Substitution.cpp` and `Parser_Templates_Inst_Deduction.cpp` do **not** contain `IdentifierNode(token)` constructor calls. They transform/copy existing IdentifierNodes from the template definition's AST. The original plan's instruction "call `createBoundIdentifier()` at creation sites in `Parser_Templates_Substitution.cpp` lines 57, 96, 171, 493, 1226" is therefore incorrect.
+
+The correct approach:
+1. After substitution produces a concrete expression tree, walk all `IdentifierNode` children that still have `binding() == Unresolved` (or `TemplateParameter`).
+2. For each, call `createBoundIdentifier()` (or a post-instantiation equivalent that has access to the now-concrete type information).
+3. Bindings that resolve at this point (e.g., a global that was shadowed by a template param) receive their final binding; anything still unknown stays `Unresolved` for codegen's fallback.
+
+#### [MODIFY] Files
+
+- `src/Parser.h` — Replace `parsing_template_body_` bool with a `parsing_template_depth_` counter; update `lookup_symbol()` test accordingly; add `TemplateParameter` case to `createBoundIdentifier()`; add dependent-base guard before `NonStaticMember` check.
+- `src/AstNodeTypes_DeclNodes.h` — Add `TemplateParameter` to `IdentifierBinding` enum.
+- `src/Parser_Templates_Inst_Substitution.cpp` — After each substitution call that produces a new expression tree, walk `IdentifierNode`s and re-bind `Unresolved`/`TemplateParameter` ones via `createBoundIdentifier()`.
+- `src/Parser_Templates_Class.cpp` and `Parser_Templates_Function.cpp` — Replace all `parsing_template_body_ = true/false` with RAII depth-counter guards.
+
+#### No change needed for already-resolved non-dependent names
+
+Names already bound in Phase 1 (e.g., a global variable referenced in a template function that is not dependent on any template parameter) keep their binding through instantiation. The `Unresolved` default remains the safe fallback for codegen.
 
 #### Compliance notes for dependent member lookup
-- In templates with a **dependent base class**, unqualified names must **not** be eagerly rebound as `NonStaticMember` during primary-template parsing just because a later instantiation might make them valid.
-- `this->member`, `Base<T>::member`, and other explicitly dependent forms are resolved during instantiation/substitution, not during the first parse of the template definition.
-- The binding helper should therefore treat "implicit member lookup in a dependent context" as a reason to stay `Unresolved`.
+
+- In templates with a **dependent base class**, unqualified names must **not** be eagerly bound as `NonStaticMember` during primary-template parsing — a later instantiation's base might provide the name.
+- `this->member`, `Base<T>::member`, and other explicitly dependent forms are resolved at instantiation/substitution time, not during the first parse of the template definition.
+- `createBoundIdentifier()` must treat "implicit member lookup inside a class with `has_deferred_base_classes`" as a reason to stay `Unresolved`.
 
 ---
 
@@ -264,16 +325,20 @@ This is the largest missing correctness area if we want the refactor to be genui
 
 | Phase | File | Change |
 |-------|------|--------|
-| 1 | `AstNodeTypes_DeclNodes.h` | Add `IdentifierBinding` enum, extend `IdentifierNode` |
-| 1 | `Parser.h` or `ParserTypes.h` | Add `createBoundIdentifier()` helper |
-| 1 | `Parser_Expr_PrimaryExpr.cpp` | Call `createBoundIdentifier()` at ~40 creation sites |
-| 1 | `AstToIr.h` | Remove `GlobalStaticVarInfo`, `detectGlobalOrStaticVar()` |
-| 1 | `CodeGen_Expr_Operators.cpp` | Replace `detectGlobalOrStaticVar()` calls with binding checks |
-| 1 | `CodeGen_Expr_Conversions.cpp` | Replace `detectGlobalOrStaticVar()` in inc/dec handler |
-| 1 | `CodeGen_Expr_Primitives.cpp` | Update `generateIdentifierIr()` to switch on binding |
+| 1 ✅ | `AstNodeTypes_DeclNodes.h` | Added `IdentifierBinding` enum (12 variants + `TemplateParameter` to add), extended `IdentifierNode` |
+| 1 ✅ | `Parser.h` | Added `createBoundIdentifier()`, `get_scope_type_of_symbol()` |
+| 1 ✅ | `Parser_Expr_PrimaryExpr.cpp` | 16 creation sites updated to `createBoundIdentifier()`; typo `idenfifier_token` fixed |
+| 1 ✅ | `AstToIr.h` | Removed `GlobalStaticVarInfo`, `detectGlobalOrStaticVar()` |
+| 1 ✅ | `CodeGen_Expr_Operators.cpp` | Removed `detectGlobalOrStaticVar()`; all assignment paths use `binding()` |
+| 1 ✅ | `CodeGen_Expr_Conversions.cpp` | Inc/dec and `analyzeAddressExpression` use `binding()` |
+| 1 ✅ | `CodeGen_Expr_Primitives.cpp` | `generateIdentifierIr()` switches on `binding()` |
 | 2 | `Parser_Expr_PrimaryExpr.cpp` | Bind lambda captures |
 | 2 | `CodeGen_Expr_Operators.cpp` | Remove ad-hoc lambda capture checks |
-| 3 | `Parser_Templates_Substitution.cpp` | Bind identifiers during instantiation |
+| 3 | `AstNodeTypes_DeclNodes.h` | Add `TemplateParameter` to `IdentifierBinding` enum |
+| 3 | `Parser.h` | Replace `parsing_template_body_` bool with depth counter; add `TemplateParameter` case and dependent-base guard to `createBoundIdentifier()` |
+| 3 | `Parser_Templates_Class.cpp` | Replace `parsing_template_body_` set/clear with RAII depth-counter guards |
+| 3 | `Parser_Templates_Function.cpp` | Same RAII depth-counter guard |
+| 3 | `Parser_Templates_Inst_Substitution.cpp` | After substitution: walk `Unresolved`/`TemplateParameter` IdentifierNodes and re-bind via `createBoundIdentifier()` |
 | 4 | `SymbolTable.h` | Preserve overload-set formation and add ADL support |
 | 4 | `Parser_Expr_PrimaryExpr.cpp` | Combine ordinary lookup with ADL for unqualified calls |
 | 5 | `ConstExprEvaluator_Members.cpp` | Use binding for fast-path evaluation |
@@ -319,6 +384,25 @@ Also touched (secondary — `IdentifierNode` creation sites):
   - A deterministic point-of-declaration case such as `int x = sizeof(x); return x;`
   - Useful to verify the variable is considered in scope for its own initializer according to the standard, even before initialization is complete.
 
+- `tests/test_template_nondependent_global_ret0.cpp`
+  - A function template that references a non-dependent global variable and a non-dependent free function.
+  - Verifies non-dependent names are bound at parse time (first-phase lookup) and not accidentally re-looked up at instantiation.
+  - Example: `int g = 0; void helper() {} template<typename T> int f(T) { helper(); return g; } int main() { return f(42); }`
+- `tests/test_template_nontype_param_shadows_global_ret0.cpp`
+  - A non-type template parameter with the same name as a global variable.
+  - `int N = 99; template<int N> int f() { return N; } int main() { return f<0>(); }`
+  - Confirms the template parameter takes priority over the global — binding must be `TemplateParameter`/`Unresolved`, not `Global`.
+- `tests/test_template_static_local_ret1.cpp`
+  - A function template with a `static` local variable; called multiple times.
+  - Verifies `StaticLocal` binding survives instantiation and the static storage is shared across calls.
+- `tests/test_template_dependent_base_unqualified_ret0.cpp`
+  - `template<typename Base> struct D : Base { int f() { return value; } }` where `Base` supplies `value`.
+  - Confirms unqualified `value` in `D::f()` is deferred (stays `Unresolved`) during primary-template parsing and is resolved correctly at instantiation. Currently likely fails.
+- `tests/test_template_rebind_after_instantiation_ret42.cpp`
+  - A template that uses a name that is `Unresolved` in the template definition but becomes `Global` once instantiated (e.g., a global variable introduced after the template is defined but before it is instantiated).
+  - Tests that post-instantiation re-binding via the AST walk correctly updates the binding.
+
 ### Manual Verification
 - Compile small programs with `static` locals, globals, lambda `[&x]` captures, `using namespace`, ADL calls, and hidden-friend calls; verify identical or improved behavior relative to the intended standard semantics
-- Grep for remaining `detectGlobalOrStaticVar` references — must be zero after Phase 1
+- Grep for remaining `detectGlobalOrStaticVar` references — must be zero (achieved in Phase 1B)
+- Grep for `parsing_template_body_` assignment — must be zero after Phase 3 (all replaced with depth-counter guards)
