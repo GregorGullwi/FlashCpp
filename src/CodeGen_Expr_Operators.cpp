@@ -51,6 +51,65 @@ AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view i
 	return info;
 }
 
+std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type) {
+	// Look up the struct type info
+	TypeIndex type_idx = param_type.type_index();
+	if (type_idx == 0 || type_idx >= gTypeInfo.size()) return std::nullopt;
+	const TypeInfo& type_info = gTypeInfo[type_idx];
+	const StructTypeInfo* struct_info = type_info.getStructInfo();
+	if (!struct_info) return std::nullopt;
+
+	// Create a temporary variable for the struct
+	TempVar temp = var_counter.next();
+
+	// Emit constructor call (default ctor to allocate the struct)
+	ConstructorCallOp ctor_op;
+	ctor_op.struct_name = type_info.name();
+	ctor_op.object = temp;
+	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+
+	// Emit member stores for each initializer
+	const auto& initializers = init_list.initializers();
+	const auto& members = struct_info->members;
+	for (size_t i = 0; i < initializers.size() && i < members.size(); ++i) {
+		const ASTNode& init_expr = initializers[i];
+		const auto& member = members[i];
+
+		// Evaluate the initializer expression
+		IrValue store_value;
+		Type store_type = member.type;
+		int store_size = static_cast<int>(member.size * 8);
+
+		if (init_expr.is<ExpressionNode>()) {
+			auto operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+			if (operands.size() >= 3) {
+				store_type = std::get<Type>(operands[0]);
+				store_size = std::get<int>(operands[1]);
+				store_value = toIrValue(operands[2]);
+			}
+		}
+
+		// Emit MemberStoreOp
+		MemberStoreOp ms;
+		ms.value = TypedValue{store_type, store_size, store_value};
+		ms.object = temp;
+		ms.member_name = member.name;
+		ms.offset = static_cast<int>(member.offset);
+		ms.struct_type_info = &type_info;
+		ms.is_reference = false;
+		ms.is_rvalue_reference = false;
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), Token()));
+	}
+
+	int actual_size_bits = static_cast<int>(struct_info->total_size * 8);
+	TypedValue result;
+	result.type = Type::Struct;
+	result.size_in_bits = actual_size_bits;
+	result.value = IrValue(temp);
+	result.type_index = type_idx;
+	return result;
+}
+
 	std::vector<IrOperand> AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
 		// Ternary operator: condition ? true_expr : false_expr
 		// Generate IR:

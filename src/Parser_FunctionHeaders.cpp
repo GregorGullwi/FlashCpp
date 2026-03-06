@@ -13,6 +13,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		return ParseResult::error("Expected '(' for parameter list", current_token_);
 	}
 
+	bool seen_default_param = false;
 	while (!consume(")"_tok)) {
 		// Handle C-style (void) parameter list meaning "no parameters"
 		// In C/C++, f(void) is equivalent to f()
@@ -97,8 +98,23 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		// Note: '=' is an Operator token, not a Punctuator token
 		if (peek() == "="_tok) {
 			advance(); // consume '='
-			// Parse the default value expression
-			auto default_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			// Check if the default value is a braced initializer for a struct parameter
+			// parse_expression doesn't handle braces outside of a function body,
+			// so we use parse_brace_initializer directly when the parameter type is known
+			ParseResult default_value = ParseResult::error("", Token());
+			if (peek() == "{"_tok && !out_params.parameters.empty()) {
+				auto& last_param = out_params.parameters.back();
+				if (last_param.is<DeclarationNode>()) {
+					const auto& param_type = last_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					if (param_type.type() == Type::Struct || param_type.type() == Type::UserDefined) {
+						default_value = parse_brace_initializer(param_type);
+					}
+				}
+			}
+			// Fallback to normal expression parsing
+			if (default_value.is_error()) {
+				default_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			}
 			if (default_value.is_error()) {
 				return default_value;
 			}
@@ -109,6 +125,20 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 					last_param.as<DeclarationNode>().set_default_value(*default_value.node());
 				}
 			}
+		}
+
+		// C++20 [dcl.fct.default]/4: If a parameter has a default argument,
+		// all subsequent parameters shall also have default arguments.
+		bool current_has_default = !out_params.parameters.empty() &&
+			out_params.parameters.back().is<DeclarationNode>() &&
+			out_params.parameters.back().as<DeclarationNode>().has_default_value();
+		if (current_has_default) {
+			seen_default_param = true;
+		} else if (seen_default_param && !out_params.parameters.empty() &&
+			out_params.parameters.back().is<DeclarationNode>()) {
+			const auto& param = out_params.parameters.back().as<DeclarationNode>();
+			return ParseResult::error("Missing default argument on parameter '" +
+				std::string(param.identifier_token().value()) + "'", param.identifier_token());
 		}
 
 		// Skip GCC attributes on parameters (e.g., __attribute__((__unused__)))

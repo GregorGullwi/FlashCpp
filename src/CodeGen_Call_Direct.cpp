@@ -1210,6 +1210,13 @@
 						if (default_expr.is<ExpressionNode>()) {
 							auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
 							call_op.args.push_back(toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size())));
+						} else if (default_expr.is<InitializerListNode>()) {
+							// Struct default argument via braced init list (e.g., Point p = {1, 2})
+							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type);
+							if (result.has_value()) {
+								call_op.args.push_back(*result);
+							}
 						}
 					}
 				}

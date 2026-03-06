@@ -5004,7 +5004,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												const auto& params = func_decl.parameter_nodes();
 												for (size_t i = args.size(); i < params.size(); ++i) {
 													if (params[i].is<DeclarationNode>() && params[i].as<DeclarationNode>().has_default_value()) {
-														args.push_back(params[i].as<DeclarationNode>().default_value());
+														const auto& def_val = params[i].as<DeclarationNode>().default_value();
+														// For braced-init-list defaults (e.g., Point p = {1, 2}),
+														// convert to ConstructorCallNode so codegen can handle it
+														if (def_val.is<InitializerListNode>()) {
+															const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+															if (param_type_node.type() == Type::Struct || param_type_node.type() == Type::UserDefined) {
+																auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
+																const InitializerListNode& init_list = def_val.as<InitializerListNode>();
+																ChunkedVector<ASTNode> ctor_args;
+																for (const auto& init : init_list.initializers()) {
+																	ctor_args.push_back(init);
+																}
+																args.push_back(emplace_node<ExpressionNode>(
+																	ConstructorCallNode(type_copy, std::move(ctor_args), idenfifier_token)));
+																continue;
+															}
+														}
+														args.push_back(def_val);
 													}
 												}
 											}

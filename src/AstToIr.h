@@ -70,6 +70,10 @@ private:
 	// Returns info needed to generate a GlobalStore for mutations on such variables.
 	GlobalStaticVarInfo detectGlobalOrStaticVar(std::string_view ident_name);
 
+	// Generate aggregate initialization of a struct from an InitializerListNode as a default argument.
+	// Emits ConstructorCallOp + MemberStoreOps for the struct, returns a TypedValue for the temporary.
+	std::optional<TypedValue> generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type);
+
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
 
 	void enterScope() {
