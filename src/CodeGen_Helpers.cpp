@@ -54,7 +54,7 @@ const Token& token) {
 void AstToIr::emitMemberStore(const TypedValue& value,
 std::variant<StringHandle, TempVar> object,
 StringHandle member_name, int offset,
-bool is_reference, bool is_rvalue_reference,
+CVReferenceQualifier ref_qualifier,
 bool is_pointer_to_member,
 const Token& token,
 std::optional<size_t> bitfield_width,
@@ -65,8 +65,7 @@ size_t bitfield_bit_offset) {
 	member_store.member_name = member_name;
 	member_store.offset = offset;
 	member_store.struct_type_info = nullptr;
-	member_store.is_reference = is_reference;
-	member_store.is_rvalue_reference = is_rvalue_reference;
+	member_store.ref_qualifier = ref_qualifier;
 	member_store.vtable_symbol = StringHandle();
 	member_store.is_pointer_to_member = is_pointer_to_member;
 	member_store.bitfield_width = bitfield_width;

@@ -999,8 +999,7 @@
 								combined_store.object = StringTable::getOrInternStringHandle("this");
 								combined_store.member_name = member.getName();
 								combined_store.offset = static_cast<int>(offset);
-								combined_store.is_reference = false;
-								combined_store.is_rvalue_reference = false;
+								combined_store.ref_qualifier = CVReferenceQualifier::None;
 								combined_store.struct_type_info = nullptr;
 								// No bitfield_width — write the full combined value
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(combined_store), Token()));
@@ -1045,8 +1044,7 @@
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
-							member_store.is_reference = member.is_reference();
-							member_store.is_rvalue_reference = member.is_rvalue_reference();
+							member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 							member_store.struct_type_info = nullptr;
 							member_store.bitfield_width = member.bitfield_width;
 							member_store.bitfield_bit_offset = member.bitfield_bit_offset;
@@ -1253,8 +1251,7 @@ void AstToIr::emitRecursiveZeroFill(
 			member_store.object = base_object;
 			member_store.member_name = sub_member.getName();
 			member_store.offset = base_offset + static_cast<int>(sub_member.offset);
-			member_store.is_reference = sub_member.is_reference();
-			member_store.is_rvalue_reference = sub_member.is_rvalue_reference();
+			member_store.ref_qualifier = ((sub_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((sub_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 			member_store.struct_type_info = nullptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 		}
@@ -1433,8 +1430,7 @@ const Token& token)
 			member_store.object = base_object;
 			member_store.member_name = member_name;
 			member_store.offset = base_offset + static_cast<int>(member.offset);
-			member_store.is_reference = member.is_reference();
-			member_store.is_rvalue_reference = member.is_rvalue_reference();
+			member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 			member_store.struct_type_info = nullptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 			continue;
@@ -1490,8 +1486,7 @@ const Token& token)
 				member_store.object = base_object;
 				member_store.member_name = member_name;
 				member_store.offset = base_offset + static_cast<int>(member.offset);
-				member_store.is_reference = member.is_reference();
-				member_store.is_rvalue_reference = member.is_rvalue_reference();
+				member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				member_store.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 			} else {
@@ -1503,8 +1498,7 @@ const Token& token)
 				member_store.object = base_object;
 				member_store.member_name = member_name;
 				member_store.offset = base_offset + static_cast<int>(member.offset);
-				member_store.is_reference = member.is_reference();
-				member_store.is_rvalue_reference = member.is_rvalue_reference();
+				member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				member_store.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 			}
@@ -1531,8 +1525,7 @@ const Token& token)
 			member_store.object = base_object;
 			member_store.member_name = member_name;
 			member_store.offset = base_offset + static_cast<int>(member.offset);
-			member_store.is_reference = member.is_reference();
-			member_store.is_rvalue_reference = member.is_rvalue_reference();
+			member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 			member_store.struct_type_info = nullptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 		}
@@ -1613,8 +1606,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
 			
-			func_param.is_reference = false;
-			func_param.is_rvalue_reference = false;
+			func_param.ref_qualifier = CVReferenceQualifier::None;
 			func_param.cv_qualifier = CVQualifier::None;
 			func_decl_op.parameters.push_back(func_param);
 		}

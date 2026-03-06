@@ -475,11 +475,14 @@ struct MemberLoadOp {
 	StringHandle member_name;                       // Which member to access
 	int offset;                                     // Byte offset in struct
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
-	bool is_reference;                              // True if member is declared as T& (describes member declaration, not access)
-	bool is_rvalue_reference;                       // True if member is declared as T&& (describes member declaration, not access)
+	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Member declaration reference qualifier (not access kind)
 	bool is_pointer_to_member = false;              // True if accessing through pointer (ptr->member), false for direct (obj.member)
 	std::optional<size_t> bitfield_width;           // Width in bits for bitfield members
 	size_t bitfield_bit_offset = 0;                 // Bit offset within the storage unit for bitfield members
+
+	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
+	bool is_lvalue_reference() const { return ref_qualifier == CVReferenceQualifier::LValueReference; }
 };
 
 // Member store (store value to struct/class member)
@@ -489,12 +492,15 @@ struct MemberStoreOp {
 	StringHandle member_name;                       // Which member to store to
 	int offset;                                     // Byte offset in struct
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
-	bool is_reference;                              // True if member is declared as T& (describes member declaration, not access)
-	bool is_rvalue_reference;                       // True if member is declared as T&& (describes member declaration, not access)
+	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Member declaration reference qualifier (not access kind)
 	StringHandle vtable_symbol;						// For vptr initialization - stores vtable symbol name
 	bool is_pointer_to_member = false;              // True if accessing through pointer (ptr->member), false for direct (obj.member)
 	std::optional<size_t> bitfield_width;           // Width in bits for bitfield members
 	size_t bitfield_bit_offset = 0;                 // Bit offset within the storage unit for bitfield members
+
+	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
+	bool is_lvalue_reference() const { return ref_qualifier == CVReferenceQualifier::LValueReference; }
 };
 
 // Label definition
@@ -677,14 +683,17 @@ struct FunctionParam {
 	int size_in_bits = 0;
 	int pointer_depth = 0;
 	StringHandle name;  // Pure StringHandle
-	bool is_reference = false;
-	bool is_rvalue_reference = false;
+	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	CVQualifier cv_qualifier = CVQualifier::None;
 	
 	// Helper to get name as StringHandle
 	StringHandle getName() const {
 		return name;
 	}
+
+	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
+	bool is_lvalue_reference() const { return ref_qualifier == CVReferenceQualifier::LValueReference; }
 };
 
 // Function declaration
@@ -794,8 +803,7 @@ struct VariableDeclOp {
 	int size_in_bits = 0;
 	StringHandle var_name;  // Pure StringHandle
 	unsigned long long custom_alignment = 0;
-	bool is_reference = false;
-	bool is_rvalue_reference = false;
+	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	bool is_array = false;
 	// Array info (if is_array)
 	std::optional<Type> array_element_type;
@@ -808,6 +816,10 @@ struct VariableDeclOp {
 	std::string_view getVarName() const {
 		return StringTable::getStringView(var_name);
 	}
+
+	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
+	bool is_lvalue_reference() const { return ref_qualifier == CVReferenceQualifier::LValueReference; }
 };
 
 // Global variable declaration
@@ -902,9 +914,12 @@ struct CatchBeginOp {
 	std::string_view catch_end_label;  // Label to jump to if not matched
 	std::string_view continuation_label;  // Parent-function continuation label after catch completes
 	bool is_const;                // True if caught by const
-	bool is_reference;            // True if caught by lvalue reference  
-	bool is_rvalue_reference;     // True if caught by rvalue reference
+	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Catch binding reference qualifier
 	bool is_catch_all;            // True for catch(...) - catches all exceptions
+
+	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
+	bool is_lvalue_reference() const { return ref_qualifier == CVReferenceQualifier::LValueReference; }
 };
 
 // Catch block end marker
@@ -1081,4 +1096,3 @@ inline std::string cvQualifierToString(CVQualifier cv) {
 // Typed IR Operand Payload - Optional typed alternative to vector operands
 // ============================================================================
 // Use std::any to store typed payloads (handles incomplete types)
-

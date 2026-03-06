@@ -73,8 +73,7 @@
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.continuation_label = end_label;
 				catch_op.is_const = type_node.is_const();
-				catch_op.is_reference = type_node.is_lvalue_reference();
-				catch_op.is_rvalue_reference = type_node.is_rvalue_reference();
+				catch_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_lvalue_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				catch_op.is_catch_all = false;  // This is a typed catch, not catch(...)
 				ir_.addInstruction(IrInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token()));
 
@@ -102,8 +101,7 @@
 					}
 					decl_op.initializer = init_value;
 					
-					decl_op.is_reference = type_node.is_reference();
-					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					decl_op.is_array = false;
 					decl_op.custom_alignment = 0;
 					
@@ -121,8 +119,7 @@
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.continuation_label = end_label;
 				catch_op.is_const = false;
-				catch_op.is_reference = false;
-				catch_op.is_rvalue_reference = false;
+				catch_op.ref_qualifier = CVReferenceQualifier::None;
 				catch_op.is_catch_all = true;  // This IS catch(...)
 				ir_.addInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token());
 				symbol_table.enter_scope(ScopeType::Block);

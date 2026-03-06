@@ -34,6 +34,8 @@ enum class ReferenceQualifier : uint8_t {
 	RValueReference = 1 << 1,  // &&
 };
 
+using CVReferenceQualifier = ReferenceQualifier;
+
 // Overloadable operator kinds for struct member operator overloads.
 // Stored as an enum instead of a string for efficient comparison.
 enum class OverloadableOperator : uint8_t {
@@ -691,4 +693,3 @@ struct StructStaticMember {
 		return name;
 	}
 };
-

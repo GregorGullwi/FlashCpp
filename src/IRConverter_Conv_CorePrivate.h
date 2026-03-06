@@ -16,8 +16,8 @@
 				handler_info.funclet_end_offset = handler.funclet_end_offset;
 				handler_info.is_catch_all = handler.is_catch_all;
 				handler_info.is_const = handler.is_const;
-				handler_info.is_reference = handler.is_reference;
-				handler_info.is_rvalue_reference = handler.is_rvalue_reference;
+				handler_info.is_reference = handler.is_reference();
+				handler_info.is_rvalue_reference = handler.is_rvalue_reference();
 				
 				// Use pre-computed frame offset for caught exception object
 				handler_info.catch_obj_offset = handler.catch_obj_stack_offset;
@@ -1320,7 +1320,7 @@
 				std::string_view var_name = op.getVarName();
 				size_t custom_alignment = op.custom_alignment;
 
-				bool is_reference = op.is_reference;
+				bool is_reference = op.is_reference();
 				bool is_array = op.is_array;
 				int total_size_bits = size_in_bits;
 				if (is_reference) {
@@ -1642,4 +1642,3 @@
 	// Helper to generate and emit size-appropriate MOV to frame (legacy - prefer emitMovToFrameSized)
 
 #include "IRConverter_Emit_CompareBranch.h"
-

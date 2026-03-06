@@ -131,8 +131,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		ms.member_name = member.name;
 		ms.offset = static_cast<int>(member.offset);
 		ms.struct_type_info = &type_info;
-		ms.is_reference = false;
-		ms.is_rvalue_reference = false;
+		ms.ref_qualifier = CVReferenceQualifier::None;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), Token()));
 	}
 
@@ -3107,8 +3106,7 @@ const Token& token) {
 				lv_info.base,                       // object
 				lv_info.member_name.value(),        // member_name
 				lv_info.offset,                     // offset
-				false,                              // is_reference
-				false,                              // is_rvalue_reference
+				CVReferenceQualifier::None,
 				lv_info.is_pointer_to_member,       // is_pointer_to_member
 				token,
 				lv_info.bitfield_width,             // bitfield_width
@@ -3450,8 +3448,7 @@ std::string_view op) {
 	load_op.object = lv_info.base;
 	load_op.member_name = lv_info.member_name.value();
 	load_op.offset = lv_info.offset;
-	load_op.is_reference = member_is_reference;
-	load_op.is_rvalue_reference = member_is_rvalue_reference;
+	load_op.ref_qualifier = ((member_is_rvalue_reference) ? CVReferenceQualifier::RValueReference : ((member_is_reference) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None));
 	load_op.struct_type_info = nullptr;
 	load_op.bitfield_width = lv_info.bitfield_width;
 	load_op.bitfield_bit_offset = lv_info.bitfield_bit_offset;
@@ -3476,14 +3473,16 @@ std::string_view op) {
 	result_tv.type = std::get<Type>(lhs_operands[0]);
 	result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
 	result_tv.value = result_temp;
+	CVReferenceQualifier member_ref_qualifier = member_is_rvalue_reference
+		? CVReferenceQualifier::RValueReference
+		: (member_is_reference ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
 	
 	emitMemberStore(
 		result_tv,
 		lv_info.base,
 		lv_info.member_name.value(),
 		lv_info.offset,
-		member_is_reference,
-		member_is_rvalue_reference,
+		member_ref_qualifier,
 		lv_info.is_pointer_to_member,  // is_pointer_to_member
 		token,
 		lv_info.bitfield_width,

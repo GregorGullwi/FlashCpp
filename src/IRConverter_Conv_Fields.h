@@ -115,8 +115,10 @@
 		int32_t catch_obj_stack_offset;  // Pre-computed stack offset for exception object
 		bool is_catch_all;  // True for catch(...)
 		bool is_const;  // True if caught by const
-		bool is_reference;  // True if caught by lvalue reference
-		bool is_rvalue_reference;  // True if caught by rvalue reference
+		CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;  // Catch binding reference qualifier
+
+		bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
+		bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
 	};
 
 	struct TryBlock {

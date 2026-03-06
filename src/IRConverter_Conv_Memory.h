@@ -288,10 +288,10 @@
 			emitAndImm64(temp_reg, mask);
 		}
 
-		if (op.is_reference) {
+		if (op.is_reference()) {
 			emitMovToFrame(temp_reg, result_offset, 64);
 			regAlloc.release(temp_reg);
-			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, op.is_rvalue_reference, result_var);
+			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, op.is_rvalue_reference(), result_var);
 			return;
 		}
 
@@ -561,7 +561,7 @@
 		// Load the value into a register - allocate through register allocator to avoid conflicts
 		X64Register value_reg = allocateRegisterWithSpilling();
 
-		if (op.is_reference) {
+		if (op.is_reference()) {
 			// value_reg already allocated above
 			bool pointer_loaded = false;
 			if (is_variable) {

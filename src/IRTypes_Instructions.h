@@ -261,7 +261,7 @@ public:
 				// Print pointer levels, but exclude the extra level added for lvalue references
 				// (that level is represented by the & suffix instead)
 				int effective_pointer_depth = param.pointer_depth;
-				if (param.is_reference && !param.is_rvalue_reference && effective_pointer_depth > 0) {
+				if (param.is_reference() && !param.is_rvalue_reference() && effective_pointer_depth > 0) {
 					effective_pointer_depth -= 1;  // Lvalue ref was represented as +1 pointer depth
 				}
 				for (int j = 0; j < effective_pointer_depth; ++j) {
@@ -270,9 +270,9 @@ public:
 				oss << param.size_in_bits;
 			
 				// Reference qualifiers
-				if (param.is_rvalue_reference) {
+				if (param.is_rvalue_reference()) {
 					oss << "&&";
-				} else if (param.is_reference) {
+				} else if (param.is_reference()) {
 					oss << "&";
 				}
 			
@@ -669,10 +669,10 @@ public:
 
 			oss << "." << op.member_name;
 			oss << " (offset: " << op.offset << ")";
-			if (op.is_reference) {
+			if (op.is_reference()) {
 				oss << " [ref]";
 			}
-			if (op.is_rvalue_reference) {
+			if (op.is_rvalue_reference()) {
 				oss << " [rvalue_ref]";
 			}
 		}
@@ -701,10 +701,10 @@ public:
 
 			oss << "." << op.member_name;
 			oss << " (offset: " << op.offset << ")";
-			if (op.is_reference) {
+			if (op.is_reference()) {
 				oss << " [ref]";
 			}
-			if (op.is_rvalue_reference) {
+			if (op.is_rvalue_reference()) {
 				oss << " [rvalue_ref]";
 			}
 			oss << ", ";
@@ -1051,7 +1051,7 @@ public:
 			if (op.custom_alignment > 0) {
 				oss << " alignas(" << op.custom_alignment << ")";
 			}
-			oss << (op.is_reference ? " [&]" : "");
+			oss << (op.is_reference() ? " [&]" : "");
 			if (op.initializer.has_value()) {
 				oss << "\nassign %" << var_name << " = ";  // Phase 4: Use var_name
 				const auto& init = op.initializer.value();
@@ -1215,8 +1215,8 @@ public:
 			}
 			oss << " %" << op.exception_temp.var_number;
 			if (op.is_const) oss << " const";
-			if (op.is_reference) oss << "&";
-			if (op.is_rvalue_reference) oss << "&&";
+			if (op.is_reference()) oss << "&";
+			if (op.is_rvalue_reference()) oss << "&&";
 			oss << " -> @" << op.catch_end_label;
 		}
 		break;
@@ -1476,5 +1476,4 @@ private:
 
 // Include helper functions now that all types are defined
 #include "IROperandHelpers.h"
-
 
