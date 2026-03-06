@@ -51,8 +51,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	// Check if it's an identifier that matches a parameter
 	if (std::holds_alternative<IdentifierNode>(expr)) {
 		const IdentifierNode& id = std::get<IdentifierNode>(expr);
+
+		// Fast path: pre-resolved Local bindings are always in the bindings map
+		if (id.binding() == IdentifierBinding::Local) {
+			auto it = bindings.find(id.name());
+			if (it != bindings.end()) return it->second;
+			// fall through to existing logic as safety net
+		}
+
 		std::string_view name = id.name();
-		
+
 		// Check if it's a bound parameter
 		auto it = bindings.find(name);
 		if (it != bindings.end()) {
@@ -275,8 +283,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	// Check if it's an identifier that matches a parameter
 	if (std::holds_alternative<IdentifierNode>(expr)) {
 		const IdentifierNode& id = std::get<IdentifierNode>(expr);
+
+		// Fast path: pre-resolved Local bindings are always in the bindings map
+		if (id.binding() == IdentifierBinding::Local) {
+			auto it = bindings.find(id.name());
+			if (it != bindings.end()) return it->second;
+			// fall through to existing logic as safety net
+		}
+
 		std::string_view name = id.name();
-		
+
 		// Check if it's a bound parameter
 		auto it = bindings.find(name);
 		if (it != bindings.end()) {
