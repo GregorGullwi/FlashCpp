@@ -1410,29 +1410,9 @@
 		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) 
 			? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 			: func_decl_node.type_node().as<TypeSpecifierNode>();
-		auto getReferencedSizeBits = [&](const TypeSpecifierNode& type_spec) {
-			int size_bits = 0;
-			if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
-				if (type_spec.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-						size_bits = static_cast<int>(struct_info->total_size * 8);
-					} else {
-						size_bits = static_cast<int>(type_info.type_size_);
-					}
-				}
-			} else {
-				size_bits = get_type_size_bits(type_spec.type());
-			}
-			if (size_bits == 0) {
-				size_bits = static_cast<int>(type_spec.size_in_bits());
-			}
-			return size_bits;
-		};
-
 		if (return_type.is_reference() || return_type.is_rvalue_reference()) {
 			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
-			int referenced_size_bits = getReferencedSizeBits(return_type);
+			int referenced_size_bits = getTypeSpecSizeBits(return_type);
 			if (return_type.is_rvalue_reference()) {
 				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), referenced_size_bits));
 			} else {

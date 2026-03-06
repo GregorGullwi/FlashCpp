@@ -270,8 +270,10 @@ private:
 		std::string_view op, EvaluationContext& context);
 	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
 		EvaluationContext& context);
-	static size_t get_struct_size_from_typeinfo(const TypeSpecifierNode& type_spec);
-	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec);
+	// get_typespec_size_bytes: unified via getTypeSpecSizeBits (AstNodeTypes_DeclNodes.h)
+	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec) {
+		return static_cast<size_t>(getTypeSpecSizeBits(type_spec)) / 8;
+	}
 	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context);
 	static EvalResult evaluate_alignof(const AlignofExprNode& alignof_expr, EvaluationContext& context);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);

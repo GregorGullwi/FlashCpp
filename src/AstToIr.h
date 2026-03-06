@@ -74,6 +74,7 @@ private:
 	// Emits ConstructorCallOp + MemberStoreOps for the struct, returns a TypedValue for the temporary.
 	std::optional<TypedValue> generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type);
 
+
 	// Fill in default arguments for parameters that weren't explicitly provided.
 	// Iterates from arg_idx to the end of param_nodes, evaluating each parameter's
 	// default value and appending it to call_op.args.  Throws InternalError if a
