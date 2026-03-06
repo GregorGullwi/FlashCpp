@@ -19,11 +19,6 @@ AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view i
 		return info;
 	}
 
-	// Check if it's found in the local symbol table — if so, it's a local variable
-	// and should not be treated as a global/static (even if a static member with the
-	// same name exists in the enclosing struct)
-	const std::optional<ASTNode> local_sym = symbol_table.lookup(ident_name);
-
 	// Check if it's a global variable (not found locally, found globally)
 	if (!local_sym.has_value() && global_symbol_table_) {
 		const std::optional<ASTNode> global_sym = global_symbol_table_->lookup(ident_name);
