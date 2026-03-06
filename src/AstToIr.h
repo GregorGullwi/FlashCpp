@@ -74,6 +74,13 @@ private:
 	// Emits ConstructorCallOp + MemberStoreOps for the struct, returns a TypedValue for the temporary.
 	std::optional<TypedValue> generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type);
 
+	// Fill in default arguments for parameters that weren't explicitly provided.
+	// Iterates from arg_idx to the end of param_nodes, evaluating each parameter's
+	// default value and appending it to call_op.args.  Throws InternalError if a
+	// parameter without a default value is encountered (indicates an overload
+	// resolution bug).
+	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
+
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
 
 	void enterScope() {

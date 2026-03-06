@@ -1202,42 +1202,7 @@
 
 		// Fill in default arguments for parameters that weren't explicitly provided
 		if (matched_func_decl) {
-			for (size_t i = arg_idx; i < param_nodes.size(); ++i) {
-				if (param_nodes[i].is<DeclarationNode>()) {
-					const auto& param_decl = param_nodes[i].as<DeclarationNode>();
-					if (param_decl.has_default_value()) {
-						const ASTNode& default_expr = param_decl.default_value();
-						const auto& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
-						if (default_expr.is<ExpressionNode>()) {
-							auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
-							TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
-							// For reference parameters (e.g., const Point& p = Point{1, 2}),
-							// mark the default arg so the caller passes an address, not a value.
-							if (param_type_spec.is_reference() && tv.type == Type::Struct) {
-								tv.ref_qualifier = ReferenceQualifier::LValueReference;
-							}
-							call_op.args.push_back(tv);
-						} else if (default_expr.is<InitializerListNode>()) {
-							// Struct default argument via braced init list (e.g., Point p = {1, 2})
-							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-							auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type);
-							if (result.has_value()) {
-								// If the parameter is a reference (e.g., const Point& p = {1, 2}),
-								// mark the default arg so the caller passes the address of the
-								// temporary struct rather than its value.
-								if (param_type.is_reference()) {
-									result->ref_qualifier = ReferenceQualifier::LValueReference;
-								}
-								call_op.args.push_back(*result);
-							} else {
-								throw InternalError("Failed to generate struct default argument for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
-							}
-						} else {
-							throw InternalError("Unhandled default argument AST node type for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
-						}
-					}
-				}
-			}
+			fillInDefaultArguments(call_op, param_nodes, arg_idx);
 		}
 
 		// Add the function call instruction with typed payload
