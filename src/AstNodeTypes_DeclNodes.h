@@ -802,36 +802,6 @@ struct TypeInfo
 
 extern std::deque<TypeInfo> gTypeInfo;
 
-// Compute the size in bits of the value type described by a TypeSpecifierNode.
-// Per C++20 [expr.sizeof], this returns the object representation size for complete types.
-// For Struct/UserDefined: authoritative lookup via StructTypeInfo::total_size * 8,
-//   falling back to TypeInfo::type_size_ for typedefs/aliases.
-// For scalars: delegates to get_type_size_bits().
-// Final fallback: type_spec.size_in_bits() (set during parsing).
-// Returns 0 only for genuinely incomplete or void types.
-inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
-	Type t = type_spec.type();
-	if (t == Type::Struct || t == Type::UserDefined) {
-		TypeIndex idx = type_spec.type_index();
-		if (idx > 0 && idx < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[idx];
-			if (const StructTypeInfo* si = ti.getStructInfo()) {
-				return static_cast<int>(si->total_size * 8);
-			}
-			if (ti.type_size_ > 0) {
-				return ti.type_size_;
-			}
-		}
-	} else {
-		int bits = get_type_size_bits(t);
-		if (bits > 0) return bits;
-	}
-	// Fallback: the parser may have stored the correct size directly
-	int stored = static_cast<int>(type_spec.size_in_bits());
-	if (stored > 0) return stored;
-	return 0;
-}
-
 // Custom hash and equality for heterogeneous lookup with string_view
 struct StringHash {
 	// No transparent lookup - all keys must be StringHandle
@@ -1122,6 +1092,36 @@ public:
 	std::string_view concept_constraint() const { return concept_constraint_; }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
+
+// Compute the size in bits of the value type described by a TypeSpecifierNode.
+// Per C++20 [expr.sizeof], this returns the object representation size for complete types.
+// For Struct/UserDefined: authoritative lookup via StructTypeInfo::total_size * 8,
+//   falling back to TypeInfo::type_size_ for typedefs/aliases.
+// For scalars: delegates to get_type_size_bits().
+// Final fallback: type_spec.size_in_bits() (set during parsing).
+// Returns 0 only for genuinely incomplete or void types.
+inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
+	Type t = type_spec.type();
+	if (t == Type::Struct || t == Type::UserDefined) {
+		TypeIndex idx = type_spec.type_index();
+		if (idx > 0 && idx < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[idx];
+			if (const StructTypeInfo* si = ti.getStructInfo()) {
+				return static_cast<int>(si->total_size * 8);
+			}
+			if (ti.type_size_ > 0) {
+				return ti.type_size_;
+			}
+		}
+	} else {
+		int bits = get_type_size_bits(t);
+		if (bits > 0) return bits;
+	}
+	// Fallback: the parser may have stored the correct size directly
+	int stored = static_cast<int>(type_spec.size_in_bits());
+	if (stored > 0) return stored;
+	return 0;
+}
 
 // Unified helper: creates a TypeInfo for a type alias, copies pointer_depth,
 // reference_qualifier, and function_signature from the TypeSpecifierNode, then

@@ -197,43 +197,6 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 	return apply_unary_op(operand_result, op);
 }
 
-// Helper function to get struct size from gTypeInfo
-size_t Evaluator::get_struct_size_from_typeinfo(const TypeSpecifierNode& type_spec) {
-	if (type_spec.type() != Type::Struct) {
-		return 0;
-	}
-	
-	size_t type_index = type_spec.type_index();
-	if (type_index >= gTypeInfo.size()) {
-		return 0;
-	}
-	
-	const TypeInfo& type_info = gTypeInfo[type_index];
-	const StructTypeInfo* struct_info = type_info.getStructInfo();
-	if (!struct_info) {
-		return 0;
-	}
-	
-	return struct_info->total_size;
-}
-
-// Helper function to get the size in bytes for a type specifier
-// Handles both primitive types and struct types
-size_t Evaluator::get_typespec_size_bytes(const TypeSpecifierNode& type_spec) {
-	size_t size_in_bytes = type_spec.size_in_bits() / 8;
-	
-	// If size_in_bits is 0, look it up
-	if (size_in_bytes == 0) {
-		if (type_spec.type() == Type::Struct) {
-			size_in_bytes = get_struct_size_from_typeinfo(type_spec);
-		} else {
-			size_in_bytes = get_type_size_bits(type_spec.type()) / 8;
-		}
-	}
-	
-	return size_in_bytes;
-}
-
 EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context) {
 	// sizeof is always a constant expression
 	// Get the actual size from the type
