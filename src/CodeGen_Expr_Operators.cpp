@@ -91,6 +91,27 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 				store_size = std::get<int>(operands[1]);
 				store_value = toIrValue(operands[2]);
 			}
+		} else if (init_expr.is<InitializerListNode>() && member.type == Type::Struct &&
+				   member.type_index > 0 && member.type_index < gTypeInfo.size()) {
+			// Nested struct aggregate init: recursively construct the sub-aggregate
+			// Per C++20 [dcl.init.aggr]/4-5, nested brace-enclosed init lists
+			// initialize sub-aggregate members recursively.
+			const TypeInfo& nested_type_info = gTypeInfo[member.type_index];
+			if (nested_type_info.getStructInfo()) {
+				// Build a temporary TypeSpecifierNode for the nested struct type
+				int nested_size_bits = static_cast<int>(nested_type_info.getStructInfo()->total_size * 8);
+				TypeSpecifierNode nested_type_spec(member.type, member.type_index, nested_size_bits);
+				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
+				if (nested_result.has_value()) {
+					store_type = nested_result->type;
+					store_size = nested_result->size_in_bits;
+					store_value = nested_result->value;
+				} else {
+					FLASH_LOG(Codegen, Error, "generateDefaultStructArg: failed to recursively init nested struct member");
+				}
+			}
+		} else if (!init_expr.is<ExpressionNode>()) {
+			FLASH_LOG(Codegen, Error, "generateDefaultStructArg: unhandled initializer type for member");
 		}
 
 		// Emit MemberStoreOp
