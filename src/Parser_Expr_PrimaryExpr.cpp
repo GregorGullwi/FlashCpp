@@ -5021,7 +5021,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																continue;
 															}
 														}
-														args.push_back(def_val);
+														// For non-struct InitializerListNode defaults (e.g., int x = {42}),
+													// extract the single scalar element. Pushing a raw InitializerListNode
+													// as an argument would crash codegen (.as<ExpressionNode>() fails since
+													// InitializerListNode is not a variant of ExpressionNode).
+													if (def_val.is<InitializerListNode>()) {
+														const InitializerListNode& il = def_val.as<InitializerListNode>();
+														if (il.size() == 1 && il.initializers()[0].is<ExpressionNode>()) {
+															args.push_back(il.initializers()[0]);
+															continue;
+														}
+														// Empty brace-init (value-initialization): push 0
+														if (il.size() == 0) {
+															Token zero_tok(Token::Type::Literal, "0"sv,
+																idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+															args.push_back(emplace_node<ExpressionNode>(
+																NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
+															continue;
+														}
+													}
+													args.push_back(def_val);
 													}
 												}
 											}

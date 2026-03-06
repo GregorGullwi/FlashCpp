@@ -1232,6 +1232,8 @@
 							} else {
 								FLASH_LOG(Codegen, Error, "Failed to generate struct default argument for parameter '", param_decl.identifier_token().value(), "'");
 							}
+						} else {
+							FLASH_LOG(Codegen, Error, "Unhandled default argument AST node type for parameter '", param_decl.identifier_token().value(), "'");
 						}
 					}
 				}
