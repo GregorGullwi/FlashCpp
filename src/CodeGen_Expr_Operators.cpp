@@ -44,7 +44,7 @@ AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view i
 				sb.append(current_struct_name_);
 				sb.append("::"sv);
 				sb.append(ident_name);
-				info.store_name = StringTable::createStringHandle(sb);
+					info.store_name = StringTable::getOrInternStringHandle(sb.commit());
 				info.type = static_member->type;
 				info.size_in_bits = static_cast<int>(static_member->size * 8);
 				return info;

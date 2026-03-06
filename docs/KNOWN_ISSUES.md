@@ -12,18 +12,6 @@ Assigning through a reference returned by a member function (e.g.,
 underlying member. The returned reference is treated as an rvalue rather
 than an lvalue. Workaround: assign directly to the member.
 
-## Increment/Decrement on Static Member Variables
-
-### Status: Open (verified 2026-03-06)
-
-Using `++` or `--` on static member variables accessed from within member
-functions (e.g., `count++` inside `static void increment()`) does not
-store the result back. The GlobalStore is generated in IR but the
-IrConverter fails to find the global variable during x86 codegen because
-the qualified name (`Counter::count`) doesn't match the registered global.
-Compound assignment (`count += 1`) has the same issue for static members.
-Workaround: use explicit assignment (`count = count + 1;`).
-
 ## Array of Structs Aggregate Initialization
 
 ### Status: Open (verified 2026-03-06)
