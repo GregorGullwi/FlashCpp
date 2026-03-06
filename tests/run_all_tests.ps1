@@ -246,6 +246,51 @@ function Write-DetailSnippet {
 	}
 }
 
+function Wait-ParallelResultJob {
+	param(
+		$Job,
+		[string]$Label,
+		[int]$TotalCount,
+		[string]$ResultDir,
+		[int]$InitialCompleted = 0,
+		[int]$PollSeconds = 5
+	)
+
+	if (-not $Job) {
+		return
+	}
+
+	$lastReportedCount = -1
+	do {
+		Wait-Job -Job $Job -Timeout $PollSeconds | Out-Null
+
+		$completedCount = 0
+		if (Test-Path $ResultDir) {
+			$completedCount = @(
+				Get-ChildItem -Path $ResultDir -Filter "*.result" -File -ErrorAction SilentlyContinue
+			).Count - $InitialCompleted
+			if ($completedCount -lt 0) { $completedCount = 0 }
+		}
+
+		if ($completedCount -gt $TotalCount) {
+			$completedCount = $TotalCount
+		}
+
+		if ($completedCount -ne $lastReportedCount) {
+			Write-Host "[Progress] ${Label}: $completedCount / $TotalCount completed..."
+			$lastReportedCount = $completedCount
+		}
+	} while ($Job.State -eq "Running" -or $Job.State -eq "NotStarted")
+
+	Wait-Job -Job $Job | Out-Null
+	Receive-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
+	Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
+
+	if ($lastReportedCount -lt $TotalCount) {
+		Write-Host "[Progress] ${Label}: $TotalCount / $TotalCount completed..."
+	}
+}
+
 # ──────────────────────────────────────────────────────
 # Worker function for testing a single regular file
 # ──────────────────────────────────────────────────────
@@ -421,13 +466,14 @@ $invokeTestOneFailFileDefinition = ${function:Invoke-TestOneFailFile}.ToString()
 # ──────────────────────────────────────────────────────
 if ($useParallel) {
 	Write-Host "Running $totalFiles tests with $Jobs parallel jobs (PowerShell $($PSVersionTable.PSVersion.Major))..."
-	$referenceFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
+	$regularParallelJob = $referenceFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
 		Set-Location $using:RepoRoot
 		${function:Invoke-TestOneFile} = $using:invokeTestOneFileDefinition
 		$file = $_
 		$hasMain = ($using:mainFileCache)[$file.Name]
 		Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:linkerPath $using:libPath1 $using:libPath2 $using:libPath3 $hasMain $using:expectedLinkFailures $using:expectedCompileFailures $using:expectedRuntimeCrashes $using:resultDir
-	}
+	} -AsJob
+	Wait-ParallelResultJob -Job $regularParallelJob -Label "Regular tests" -TotalCount $totalFiles -ResultDir $resultDir
 } else {
 	if ($Jobs -gt 1 -and $PSVersionTable.PSVersion.Major -lt 7 -and -not $TestFile) {
 		Write-Host "NOTE: Parallel execution requires PowerShell 7+. Running sequentially." -ForegroundColor Yellow
@@ -477,12 +523,18 @@ Write-Host "=============================================="
 Write-Host ""
 
 if ($useParallel -and $failFiles.Count -gt 0) {
-	$failFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
+	$initialFailCompleted = if (Test-Path $resultDir) {
+		@(Get-ChildItem -Path $resultDir -Filter "*.result" -File -ErrorAction SilentlyContinue).Count
+	} else {
+		0
+	}
+	$failParallelJob = $failFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
 		Set-Location $using:RepoRoot
 		${function:Invoke-TestOneFailFile} = $using:invokeTestOneFailFileDefinition
 		$file = $_
 		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:resultDir
-	}
+	} -AsJob
+	Wait-ParallelResultJob -Job $failParallelJob -Label "_fail tests" -TotalCount $failFiles.Count -ResultDir $resultDir -InitialCompleted $initialFailCompleted
 } else {
 	$currentFile = 0
 	foreach ($file in $failFiles) {
@@ -728,7 +780,7 @@ $expectedFailuresWithoutFail = $expectedCompileFailures + $expectedLinkFailures 
 	$_ -notmatch "fail"
 } | Sort-Object -Unique
 
-if ($expectedFailuresWithoutFail.Count -gt 0) {
+if (-not $TestFile -and $expectedFailuresWithoutFail.Count -gt 0) {
 	Write-Host "=== Expected failure files without 'fail' in name ===" -ForegroundColor Yellow
 	Write-Host "(These files are marked as expected failures but may be legitimate tests to fix)" -ForegroundColor Yellow
 	$expectedFailuresWithoutFail | ForEach-Object {
