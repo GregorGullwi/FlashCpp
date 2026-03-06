@@ -5039,6 +5039,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
 															continue;
 														}
+														// Multi-element non-struct InitializerListNode: not valid C++20
+														// for scalar types. Pushing a raw InitializerListNode would crash
+														// codegen since it is not an ExpressionNode variant.
+														return ParseResult::error("Cannot use multi-element braced-init-list as default argument for non-aggregate parameter '"
+															+ std::string(params[i].as<DeclarationNode>().identifier_token().value()) + "'",
+															idenfifier_token);
 													}
 													args.push_back(def_val);
 													}
