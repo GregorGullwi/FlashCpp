@@ -1,4 +1,4 @@
-// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
+﻿// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
 // Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined
 // literals, and conversion operators.
 // On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult.
@@ -3372,6 +3372,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 
+				// ADL per C++20 [basic.lookup.argdep]: if ordinary lookup gave only a fake forward decl,
+				// try ADL using the argument types to find functions in associated namespaces.
+				if (!found_member_function_in_context &&
+				    identifierType.has_value() && !identifierType->is<FunctionDeclarationNode>()) {
+					std::vector<TypeSpecifierNode> adl_arg_types;
+					for (const auto& adl_arg : args) {
+					    if (auto at = get_expression_type(adl_arg); at.has_value()) {
+					        adl_arg_types.push_back(*at);
+					    }
+					}
+					if (!adl_arg_types.empty()) {
+					    auto adl_cands = gSymbolTable.lookup_adl(identifier_token.value(), adl_arg_types);
+					    if (!adl_cands.empty()) {
+					        auto adl_res = resolve_overload(adl_cands, adl_arg_types);
+					        if (adl_res.has_match && !adl_res.is_ambiguous) {
+					            identifierType = *adl_res.selected_overload;
+					        }
+					    }
+					}
+				}
+
 				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
 				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 				if (!decl_ptr) {
@@ -3403,6 +3424,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 					}
 					result = function_call_node;
+					return ParseResult::success(*result);
 				}
 			}
 			else {
@@ -4670,7 +4692,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			bool is_template_parameter = identifierType && identifierType->is<TemplateParameterReferenceNode>();
 			
 			bool is_function_call = peek() == "("_tok &&
-			                        (is_function_decl || is_function_pointer || has_operator_call || explicit_template_args.has_value() || is_template_parameter);
+			                        (is_function_decl || is_function_pointer || has_operator_call || explicit_template_args.has_value() || is_template_parameter ||
+			                         !identifierType.has_value()); // allow ADL: try function call even when ordinary lookup found nothing
 
 			if (is_function_call && consume("("_tok)) {
 				if (peek().is_eof())
@@ -4971,6 +4994,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									for (size_t i = 0; i < arg_types.size(); ++i) {
 										const auto& arg = arg_types[i];
 										FLASH_LOG(Parser, Debug, "  Arg[", i, "]: type=", (int)arg.type(), ", is_ref=", arg.is_reference(), ", is_rvalue_ref=", arg.is_rvalue_reference(), ", is_lvalue_ref=", arg.is_lvalue_reference(), ", is_ptr=", arg.is_pointer(), ", ptr_depth=", arg.pointer_depth());
+									}
+									// ADL per C++20 [basic.lookup.argdep]: augment candidate set with
+									// functions from associated namespaces of the argument types.
+									// Suppressed only when ordinary lookup found a blocking non-function decl.
+									if (!arg_types.empty() &&
+									    std::all_of(all_overloads.begin(), all_overloads.end(),
+									                [](const ASTNode& n) { return n.is<FunctionDeclarationNode>(); })) {
+										auto adl_candidates = gSymbolTable.lookup_adl(
+										    identifier_token.value(), arg_types);
+										all_overloads.insert(all_overloads.end(),
+										    adl_candidates.begin(), adl_candidates.end());
 									}
 									if (all_overloads.empty()) {
 										// No overloads found - try template instantiation (skip in extern "C" - C has no templates)

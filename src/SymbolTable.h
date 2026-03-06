@@ -1,12 +1,14 @@
 #pragma once
 
 #include <unordered_map>
+#include <unordered_set>
 #include <string_view>
 #include <stack>
 #include <optional>
 #include <span>
 #include <vector>
 #include <functional>
+#include <algorithm>
 #include "AstNodeTypes.h"
 #include "Token.h"
 #include "StackString.h"
@@ -513,6 +515,39 @@ public:
 	template<typename StringContainer>
 	std::vector<ASTNode> lookup_qualified_all(const StringContainer& namespaces, std::string_view identifier) const {
 		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
+	}
+
+	// Collect ADL candidates per C++20 [basic.lookup.argdep].
+	// For each argument type that is a struct/class, searches the namespace in which
+	// the struct was declared, plus namespaces of all its direct base classes.
+	// Suppressed when ordinary lookup already found a blocking non-function declaration.
+	std::vector<ASTNode> lookup_adl(std::string_view func_name,
+	                                const std::vector<TypeSpecifierNode>& arg_types) const {
+		std::vector<ASTNode> result;
+		std::unordered_set<NamespaceHandle> visited;
+
+		auto search_ns = [&](NamespaceHandle ns) {
+			if (!ns.isValid() || ns.isGlobal() || !visited.insert(ns).second) return;
+			auto candidates = lookup_qualified_all(ns, func_name);
+			result.insert(result.end(), candidates.begin(), candidates.end());
+		};
+
+		for (const auto& arg_type : arg_types) {
+			TypeIndex ti = arg_type.type_index();
+			if (ti > 0 && ti < gTypeInfo.size()) {
+				if (const StructTypeInfo* si = gTypeInfo[ti].getStructInfo()) {
+					search_ns(si->namespace_handle);
+					for (const auto& base : si->base_classes) {
+						if (base.type_index > 0 && base.type_index < gTypeInfo.size()) {
+							if (const StructTypeInfo* bsi = gTypeInfo[base.type_index].getStructInfo()) {
+								search_ns(bsi->namespace_handle);
+							}
+						}
+					}
+				}
+			}
+		}
+		return result;
 	}
 
 	// Resolve function overload based on argument types (full type info)
