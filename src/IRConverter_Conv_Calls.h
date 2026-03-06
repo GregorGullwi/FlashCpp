@@ -80,7 +80,7 @@
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
-				bool is_two_reg_struct = isTwoRegisterStruct(arg);
+				bool is_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 				
 				// Determine if this argument goes on stack (overflows register file)
 				bool goes_on_stack = false;
@@ -115,8 +115,10 @@
 					// Linux: RSP+0 (no shadow space) + stack_arg_count*8
 					int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
 
-					// Determine if this stack argument needs to pass an address instead of its value
-					bool stack_pass_address = arg.is_reference() || shouldPassStructByAddress(arg);
+					// Determine if this stack argument needs to pass an address instead of its value.
+					// For SysV variadic two-register structs, pass bytes directly (not a pointer) —
+					// the callee's va_arg reads from the overflow area by value.
+					bool stack_pass_address = arg.is_reference() || shouldPassStructByAddress(arg, is_two_reg_struct);
 
 					if (stack_pass_address) {
 						// Store address of the argument on the stack
@@ -216,7 +218,7 @@
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
-				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg);
+				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 				
 				// Check if this argument fits in a register (accounting for param_shift)
 				// Windows x64 variadic: unified position counter — int and float share the same 4 slots.
@@ -268,7 +270,8 @@
 				// For member functions: first arg is always "this" pointer (pass address)
 				// System V AMD64 ABI (Linux): 
 				//   - Structs ≤8 bytes: pass by value in one register
-				//   - Structs 9-16 bytes: pass by value in TWO consecutive registers
+				//   - Structs 9-16 bytes in VARIADIC calls: pass by value in TWO consecutive registers
+				//   - Structs 9-16 bytes in non-variadic calls: pass by pointer (FlashCpp internal)
 				//   - Structs >16 bytes: pass by pointer
 				// x64 Windows ABI:
 				//   - Structs of 1, 2, 4, or 8 bytes: pass by value in one register
@@ -281,10 +284,12 @@
 				} else if (arg.is_reference()) {
 					// Parameter is explicitly a reference - always pass by address
 					should_pass_address = true;
+				} else if (is_potential_two_reg_struct) {
+					// SysV AMD64 variadic: 9-16 byte structs go in two consecutive GP registers.
+					// Must check before shouldPassStructByAddress (which would wrongly return true).
+					is_two_register_struct = true;
 				} else if (shouldPassStructByAddress(arg)) {
 					should_pass_address = true;
-				} else {
-					is_two_register_struct = is_potential_two_reg_struct;
 				}
 				
 				if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {

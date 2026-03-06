@@ -1,7 +1,7 @@
 # TODO / FIXME Analysis
 
 **Date**: 2026-03-01 (last updated 2026-03-06)
-**Total items found**: 55 (44 TODO + 4 FIXME/minor + 1 discovered + 9 newly fixed)
+**Total items found**: 56 (44 TODO + 4 FIXME/minor + 1 discovered + 10 newly fixed)
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
 ---
@@ -245,3 +245,8 @@ Assigning through a reference returned by a member function (e.g., `h.getRef() =
 
 ## 35. const& Struct Default Arguments Pass Value Instead of Pointer ✅ Fixed (2026-03-06)
 `src/CodeGen_Call_Direct.cpp`, `src/CodeGen_Call_Indirect.cpp` — When a struct parameter declared as `const T&` has a braced-init default (e.g., `void f(const Point& p = {1, 2})`), the generated default argument TypedValue was not marked as a reference. The caller therefore passed the struct bytes by value rather than by pointer, causing the callee (which dereferences the pointer) to segfault. Both the `InitializerListNode` and `ExpressionNode` default fill-in paths now check `param_type.is_reference()` and set `ref_qualifier = ReferenceQualifier::LValueReference` on the resulting TypedValue. Test: `test_struct_const_ref_args_ret42.cpp`.
+
+---
+
+## 36. SysV AMD64 Variadic Struct Argument ABI ✅ Fixed (2026-03-06)
+`src/IRConverter_Emit_CompareBranch.h`, `src/IRConverter_Conv_Calls.h` — For variadic calls on Linux with 9–16 byte struct arguments (e.g., `Point3D{x,y,z,w}` = 16 bytes passed to `sum_points3d(int count, ...)`), the caller was using the pointer convention (passing `&p` via LEA). The callee's `va_arg` reads from the register save area (not through a pointer), so it was reading garbage. Fixed by restoring the two-register convention exclusively for Linux variadic calls: `isTwoRegisterStruct(arg, is_variadic_call=true)` returns `true` for 9–16 byte structs in variadic context; `shouldPassStructByAddress(arg, is_two_register_struct)` returns `false` when the two-register path applies; and the register-passing loop checks `is_potential_two_reg_struct` before `shouldPassStructByAddress` to prevent the pointer path from overriding. Non-variadic struct passing (pointer convention) is unaffected. Test: `test_va_large_struct_ret0.cpp`.

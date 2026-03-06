@@ -1222,21 +1222,32 @@
 	}
 
 	/// Check if an argument is a two-register struct under System V AMD64 ABI (9-16 bytes, by value).
-	bool isTwoRegisterStruct(const TypedValue& arg) const {
-		// FlashCpp uses pass-by-pointer for all structs > 64 bits on both Linux and Windows.
-		// The System V AMD64 ABI two-register convention (9-16 bytes in two integer registers)
-		// is NOT implemented in the callee prologue (IRConverter_Conv_VarDecl.h marks all
-		// structs > 64 bits as pass-by-pointer and dereferences them).  The caller must use
-		// the same convention, so two-register pass is disabled here.
-		// TODO: implement the full SysV two-register prologue to be ABI-compatible.
+	bool isTwoRegisterStruct(const TypedValue& arg, bool is_variadic_call = false) const {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// SysV AMD64 ABI: for VARIADIC calls, structs 9-16 bytes that are classified as
+			// INTEGER+INTEGER must be passed in two consecutive general-purpose registers.
+			// The callee's va_arg reads them from the register save area, so the caller MUST
+			// put the actual bytes there, not a pointer.
+			// For NON-variadic calls, FlashCpp uses the pointer convention (callee dereferences),
+			// so return false there.
+			if (is_variadic_call) {
+				return arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference();
+			}
+		}
+		// FlashCpp uses pass-by-pointer for all non-variadic structs > 64 bits.
+		// The callee prologue marks such params as pass-by-pointer and dereferences them.
+		// TODO: implement the full SysV two-register callee prologue for full ABI compatibility.
 		(void)arg;
 		return false;
 	}
 
 	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
-	bool shouldPassStructByAddress(const TypedValue& arg) const {
+	bool shouldPassStructByAddress(const TypedValue& arg, bool is_two_register_struct = false) const {
 		if (arg.type != Type::Struct || arg.is_reference()) return false;
-		// FlashCpp passes all structs > 64 bits by pointer on both Linux and Windows,
+		// SysV AMD64 variadic two-register structs (9-16 bytes) must pass their bytes in
+		// registers, NOT a pointer — the va_arg reads directly from the register save area.
+		if (is_two_register_struct) return false;
+		// FlashCpp passes all other structs > 64 bits by pointer on both Linux and Windows,
 		// matching the callee prologue which always dereferences the incoming pointer for
 		// structs whose size exceeds one general-purpose register.
 		return arg.size_in_bits > 64;
