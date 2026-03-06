@@ -180,7 +180,6 @@ void Parser::populateTemplateParamSubstitutions(
 		subs.push_back(subst);
 	}
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helper: re-parse a template function body with concrete argument
 // substitution and set the result as new_func_ref's definition.
