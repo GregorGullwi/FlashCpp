@@ -1192,17 +1192,40 @@ private:
 	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
 };
 
+enum class IdentifierBinding : uint8_t {
+	Unresolved,       // Not yet resolved (default, templates, deferred)
+	Local,            // Local variable or function parameter
+	Global,           // Global variable (file scope / namespace scope)
+	StaticLocal,      // static local variable inside a function
+	StaticMember,     // static data member of a struct/class
+	NonStaticMember,  // non-static data member (implicit this->member)
+	CapturedByValue,  // Lambda [x] capture
+	CapturedByRef,    // Lambda [&x] capture
+	CapturedThis,     // Lambda [this] capture
+	CapturedCopyThis, // Lambda [*this] capture
+	EnumConstant,     // Enumerator value
+	Function,         // Function name (not a variable; overload resolution deferred)
+};
+
 class IdentifierNode {
 public:
 	explicit IdentifierNode(Token identifier) : identifier_(identifier) {}
 
-	std::optional<Token> try_get_parent_token() { return parent_token_; }
 	std::string_view name() const { return identifier_.value(); }
 	StringHandle nameHandle() const { return identifier_.handle(); }
+	std::optional<Token> try_get_parent_token() { return parent_token_; }
+
+	IdentifierBinding binding() const { return binding_; }
+	void set_binding(IdentifierBinding b) { binding_ = b; }
+	StringHandle resolved_name() const { return resolved_name_; }
+	void set_resolved_name(StringHandle h) { resolved_name_ = h; }
+	bool is_resolved() const { return binding_ != IdentifierBinding::Unresolved; }
 
 private:
 	Token identifier_;
 	std::optional<Token> parent_token_;
+	IdentifierBinding binding_ = IdentifierBinding::Unresolved;
+	StringHandle resolved_name_; // mangled/qualified name for static locals, static members, globals
 };
 
 // Qualified identifier node for namespace::identifier chains

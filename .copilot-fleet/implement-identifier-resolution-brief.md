@@ -37,5 +37,12 @@ Reviewer checklist (short)
 - detectGlobalOrStaticVar removed by the codegen migration PRs (grep → zero).
 - `make` / MSVC build succeeds and tests pass.
 
-Next action (recommended)
-- Start Phase 0A: add the two `using`/overload tests referenced in the docs under `tests/` on a branch named `feat/identifier-resolution/phase-0a`, push, and open a PR that contains only the tests (so CI shows they fail). Use the full docs file for the detailed step list and file-by-file tasks.
+Progress (branch: `copilot/identifier-refactor`, rebased on origin/main `3e4c591c`)
+- Phase 0A — **DONE** (no implementation needed; `using`-directive/declaration overload-set semantics already correct in SymbolTable)
+- Phase 0B — **DONE** (commit `c264c2f3`): Fixed point-of-declaration for local variables (`sizeof(x)` in own initializer). Three fixes: (1) parser pre-inserts stub VarDecl before parsing initializer; (2) `sizeof` disambiguation falls through when name is a known variable; (3) codegen registers var in local symbol_table before evaluating initializer. Test: `test_initializer_point_of_declaration_ret4.cpp`.
+- Phase 1A — **DONE** (uncommitted, stashed/applied): Added `IdentifierBinding` enum (12 variants) and fields to `IdentifierNode`; added `createBoundIdentifier()` in `Parser.h` (classifies Local/Global/Function/EnumConstant/Unresolved); updated 16 creation sites in `Parser_Expr_PrimaryExpr.cpp`; added `get_scope_type_of_symbol()` to `SymbolTable.h`; also fixed typo `idenfifier_token` → `identifier_token` (308 occurrences). All 1327 tests pass.
+- Phase 1B — **NEXT**: Remove `detectGlobalOrStaticVar`, update codegen to switch on `binding()`.
+- Phases 2-5 — pending
+
+Next action
+- Commit staged Phase 1A work, then implement Phase 1B: remove `GlobalStaticVarInfo`/`detectGlobalOrStaticVar()` from `AstToIr.h` and `CodeGen_Expr_Operators.cpp`; update `generateIdentifierIr()` in `CodeGen_Expr_Primitives.cpp` to switch on `binding()`; update compound-assignment and inc/dec handlers. Grep for `detectGlobalOrStaticVar` must reach zero.

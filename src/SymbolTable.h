@@ -602,6 +602,28 @@ public:
  		return std::nullopt;
  	}
 
+	// Return the ScopeType of the scope that directly contains this identifier.
+	// Searches scope.symbols (innermost first), then falls back to namespace_symbols_.
+	// Returns nullopt if not found anywhere.
+	std::optional<ScopeType> get_scope_type_of_symbol(std::string_view identifier) const {
+		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			const Scope& scope = *stackIt;
+			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
+				return scope.scope_type;
+			}
+		}
+		// Symbol may be in namespace_symbols_ (e.g. found via using-directive) but not
+		// materialised into any scope's symbols map. Treat that as namespace-scope.
+		StringHandle key = StringTable::getOrInternStringHandle(identifier);
+		for (const auto& [ns_handle, symbols] : namespace_symbols_) {
+			if (symbols.find(key) != symbols.end()) {
+				return ScopeType::Namespace;
+			}
+		}
+		return std::nullopt;
+	}
+
 	void enter_scope(ScopeType scopeType) {
 		symbol_table_stack_.emplace_back(Scope(scopeType, symbol_table_stack_.size()));
 	}

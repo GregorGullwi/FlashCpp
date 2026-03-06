@@ -1183,6 +1183,63 @@ public:  // Public methods for template instantiation
             return nullptr;
         }
 
+        // Create an IdentifierNode and perform ordinary unqualified lookup to classify its binding.
+        // Returns Unresolved when the name cannot be classified (template-dependent names,
+        // 'this', unknown identifiers, etc.). Safe to call for any token; the Unresolved
+        // fallback preserves all existing codegen behaviour.
+        IdentifierNode createBoundIdentifier(Token token) const {
+            IdentifierNode node(token);
+
+            // In template bodies with active template parameters, names may be dependent.
+            // lookup_symbol() already handles this by returning TemplateParameterReferenceNode.
+            auto sym = lookup_symbol(token.handle());
+            if (!sym.has_value()) {
+                return node; // Unresolved
+            }
+
+            // Template parameter reference - leave Unresolved; resolved at instantiation time.
+            if (sym->is<TemplateParameterReferenceNode>()) {
+                return node;
+            }
+
+            // Function or function-template -> Function binding.
+            if (sym->is<FunctionDeclarationNode>() || sym->is<TemplateFunctionDeclarationNode>()) {
+                node.set_binding(IdentifierBinding::Function);
+                return node;
+            }
+
+            // DeclarationNode: may be an enum constant, variable, or parameter.
+            if (sym->is<DeclarationNode>()) {
+                const auto& decl = sym->as<DeclarationNode>();
+                if (decl.type_node().is<TypeSpecifierNode>()) {
+                    if (decl.type_node().as<TypeSpecifierNode>().type() == Type::Enum) {
+                        node.set_binding(IdentifierBinding::EnumConstant);
+                        return node;
+                    }
+                }
+                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+                if (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace) {
+                    node.set_binding(IdentifierBinding::Global);
+                } else if (scope_type.has_value()) {
+                    node.set_binding(IdentifierBinding::Local);
+                }
+                return node;
+            }
+
+            // VariableDeclarationNode.
+            if (sym->is<VariableDeclarationNode>()) {
+                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+                if (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace) {
+                    node.set_binding(IdentifierBinding::Global);
+                } else if (scope_type.has_value()) {
+                    node.set_binding(IdentifierBinding::Local);
+                }
+                return node;
+            }
+
+            return node; // Unresolved for other symbol types (types, structs, etc.)
+        }
+
         SaveHandle save_token_position();
         void restore_token_position(SaveHandle handle, const std::source_location location = std::source_location::current());
         void restore_lexer_position_only(SaveHandle handle);  // Restore lexer without erasing AST nodes
