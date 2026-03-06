@@ -299,18 +299,14 @@ function Invoke-TestOneFile {
 
 	$ErrorActionPreference = "SilentlyContinue"
 
-	# Use unique per-job paths in the system temp dir to avoid race conditions
+	# Use unique per-worker paths in the system temp dir to avoid race conditions
 	# when parallel workers process tests that share the same base name.
 	$tempDir = [System.IO.Path]::GetTempPath()
-	$objFile = Join-Path $tempDir "${baseName}_$PID.obj"
-	$exeFile = Join-Path $tempDir "${baseName}_$PID.exe"
-	$ilkFile = Join-Path $tempDir "${baseName}_$PID.ilk"
-	$pdbFile = Join-Path $tempDir "${baseName}_$PID.pdb"
-
-	# Clean up any stale artifacts from a previous run with the same PID
-	foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile)) {
-		if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
-	}
+	$uniqueSuffix = [guid]::NewGuid().ToString('N')
+	$objFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.obj"
+	$exeFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.exe"
+	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
+	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
 
 	# Parse expected return value from filename
 	$expectedReturnValue = $null
@@ -425,15 +421,12 @@ function Invoke-TestOneFailFile {
 
 	$ErrorActionPreference = "SilentlyContinue"
 
-	# Use unique per-job paths in the system temp dir to avoid race conditions.
+	# Use unique per-worker paths in the system temp dir to avoid race conditions.
 	$tempDir = [System.IO.Path]::GetTempPath()
-	$objFile = Join-Path $tempDir "${baseName}_$PID.obj"
-	$ilkFile = Join-Path $tempDir "${baseName}_$PID.ilk"
-	$pdbFile = Join-Path $tempDir "${baseName}_$PID.pdb"
-
-	foreach ($f in @($objFile, $ilkFile, $pdbFile)) {
-		if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
-	}
+	$uniqueSuffix = [guid]::NewGuid().ToString('N')
+	$objFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.obj"
+	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
+	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
 
 	# Fallback result in case the worker encounters a terminating error
 	$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: unknown"
