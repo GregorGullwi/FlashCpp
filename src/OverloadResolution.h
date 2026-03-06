@@ -453,20 +453,7 @@ struct OverloadResolutionResult {
 	}
 };
 
-// Count the minimum required arguments for a function (excluding trailing default arguments)
-inline size_t countMinRequiredArgs(const FunctionDeclarationNode& func) {
-	const auto& params = func.parameter_nodes();
-	size_t min_required = params.size();
-	// Walk from the end - default arguments must be trailing
-	for (size_t i = params.size(); i > 0; --i) {
-		if (params[i-1].is<DeclarationNode>() && params[i-1].as<DeclarationNode>().has_default_value()) {
-			min_required--;
-		} else {
-			break;
-		}
-	}
-	return min_required;
-}
+// countMinRequiredArgs is defined in SymbolTable.h (included above)
 
 // Perform overload resolution for a function call
 // Returns the best matching overload, or nullptr if no match or ambiguous

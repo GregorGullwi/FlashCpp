@@ -87,6 +87,21 @@ inline bool signaturesMatch(const std::vector<Type>& sig1, const std::vector<Typ
 	return true;
 }
 
+// Count the minimum required arguments for a function (excluding trailing default arguments)
+inline size_t countMinRequiredArgs(const FunctionDeclarationNode& func) {
+	const auto& params = func.parameter_nodes();
+	size_t min_required = params.size();
+	// Walk from the end - default arguments must be trailing
+	for (size_t i = params.size(); i > 0; --i) {
+		if (params[i-1].is<DeclarationNode>() && params[i-1].as<DeclarationNode>().has_default_value()) {
+			min_required--;
+		} else {
+			break;
+		}
+	}
+	return min_required;
+}
+
 class SymbolTable {
 public:
 	bool insert([[maybe_unused]] const std::string& identifier, [[maybe_unused]] ASTNode node) {
@@ -503,15 +518,7 @@ public:
 			if (!overload.is<FunctionDeclarationNode>()) continue;
 			const auto& func_decl = overload.as<FunctionDeclarationNode>();
 			const auto& params = func_decl.parameter_nodes();
-			// Count minimum required args (excluding trailing defaults)
-			size_t min_required = params.size();
-			for (size_t i = params.size(); i > 0; --i) {
-				if (params[i-1].is<DeclarationNode>() && params[i-1].as<DeclarationNode>().has_default_value()) {
-					min_required--;
-				} else {
-					break;
-				}
-			}
+			size_t min_required = countMinRequiredArgs(func_decl);
 			if (arg_types.size() < min_required || arg_types.size() > params.size()) continue;
 
 			bool exact_match = true;
@@ -530,14 +537,7 @@ public:
 			if (!overload.is<FunctionDeclarationNode>()) continue;
 			const auto& func_decl = overload.as<FunctionDeclarationNode>();
 			const auto& params = func_decl.parameter_nodes();
-			size_t min_required = params.size();
-			for (size_t i = params.size(); i > 0; --i) {
-				if (params[i-1].is<DeclarationNode>() && params[i-1].as<DeclarationNode>().has_default_value()) {
-					min_required--;
-				} else {
-					break;
-				}
-			}
+			size_t min_required = countMinRequiredArgs(func_decl);
 			if (arg_types.size() >= min_required && arg_types.size() <= params.size()) {
 				return overload;
 			}
