@@ -252,6 +252,7 @@ $testOneFileBlock = {
 				"/LIBPATH:$libPath1",
 				"/SUBSYSTEM:CONSOLE",
 				"/OUT:$exeFile",
+				"/PDB:$pdbFile",
 				$objFile,
 				"kernel32.lib",
 				"libucrt.lib",
@@ -390,6 +391,7 @@ if ($useParallel) {
 			$parts = $line -split '\|', 4
 			switch ($parts[0]) {
 				"RETURN_OK"             { Write-Host "OK (returned $($parts[2]))" }
+				"COMPILE_LINK_OK"       { Write-Host "OK (no main - link skipped)" }
 				"RETURN_MISMATCH"       { Write-Host "[RETURN MISMATCH] expected $($parts[2]) got $($parts[3])" -ForegroundColor Red }
 				"RUNTIME_CRASH"         { Write-Host "[RUNTIME CRASH] $($parts[2])" -ForegroundColor Red }
 				"EXPECTED_CRASH"        { Write-Host "OK (expected runtime crash)" }
@@ -500,6 +502,10 @@ foreach ($file in $referenceFiles) {
 				Unresolved = @()
 				FullOutput = $parts[2]
 			}
+		}
+		"COMPILE_LINK_OK" {
+			$compileSuccess += $file.Name
+			$linkSuccess += $file.Name
 		}
 		"EXPECTED_LINK_FAIL" {
 			$compileSuccess += $file.Name
