@@ -53,6 +53,10 @@ if (Test-Path "x64\Debug\FlashCpp.exe") {
 	}
 }
 
+# Resolve to absolute path so parallel runspaces (which have a different working
+# directory) can still invoke the compiler without a CommandNotFoundException.
+$flashCppPath = (Get-Item $flashCppPath).FullName
+
 # Get FlashCpp build info
 $buildDate = (Get-Item $flashCppPath).LastWriteTime
 Write-Host "Using: $flashCppPath"
@@ -361,6 +365,7 @@ $testOneFailFileBlock = {
 if ($useParallel) {
 	Write-Host "Running $totalFiles tests with $Jobs parallel jobs (PowerShell $($PSVersionTable.PSVersion.Major))..."
 	$referenceFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
+		Set-Location $using:RepoRoot
 		$file = $_
 		$block = $using:testOneFileBlock
 		$hasMain = ($using:mainFileCache)[$file.Name]
@@ -408,6 +413,7 @@ Write-Host ""
 
 if ($useParallel -and $failFiles.Count -gt 0) {
 	$failFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
+		Set-Location $using:RepoRoot
 		$file = $_
 		$block = $using:testOneFailFileBlock
 		& $block $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:resultDir
