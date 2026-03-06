@@ -281,6 +281,8 @@ $testOneFileBlock = {
 						$resultLine = "RUNTIME_CRASH|$fileName|0x$($signal.ToString('X8'))"
 					}
 				} else {
+					# Linux truncates exit codes to 8 bits (0-255); apply the same
+					# truncation here so return-value checks are consistent across platforms.
 					$returnValue = $returnValue -band 0xFF
 					if ($expectedReturnValue -ne $null) {
 						if ($returnValue -ne $expectedReturnValue) {
@@ -395,9 +397,15 @@ if ($useParallel) {
 				"RETURN_MISMATCH"       { Write-Host "[RETURN MISMATCH] expected $($parts[2]) got $($parts[3])" -ForegroundColor Red }
 				"RUNTIME_CRASH"         { Write-Host "[RUNTIME CRASH] $($parts[2])" -ForegroundColor Red }
 				"EXPECTED_CRASH"        { Write-Host "OK (expected runtime crash)" }
-				"LINK_FAIL"             { Write-Host "[LINK FAILED]" -ForegroundColor Red }
+				"LINK_FAIL"             {
+					Write-Host "[LINK FAILED]" -ForegroundColor Red
+					if ($parts[2]) { Write-Host "  $($parts[2])" -ForegroundColor Yellow }
+				}
 				"EXPECTED_LINK_FAIL"    { Write-Host "OK (expected link fail)" }
-				"COMPILE_FAIL"          { Write-Host "[COMPILE FAILED]" -ForegroundColor Red }
+				"COMPILE_FAIL"          {
+					Write-Host "[COMPILE FAILED]" -ForegroundColor Red
+					if ($parts[2]) { Write-Host "  $($parts[2])" -ForegroundColor Yellow }
+				}
 				"EXPECTED_COMPILE_FAIL" { Write-Host "OK (expected fail)" }
 			}
 		}

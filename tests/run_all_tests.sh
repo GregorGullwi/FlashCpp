@@ -103,7 +103,9 @@ test_one_file() {
     local repo_root="$2"
     local result_dir="$3"
     local f="tests/$base"
-    local obj="${base%.cpp}.obj"
+    # Use unique per-job paths in /tmp to avoid race conditions when parallel
+    # workers compile different tests that happen to share the same base name.
+    local obj="/tmp/${base%.cpp}_$$.o"
     local exe="/tmp/${base%.cpp}_$$_exe"
     local result_file="$result_dir/$base.result"
 
@@ -116,7 +118,7 @@ test_one_file() {
         extra_flags+=("-fno-access-control")
     fi
     local compile_output
-    compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "${extra_flags[@]}" "$f" 2>&1)
+    compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "${extra_flags[@]}" -o "$obj" "$f" 2>&1)
     local compile_exit=$?
 
     # Check if compiler crashed (exit code 134 = SIGABRT, 136 = SIGFPE, 139 = SIGSEGV)
@@ -188,14 +190,14 @@ test_one_fail_file() {
     local repo_root="$2"
     local result_dir="$3"
     local f="tests/$base"
-    local obj="${base%.cpp}.obj"
+    local obj="/tmp/${base%.cpp}_$$.o"
     local result_file="$result_dir/$base.result"
 
     cd "$repo_root"
     rm -f "$obj"
 
     local compile_output
-    compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "$f" 2>&1)
+    compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 -o "$obj" "$f" 2>&1)
     local compile_exit=$?
 
     # Check if compiler crashed
