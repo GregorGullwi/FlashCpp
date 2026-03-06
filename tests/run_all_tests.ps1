@@ -276,7 +276,7 @@ $testOneFileBlock = {
 					if ($expectedRuntimeCrashes -contains $fileName) {
 						$resultLine = "EXPECTED_CRASH|$fileName|"
 					} else {
-						$signal = if ($returnValue -lt 0) { $returnValue + 2147483648 } else { $returnValue }
+						$signal = if ($returnValue -lt 0) { $returnValue + 4294967296 } else { $returnValue }
 						$resultLine = "RUNTIME_CRASH|$fileName|0x$($signal.ToString('X8'))"
 					}
 				} else {
