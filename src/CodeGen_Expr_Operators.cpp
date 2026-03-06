@@ -167,8 +167,11 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 			TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
 			// For reference parameters (e.g., const Point& p = Point{1, 2}),
 			// mark the default arg so the caller passes an address, not a value.
-			if (param_type_spec.is_reference() && tv.type == Type::Struct) {
-				tv.ref_qualifier = ReferenceQualifier::LValueReference;
+			// Also handle rvalue references (e.g., Point&& p = Point{1, 2}).
+			if ((param_type_spec.is_reference() || param_type_spec.is_rvalue_reference()) && tv.type == Type::Struct) {
+				tv.ref_qualifier = param_type_spec.is_rvalue_reference()
+					? ReferenceQualifier::RValueReference
+					: ReferenceQualifier::LValueReference;
 			}
 			call_op.args.push_back(tv);
 		} else if (default_expr.is<InitializerListNode>()) {
@@ -179,8 +182,11 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 				// If the parameter is a reference (e.g., const Point& p = {1, 2}),
 				// mark the default arg so the caller passes the address of the
 				// temporary struct rather than its value.
-				if (param_type.is_reference()) {
-					result->ref_qualifier = ReferenceQualifier::LValueReference;
+				// Also handle rvalue references (e.g., Point&& p = {1, 2}).
+				if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+					result->ref_qualifier = param_type.is_rvalue_reference()
+						? ReferenceQualifier::RValueReference
+						: ReferenceQualifier::LValueReference;
 				}
 				call_op.args.push_back(*result);
 			} else {
@@ -213,15 +219,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (default_expr.is<ExpressionNode>()) {
 			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
 			TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
-			if (param_type_spec.is_reference() && tv.type == Type::Struct) {
-				tv.ref_qualifier = ReferenceQualifier::LValueReference;
+			if ((param_type_spec.is_reference() || param_type_spec.is_rvalue_reference()) && tv.type == Type::Struct) {
+				tv.ref_qualifier = param_type_spec.is_rvalue_reference()
+					? ReferenceQualifier::RValueReference
+					: ReferenceQualifier::LValueReference;
 			}
 			call_op.args.push_back(std::move(tv));
 		} else if (default_expr.is<InitializerListNode>()) {
 			auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type_spec);
 			if (result.has_value()) {
-				if (param_type_spec.is_reference()) {
-					result->ref_qualifier = ReferenceQualifier::LValueReference;
+				if (param_type_spec.is_reference() || param_type_spec.is_rvalue_reference()) {
+					result->ref_qualifier = param_type_spec.is_rvalue_reference()
+						? ReferenceQualifier::RValueReference
+						: ReferenceQualifier::LValueReference;
 				}
 				call_op.args.push_back(std::move(*result));
 			}
