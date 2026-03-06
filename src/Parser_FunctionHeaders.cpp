@@ -102,12 +102,19 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			// parse_expression doesn't handle braces outside of a function body,
 			// so we use parse_brace_initializer directly when the parameter type is known
 			ParseResult default_value = ParseResult::error("", Token());
+			ParseResult default_value = ParseResult::error("", Token());
 			if (peek() == "{"_tok && !out_params.parameters.empty()) {
 				auto& last_param = out_params.parameters.back();
 				if (last_param.is<DeclarationNode>()) {
 					const auto& param_type = last_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 					if (param_type.type() == Type::Struct || param_type.type() == Type::UserDefined) {
+						SaveHandle brace_pos = save_token_position();
 						default_value = parse_brace_initializer(param_type);
+						if (!default_value.is_error()) {
+							discard_saved_token(brace_pos);
+						} else {
+							restore_token_position(brace_pos);
+						}
 					}
 				}
 			}
