@@ -36,12 +36,6 @@ enum class ReferenceQualifier : uint8_t {
 
 using CVReferenceQualifier = ReferenceQualifier;
 
-constexpr CVReferenceQualifier toCVReferenceQualifier(bool is_reference, bool is_rvalue_reference) {
-	return is_rvalue_reference
-		? CVReferenceQualifier::RValueReference
-		: (is_reference ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
-}
-
 // Overloadable operator kinds for struct member operator overloads.
 // Stored as an enum instead of a string for efficient comparison.
 enum class OverloadableOperator : uint8_t {

@@ -16,8 +16,8 @@
 				handler_info.funclet_end_offset = handler.funclet_end_offset;
 				handler_info.is_catch_all = handler.is_catch_all;
 				handler_info.is_const = handler.is_const;
-				handler_info.is_reference = handler.is_reference;
-				handler_info.is_rvalue_reference = handler.is_rvalue_reference;
+				handler_info.is_reference = handler.is_reference();
+				handler_info.is_rvalue_reference = handler.is_rvalue_reference();
 				
 				// Use pre-computed frame offset for caught exception object
 				handler_info.catch_obj_offset = handler.catch_obj_stack_offset;

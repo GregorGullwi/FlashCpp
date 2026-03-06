@@ -919,7 +919,7 @@
 				member_load.object = object_name;
 				member_load.member_name = member_name;
 				member_load.offset = static_cast<int>(adjusted_offset);
-				member_load.ref_qualifier = toCVReferenceQualifier(true, false);
+				member_load.ref_qualifier = CVReferenceQualifier::LValueReference;
 				member_load.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 				
@@ -957,7 +957,7 @@
 				member_load.object = object_name;
 				member_load.member_name = member_name;
 				member_load.offset = static_cast<int>(adjusted_offset);
-				member_load.ref_qualifier = toCVReferenceQualifier(false, false);
+				member_load.ref_qualifier = CVReferenceQualifier::None;
 				member_load.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 				

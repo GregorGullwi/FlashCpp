@@ -70,8 +70,7 @@
 			handler.type_index = catch_op.type_index;
 			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
 			handler.is_const = catch_op.is_const;
-			handler.is_reference = catch_op.is_reference();
-			handler.is_rvalue_reference = catch_op.is_rvalue_reference();
+			handler.ref_qualifier = catch_op.ref_qualifier;
 			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
 			
 			// Pre-compute stack offset for exception object during IR processing.

@@ -698,15 +698,14 @@
 				}
 			}
 
-			bool param_is_ref_like = false;
-			[[maybe_unused]] bool param_is_rvalue_ref = false;
+			CVReferenceQualifier param_ref_qualifier = CVReferenceQualifier::None;
 			[[maybe_unused]] bool param_is_pack = param_decl && param_decl->is_parameter_pack();
 			if (param_type) {
-				param_is_ref_like = param_type->is_reference() || param_type->is_rvalue_reference();
-				param_is_rvalue_ref = param_type->is_rvalue_reference();
+				param_ref_qualifier = param_type->is_rvalue_reference()
+					? CVReferenceQualifier::RValueReference
+					: (param_type->is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
 			} else if (cached_param) {
-				param_is_ref_like = cached_param->is_reference() || cached_param->is_rvalue_reference();
-				param_is_rvalue_ref = cached_param->is_rvalue_reference();
+				param_ref_qualifier = cached_param->ref_qualifier;
 				param_is_pack = cached_param->is_parameter_pack;
 			}
 			
@@ -715,7 +714,7 @@
 			// generating a Dereference operation (which would give us the value, not the address).
 			// For reference-to-reference passing, we just want to pass the variable name directly,
 			// and let the IRConverter use MOV to load the address stored in the reference.
-			if (param_is_ref_like &&
+			if (param_ref_qualifier != CVReferenceQualifier::None &&
 			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				const DeclarationNode* decl_ptr = lookupDeclaration(identifier.name());
@@ -740,7 +739,7 @@
 			
 			// If the parameter expects a reference, use LValueAddress context to avoid dereferencing
 			// This is needed for non-reference arguments being passed to reference parameters
-			if (param_is_ref_like) {
+			if (param_ref_qualifier != CVReferenceQualifier::None) {
 				arg_context = ExpressionContext::LValueAddress;
 			}
 			
@@ -980,7 +979,7 @@
 					irOperands.emplace_back(type_node.type());  // Element type (e.g., Char for char[])
 					irOperands.emplace_back(64);  // Pointer size is 64 bits on x64
 					irOperands.emplace_back(addr_var);
-				} else if (param_is_ref_like) {
+				} else if (param_ref_qualifier != CVReferenceQualifier::None) {
 					// Parameter expects a reference - pass the address of the argument
 					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Argument is already a reference - just pass it through
@@ -1017,7 +1016,7 @@
 			} else {
 				// Not an identifier - could be a literal, expression result, etc.
 				// Check if parameter expects a reference and argument is a literal
-				if (param_is_ref_like) {
+				if (param_ref_qualifier != CVReferenceQualifier::None) {
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
 					

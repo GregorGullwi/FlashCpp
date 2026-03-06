@@ -390,7 +390,7 @@
 									member_load.object = base_temp;
 									member_load.member_name = func_name_handle;
 									member_load.offset = static_cast<int>(member.offset);
-									member_load.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
+									member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 									member_load.struct_type_info = &member_type_info;  // MemberLoadOp expects TypeInfo*
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
@@ -698,7 +698,7 @@
 
 						member_load.member_name = StringTable::getOrInternStringHandle(func_name);  // Member name
 						member_load.offset = static_cast<int>(member.offset);  // Member offset
-						member_load.ref_qualifier = toCVReferenceQualifier(member.is_reference(), member.is_rvalue_reference());
+						member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 						member_load.struct_type_info = nullptr;  // Not used downstream; consistent with all other MemberLoadOp sites
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));

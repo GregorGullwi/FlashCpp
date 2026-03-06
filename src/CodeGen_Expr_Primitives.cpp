@@ -267,7 +267,7 @@
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
-						member_load.ref_qualifier = toCVReferenceQualifier(member->is_reference(), member->is_rvalue_reference());
+						member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 						member_load.struct_type_info = nullptr;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
@@ -306,7 +306,7 @@
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
-						member_load.ref_qualifier = toCVReferenceQualifier(member->is_reference(), member->is_rvalue_reference());
+						member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 						member_load.struct_type_info = nullptr;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
@@ -346,7 +346,7 @@
 					member_load.object = *copy_this_temp;
 					member_load.member_name = member->getName();
 					member_load.offset = static_cast<int>(result.adjusted_offset);
-					member_load.ref_qualifier = toCVReferenceQualifier(member->is_reference(), member->is_rvalue_reference());
+					member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 					
@@ -538,7 +538,7 @@
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
-						member_load.ref_qualifier = toCVReferenceQualifier(member->is_reference(), member->is_rvalue_reference());
+						member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 						member_load.struct_type_info = nullptr;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));

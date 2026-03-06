@@ -151,7 +151,7 @@
 			lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
-			lambda_decl_op.ref_qualifier = toCVReferenceQualifier(false, false);
+			lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
 			lambda_decl_op.is_array = false;
 			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
 		} else {
@@ -167,7 +167,7 @@
 			lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
-			lambda_decl_op.ref_qualifier = toCVReferenceQualifier(false, false);
+			lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
 			lambda_decl_op.is_array = false;
 			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
 		}
@@ -197,7 +197,7 @@
 							store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 							store_this.member_name = StringTable::getOrInternStringHandle("__this");
 							store_this.offset = static_cast<int>(member->offset);
-							store_this.ref_qualifier = toCVReferenceQualifier(false, false);
+							store_this.ref_qualifier = CVReferenceQualifier::None;
 							store_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_this), lambda.lambda_token()));
 						}
@@ -232,7 +232,7 @@
 									load_op.object = StringTable::getOrInternStringHandle("this");
 									load_op.member_name = enclosing_member.getName();
 									load_op.offset = static_cast<int>(enclosing_member.offset);
-									load_op.ref_qualifier = toCVReferenceQualifier(enclosing_member.is_reference(), enclosing_member.is_rvalue_reference());
+									load_op.ref_qualifier = ((enclosing_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((enclosing_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 									load_op.struct_type_info = nullptr;
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), lambda.lambda_token()));
 
@@ -244,7 +244,7 @@
 									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 									store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 									store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
-									store_copy_this.ref_qualifier = toCVReferenceQualifier(enclosing_member.is_reference(), enclosing_member.is_rvalue_reference());
+									store_copy_this.ref_qualifier = ((enclosing_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((enclosing_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 									store_copy_this.struct_type_info = nullptr;
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
 								}
@@ -319,7 +319,7 @@
 								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 								member_store.member_name = member->getName();
 								member_store.offset = static_cast<int>(member->offset);
-								member_store.ref_qualifier = toCVReferenceQualifier(true, false);
+								member_store.ref_qualifier = CVReferenceQualifier::LValueReference;
 								member_store.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 							} else {
@@ -347,7 +347,7 @@
 								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 								member_store.member_name = member->getName();
 								member_store.offset = static_cast<int>(member->offset);
-								member_store.ref_qualifier = toCVReferenceQualifier(member->is_reference(), member->is_rvalue_reference());
+								member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 								member_store.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 							}
@@ -395,7 +395,7 @@
 									}
 									member_load.offset = enclosing_offset;
 									member_load.struct_type_info = nullptr;
-									member_load.ref_qualifier = toCVReferenceQualifier(true, false);
+									member_load.ref_qualifier = CVReferenceQualifier::LValueReference;
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
 								} else {
 									// Enclosing captured by value - need to get address of this->x
@@ -426,7 +426,7 @@
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
-							member_store.ref_qualifier = toCVReferenceQualifier(member->is_reference(), member->is_rvalue_reference());
+							member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 							member_store.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						} else {
@@ -458,7 +458,7 @@
 								}
 								member_load.offset = enclosing_offset;
 								member_load.struct_type_info = nullptr;
-								member_load.ref_qualifier = toCVReferenceQualifier(false, false);
+								member_load.ref_qualifier = CVReferenceQualifier::None;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
 
 								member_store.value.value = loaded_value;
@@ -470,7 +470,7 @@
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
-							member_store.ref_qualifier = toCVReferenceQualifier(member->is_reference(), member->is_rvalue_reference());
+							member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 							member_store.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						}
@@ -661,17 +661,17 @@
 						func_param.type = deduced->type();
 						func_param.size_in_bits = deduced->size_in_bits();
 						// Use reference flags from the deduced type (set at call site)
-						func_param.ref_qualifier = toCVReferenceQualifier(deduced->is_reference(), deduced->is_rvalue_reference());
+						func_param.ref_qualifier = ((deduced->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((deduced->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					} else {
 						// No deduced type available, fallback to int
 						func_param.type = Type::Int;
 						func_param.size_in_bits = 32;
-						func_param.ref_qualifier = toCVReferenceQualifier(param_type.is_reference(), param_type.is_rvalue_reference());
+						func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					}
 				} else {
 					func_param.type = param_type.type();
 					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
-					func_param.ref_qualifier = toCVReferenceQualifier(param_type.is_reference(), param_type.is_rvalue_reference());
+					func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				}
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
@@ -825,16 +825,16 @@
 						func_param.type = deduced->type();
 						func_param.size_in_bits = deduced->size_in_bits();
 						// Use reference flags from the deduced type (set at call site)
-						func_param.ref_qualifier = toCVReferenceQualifier(deduced->is_reference(), deduced->is_rvalue_reference());
+						func_param.ref_qualifier = ((deduced->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((deduced->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					} else {
 						func_param.type = Type::Int;
 						func_param.size_in_bits = 32;
-						func_param.ref_qualifier = toCVReferenceQualifier(param_type.is_reference(), param_type.is_rvalue_reference());
+						func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					}
 				} else {
 					func_param.type = param_type.type();
 					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
-					func_param.ref_qualifier = toCVReferenceQualifier(param_type.is_reference(), param_type.is_rvalue_reference());
+					func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				}
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
@@ -1058,7 +1058,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 	load_op.member_name = StringTable::getOrInternStringHandle("__copy_this");
 	load_op.offset = static_cast<int>(copy_this_member->offset);
-	load_op.ref_qualifier = toCVReferenceQualifier(false, false);
+	load_op.ref_qualifier = CVReferenceQualifier::None;
 	load_op.struct_type_info = nullptr;
 	ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
 
@@ -1199,7 +1199,7 @@ std::optional<TempVar> AstToIr::emitLoadThisPointer(const Token& token) {
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 	load_op.member_name = StringTable::getOrInternStringHandle("__this");
 	load_op.offset = this_member_offset;
-	load_op.ref_qualifier = toCVReferenceQualifier(false, false);
+	load_op.ref_qualifier = CVReferenceQualifier::None;
 	load_op.struct_type_info = nullptr;
 	ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
 
