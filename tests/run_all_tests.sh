@@ -169,7 +169,7 @@ test_one_file() {
             # Link failure
             local link_errors
             link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed" | head -5)
-            echo "LINK_FAIL|$base|$link_errors" > "$result_file"
+            echo "LINK_FAIL|$base|$(echo "$link_errors" | head -1)" > "$result_file"
         fi
     else
         local first_error
