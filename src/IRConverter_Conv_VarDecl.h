@@ -1855,7 +1855,8 @@
 											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
 										}
 										handled_reference_return = true;
-									} else if (std::holds_alternative<StringHandle>(lv_info.base)) {
+									} else if (std::holds_alternative<StringHandle>(lv_info.base) &&
+										   std::get<StringHandle>(lv_info.base) == StringTable::getOrInternStringHandle("this")) {
 										auto this_it = current_scope.variables.find(StringTable::getOrInternStringHandle("this"));
 										if (this_it != current_scope.variables.end()) {
 											if (base_is_pointer) {
