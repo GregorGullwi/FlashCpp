@@ -42,8 +42,7 @@ int main() {
     if (r1 != 42) return 1;
 
     // 2. Explicit call (override default)
-    Point p2{40, 2};
-    int r2 = sumPoint(p2);          // 42
+	    int r2 = sumPoint({40, 2});     // 42
     if (r2 != 42) return 2;
 
     // 3. Constructor call default
@@ -55,8 +54,7 @@ int main() {
     if (r4 != 42) return 4;
 
     // 5. Override struct default when multiple params
-    Point p5{10, 10};
-    int r5 = addToPoint(22, p5);    // 22 + 10 + 10 = 42
+	    int r5 = addToPoint(22, {10, 10}); // 22 + 10 + 10 = 42
     if (r5 != 42) return 5;
 
     // 6. Template function with struct default
@@ -70,8 +68,7 @@ int main() {
     if (r7 != 42) return 7;
 
     // 8. Member function override default
-    Point p8{20, 22};
-    int r8 = c.compute(p8);         // 20 + 22 + 0 = 42
+	    int r8 = c.compute({20, 22});    // 20 + 22 + 0 = 42
     if (r8 != 42) return 8;
 
     return 42;

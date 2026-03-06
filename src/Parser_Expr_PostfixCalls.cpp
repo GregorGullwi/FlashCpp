@@ -24,6 +24,39 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	return std::nullopt;
 }
 
+const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
+	const std::optional<ASTNode>& object_expr, std::string_view member_name)
+{
+	if (!object_expr.has_value()) return nullptr;
+	auto type_opt = get_expression_type(*object_expr);
+	if (!type_opt.has_value()) return nullptr;
+	const auto& type_spec = *type_opt;
+	if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return nullptr;
+	TypeIndex type_idx = type_spec.type_index();
+	if (type_idx >= gTypeInfo.size()) return nullptr;
+
+	StringHandle type_name = gTypeInfo[type_idx].name();
+	instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
+	const StructTypeInfo* struct_info = gTypeInfo[type_idx].getStructInfo();
+	if (!struct_info) return nullptr;
+
+	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+	const FunctionDeclarationNode* match = nullptr;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.is_constructor || member_func.is_destructor) continue;
+		if (member_func.getName() != member_name_handle) continue;
+		if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
+
+		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (match) {
+			return nullptr;
+		}
+		match = &candidate;
+	}
+
+	return match;
+}
+
 // Apply postfix operators (., ->, [], (), ++, --) to an existing expression result
 // This allows cast expressions (static_cast, dynamic_cast, etc.) to be followed by member access
 // e.g., static_cast<T&&>(t).operator<=>(u)
@@ -167,12 +200,16 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			
 			// Check if this is a member function call (followed by '(')
 			if (peek() == "("_tok) {
+					const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
+						? nullptr
+						: tryResolveConcreteMemberFunction(result, member_name_token.value());
 				advance(); // consume '('
 				
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 					.handle_pack_expansion = true,
 					.collect_types = true,
-					.expand_simple_packs = false
+						.expand_simple_packs = false,
+						.callee_decl = known_member_func
 				});
 				if (!args_result.success) {
 					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
@@ -241,12 +278,16 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			
 			// Check if this is a member function call (followed by '(')
 			if (peek() == "("_tok) {
+					const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
+						? nullptr
+						: tryResolveConcreteMemberFunction(result, member_name_token.value());
 				advance(); // consume '('
 				
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 					.handle_pack_expansion = true,
 					.collect_types = true,
-					.expand_simple_packs = false
+						.expand_simple_packs = false,
+						.callee_decl = known_member_func
 				});
 				if (!args_result.success) {
 					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
@@ -1195,6 +1236,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		// Check if this is a member function call (followed by '(')
 		if (peek() == "("_tok) {
 			// This is a member function call: obj.method(args)
+				const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
+					? nullptr
+					: tryResolveConcreteMemberFunction(result, member_name_token.value());
 
 			advance(); // consume '('
 
@@ -1202,7 +1246,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 				.handle_pack_expansion = true,
 				.collect_types = true,
-				.expand_simple_packs = false
+					.expand_simple_packs = false,
+					.callee_decl = known_member_func
 			});
 			if (!args_result.success) {
 				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));

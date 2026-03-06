@@ -206,19 +206,23 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 	// We have arguments, so allocate storage
 	ChunkedVector<ASTNode> args;
 	std::vector<TypeSpecifierNode> arg_types;
+		const std::vector<ASTNode>* callee_params = nullptr;
+		if (ctx.callee_decl) {
+			callee_params = &ctx.callee_decl->parameter_nodes();
+		} else if (!ctx.callee_name.empty()) {
+			auto func_lookup = gSymbolTable.lookup(ctx.callee_name);
+			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
+				callee_params = &func_lookup->as<FunctionDeclarationNode>().parameter_nodes();
+			}
+		}
 	
 	while (true) {
 		// Handle brace-init-list argument: func({.x=1}) -> func(ParamType{.x=1})
 		// When a '{' is encountered as an argument, infer the parameter type from the function signature
-		if (peek() == "{"_tok && !ctx.callee_name.empty()) {
-			// Look up the function to get the parameter type at the current argument index
-			auto func_lookup = gSymbolTable.lookup(ctx.callee_name);
-			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
-				const auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
+			if (peek() == "{"_tok && callee_params) {
 				size_t arg_index = args.size();
-				const auto& params = func_decl.parameter_nodes();
-				if (arg_index < params.size() && params[arg_index].is<DeclarationNode>()) {
-					const auto& param_decl = params[arg_index].as<DeclarationNode>();
+				if (arg_index < callee_params->size() && (*callee_params)[arg_index].is<DeclarationNode>()) {
+					const auto& param_decl = (*callee_params)[arg_index].as<DeclarationNode>();
 					if (param_decl.type_node().is<TypeSpecifierNode>()) {
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						// Only handle struct/user-defined types
@@ -257,7 +261,6 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						}
 					}
 				}
-			}
 		}
 		
 		auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
