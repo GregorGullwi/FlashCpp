@@ -58,6 +58,31 @@ private:
 		std::string struct_name;
 	};
 
+	// Result of detecting whether a variable identifier refers to a global or static variable
+	struct GlobalStaticVarInfo {
+		bool is_global_or_static = false;
+		StringHandle store_name;   // Mangled name for static locals, or identifier handle for globals
+		Type type = Type::Void;
+		int size_in_bits = 0;
+	};
+
+	// Detect if a variable name refers to a global variable, static local, or static struct member.
+	// Returns info needed to generate a GlobalStore for mutations on such variables.
+	GlobalStaticVarInfo detectGlobalOrStaticVar(std::string_view ident_name);
+
+	// Generate aggregate initialization of a struct from an InitializerListNode as a default argument.
+	// Emits ConstructorCallOp + MemberStoreOps for the struct, returns a TypedValue for the temporary.
+	std::optional<TypedValue> generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type);
+
+
+	// Fill in default arguments for parameters that weren't explicitly provided.
+	// Iterates from arg_idx to the end of param_nodes, evaluating each parameter's
+	// default value and appending it to call_op.args. Stops at a trailing function
+	// parameter pack (which may be omitted). Throws InternalError if a non-pack
+	// parameter without a default value is encountered (indicates an overload
+	// resolution bug).
+	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
+
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
 
 	void enterScope() {
@@ -595,12 +620,17 @@ private:
 	std::unordered_map<std::string, TypeSpecifierNode> deduced_auto_return_types_;
 	
 	struct CachedParamInfo {
+		StringHandle name{};
 		bool is_reference = false;
 		bool is_rvalue_reference = false;
 		bool is_parameter_pack = false;
+		bool has_default_value = false;
+		ASTNode default_value;
+		ASTNode type_node;
 	};
 	// Cache parameter reference info by mangled function name to aid call-site lowering
 	std::unordered_map<StringHandle, std::vector<CachedParamInfo>> function_param_cache_;
+	void fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx);
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;

@@ -18,9 +18,6 @@ Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay
 Prefer StringHandle primarily or `std::string_view` secondary for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
 Prefer StringBuilder instead of using std::string concatination.
 Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do not add opcodes manually to `textSectionData` in `IRConverter.h`, make helper functions if no fitting `emit` function exist.
-Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.
-Try to make complete C++20 standard compliant solutions. If you deviate from that, notify the user and make a TODO.
-If you encounter existing bugs while testing, notify the user. If it's close to the area you are already working on, make an effort to investigste and fix it.
 
 ## Testing Guidelines
 When adding new test cases and files, verify that they are valid C++20 source file by compiling them with clang first in c++20 mode.
@@ -48,3 +45,6 @@ Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen
 * If a needed change requires an architectural edit: Make a plan in form of a todo list.
 * If you discover bugs in the compiler: document it as a todo or add it to docs/KNOWN_ISSUES.md
 * If you fix a bug, make a test first in the tests/folder that demonstrates that behavior and submit it. Append a _retX.cpp to the file name and make the return value dependent on the non-buggy behavior, so we can easily test if the bug appears again later.
+* If you encounter existing bugs while testing, notify the user. If it's close to the area you are already working on, make an effort to investigste and fix it.
+* Try to make complete C++20 standard compliant solutions. If you deviate from that, notify the user and make a TODO.
+* Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.

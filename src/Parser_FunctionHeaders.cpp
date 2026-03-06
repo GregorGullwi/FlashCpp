@@ -13,6 +13,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		return ParseResult::error("Expected '(' for parameter list", current_token_);
 	}
 
+	bool seen_default_param = false;
 	while (!consume(")"_tok)) {
 		// Handle C-style (void) parameter list meaning "no parameters"
 		// In C/C++, f(void) is equivalent to f()
@@ -97,8 +98,29 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		// Note: '=' is an Operator token, not a Punctuator token
 		if (peek() == "="_tok) {
 			advance(); // consume '='
-			// Parse the default value expression
-			auto default_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			// Check if the default value is a braced initializer for a struct parameter
+			// parse_expression doesn't handle braces outside of a function body,
+			// so we use parse_brace_initializer directly when the parameter type is known
+			ParseResult default_value = ParseResult::error("", Token());
+			if (peek() == "{"_tok && !out_params.parameters.empty()) {
+				auto& last_param = out_params.parameters.back();
+				if (last_param.is<DeclarationNode>()) {
+					const auto& param_type = last_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					if (param_type.type() == Type::Struct || param_type.type() == Type::UserDefined) {
+						SaveHandle brace_pos = save_token_position();
+						default_value = parse_brace_initializer(param_type);
+						if (!default_value.is_error()) {
+							discard_saved_token(brace_pos);
+						} else {
+							restore_token_position(brace_pos);
+						}
+					}
+				}
+			}
+			// Fallback to normal expression parsing
+			if (default_value.is_error()) {
+				default_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			}
 			if (default_value.is_error()) {
 				return default_value;
 			}
@@ -108,6 +130,25 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				if (last_param.is<DeclarationNode>()) {
 					last_param.as<DeclarationNode>().set_default_value(*default_value.node());
 				}
+			}
+		}
+
+		// C++20 [dcl.fct.default]/4: If a parameter has a default argument,
+		// all subsequent parameters shall also have default arguments.
+		bool current_has_default = !out_params.parameters.empty() &&
+			out_params.parameters.back().is<DeclarationNode>() &&
+			out_params.parameters.back().as<DeclarationNode>().has_default_value();
+		if (current_has_default) {
+			seen_default_param = true;
+		} else if (seen_default_param && !out_params.parameters.empty() &&
+			out_params.parameters.back().is<DeclarationNode>()) {
+			const auto& param = out_params.parameters.back().as<DeclarationNode>();
+			// C++20 [dcl.fct.default]/4: parameter packs are exempt from the
+			// trailing-default requirement ("unless the parameter was expanded
+			// from a parameter pack or is a function parameter pack").
+			if (!param.is_parameter_pack()) {
+				return ParseResult::error("Missing default argument on parameter '" +
+					std::string(param.identifier_token().value()) + "'", param.identifier_token());
 			}
 		}
 
@@ -170,19 +211,23 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 	// We have arguments, so allocate storage
 	ChunkedVector<ASTNode> args;
 	std::vector<TypeSpecifierNode> arg_types;
+		const std::vector<ASTNode>* callee_params = nullptr;
+		if (ctx.callee_decl) {
+			callee_params = &ctx.callee_decl->parameter_nodes();
+		} else if (!ctx.callee_name.empty()) {
+			auto func_lookup = gSymbolTable.lookup(ctx.callee_name);
+			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
+				callee_params = &func_lookup->as<FunctionDeclarationNode>().parameter_nodes();
+			}
+		}
 	
 	while (true) {
 		// Handle brace-init-list argument: func({.x=1}) -> func(ParamType{.x=1})
 		// When a '{' is encountered as an argument, infer the parameter type from the function signature
-		if (peek() == "{"_tok && !ctx.callee_name.empty()) {
-			// Look up the function to get the parameter type at the current argument index
-			auto func_lookup = gSymbolTable.lookup(ctx.callee_name);
-			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
-				const auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
+			if (peek() == "{"_tok && callee_params) {
 				size_t arg_index = args.size();
-				const auto& params = func_decl.parameter_nodes();
-				if (arg_index < params.size() && params[arg_index].is<DeclarationNode>()) {
-					const auto& param_decl = params[arg_index].as<DeclarationNode>();
+				if (arg_index < callee_params->size() && (*callee_params)[arg_index].is<DeclarationNode>()) {
+					const auto& param_decl = (*callee_params)[arg_index].as<DeclarationNode>();
 					if (param_decl.type_node().is<TypeSpecifierNode>()) {
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						// Only handle struct/user-defined types
@@ -221,7 +266,6 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						}
 					}
 				}
-			}
 		}
 		
 		auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);

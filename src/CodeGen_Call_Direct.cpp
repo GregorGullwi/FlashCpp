@@ -337,7 +337,9 @@
 				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
 				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}", 
 					(void*)overload_decl, (void*)&decl_node);
-				if (overload_decl == &decl_node) {
+				if (overload_decl == &decl_node ||
+					(has_precomputed_mangled && overload_func_decl->has_mangled_name() &&
+					 overload_func_decl->mangled_name() == functionCallNode.mangled_name())) {
 					// Found the matching overload
 					matched_func_decl = overload_func_decl;
 					resolveMangledName(matched_func_decl);
@@ -346,10 +348,27 @@
 				}
 			}
 		}
+
+		// For instantiated template calls, the concrete specialization is registered under its
+		// mangled name in the symbol table. Prefer that over falling back to the template pattern.
+		if (!matched_func_decl && has_precomputed_mangled) {
+			auto mangled_symbol = lookupSymbol(functionCallNode.mangled_name());
+			if (mangled_symbol.has_value()) {
+				if (mangled_symbol->is<FunctionDeclarationNode>()) {
+					matched_func_decl = &mangled_symbol->as<FunctionDeclarationNode>();
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched function by mangled symbol lookup: {}", function_name);
+				} else if (mangled_symbol->is<TemplateFunctionDeclarationNode>()) {
+					matched_func_decl = &mangled_symbol->as<TemplateFunctionDeclarationNode>().function_decl_node();
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched template function by mangled symbol lookup: {}", function_name);
+				}
+			}
+		}
 	
 		// Fallback: if pointer comparison failed (e.g., for template instantiations),
 		// try to find the function by checking if there's only one overload with this name
-		if (!matched_func_decl && scoped_overloads.size() == 1 &&
+		if (!matched_func_decl && !has_precomputed_mangled && scoped_overloads.size() == 1 &&
 		(scoped_overloads[0].is<FunctionDeclarationNode>() || scoped_overloads[0].is<TemplateFunctionDeclarationNode>())) {
 			matched_func_decl = scoped_overloads[0].is<FunctionDeclarationNode>()
 				? &scoped_overloads[0].as<FunctionDeclarationNode>()
@@ -359,7 +378,7 @@
 		}
 
 		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
-		if (!matched_func_decl && gSymbolTable_overloads.size() == 1 &&
+		if (!matched_func_decl && !has_precomputed_mangled && gSymbolTable_overloads.size() == 1 &&
 		(gSymbolTable_overloads[0].is<FunctionDeclarationNode>() || gSymbolTable_overloads[0].is<TemplateFunctionDeclarationNode>())) {
 			matched_func_decl = gSymbolTable_overloads[0].is<FunctionDeclarationNode>()
 				? &gSymbolTable_overloads[0].as<FunctionDeclarationNode>()
@@ -646,7 +665,7 @@
 		std::vector<ASTNode> param_nodes;
 		if (matched_func_decl) {
 			param_nodes = matched_func_decl->parameter_nodes();
-		} else {
+		} else if (!has_precomputed_mangled) {
 			// Try to get from the function declaration stored in FunctionCallNode
 			// Look up the function in symbol table to get full declaration with parameters
 			auto local_func_symbol = lookupSymbol(func_decl_node.identifier_token().value());
@@ -1118,7 +1137,7 @@
 		call_op.return_type = return_type.type();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
-		call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference()) 
+		call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64 
 			: static_cast<int>(return_type.size_in_bits());
 		call_op.return_type_index = return_type.type_index();
@@ -1200,20 +1219,32 @@
 			arg_idx++;
 		}
 
+		// Fill in default arguments for parameters that weren't explicitly provided
+		if (matched_func_decl) {
+			fillInDefaultArguments(call_op, param_nodes, arg_idx);
+		} else if (cached_param_list) {
+			fillInCachedDefaultArguments(call_op, *cached_param_list, arg_idx);
+		}
+
 		// Add the function call instruction with typed payload
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-		// For functions returning rvalue references, mark the result as an xvalue
-		// This prevents taking the address of the result when passing to another function
-		if (return_type.is_rvalue_reference()) {
-			// Create lvalue info indicating this is a Direct value (the function returns the address directly)
-			LValueInfo lvalue_info(LValueInfo::Kind::Direct, ret_var, 0);
-			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), static_cast<int>(return_type.size_in_bits())));
+		// Reference-returning functions produce glvalues that refer to the object behind
+		// the returned address. Model them as indirect lvalues/xvalues so assignment and
+		// compound assignment store through the reference target instead of a temporary.
+		if (return_type.is_reference() || return_type.is_rvalue_reference()) {
+			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
+			int referenced_size_bits = getTypeSpecSizeBits(return_type);
+			if (return_type.is_rvalue_reference()) {
+				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), referenced_size_bits));
+			} else {
+				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.type(), referenced_size_bits));
+			}
 		}
 
 		// Return the result variable with its type and size
 		// For references, return 64-bit size (address size)
-		int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference())
+		int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
 		// Return type_index for struct types so structured bindings can decompose the result

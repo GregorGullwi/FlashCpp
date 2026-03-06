@@ -4682,6 +4682,54 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
+
+					auto appendMissingDefaultArguments = [&](const FunctionDeclarationNode& func_decl) -> std::optional<ParseResult> {
+						const auto& params = func_decl.parameter_nodes();
+						if (args.size() >= params.size()) {
+							return std::nullopt;
+						}
+
+						for (size_t i = args.size(); i < params.size(); ++i) {
+							if (params[i].is<DeclarationNode>() && params[i].as<DeclarationNode>().has_default_value()) {
+								ASTNode def_val = params[i].as<DeclarationNode>().default_value();
+								if (def_val.is<InitializerListNode>()) {
+									const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+									// For struct/aggregate parameters, convert InitializerListNode to ConstructorCallNode
+									if (param_type_node.type() == Type::Struct || param_type_node.type() == Type::UserDefined) {
+										auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
+										const InitializerListNode& init_list = def_val.as<InitializerListNode>();
+										ChunkedVector<ASTNode> ctor_args;
+										for (const auto& init : init_list.initializers()) {
+											ctor_args.push_back(init);
+										}
+										args.push_back(emplace_node<ExpressionNode>(
+											ConstructorCallNode(type_copy, std::move(ctor_args), idenfifier_token)));
+										continue;
+									}
+									const InitializerListNode& il = def_val.as<InitializerListNode>();
+									if (il.size() == 1 && il.initializers()[0].is<ExpressionNode>()) {
+										args.push_back(il.initializers()[0]);
+										continue;
+									}
+									if (il.size() == 0) {
+										Token zero_tok(Token::Type::Literal, "0"sv,
+											idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+										args.push_back(emplace_node<ExpressionNode>(
+											NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
+										continue;
+									}
+									return ParseResult::error("Cannot use multi-element braced-init-list as default argument for non-aggregate parameter '"
+										+ std::string(params[i].as<DeclarationNode>().identifier_token().value()) + "'",
+										idenfifier_token);
+								}
+								args.push_back(def_val);
+							} else {
+								return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+							}
+						}
+
+						return std::nullopt;
+					};
 				
 				FLASH_LOG_FORMAT(Parser, Debug, "After parsing args: size={}, has_operator_call={}, is_template_parameter={}, is_function_pointer={}", 
 					args.size(), has_operator_call, is_template_parameter, is_function_pointer);
@@ -4865,6 +4913,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										if (func_check && func_check->is_deleted()) {
 											return ParseResult::error("Call to deleted function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 										}
+								if (instantiated_func->is<FunctionDeclarationNode>()) {
+									if (auto default_args_error = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); default_args_error.has_value()) {
+										return *default_args_error;
+									}
+								}
 										// Successfully instantiated template
 										const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
 										if (!decl_ptr) {
@@ -4922,6 +4975,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											if (func_check && func_check->is_deleted()) {
 												return ParseResult::error("Call to deleted function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 											}
+								if (instantiated_func->is<FunctionDeclarationNode>()) {
+									if (auto default_args_error = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); default_args_error.has_value()) {
+										return *default_args_error;
+									}
+								}
 											// Successfully instantiated template
 											const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
 											if (!decl_ptr) {
@@ -4996,6 +5054,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
 											if (!decl_ptr) {
 												return ParseResult::error("Invalid function declaration", idenfifier_token);
+											}
+
+											// Fill in default arguments for missing parameters
+											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
+												const auto& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();
+												if (auto err = appendMissingDefaultArguments(func_decl); err.has_value()) {
+													return *err;
+												}
 											}
 
 											result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), idenfifier_token));
@@ -5293,13 +5359,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Check for fold expression patterns
 		SaveHandle fold_check_pos = save_token_position();
 		bool is_fold = false;
+			auto is_fold_operator = [this]() {
+				return peek().is_operator() || peek() == ","_tok;
+			};
 		
 		// Pattern 1: Unary left fold: (... op pack)
 		if (peek() == "..."_tok) {
 			advance(); // consume ...
 			
 			// Next should be an operator
-			if (peek().is_operator()) {
+				if (is_fold_operator()) {
 				std::string_view fold_op = peek_info().value();
 				Token op_token = peek_info();
 				advance(); // consume operator
@@ -5330,7 +5399,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				advance(); // consume identifier
 				
 				// Check what follows
-				if (peek().is_operator()) {
+					if (is_fold_operator()) {
 					std::string_view fold_op = peek_info().value();
 					Token op_token = peek_info();
 					advance(); // consume operator
@@ -5340,7 +5409,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						advance(); // consume ...
 						
 						// Check if binary fold or unary right fold
-						if (peek().is_operator() &&
+							if (is_fold_operator() &&
 							peek_info().value() == fold_op) {
 							// Binary fold: (X op ... op Y)
 							// Need to determine direction: if first_id is a pack parameter, it's
@@ -5436,7 +5505,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			ParseResult init_result = parse_primary_expression(ExpressionContext::Normal);
 			
 			if (!init_result.is_error() && init_result.node().has_value()) {
-				if (peek().is_operator()) {
+					if (is_fold_operator()) {
 					std::string_view fold_op = peek_info().value();
 					Token op_token = peek_info();
 					advance(); // consume operator
@@ -5444,7 +5513,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (peek() == "..."_tok) {
 						advance(); // consume ...
 						
-						if (peek().is_operator() &&
+							if (is_fold_operator() &&
 							peek_info().value() == fold_op) {
 							advance(); // consume second operator
 							

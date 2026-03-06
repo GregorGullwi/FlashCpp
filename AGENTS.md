@@ -16,13 +16,18 @@ Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workfl
 - If you call link.exe manually, ensure you include all necessary libraries: `"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\link.exe" /ENTRY:mainCRTStartup /LIBPATH:"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\lib\x64" /LIBPATH:"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\um\x64" /LIBPATH:"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\ucrt\x64"`
 
 ## Coding Style & Naming Conventions
+Try to reuse as much code as possible. Look in the same PR for similar code patterns and try to extract it into a function or a local lambda.
+For patterns that are used in different places in a compiler, like parsing attributes, skipping balanced braces, brackets, etc, search for existing helper functions and try to use those.
 Target warning-clean builds under both MSVC and clang. Use tab indentation, same-line braces, and keep includes grouped `<system>` before quotes.
+When checking indentation in touched lines, prefer explicit tab rendering or `git diff --check`; normal file views can hide off-by-one tab mistakes.
 Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase.
-Prefer `std::string_view` for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
+Prefer StringHandle primarily or `std::string_view` secondary for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
+Prefer StringBuilder instead of using std::string concatination.
 Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do not add opcodes manually to `textSectionData` in `IRConverter.h`, make helper functions if no fitting `emit` function exist.
 
 ## Workspace Hygiene
 Delete binaries, dumps, and logs before you summarize your work. Feel free to leave debug output in the source code. Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
+Also remove temporary audit artifacts such as indentation reports, diff snapshots, and one-off scratch files created while debugging or reviewing changes.
 
 ## Debugging & Reference Tips
 Use `dumpbin.exe`, locate the path with `where.exe`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `x64/Debug/FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source. Output file will end up in the working folder.
@@ -43,3 +48,6 @@ To show IR, use `--log-level=Codegen:debug`
 * If you fix a bug, make a test first in the tests/folder that demonstrates that behavior and submit it. Append a _retX.cpp to the file name and make the return value dependent on the non-buggy behavior, so we can easily test if the bug appears again later.
 * If you want to submit a test that is supposed to fail, just add "_fail.cpp" at the end and the script will handle it
 * Make proper implementation of features, don't just leave TODOs or skip tokens when parsing.
+* If you encounter existing bugs while testing, notify the user. If it's close to the area you are already working on, make an effort to investigste and fix it.
+* Try to make complete C++20 standard compliant solutions. If you deviate from that, notify the user and make a TODO.
+* Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.

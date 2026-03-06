@@ -1,39 +1,53 @@
 # Known Issues
 
-*All previously known issues have been fixed.*
+This file tracks currently open issues only. Fixed items are removed once they are
+validated.
 
-## Same-Named Types in Different Namespaces
+## Assignment Through Reference-Returning Methods
 
-### Status: FIXED
+### Status: Open (verified 2026-03-06)
 
-The `lookupTypeInCurrentContext` function now prefers namespace-qualified lookup,
-matching C++ name resolution semantics.
+Assigning through a reference returned by a member function (e.g.,
+`h.getRef() = 42;` where `getRef()` returns `int&`) does not update the
+underlying member. The returned reference is treated as an rvalue rather
+than an lvalue. Workaround: assign directly to the member.
 
-## Template Instantiation Namespace Tracking
+## Array of Structs Aggregate Initialization
 
-### Status: FIXED
+### Status: Open (verified 2026-03-06)
 
-All template instantiation paths now derive the declaration-site namespace from the
-template name or struct declaration name. Additionally:
+Initializing an array of structs with nested brace initializers
+(e.g., `Pair arr[3] = {{1, 2}, {3, 4}, {5, 6}};`) fails to parse.
+The parser does not handle nested initializer lists for array elements.
 
-- `compute_and_set_mangled_name` recovers namespace from the struct's `NamespaceHandle`
-  when the current namespace is empty (template instantiation from a different namespace).
-- `instantiate_full_specialization` now calls `compute_and_set_mangled_name` on
-  member functions (was previously missing).
-- Codegen definition, direct call, and indirect call paths all recover namespace from
-  `NamespaceHandle` as a fallback when `current_namespace_stack_` is empty.
-- `instantiateLazyNestedType` now derives namespace from the parent class's
-  `NamespaceHandle` instead of parsing the nested type's qualified name (which
-  would treat mangled class names as namespaces).
-- Namespace recovery logic is consolidated into `buildNamespacePathFromHandle()`
-  in `NamespaceRegistry.h`.
+## System V AMD64 ABI: Two-Register Struct Passing for Non-Variadic Calls
 
-## Constexpr Array Dimensions from Constexpr Variable
+### Status: Open (partially fixed 2026-03-06)
 
-### Status: Open (pre-existing)
+FlashCpp uses a pointer convention for all **non-variadic** struct arguments > 8 bytes,
+which is consistent internally (caller and callee agree) but deviates from the System V
+AMD64 ABI for 9–16 byte structs. External C libraries or compiler-generated code that
+passes such structs in two registers (per the spec) will be incompatible.
 
-Using a `constexpr int` variable as an array dimension does not evaluate to the
-constant value. For example, `constexpr int N = 42; int arr[N];` produces an
-array of size 1 rather than 42. This affects both global and local arrays.
+**Variadic calls are now correct:** 9–16 byte structs passed as variadic arguments on
+Linux now correctly use the two-register convention, matching what `va_arg` expects.
 
-Workaround: use integer literals directly as array dimensions.
+Implementing the full two-register callee prologue (unpack RDI + RSI into a local
+stack slot) is needed for full ABI compatibility with non-variadic external code.
+
+## Default Argument Codegen Silently Skips Unrecognized Expression Types
+
+### Status: Open (verified 2026-03-06)
+
+In both `CodeGen_Call_Direct.cpp` and `CodeGen_Call_Indirect.cpp`, the default
+argument fill-in code only handles `ExpressionNode` and `InitializerListNode`
+default values. If a parameter's default value is stored as any other AST node
+type, no argument is added to `call_op.args` and no error is reported — the
+parameter is silently dropped, causing argument misalignment for subsequent
+parameters.
+
+Currently all supported default value forms (literals, identifiers, constructor
+calls, braced init lists) produce one of these two node types, so this is not
+triggered in practice. However, future additions (e.g., lambda defaults, fold
+expressions) could hit this path silently. An `else` branch should emit an
+`InternalError` or `CompileError` to catch unexpected default value types.

@@ -1,7 +1,7 @@
 # TODO / FIXME Analysis
 
-**Date**: 2026-03-01 (last updated 2026-03-05)
-**Total items found**: 49 (44 TODO + 4 FIXME/minor + 1 discovered)
+**Date**: 2026-03-01 (last updated 2026-03-06)
+**Total items found**: 56 (44 TODO + 4 FIXME/minor + 1 discovered + 10 newly fixed)
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
 ---
@@ -178,12 +178,12 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 | Status | Count |
 |--------|-------|
-| ✅ Fixed | 48 |
+| ✅ Fixed | 54 |
 | ✅ Verified / Already works | 9 |
 | ✅ Valid (open) | 2 |
-| **Total** | **49** (+ several post-analysis fixes) |
+| **Total** | **52** (+ several post-analysis fixes) |
 
-**Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21). All item #8 constexpr evaluation gaps have been resolved.
+**Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21), assignment through reference-returning methods (#29). All item #8 constexpr evaluation gaps have been resolved.
 
 ---
 
@@ -194,4 +194,64 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 - `ConstructorCallNode` wrapped in `ExpressionNode` not recognised in constexpr evaluator ✅ Fixed – added `extract_constructor_call()` helper that unwraps both direct and `ExpressionNode`-wrapped `ConstructorCallNode`s.
 - Constexpr `evaluate_callable_object()` rejects ambiguous same-arity `operator()` overloads rather than resolving by type.
 - `tests/test_integral_constant_pattern_ret42.cpp` emits pre-existing `Parser returned size_bits=0` / `handleLValueCompoundAssignment: FAIL` diagnostics despite producing the correct runtime result.
-- `tests/test_namespace_template_specialization_ret42.cpp` fails to link: mangled name mismatch for member functions of template specializations declared inside namespaces.
+- `tests/test_namespace_template_specialization_ret42.cpp` ✅ Fixed – mangled name mismatch resolved; test now links and passes.
+
+---
+
+## 26. Default Function Arguments ✅ Fixed (2026-03-05)
+`src/OverloadResolution.h`, `src/SymbolTable.h`, `src/Parser_Expr_PrimaryExpr.cpp` — Overload resolution now accounts for trailing default parameter values. When a call provides fewer arguments than parameters, the remaining default argument expressions are filled into the FunctionCallNode at parse time. Added `countMinRequiredArgs()` helper. Test: `test_default_function_args_ret42.cpp`.
+
+---
+
+## 27. Compound Assignment on Global/Static Variables ✅ Fixed (2026-03-05)
+`src/CodeGen_Expr_Operators.cpp` — Compound assignment operators (`+=`, `-=`, `*=`, etc.) on global variables and static local variables now generate proper `GlobalLoad → arithmetic → GlobalStore` IR. Previously only simple assignment (`=`) was handled; compound ops silently lost the store. Test: `test_compound_assign_global_ret42.cpp`.
+
+---
+
+## 28. Range-Based For Loop with Unsized Arrays ✅ Fixed (2026-03-05)
+`src/CodeGen_Stmt_Control.cpp` — Range-based for loops over unsized arrays (`int arr[] = {1,2,3}`) now infer the array size from the initializer list. Previously, `visitRangedForArray` required `array_size()` which returned `nullopt` for unsized arrays. Test: `test_range_for_unsized_array_ret42.cpp`.
+
+---
+
+## 29. Assignment Through Reference-Returning Methods (Open)
+Assigning through a reference returned by a member function (e.g., `h.getRef() = 42;`) does not update the underlying member. The returned reference is treated as an rvalue rather than as an lvalue. Workaround: assign directly to the member.
+
+---
+
+## 30. Default Arguments for Member Functions ✅ Fixed (2026-03-06)
+`src/CodeGen_Call_Indirect.cpp` — Member function calls with omitted trailing default arguments now work. Default argument fill-in added at the CodeGen level after argument processing, using the resolved function declaration's parameter list. Test: `test_default_args_extended_ret42.cpp`.
+
+---
+
+## 31. Default Arguments for Template Functions ✅ Fixed (2026-03-06)
+`src/Parser_Templates_Inst_Deduction.cpp`, `src/CodeGen_Call_Direct.cpp` — Template function instantiation now preserves default argument values from the original template declaration when creating substituted parameter nodes. CodeGen-level default fill-in also added for direct calls. Test: `test_default_args_extended_ret42.cpp`.
+
+---
+
+## 32. Nested Struct Aggregate Init in generateDefaultStructArg ✅ Fixed (2026-03-06)
+`src/CodeGen_Expr_Operators.cpp`, `src/CodeGen_Visitors_Decl.cpp` — When a default argument is a braced initializer list whose members include nested struct initializers (e.g., `Outer o = {10, {12, 20}}`), the `generateDefaultStructArg` helper and the aggregate-init path of `generateConstructorCallIr` now recursively construct nested sub-aggregates. Previously, the nested `InitializerListNode` was incorrectly cast to `ExpressionNode`, causing `bad_any_cast`. Added `store_value_set` guard to prevent emitting `MemberStoreOp` with a default-initialised `IrValue`. Test: `test_nested_struct_default_arg_ret42.cpp`.
+
+---
+
+## 33. Silent Drop in generateDefaultStructArg Error Path ✅ Fixed (2026-03-06)
+`src/CodeGen_Call_Direct.cpp`, `src/CodeGen_Call_Indirect.cpp` — When `generateDefaultStructArg` returns `nullopt` (type lookup failure), the argument was silently dropped with no diagnostic. Now emits a `FLASH_LOG(Codegen, Error, ...)` message so failures are visible in logs.
+
+---
+
+## 34. 9–16 Byte Struct Caller/Callee ABI Mismatch ✅ Fixed (2026-03-06)
+`src/IRConverter_Emit_CompareBranch.h` — For structs 9–16 bytes on Linux, the caller was using the System V AMD64 two-register convention (values in RDI + RSI) while the callee always used the pointer convention (RDI = pointer, dereferences with `mov (%rcx),%eax`). FlashCpp now uses the pointer convention for all structs > 8 bytes on both Linux and Windows, matching the existing callee prologue. `isTwoRegisterStruct` always returns `false`; `shouldPassStructByAddress` returns `true` for `size_in_bits > 64` on all platforms. Test: `test_struct_const_ref_args_ret42.cpp`.
+
+---
+
+## 35. const& Struct Default Arguments Pass Value Instead of Pointer ✅ Fixed (2026-03-06)
+`src/CodeGen_Call_Direct.cpp`, `src/CodeGen_Call_Indirect.cpp` — When a struct parameter declared as `const T&` has a braced-init default (e.g., `void f(const Point& p = {1, 2})`), the generated default argument TypedValue was not marked as a reference. The caller therefore passed the struct bytes by value rather than by pointer, causing the callee (which dereferences the pointer) to segfault. Both the `InitializerListNode` and `ExpressionNode` default fill-in paths now check `param_type.is_reference()` and set `ref_qualifier = ReferenceQualifier::LValueReference` on the resulting TypedValue. Test: `test_struct_const_ref_args_ret42.cpp`.
+
+---
+
+## 36. SysV AMD64 Variadic Struct Argument ABI ✅ Fixed (2026-03-06)
+`src/IRConverter_Emit_CompareBranch.h`, `src/IRConverter_Conv_Calls.h` — For variadic calls on Linux with 9–16 byte struct arguments (e.g., `Point3D{x,y,z,w}` = 16 bytes passed to `sum_points3d(int count, ...)`), the caller was using the pointer convention (passing `&p` via LEA). The callee's `va_arg` reads from the register save area (not through a pointer), so it was reading garbage. Fixed by restoring the two-register convention exclusively for Linux variadic calls: `isTwoRegisterStruct(arg, is_variadic_call=true)` returns `true` for 9–16 byte structs in variadic context; `shouldPassStructByAddress(arg, is_two_register_struct)` returns `false` when the two-register path applies; and the register-passing loop checks `is_potential_two_reg_struct` before `shouldPassStructByAddress` to prevent the pointer path from overriding. Non-variadic struct passing (pointer convention) is unaffected. Test: `test_va_large_struct_ret0.cpp`.
+
+---
+
+## 37. `if constexpr` in Template Bodies — Long-Term Conformance Follow-up
+`src/Parser_Templates_Inst_Deduction.cpp`, `src/Parser_Templates_Substitution.cpp`, `src/Parser_Expr_ControlFlowStmt.cpp` — Current work now prefers substituting an already-parsed template body AST before falling back to token-level body re-parsing, which reduces reliance on parser-time dead-branch skipping. The long-term standards-aligned solution is to preserve template function bodies as AST consistently, evaluate dependent `if constexpr` conditions during instantiation/substitution, and instantiate only the selected substatement once the condition becomes non-dependent. Token-level branch skipping during body re-parse should remain only as a compatibility fallback for bodies that still cannot be represented faithfully as AST during initial parse.

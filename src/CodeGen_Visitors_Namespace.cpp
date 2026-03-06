@@ -257,7 +257,9 @@
 				Type return_type = current_function_return_type_;
 				int return_size = current_function_return_size_;
 		
-				// Convert if types don't match
+				// For reference returns we already evaluated the expression in LValueAddress
+				// context, so the operand now represents the address-producing glvalue.
+				// Do not run ordinary value conversion against the ABI-sized return slot.
 				if (expr_type != return_type || expr_size != return_size) {
 					// Check for user-defined conversion operator
 					// If expr is a struct type with a conversion operator to return_type, call it

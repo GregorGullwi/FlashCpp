@@ -87,6 +87,43 @@ inline bool signaturesMatch(const std::vector<Type>& sig1, const std::vector<Typ
 	return true;
 }
 
+// Count the minimum required arguments for a function.
+//
+// C++ permits a defaulted parameter to be followed by a function parameter pack,
+// so we must ignore any trailing pack first and then discount trailing defaults.
+inline size_t countMinRequiredArgs(const FunctionDeclarationNode& func) {
+	const auto& params = func.parameter_nodes();
+	size_t min_required = params.size();
+	size_t i = params.size();
+
+	// A trailing function parameter pack may follow a defaulted parameter.
+	while (i > 0) {
+		if (!params[i - 1].is<DeclarationNode>()) {
+			break;
+		}
+		const auto& param_decl = params[i - 1].as<DeclarationNode>();
+		if (!param_decl.is_parameter_pack()) {
+			break;
+		}
+		min_required--;
+		--i;
+	}
+
+	// Walk the remaining suffix of trailing default arguments.
+	while (i > 0) {
+		if (!params[i - 1].is<DeclarationNode>()) {
+			break;
+		}
+		const auto& param_decl = params[i - 1].as<DeclarationNode>();
+		if (!param_decl.has_default_value()) {
+			break;
+		}
+		min_required--;
+		--i;
+	}
+	return min_required;
+}
+
 class SymbolTable {
 public:
 	bool insert([[maybe_unused]] const std::string& identifier, [[maybe_unused]] ASTNode node) {
@@ -498,14 +535,16 @@ public:
 		}
 
 		// Multiple overloads - find the best match based on argument types
-		// Phase 1: Try exact parameter count and full type match
+		// Phase 1: Try exact type match (accounting for default arguments)
 		for (const auto& overload : overloads) {
 			if (!overload.is<FunctionDeclarationNode>()) continue;
-			const auto& params = overload.as<FunctionDeclarationNode>().parameter_nodes();
-			if (params.size() != arg_types.size()) continue;
+			const auto& func_decl = overload.as<FunctionDeclarationNode>();
+			const auto& params = func_decl.parameter_nodes();
+			size_t min_required = countMinRequiredArgs(func_decl);
+			if (arg_types.size() < min_required || arg_types.size() > params.size()) continue;
 
 			bool exact_match = true;
-			for (size_t i = 0; i < params.size(); ++i) {
+			for (size_t i = 0; i < arg_types.size(); ++i) {
 				if (!parameterMatchesType(params[i], arg_types[i])) {
 					exact_match = false;
 					break;
@@ -515,9 +554,13 @@ public:
 		}
 
 		// Phase 2: Try parameter count match only (allows implicit conversions)
+		// Also accounts for default arguments
 		for (const auto& overload : overloads) {
 			if (!overload.is<FunctionDeclarationNode>()) continue;
-			if (overload.as<FunctionDeclarationNode>().parameter_nodes().size() == arg_types.size()) {
+			const auto& func_decl = overload.as<FunctionDeclarationNode>();
+			const auto& params = func_decl.parameter_nodes();
+			size_t min_required = countMinRequiredArgs(func_decl);
+			if (arg_types.size() >= min_required && arg_types.size() <= params.size()) {
 				return overload;
 			}
 		}

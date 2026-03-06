@@ -1685,7 +1685,60 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 		// Regular integer increment/decrement
 		IrOpcode pre_opcode = is_increment ? IrOpcode::PreIncrement : IrOpcode::PreDecrement;
 		IrOpcode post_opcode = is_increment ? IrOpcode::PostIncrement : IrOpcode::PostDecrement;
-		ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, Token()));
+
+		// Check if the operand is a global/static variable that needs GlobalStore
+		GlobalStaticVarInfo gsi;
+		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+				gsi = detectGlobalOrStaticVar(std::get<IdentifierNode>(operandExpr).name());
+			}
+		}
+
+		if (gsi.is_global_or_static) {
+			// For global/static: manually do load → add/sub 1 → store
+			IrOpcode arith_opcode_int = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
+			Type elem_type = std::get<Type>(operandIrOperands[0]);
+			int elem_size = std::get<int>(operandIrOperands[1]);
+			IrValue loaded_val = std::holds_alternative<TempVar>(operandIrOperands[2])
+				? IrValue(std::get<TempVar>(operandIrOperands[2]))
+				: toIrValue(operandIrOperands[2]);
+
+			if (is_prefix) {
+				BinaryOp bin_op{
+					.lhs = {elem_type, elem_size, loaded_val},
+					.rhs = {Type::Int, 32, 1ULL},
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), Token()));
+				std::vector<IrOperand> store_ops;
+				store_ops.emplace_back(gsi.store_name);
+				store_ops.emplace_back(result_var);
+				ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_ops), Token());
+			} else {
+				// Postfix: save old value, compute new, store, return old
+				TempVar old_val = var_counter.next();
+				AssignmentOp save_op;
+				save_op.result = old_val;
+				save_op.lhs = {elem_type, elem_size, old_val};
+				save_op.rhs = {elem_type, elem_size, loaded_val};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
+
+				BinaryOp bin_op{
+					.lhs = {elem_type, elem_size, loaded_val},
+					.rhs = {Type::Int, 32, 1ULL},
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), Token()));
+				std::vector<IrOperand> store_ops;
+				store_ops.emplace_back(gsi.store_name);
+				store_ops.emplace_back(result_var);
+				ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_ops), Token());
+				return { operandType, elem_size, old_val, 0ULL };
+			}
+		} else {
+			ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, Token()));
+		}
 	}
 	
 	return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };

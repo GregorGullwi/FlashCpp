@@ -321,13 +321,23 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 				
 				size_t num_pack_elements = 0;
+				std::string_view func_pack_name;
 				if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
 					num_pack_elements = template_args.size() - non_variadic_count;
+				}
+				if (!pack_param_info_.empty()) {
+					func_pack_name = pack_param_info_[0].original_name;
+					if (num_pack_elements == 0) {
+						num_pack_elements = pack_param_info_[0].pack_size;
+					}
 				}
 				
 				FLASH_LOG(Templates, Debug, "Complex fold expansion: num_pack_elements=", num_pack_elements);
 				
 				if (num_pack_elements == 0) {
+					if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
+						return substituteTemplateParameters(*fold.init_expr(), template_params, template_args);
+					}
 					// C++17: empty unary fold is allowed only for &&, || and comma
 					// For other operators, return identity values
 					std::string_view op = fold.op();
@@ -348,10 +358,6 @@ ASTNode Parser::substituteTemplateParameters(
 				
 				// For each pack element, substitute the variadic parameter in the complex expression
 				for (size_t i = 0; i < num_pack_elements; ++i) {
-					// Create a single-element template params/args pair for the variadic parameter
-					std::vector<ASTNode> single_param = { template_params[variadic_param_idx] };
-					std::vector<TemplateTypeArg> single_arg = { template_args[non_variadic_count + i] };
-					
 					// Also include the non-variadic parameters so they get substituted too
 					std::vector<ASTNode> subst_params;
 					std::vector<TemplateTypeArg> subst_args;
@@ -359,6 +365,9 @@ ASTNode Parser::substituteTemplateParameters(
 						if (template_params[p].is<TemplateParameterNode>()) {
 							const auto& tparam = template_params[p].as<TemplateParameterNode>();
 							if (tparam.is_variadic()) {
+									if (variadic_param_idx == SIZE_MAX || (non_variadic_count + i) >= template_args.size()) {
+										continue;
+									}
 								// Create a non-variadic version of this parameter for single substitution
 								TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
 								// Don't set variadic - we're substituting one element at a time
@@ -371,7 +380,11 @@ ASTNode Parser::substituteTemplateParameters(
 						}
 					}
 					
-					ASTNode substituted = substituteTemplateParameters(*fold.pack_expr(), subst_params, subst_args);
+					ASTNode expanded_pack_expr = fold.pack_expr().has_value() ? *fold.pack_expr() : ASTNode();
+					if (!func_pack_name.empty() && expanded_pack_expr.has_value()) {
+						expanded_pack_expr = replacePackIdentifierInExpr(expanded_pack_expr, func_pack_name, i);
+					}
+					ASTNode substituted = substituteTemplateParameters(expanded_pack_expr, subst_params, subst_args);
 					pack_values.push_back(substituted);
 				}
 			} else {

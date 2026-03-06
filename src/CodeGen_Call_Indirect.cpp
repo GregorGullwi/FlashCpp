@@ -493,6 +493,76 @@
 		// Get the function declaration directly from the node (no need to look it up)
 		const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 		const DeclarationNode& func_decl_node = func_decl.decl_node();
+		auto getParamDecl = [](const ASTNode& param_node) -> const DeclarationNode* {
+			if (param_node.is<DeclarationNode>()) {
+				return &param_node.as<DeclarationNode>();
+			}
+			if (param_node.is<VariableDeclarationNode>()) {
+				return &param_node.as<VariableDeclarationNode>().declaration();
+			}
+			return nullptr;
+		};
+		auto sameTypeSpec = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+			return lhs.type() == rhs.type()
+				&& lhs.type_index() == rhs.type_index()
+				&& lhs.pointer_depth() == rhs.pointer_depth()
+				&& lhs.reference_qualifier() == rhs.reference_qualifier()
+				&& lhs.cv_qualifier() == rhs.cv_qualifier();
+		};
+		auto matchesSelectedMemberDecl = [&](const FunctionDeclarationNode& candidate) {
+			if (&candidate == &func_decl || &candidate.decl_node() == &func_decl_node) {
+				return true;
+			}
+			if (candidate.decl_node().identifier_token().value() != func_decl_node.identifier_token().value()) {
+				return false;
+			}
+			if (candidate.has_mangled_name() && func_decl.has_mangled_name()) {
+				return candidate.mangled_name() == func_decl.mangled_name();
+			}
+			const auto& lhs_params = candidate.parameter_nodes();
+			const auto& rhs_params = func_decl.parameter_nodes();
+			if (lhs_params.size() != rhs_params.size()) {
+				return false;
+			}
+			for (size_t i = 0; i < lhs_params.size(); ++i) {
+				const DeclarationNode* lhs_decl = getParamDecl(lhs_params[i]);
+				const DeclarationNode* rhs_decl = getParamDecl(rhs_params[i]);
+				if (!lhs_decl || !rhs_decl) {
+					return false;
+				}
+				if (lhs_decl->is_parameter_pack() != rhs_decl->is_parameter_pack()) {
+					return false;
+				}
+				if (!sameTypeSpec(lhs_decl->type_node().as<TypeSpecifierNode>(), rhs_decl->type_node().as<TypeSpecifierNode>())) {
+					return false;
+				}
+			}
+			return true;
+		};
+		const size_t explicit_arg_count = memberFunctionCallNode.arguments().size();
+		auto isViableMemberOverload = [&](const FunctionDeclarationNode& candidate) {
+			const auto& params = candidate.parameter_nodes();
+			if (explicit_arg_count > params.size()) {
+				if (params.empty()) {
+					return false;
+				}
+				const DeclarationNode* last_param = getParamDecl(params.back());
+				return last_param && last_param->is_parameter_pack();
+			}
+			for (size_t i = explicit_arg_count; i < params.size(); ++i) {
+				const DeclarationNode* param_decl = getParamDecl(params[i]);
+				if (!param_decl) {
+					return false;
+				}
+				if (param_decl->is_parameter_pack()) {
+					return true;
+				}
+				if (!param_decl->has_default_value()) {
+					return false;
+				}
+			}
+			return true;
+		};
 
 		// Check if this is a virtual function call
 		// Look up the struct type to check if the function is virtual
@@ -512,7 +582,9 @@
 				std::string_view func_name = func_decl_node.identifier_token().value();
 				StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 				for (const auto& member_func : struct_info->member_functions) {
-					if (member_func.getName() == func_name_handle) {
+					if (member_func.getName() == func_name_handle &&
+						member_func.function_decl.is<FunctionDeclarationNode>() &&
+						matchesSelectedMemberDecl(member_func.function_decl.as<FunctionDeclarationNode>())) {
 						called_member_func = &member_func;
 						if (member_func.is_virtual) {
 							is_virtual_call = true;
@@ -521,6 +593,20 @@
 						break;
 					}
 				}
+					if (!called_member_func) {
+						for (const auto& member_func : struct_info->member_functions) {
+							if (member_func.getName() == func_name_handle &&
+								member_func.function_decl.is<FunctionDeclarationNode>() &&
+								isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
+								called_member_func = &member_func;
+								if (member_func.is_virtual) {
+									is_virtual_call = true;
+									vtable_index = member_func.vtable_index;
+								}
+								break;
+							}
+						}
+					}
 				
 				// If not found in the current class, search base classes
 				const StructTypeInfo* declaring_struct = struct_info;
@@ -534,7 +620,9 @@
 									if (base_struct_info) {
 										// Check member functions in base class
 										for (const auto& member_func : base_struct_info->member_functions) {
-											if (member_func.getName() == func_name_handle) {
+												if (member_func.getName() == func_name_handle &&
+													member_func.function_decl.is<FunctionDeclarationNode>() &&
+													matchesSelectedMemberDecl(member_func.function_decl.as<FunctionDeclarationNode>())) {
 												called_member_func = &member_func;
 												declaring_struct = base_struct_info;  // Update to use base class name
 												if (member_func.is_virtual) {
@@ -544,6 +632,19 @@
 												return; // Stop searching once found
 											}
 										}
+											for (const auto& member_func : base_struct_info->member_functions) {
+												if (member_func.getName() == func_name_handle &&
+													member_func.function_decl.is<FunctionDeclarationNode>() &&
+													isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
+													called_member_func = &member_func;
+													declaring_struct = base_struct_info;
+													if (member_func.is_virtual) {
+														is_virtual_call = true;
+														vtable_index = member_func.vtable_index;
+													}
+													return;
+												}
+											}
 										// Recursively search base classes of this base class
 										if (!called_member_func) {
 											self(self, base_struct_info);
@@ -1105,7 +1206,7 @@
 			const auto& return_type = *return_type_ptr;
 			call_op.return_type = return_type.type();
 			// For reference return types, use 64-bit size (pointer size) since references are returned as pointers
-			call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference()) ? 64 : static_cast<int>(return_type.size_in_bits());
+			call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) ? 64 : static_cast<int>(return_type.size_in_bits());
 			call_op.is_member_function = true;
 			
 			// Get the actual function declaration to check if it's variadic
@@ -1394,6 +1495,11 @@
 			
 				arg_index++;
 			});
+
+			// Fill in default arguments for parameters that weren't explicitly provided
+			if (actual_func_decl) {
+				fillInDefaultArguments(call_op, actual_func_decl->parameter_nodes(), arg_index);
+			}
 			
 			// Add the function call instruction with typed payload
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
@@ -1405,6 +1511,15 @@
 		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) 
 			? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 			: func_decl_node.type_node().as<TypeSpecifierNode>();
+		if (return_type.is_reference() || return_type.is_rvalue_reference()) {
+			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
+			int referenced_size_bits = getTypeSpecSizeBits(return_type);
+			if (return_type.is_rvalue_reference()) {
+				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), referenced_size_bits));
+			} else {
+				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.type(), referenced_size_bits));
+			}
+		}
 		
 		// For pointer/reference return types, use 64 bits (pointer size on x64)
 		// Otherwise, use the type's natural size

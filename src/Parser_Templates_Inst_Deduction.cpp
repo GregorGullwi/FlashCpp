@@ -180,7 +180,6 @@ void Parser::populateTemplateParamSubstitutions(
 		subs.push_back(subst);
 	}
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helper: re-parse a template function body with concrete argument
 // substitution and set the result as new_func_ref's definition.
@@ -606,6 +605,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
 
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+			// Preserve default argument value from the original template declaration
+			if (param_decl.has_default_value()) {
+				new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+			}
 			new_func_ref.add_parameter_node(new_param_decl);
 		}
 	}
@@ -811,13 +814,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 	// Check if we have only variadic parameters - they can be empty
 	bool all_variadic = true;
-	bool has_variadic_pack = false;
 	for (const auto& template_param_node : template_params) {
 		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
 		if (!param.is_variadic()) {
 			all_variadic = false;
-		} else {
-			has_variadic_pack = true;
 		}
 	}
 
@@ -825,35 +825,36 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		return std::nullopt;  // No arguments to deduce from
 	}
 
-	// SFINAE: Check function parameter count against call argument count
-	// For non-variadic templates, argument count must be <= parameter count (some may have defaults)
-	// and >= count of parameters without default values
-	// For variadic templates, argument count must be >= non-pack parameter count
+	// SFINAE: Check function parameter count against call argument count.
+	// Use the actual function parameter list here rather than template-parameter
+	// variadicity: a variadic template does not necessarily have a function
+	// parameter pack, and a trailing function parameter pack may follow a
+	// defaulted parameter.
 	size_t func_param_count = func_decl.parameter_nodes().size();
-	if (!has_variadic_pack) {
+	bool has_function_parameter_pack = false;
+	for (const auto& param : func_decl.parameter_nodes()) {
+		if (param.is<DeclarationNode>() && param.as<DeclarationNode>().is_parameter_pack()) {
+			has_function_parameter_pack = true;
+			break;
+		}
+	}
+	if (!has_function_parameter_pack) {
 		if (arg_types.size() > func_param_count) {
 			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} > parameter count {} for non-variadic template '{}'",
 				recursion_depth, arg_types.size(), func_param_count, template_name);
 			return std::nullopt;
 		}
-		// Count required parameters (those without default values)
-		size_t required_params = 0;
-		for (const auto& param : func_decl.parameter_nodes()) {
-			if (param.is<DeclarationNode>() && !param.as<DeclarationNode>().has_default_value()) {
-				required_params++;
-			}
-		}
+		size_t required_params = countMinRequiredArgs(func_decl);
 		if (arg_types.size() < required_params) {
 			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for non-variadic template '{}'",
 				recursion_depth, arg_types.size(), required_params, template_name);
 			return std::nullopt;
 		}
 	} else {
-		// Variadic: count non-pack parameters (all params except the pack expansion)
-		size_t non_pack_params = func_param_count > 0 ? func_param_count - 1 : 0;
-		if (arg_types.size() < non_pack_params) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < non-pack parameter count {} for variadic template '{}'",
-				recursion_depth, arg_types.size(), non_pack_params, template_name);
+		size_t required_params = countMinRequiredArgs(func_decl);
+		if (arg_types.size() < required_params) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for variadic template '{}'",
+				recursion_depth, arg_types.size(), required_params, template_name);
 			return std::nullopt;
 		}
 	}
@@ -861,6 +862,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Build template argument list
 	InlineVector<TemplateTypeArg, 4> template_args;
 	std::vector<Type> deduced_type_args;  // For types extracted from instantiated names
+	size_t function_pack_arg_start = SIZE_MAX;
+	if (has_function_parameter_pack) {
+		size_t params_before_pack = 0;
+		for (const auto& param : func_decl.parameter_nodes()) {
+			if (param.is<DeclarationNode>() && param.as<DeclarationNode>().is_parameter_pack()) {
+				break;
+			}
+			++params_before_pack;
+		}
+		function_pack_arg_start = std::min(arg_types.size(), params_before_pack);
+	}
 
 	// Pre-deduction pass: build a map from template parameter names to deduced arguments
 	// by matching function parameter types against call argument types.
@@ -1041,6 +1053,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		} else if (param.kind() == TemplateParameterKind::Type) {
 			// Type parameter - check if it's variadic (parameter pack)
 			if (param.is_variadic()) {
+				if (function_pack_arg_start != SIZE_MAX) {
+					arg_index = function_pack_arg_start;
+				}
 				// Deduce all remaining argument types for this parameter pack,
 				// skipping any slots already consumed by the pre-deduction pass.
 				while (arg_index < arg_types.size()) {
@@ -1102,7 +1117,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 	}
-
 	// template_args is already std::vector<TemplateTypeArg> — no conversion needed.
 
 	// Step 2: Check if we already have this instantiation
@@ -1765,8 +1779,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
 				}
 
-				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-				new_func_ref.add_parameter_node(new_param_decl);
+					auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+					if (param_decl.has_default_value()) {
+						new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+					}
+					new_func_ref.add_parameter_node(new_param_decl);
 
 				if (arg_type_index < arg_types.size()) {
 					arg_type_index++;

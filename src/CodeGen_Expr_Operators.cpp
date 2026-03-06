@@ -1,5 +1,248 @@
 #include "CodeGen.h"
 
+AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view ident_name) {
+	GlobalStaticVarInfo info;
+	StringHandle ident_handle = StringTable::getOrInternStringHandle(ident_name);
+
+	// Check if it's found in the local symbol table — if so, it's a local variable
+	// and should not be treated as a global/static (even if a static local or static
+	// member with the same name exists).
+	const std::optional<ASTNode> local_sym = symbol_table.lookup(ident_name);
+
+	// Check if it's a static local variable (only when not shadowed by a local)
+	auto static_it = static_local_names_.find(ident_handle);
+	if (!local_sym.has_value() && static_it != static_local_names_.end()) {
+		info.is_global_or_static = true;
+		info.store_name = static_it->second.mangled_name;
+		info.type = static_it->second.type;
+		info.size_in_bits = static_it->second.size_in_bits;
+		return info;
+	}
+
+	// Check if it's a global variable (not found locally, found globally)
+	if (!local_sym.has_value() && global_symbol_table_) {
+		const std::optional<ASTNode> global_sym = global_symbol_table_->lookup(ident_name);
+		if (global_sym.has_value() && global_sym->is<VariableDeclarationNode>()) {
+			const auto& var_decl = global_sym->as<VariableDeclarationNode>();
+			const auto& ts = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			info.is_global_or_static = true;
+			info.store_name = ident_handle;
+			info.type = ts.type();
+			info.size_in_bits = static_cast<int>(ts.size_in_bits());
+			return info;
+		}
+	}
+
+	// Check if it's a static member of the current struct (only when not shadowed by a local)
+	if (!local_sym.has_value() && current_struct_name_.isValid()) {
+		auto struct_it = gTypesByName.find(current_struct_name_);
+		if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
+			const auto* static_member = struct_it->second->getStructInfo()->findStaticMember(ident_handle);
+			if (static_member) {
+				info.is_global_or_static = true;
+				StringBuilder sb;
+				sb.append(current_struct_name_);
+				sb.append("::"sv);
+				sb.append(ident_name);
+				info.store_name = StringTable::getOrInternStringHandle(sb.commit());
+				info.type = static_member->type;
+				info.size_in_bits = static_cast<int>(static_member->size * 8);
+				return info;
+			}
+		}
+	}
+
+	return info;
+}
+
+std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type) {
+	// Look up the struct type info
+	TypeIndex type_idx = param_type.type_index();
+	if (type_idx == 0 || type_idx >= gTypeInfo.size()) return std::nullopt;
+	const TypeInfo& type_info = gTypeInfo[type_idx];
+	const StructTypeInfo* struct_info = type_info.getStructInfo();
+	if (!struct_info) return std::nullopt;
+
+	// Create a temporary variable for the struct
+	TempVar temp = var_counter.next();
+
+	// Emit constructor call (default ctor to allocate the struct)
+	ConstructorCallOp ctor_op;
+	ctor_op.struct_name = type_info.name();
+	ctor_op.object = temp;
+	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+
+	// Emit member stores for each initializer
+	const auto& initializers = init_list.initializers();
+	const auto& members = struct_info->members;
+	for (size_t i = 0; i < initializers.size() && i < members.size(); ++i) {
+		const ASTNode& init_expr = initializers[i];
+		const auto& member = members[i];
+
+		// Evaluate the initializer expression
+		IrValue store_value;
+		Type store_type = member.type;
+		int store_size = static_cast<int>(member.size * 8);
+		bool store_value_set = false;
+
+		if (init_expr.is<ExpressionNode>()) {
+			auto operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+			if (operands.size() >= 3) {
+				store_type = std::get<Type>(operands[0]);
+				store_size = std::get<int>(operands[1]);
+				store_value = toIrValue(operands[2]);
+				store_value_set = true;
+			}
+		} else if (init_expr.is<InitializerListNode>() && member.type == Type::Struct &&
+				   member.type_index > 0 && member.type_index < gTypeInfo.size()) {
+			// Nested struct aggregate init: recursively construct the sub-aggregate
+			// Per C++20 [dcl.init.aggr]/4-5, nested brace-enclosed init lists
+			// initialize sub-aggregate members recursively.
+			const TypeInfo& nested_type_info = gTypeInfo[member.type_index];
+			if (nested_type_info.getStructInfo()) {
+				// Build a temporary TypeSpecifierNode for the nested struct type
+				int nested_size_bits = static_cast<int>(nested_type_info.getStructInfo()->total_size * 8);
+				TypeSpecifierNode nested_type_spec(member.type, member.type_index, nested_size_bits);
+				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
+				if (nested_result.has_value()) {
+					store_type = nested_result->type;
+					store_size = nested_result->size_in_bits;
+					store_value = nested_result->value;
+					store_value_set = true;
+				} else {
+					FLASH_LOG(Codegen, Error, "generateDefaultStructArg: failed to recursively init nested struct member");
+				}
+			}
+		} else if (!init_expr.is<ExpressionNode>()) {
+			FLASH_LOG(Codegen, Error, "generateDefaultStructArg: unhandled initializer type for member");
+		}
+
+		// Skip MemberStore if the value was never set (prevents emitting IR with a
+		// default-constructed IrValue that may carry garbage into the callee).
+		if (!store_value_set) {
+			FLASH_LOG(Codegen, Error, "generateDefaultStructArg: skipping member '", member.name, "' - store value not set");
+			continue;
+		}
+
+		// Emit MemberStoreOp
+		MemberStoreOp ms;
+		ms.value = TypedValue{ .type = store_type, .size_in_bits = store_size, .value = store_value, .type_index = member.type_index};
+		ms.object = temp;
+		ms.member_name = member.name;
+		ms.offset = static_cast<int>(member.offset);
+		ms.struct_type_info = &type_info;
+		ms.is_reference = false;
+		ms.is_rvalue_reference = false;
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), Token()));
+	}
+
+	int actual_size_bits = static_cast<int>(struct_info->total_size * 8);
+	TypedValue result;
+	result.type = Type::Struct;
+	result.size_in_bits = actual_size_bits;
+	result.value = IrValue(temp);
+	result.type_index = type_idx;
+	return result;
+}
+
+void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx) {
+	for (size_t i = arg_idx; i < param_nodes.size(); ++i) {
+		if (!param_nodes[i].is<DeclarationNode>()) continue;
+		const auto& param_decl = param_nodes[i].as<DeclarationNode>();
+		if (param_decl.is_parameter_pack()) {
+			// A trailing function parameter pack may legally be omitted.
+			break;
+		}
+		if (!param_decl.has_default_value()) {
+			// Reaching a non-default parameter here means overload resolution
+			// accepted a call with too few arguments — that's a compiler bug.
+			throw InternalError("Missing default argument for parameter '" +
+				std::string(param_decl.identifier_token().value()) +
+				"' (overload resolution should have rejected this call)");
+		}
+		const ASTNode& default_expr = param_decl.default_value();
+		const auto& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+		if (default_expr.is<ExpressionNode>()) {
+			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
+			TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
+			// For reference parameters (e.g., const Point& p = Point{1, 2}),
+			// mark the default arg so the caller passes an address, not a value.
+			// Also handle rvalue references (e.g., Point&& p = Point{1, 2}).
+			if ((param_type_spec.is_reference() || param_type_spec.is_rvalue_reference()) && tv.type == Type::Struct) {
+				tv.ref_qualifier = param_type_spec.is_rvalue_reference()
+					? ReferenceQualifier::RValueReference
+					: ReferenceQualifier::LValueReference;
+			}
+			call_op.args.push_back(tv);
+		} else if (default_expr.is<InitializerListNode>()) {
+			// Struct default argument via braced init list (e.g., Point p = {1, 2})
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type);
+			if (result.has_value()) {
+				// If the parameter is a reference (e.g., const Point& p = {1, 2}),
+				// mark the default arg so the caller passes the address of the
+				// temporary struct rather than its value.
+				// Also handle rvalue references (e.g., Point&& p = {1, 2}).
+				if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+					result->ref_qualifier = param_type.is_rvalue_reference()
+						? ReferenceQualifier::RValueReference
+						: ReferenceQualifier::LValueReference;
+				}
+				call_op.args.push_back(*result);
+			} else {
+				throw InternalError("Failed to generate struct default argument for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
+			}
+		} else {
+			throw InternalError("Unhandled default argument AST node type for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
+		}
+	}
+}
+
+void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx) {
+	for (size_t i = arg_idx; i < cached_params.size(); ++i) {
+		const auto& param = cached_params[i];
+		if (param.is_parameter_pack) {
+			break;
+		}
+		if (!param.has_default_value) {
+			throw InternalError("Missing default argument for parameter '" +
+				std::string(StringTable::getStringView(param.name)) +
+				"' (overload resolution should have rejected this call)");
+		}
+
+		const ASTNode& default_expr = param.default_value;
+		if (!param.type_node.is<TypeSpecifierNode>()) {
+			throw InternalError("Cached parameter type missing for default argument evaluation");
+		}
+		const auto& param_type_spec = param.type_node.as<TypeSpecifierNode>();
+
+		if (default_expr.is<ExpressionNode>()) {
+			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
+			TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
+			if ((param_type_spec.is_reference() || param_type_spec.is_rvalue_reference()) && tv.type == Type::Struct) {
+				tv.ref_qualifier = param_type_spec.is_rvalue_reference()
+					? ReferenceQualifier::RValueReference
+					: ReferenceQualifier::LValueReference;
+			}
+			call_op.args.push_back(std::move(tv));
+		} else if (default_expr.is<InitializerListNode>()) {
+			auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type_spec);
+			if (result.has_value()) {
+				if (param_type_spec.is_reference() || param_type_spec.is_rvalue_reference()) {
+					result->ref_qualifier = param_type_spec.is_rvalue_reference()
+						? ReferenceQualifier::RValueReference
+						: ReferenceQualifier::LValueReference;
+				}
+				call_op.args.push_back(std::move(*result));
+			} else {
+				throw InternalError("Failed to generate struct default argument for cached parameter '" + std::string(StringTable::getStringView(param.name)) + "'");
+			}
+		} else {
+			throw InternalError("Unhandled default argument AST node type for cached parameter '" + std::string(StringTable::getStringView(param.name)) + "'");
+		}
+	}
+}
+
 	std::vector<IrOperand> AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
 		// Ternary operator: condition ? true_expr : false_expr
 		// Generate IR:
@@ -246,38 +489,16 @@
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				std::string_view lhs_name = lhs_ident.name();
-
-				// Check if this is a static local variable
-				StringHandle lhs_handle = StringTable::getOrInternStringHandle(lhs_name);
-				auto static_local_it = static_local_names_.find(lhs_handle);
-				bool is_static_local = (static_local_it != static_local_names_.end());
+				auto gsi = detectGlobalOrStaticVar(lhs_ident.name());
 				
-				// Check if this is a global variable (not found in local symbol table, but found in global)
-				const std::optional<ASTNode> local_symbol = symbol_table.lookup(lhs_name);
-				bool is_global = false;
-				
-				if (!local_symbol.has_value() && global_symbol_table_) {
-					// Not found locally - check global symbol table
-					const std::optional<ASTNode> global_symbol = global_symbol_table_->lookup(lhs_name);
-					if (global_symbol.has_value() && global_symbol->is<VariableDeclarationNode>()) {
-						is_global = true;
-					}
-				}
-				
-				if (is_global || is_static_local) {
+				if (gsi.is_global_or_static) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
 					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
-					// For static locals, use the mangled name; for globals, use the simple name
-					if (is_static_local) {
-						store_operands.emplace_back(static_local_it->second.mangled_name);  // mangled name for static local
-					} else {
-						store_operands.emplace_back(StringTable::getOrInternStringHandle(lhs_name));  // simple name for global
-					}
+					store_operands.emplace_back(gsi.store_name);
 					
 					// Extract the value from RHS (rhsIrOperands[2])
 					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
@@ -304,6 +525,62 @@
 
 					// Return the RHS value as the result (assignment expression returns the assigned value)
 					return rhsIrOperands;
+				}
+			}
+		}
+
+		// Special handling for compound assignment to global/static local variables
+		// (e.g., static int n = 0; n += 21;)
+		if (compound_assignment_ops.count(op) > 0 &&
+		binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
+				auto gsi = detectGlobalOrStaticVar(lhs_ident.name());
+
+				if (gsi.is_global_or_static) {
+					// Load current value from global
+					TempVar loaded = var_counter.next();
+					GlobalLoadOp load_op;
+					load_op.result.type = gsi.type;
+					load_op.result.size_in_bits = gsi.size_in_bits;
+					load_op.result.value = loaded;
+					load_op.global_name = gsi.store_name;
+					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
+
+					// Evaluate RHS
+					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+					// Map compound op to arithmetic opcode
+					static const std::unordered_map<std::string_view, IrOpcode> op_to_arith = {
+						{"+=", IrOpcode::Add}, {"-=", IrOpcode::Subtract},
+						{"*=", IrOpcode::Multiply}, {"/=", IrOpcode::Divide},
+						{"%=", IrOpcode::Modulo}, {"&=", IrOpcode::BitwiseAnd},
+						{"|=", IrOpcode::BitwiseOr}, {"^=", IrOpcode::BitwiseXor},
+						{"<<=", IrOpcode::ShiftLeft}, {">>=", IrOpcode::ShiftRight}
+					};
+					auto arith_it = op_to_arith.find(op);
+					if (arith_it == op_to_arith.end()) {
+						FLASH_LOG(Codegen, Error, "Unsupported compound assignment operator for global: ", op);
+						return {};
+					}
+
+					// Perform the operation
+					TempVar result_var = var_counter.next();
+					BinaryOp bin_op{
+						.lhs = {gsi.type, gsi.size_in_bits, loaded},
+						.rhs = toTypedValue(rhsIrOperands),
+						.result = result_var,
+					};
+					ir_.addInstruction(IrInstruction(arith_it->second, std::move(bin_op), binaryOperatorNode.get_token()));
+
+					// Store result back to global
+					std::vector<IrOperand> store_operands;
+					store_operands.emplace_back(gsi.store_name);
+					store_operands.emplace_back(result_var);
+					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
+
+					return {gsi.type, gsi.size_in_bits, result_var, 0ULL};
 				}
 			}
 		}
@@ -2721,6 +2998,7 @@ const Token& token) {
 
 	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
 	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+	TempVarMetadata lhs_meta = getTempVarMetadata(lhs_temp);
 	
 	if (!lvalue_info_opt.has_value()) {
 		FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - no lvalue metadata for temp=", lhs_temp.var_number);
@@ -2728,6 +3006,32 @@ const Token& token) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
+	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : std::get<Type>(lhs_operands[0]);
+	auto inferLValueSizeBits = [&]() {
+		int inferred_size_bits = 0;
+		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
+			if (lhs_operands.size() > 3 && std::holds_alternative<unsigned long long>(lhs_operands[3])) {
+				TypeIndex type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhs_operands[3]));
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+						inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
+					} else {
+						inferred_size_bits = static_cast<int>(type_info.type_size_);
+					}
+				}
+			}
+		} else {
+			inferred_size_bits = get_type_size_bits(lvalue_type);
+		}
+		if (inferred_size_bits == 0 && lhs_meta.value_size_bits > 0) {
+			inferred_size_bits = lhs_meta.value_size_bits;
+		}
+		if (inferred_size_bits == 0) {
+			inferred_size_bits = std::get<int>(lhs_operands[1]);
+		}
+		return inferred_size_bits;
+	};
 	
 	FLASH_LOG(Codegen, Debug, "handleLValueAssignment: kind=", static_cast<int>(lv_info.kind));
 
@@ -2817,12 +3121,18 @@ const Token& token) {
 			// Dereference assignment: *ptr = value
 			// This case works because we have all needed info in LValueInfo
 			FLASH_LOG(Codegen, Debug, "  -> DereferenceStore (handled via metadata)");
+			Type pointee_type = lvalue_type;
+			int pointee_size_bits = inferLValueSizeBits();
+			TypedValue value_tv;
+			value_tv.type = pointee_type;
+			value_tv.size_in_bits = pointee_size_bits;
+			value_tv.value = toIrValue(rhs_operands[2]);
 			
 			// Emit the store using helper
 			emitDereferenceStore(
-				toTypedValue(rhs_operands),     // value
-				std::get<Type>(lhs_operands[0]), // pointee_type
-				std::get<int>(lhs_operands[1]),  // pointee_size_in_bits
+				value_tv,
+				pointee_type,
+				pointee_size_bits,
 				lv_info.base,                    // pointer
 				token
 			);
@@ -2861,6 +3171,7 @@ std::string_view op) {
 	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
 	FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: Checking TempVar {} for metadata", lhs_temp.var_number);
 	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+	TempVarMetadata lhs_meta = getTempVarMetadata(lhs_temp);
 	
 	if (!lvalue_info_opt.has_value()) {
 		FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: FAIL - no lvalue metadata for TempVar {}", lhs_temp.var_number);
@@ -2868,6 +3179,33 @@ std::string_view op) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
+	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : std::get<Type>(lhs_operands[0]);
+	auto inferLValueSizeBits = [&]() {
+		int inferred_size_bits = 0;
+		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
+			if (lhs_operands.size() > 3 && std::holds_alternative<unsigned long long>(lhs_operands[3])) {
+				TypeIndex type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhs_operands[3]));
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+						inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
+					} else {
+						inferred_size_bits = static_cast<int>(type_info.type_size_);
+					}
+				}
+			}
+		} else {
+			inferred_size_bits = get_type_size_bits(lvalue_type);
+		}
+		if (inferred_size_bits == 0 && lhs_meta.value_size_bits > 0) {
+			inferred_size_bits = lhs_meta.value_size_bits;
+		}
+		if (inferred_size_bits == 0) {
+			inferred_size_bits = std::get<int>(lhs_operands[1]);
+		}
+		return inferred_size_bits;
+	};
+	int lvalue_size_bits = inferLValueSizeBits();
 	
 	FLASH_LOG(Codegen, Debug, "handleLValueCompoundAssignment: kind=", static_cast<int>(lv_info.kind), " op=", op);
 
@@ -2909,7 +3247,7 @@ std::string_view op) {
 		// Generate a Dereference instruction to load the current value
 		DereferenceOp deref_op;
 		deref_op.result = current_value_temp;
-		deref_op.pointer.type = std::get<Type>(lhs_operands[0]);
+		deref_op.pointer.type = lvalue_type;
 		deref_op.pointer.size_in_bits = 64;  // pointer size
 		deref_op.pointer.pointer_depth = 1;
 		
@@ -2933,8 +3271,8 @@ std::string_view op) {
 		
 		// Create the binary operation
 		BinaryOp bin_op;
-		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
-		bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+		bin_op.lhs.type = lvalue_type;
+		bin_op.lhs.size_in_bits = lvalue_size_bits;
 		bin_op.lhs.value = current_value_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
 		bin_op.result = result_temp;
@@ -2943,19 +3281,24 @@ std::string_view op) {
 		
 		// Store result back through the pointer using DereferenceStore
 		TypedValue result_tv;
-		result_tv.type = std::get<Type>(lhs_operands[0]);
-		result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+		result_tv.type = lvalue_type;
+		result_tv.size_in_bits = lvalue_size_bits;
 		result_tv.value = result_temp;
 		
 		// Handle both TempVar and StringHandle bases for DereferenceStore
 		if (std::holds_alternative<TempVar>(base_value)) {
-			emitDereferenceStore(result_tv, std::get<Type>(lhs_operands[0]), std::get<int>(lhs_operands[1]),
-			std::get<TempVar>(base_value), token);
+			emitDereferenceStore(
+				result_tv,
+				lvalue_type,
+				lvalue_size_bits,
+				std::get<TempVar>(base_value),
+				token
+			);
 		} else {
 			// StringHandle base: emitDereferenceStore expects a TempVar, so we pass the StringHandle as the pointer
 			// Generate DereferenceStore with StringHandle directly
 			DereferenceStoreOp store_op;
-			store_op.pointer.type = std::get<Type>(lhs_operands[0]);
+			store_op.pointer.type = lvalue_type;
 			store_op.pointer.size_in_bits = 64;
 			store_op.pointer.pointer_depth = 1;
 			store_op.pointer.value = std::get<StringHandle>(base_value);
