@@ -309,7 +309,11 @@ for base in "${FAIL_FILES[@]}"; do
             ;;
         FAIL_BAD)
             FAIL_BAD+=("$base")
-            echo -e "${RED}[UNEXPECTED PASS]${NC} $base ($detail)"
+            if [[ "$detail" == CRASHED* ]]; then
+                echo -e "${RED}[COMPILER CRASH]${NC} $base ($detail)"
+            else
+                echo -e "${RED}[UNEXPECTED PASS]${NC} $base ($detail)"
+            fi
             ;;
     esac
 done
