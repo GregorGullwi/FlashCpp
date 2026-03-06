@@ -1,11 +1,18 @@
 # Reference Files Test Script for FlashCpp (PowerShell)
-# This script compiles and links all .cpp files in tests/Reference/ and reports any failures
-# Ported from run_all_tests.sh - includes runtime execution and return value validation
+# This script compiles and links all .cpp files in tests/ and reports any failures
+# Supports parallel execution with -Jobs N (default: number of CPU cores)
 # OPTIMIZED VERSION - uses call operator instead of Start-Process for better performance
 
 param(
-	[string]$TestFile = $null
+	[string]$TestFile = $null,
+	[int]$Jobs = 0
 )
+
+# Default to number of logical processors
+if ($Jobs -le 0) {
+	$Jobs = [Environment]::ProcessorCount
+	if ($Jobs -le 0) { $Jobs = 4 }
+}
 
 # Suppress PowerShell errors from native commands writing to stderr
 # (FlashCpp writes version info to stderr which is not an error)
@@ -45,6 +52,10 @@ if (Test-Path "x64\Debug\FlashCpp.exe") {
 		exit 1
 	}
 }
+
+# Resolve to absolute path so parallel runspaces (which have a different working
+# directory) can still invoke the compiler without a CommandNotFoundException.
+$flashCppPath = (Get-Item $flashCppPath).FullName
 
 # Get FlashCpp build info
 $buildDate = (Get-Item $flashCppPath).LastWriteTime
@@ -153,7 +164,7 @@ if ($TestFile) {
 
 $totalFiles = $referenceFiles.Count
 $totalFailFiles = $failFiles.Count
-Write-Host "Found $totalFiles test files with main() in tests/"
+Write-Host "Found $totalFiles test files with main() in tests/ ($Jobs parallel jobs)"
 Write-Host "Found $totalFailFiles _fail test files (expected to fail compilation)"
 Write-Host ""
 
@@ -178,7 +189,367 @@ $expectedLinkFailures = @(
 	"test_external_abi_simple.cpp"
 )
 
-# Results tracking
+# Pre-cache main() detection to avoid reading files twice
+$mainFileCache = @{}
+foreach ($file in $referenceFiles) {
+	$sourceContent = Get-Content $file.FullName -Raw
+	$mainFileCache[$file.Name] = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
+}
+
+# ──────────────────────────────────────────────────────
+# Create temp directory for parallel result collection
+# ──────────────────────────────────────────────────────
+$resultDir = Join-Path ([System.IO.Path]::GetTempPath()) "flashcpp_test_results_$PID"
+if (Test-Path $resultDir) { Remove-Item $resultDir -Recurse -Force }
+New-Item -ItemType Directory -Path $resultDir -Force | Out-Null
+
+# ──────────────────────────────────────────────────────
+# Determine whether to run in parallel (PS 7+) or sequential
+# ──────────────────────────────────────────────────────
+$useParallel = ($PSVersionTable.PSVersion.Major -ge 7) -and ($Jobs -gt 1) -and (-not $TestFile)
+
+function Get-ResultDetail {
+	param(
+		[string[]]$Parts,
+		[int]$StartIndex = 2
+	)
+
+	if ($Parts.Count -le $StartIndex) {
+		return ""
+	}
+
+	return (($Parts[$StartIndex..($Parts.Count - 1)] -join '|').Trim())
+}
+
+function Write-DetailSnippet {
+	param(
+		[string]$Detail,
+		[int]$MaxLines = 4
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Detail)) {
+		return
+	}
+
+	$detailLines = @($Detail -split '\r?\n' | Where-Object { $_.Trim() -ne "" })
+	if ($detailLines.Count -eq 0) {
+		return
+	}
+
+	$snippetLines = @($detailLines | Select-Object -First $MaxLines)
+	foreach ($detailLine in $snippetLines) {
+		Write-Host "  $detailLine" -ForegroundColor Yellow
+	}
+
+	if ($detailLines.Count -gt $MaxLines) {
+		Write-Host "  ..." -ForegroundColor Yellow
+	}
+}
+
+function Wait-ParallelResultJob {
+	param(
+		$Job,
+		[string]$Label,
+		[int]$TotalCount,
+		[string]$ResultDir,
+		[int]$InitialCompleted = 0,
+		[int]$PollSeconds = 5
+	)
+
+	if (-not $Job) {
+		return
+	}
+
+	$lastReportedCount = -1
+	do {
+		Wait-Job -Job $Job -Timeout $PollSeconds | Out-Null
+
+		$completedCount = 0
+		if (Test-Path $ResultDir) {
+			$completedCount = @(
+				Get-ChildItem -Path $ResultDir -Filter "*.result" -File -ErrorAction SilentlyContinue
+			).Count - $InitialCompleted
+			if ($completedCount -lt 0) { $completedCount = 0 }
+		}
+
+		if ($completedCount -gt $TotalCount) {
+			$completedCount = $TotalCount
+		}
+
+		if ($completedCount -ne $lastReportedCount) {
+			Write-Host "[Progress] ${Label}: $completedCount / $TotalCount completed..."
+			$lastReportedCount = $completedCount
+		}
+	} while ($Job.State -eq "Running" -or $Job.State -eq "NotStarted")
+
+	Wait-Job -Job $Job | Out-Null
+	Receive-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
+	Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
+
+	if ($lastReportedCount -lt $TotalCount) {
+		Write-Host "[Progress] ${Label}: $TotalCount / $TotalCount completed..."
+	}
+}
+
+# ──────────────────────────────────────────────────────
+# Worker function for testing a single regular file
+# ──────────────────────────────────────────────────────
+function Invoke-TestOneFile {
+	param($filePath, $fileName, $baseName, $flashCppPath, $linkerPath, $libPath1, $libPath2, $libPath3, $hasMain, $expectedLinkFailures, $expectedCompileFailures, $expectedRuntimeCrashes, $resultDir)
+
+	$ErrorActionPreference = "SilentlyContinue"
+
+	# Use unique per-worker paths in the system temp dir to avoid race conditions
+	# when parallel workers process tests that share the same base name.
+	$tempDir = [System.IO.Path]::GetTempPath()
+	$uniqueSuffix = [guid]::NewGuid().ToString('N')
+	$objFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.obj"
+	$exeFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.exe"
+	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
+	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
+
+	# Parse expected return value from filename
+	$expectedReturnValue = $null
+	if ($fileName -match '_ret(\d+)\.cpp$') {
+		$expectedReturnValue = [int]$matches[1]
+	}
+
+	# Fallback: if the worker dies unexpectedly the result file still gets written
+	$resultLine = "COMPILE_FAIL|$fileName|WORKER ERROR: unknown"
+	try {
+		# Compile with FlashCpp; -o directs the object file to the unique temp path
+		$flashCppArgs = @("--log-level=1", "-o", $objFile, $filePath)
+		if ($fileName -match "^test_no_access_control_flag_ret100.*\.cpp$") {
+			$flashCppArgs = @("-fno-access-control") + $flashCppArgs
+		}
+
+		$compileOutput = & $flashCppPath $flashCppArgs 2>&1 | Out-String
+		$compileExitCode = $LASTEXITCODE
+
+		if (Test-Path $objFile) {
+			if (-not $hasMain) {
+				$resultLine = "COMPILE_LINK_OK|$fileName|0|no main"
+			} else {
+				# Link
+				$linkArgs = @(
+					"/LIBPATH:$libPath1",
+					"/SUBSYSTEM:CONSOLE",
+					"/OUT:$exeFile",
+					"/PDB:$pdbFile",
+					$objFile,
+					"kernel32.lib",
+					"libucrt.lib",
+					"legacy_stdio_definitions.lib"
+				)
+				if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
+				if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
+
+				$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
+
+				if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
+					$stdErrOutput = & $exeFile 2>&1 | Out-String
+					$returnValue = $LASTEXITCODE
+
+					$windowsExceptionCodes = @(
+						-1073741819, -1073740791, -1073741571, -1073740940, -1073741795
+					)
+					$isWindowsCrash = $windowsExceptionCodes -contains $returnValue
+
+					if ($isWindowsCrash) {
+						if ($expectedRuntimeCrashes -contains $fileName) {
+							$resultLine = "EXPECTED_CRASH|$fileName|"
+						} else {
+							$signal = if ($returnValue -lt 0) { $returnValue + 4294967296 } else { $returnValue }
+							$resultLine = "RUNTIME_CRASH|$fileName|0x$($signal.ToString('X8'))"
+						}
+					} else {
+						# Linux truncates exit codes to 8 bits (0-255); apply the same
+						# truncation here so return-value checks are consistent across platforms.
+						$returnValue = $returnValue -band 0xFF
+						if ($expectedReturnValue -ne $null) {
+							if ($returnValue -ne $expectedReturnValue) {
+								$resultLine = "RETURN_MISMATCH|$fileName|$expectedReturnValue|$returnValue"
+							} else {
+								$resultLine = "RETURN_OK|$fileName|$returnValue|"
+							}
+						} else {
+							$resultLine = "RETURN_OK|$fileName|$returnValue|"
+						}
+					}
+				} else {
+					if ($expectedLinkFailures -contains $fileName) {
+						$resultLine = "EXPECTED_LINK_FAIL|$fileName|"
+					} else {
+						$errors = ($linkOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -Last 5) -join "`n"
+						$resultLine = "LINK_FAIL|$fileName|$errors"
+					}
+				}
+			}
+		} else {
+			if ($expectedCompileFailures -contains $fileName) {
+				$resultLine = "EXPECTED_COMPILE_FAIL|$fileName|"
+			} else {
+				$allLines = $compileOutput -split "`n" | Where-Object {
+					$_.Trim() -ne "" -and
+					$_ -notmatch "===== FLASHCPP VERSION" -and
+					$_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL|\|)"
+				}
+				$errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
+				$detail = if ($errorLines) { ($errorLines | Select-Object -Last 3) -join "`n" } else { ($allLines | Select-Object -Last 3) -join "`n" }
+				$resultLine = "COMPILE_FAIL|$fileName|$detail"
+			}
+		}
+	} catch {
+		$resultLine = "COMPILE_FAIL|$fileName|WORKER ERROR: $_"
+	} finally {
+		# Always clean up temp artifacts
+		foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile)) {
+			if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+		}
+	}
+
+	# Write result (always executes, even if the worker threw)
+	$resultFile = Join-Path $resultDir "$fileName.result"
+	Set-Content -Path $resultFile -Value $resultLine -NoNewline
+}
+
+# ──────────────────────────────────────────────────────
+# Worker function for testing a single _fail file
+# ──────────────────────────────────────────────────────
+function Invoke-TestOneFailFile {
+	param($filePath, $fileName, $baseName, $flashCppPath, $resultDir)
+
+	$ErrorActionPreference = "SilentlyContinue"
+
+	# Use unique per-worker paths in the system temp dir to avoid race conditions.
+	$tempDir = [System.IO.Path]::GetTempPath()
+	$uniqueSuffix = [guid]::NewGuid().ToString('N')
+	$objFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.obj"
+	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
+	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
+
+	# Fallback result in case the worker encounters a terminating error
+	$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: unknown"
+	try {
+		$failOutput = & $flashCppPath --log-level=1 -o $objFile $filePath 2>&1 | Out-String
+
+		if (Test-Path $objFile) {
+			$resultLine = "FAIL_BAD|$fileName|should have failed"
+		} else {
+			$resultLine = "FAIL_OK|$fileName|"
+		}
+	} catch {
+		$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: $_"
+	} finally {
+		# Always clean up temp artifacts
+		foreach ($f in @($objFile, $ilkFile, $pdbFile)) {
+			if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+		}
+	}
+
+	$resultFile = Join-Path $resultDir "$fileName.result"
+	Set-Content -Path $resultFile -Value $resultLine -NoNewline
+}
+
+$invokeTestOneFileDefinition = ${function:Invoke-TestOneFile}.ToString()
+$invokeTestOneFailFileDefinition = ${function:Invoke-TestOneFailFile}.ToString()
+
+# ──────────────────────────────────────────────────────
+# Run regular tests
+# ──────────────────────────────────────────────────────
+if ($useParallel) {
+	Write-Host "Running $totalFiles tests with $Jobs parallel jobs (PowerShell $($PSVersionTable.PSVersion.Major))..."
+	$regularParallelJob = $referenceFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
+		Set-Location $using:RepoRoot
+		${function:Invoke-TestOneFile} = $using:invokeTestOneFileDefinition
+		$file = $_
+		$hasMain = ($using:mainFileCache)[$file.Name]
+		Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:linkerPath $using:libPath1 $using:libPath2 $using:libPath3 $hasMain $using:expectedLinkFailures $using:expectedCompileFailures $using:expectedRuntimeCrashes $using:resultDir
+	} -AsJob
+	Wait-ParallelResultJob -Job $regularParallelJob -Label "Regular tests" -TotalCount $totalFiles -ResultDir $resultDir
+} else {
+	if ($Jobs -gt 1 -and $PSVersionTable.PSVersion.Major -lt 7 -and -not $TestFile) {
+		Write-Host "NOTE: Parallel execution requires PowerShell 7+. Running sequentially." -ForegroundColor Yellow
+		Write-Host "      Upgrade to PS 7+ and use -Jobs $Jobs for parallel testing." -ForegroundColor Yellow
+	}
+	$currentFile = 0
+	foreach ($file in $referenceFiles) {
+		$currentFile++
+		Write-Host "[$currentFile/$totalFiles] Testing $($file.Name)... " -NoNewline
+		$hasMain = $mainFileCache[$file.Name]
+			Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $libPath1 $libPath2 $libPath3 $hasMain $expectedLinkFailures $expectedCompileFailures $expectedRuntimeCrashes $resultDir
+
+		# Read and display result inline for sequential mode
+		$resultFile = Join-Path $resultDir "$($file.Name).result"
+		if (Test-Path $resultFile) {
+			$line = Get-Content $resultFile -Raw
+			$parts = $line -split '\|', 4
+				$detail = Get-ResultDetail -Parts $parts
+			switch ($parts[0]) {
+				"RETURN_OK"             { Write-Host "OK (returned $($parts[2]))" }
+				"COMPILE_LINK_OK"       { Write-Host "OK (no main - link skipped)" }
+				"RETURN_MISMATCH"       { Write-Host "[RETURN MISMATCH] expected $($parts[2]) got $($parts[3])" -ForegroundColor Red }
+				"RUNTIME_CRASH"         { Write-Host "[RUNTIME CRASH] $($parts[2])" -ForegroundColor Red }
+				"EXPECTED_CRASH"        { Write-Host "OK (expected runtime crash)" }
+				"LINK_FAIL"             {
+					Write-Host "[LINK FAILED]" -ForegroundColor Red
+						Write-DetailSnippet -Detail $detail
+				}
+				"EXPECTED_LINK_FAIL"    { Write-Host "OK (expected link fail)" }
+				"COMPILE_FAIL"          {
+					Write-Host "[COMPILE FAILED]" -ForegroundColor Red
+						Write-DetailSnippet -Detail $detail
+				}
+				"EXPECTED_COMPILE_FAIL" { Write-Host "OK (expected fail)" }
+			}
+		}
+	}
+}
+
+# ──────────────────────────────────────────────────────
+# Run _fail tests
+# ──────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "=============================================="
+Write-Host "Testing _fail.cpp files (expected to fail)"
+Write-Host "=============================================="
+Write-Host ""
+
+if ($useParallel -and $failFiles.Count -gt 0) {
+	$initialFailCompleted = if (Test-Path $resultDir) {
+		@(Get-ChildItem -Path $resultDir -Filter "*.result" -File -ErrorAction SilentlyContinue).Count
+	} else {
+		0
+	}
+	$failParallelJob = $failFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
+		Set-Location $using:RepoRoot
+		${function:Invoke-TestOneFailFile} = $using:invokeTestOneFailFileDefinition
+		$file = $_
+		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:resultDir
+	} -AsJob
+	Wait-ParallelResultJob -Job $failParallelJob -Label "_fail tests" -TotalCount $failFiles.Count -ResultDir $resultDir -InitialCompleted $initialFailCompleted
+} else {
+	$currentFile = 0
+	foreach ($file in $failFiles) {
+		$currentFile++
+		Write-Host "[$currentFile/$totalFailFiles] Testing $($file.Name)... " -NoNewline
+		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $flashCppPath $resultDir
+
+		$resultFile = Join-Path $resultDir "$($file.Name).result"
+		if (Test-Path $resultFile) {
+			$line = Get-Content $resultFile -Raw
+			$parts = $line -split '\|', 3
+			switch ($parts[0]) {
+				"FAIL_OK"  { Write-Host "OK (failed as expected)" }
+				"FAIL_BAD" { Write-Host "[UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red }
+			}
+		}
+	}
+}
+
+# ──────────────────────────────────────────────────────
+# Collect results from temp files
+# ──────────────────────────────────────────────────────
 $compileSuccess = @()
 $compileFailed = @()
 $linkSuccess = @()
@@ -187,303 +558,104 @@ $runSuccess = @()
 $runFailed = @()
 $runtimeCrashes = @()
 $returnMismatches = @()
-$missingExpected = @()
-# Detailed error tracking
-$linkErrorDetails = @{}
-
-# Helper function to parse expected return value from filename
-function Get-ExpectedReturnValue {
-	param([string]$filename)
-	
-	if ($filename -match '_ret(\d+)\.cpp$') {
-		return [int]$matches[1]
-	}
-	return $null
-}
-
-# Helper function to show crash log analysis
-function Show-CrashLog {
-	$latestCrash = Get-ChildItem -Filter "flashcpp_crash_*.log" -ErrorAction SilentlyContinue | 
-		Sort-Object LastWriteTime -Descending | 
-		Select-Object -First 1
-	
-	if ($latestCrash) {
-		Write-Host ""
-		Write-Host "=== Crash Stack Trace ===" -ForegroundColor Yellow
-		$content = Get-Content $latestCrash.FullName -Raw
-		if ($content -match "=== Stack Trace ===([\s\S]*?)(?:===|$)") {
-			$stackTrace = $matches[1].Trim() -split "`n" | Select-Object -First 20
-			foreach ($line in $stackTrace) {
-				if ($line.Trim()) {
-					Write-Host "  $line" -ForegroundColor Yellow
-				}
-			}
-		}
-		Remove-Item $latestCrash.FullName -Force -ErrorAction SilentlyContinue
-	}
-}
-
-# Pre-cache main() detection to avoid reading files twice
-$mainFileCache = @{}
-foreach ($file in $referenceFiles) {
-	$sourceContent = Get-Content $file.FullName -Raw
-	$mainFileCache[$file.Name] = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
-}
-
-$currentFile = 0
-foreach ($file in $referenceFiles) {
-	$currentFile++
-	$baseName = $file.BaseName
-	# FlashCpp writes .obj to current directory (repo root), not source directory
-	$objFile = "$baseName.obj"
-	$exeFile = "$baseName.exe"
-	$ilkFile = "$baseName.ilk"
-	$pdbFile = "$baseName.pdb"
-
-	# Clean up previous artifacts
-	if (Test-Path $objFile) { Remove-Item $objFile -Force }
-	if (Test-Path $exeFile) { Remove-Item $exeFile -Force }
-	if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
-	if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force }
-
-	Write-Host "[$currentFile/$totalFiles] Testing $($file.Name)... " -NoNewline
-
-	# Parse expected return value from filename
-	$expectedReturnValue = Get-ExpectedReturnValue -filename $file.Name
-
-	# Compile with FlashCpp using call operator for speed
-	$flashCppArgs = @("--log-level=1", $file.FullName)
-	if ($file.Name -match "^test_no_access_control_flag_ret100.*\.cpp$") {
-		$flashCppArgs = @("-fno-access-control") + $flashCppArgs
-	}
-	
-	# Use call operator for fast compilation
-	$compileOutput = & $flashCppPath $flashCppArgs 2>&1 | Out-String
-	$compileExitCode = $LASTEXITCODE
-	
-	# Check if compilation succeeded by verifying obj file was created
-	if (Test-Path $objFile) {
-		$compileSuccess += $file.Name
-
-		# Check if source file has a main function before attempting to link
-		$hasMain = $mainFileCache[$file.Name]
-
-		if (-not $hasMain) {
-			Write-Host "OK (no main - link skipped)"
-			$linkSuccess += $file.Name  # Count as success since compilation worked
-		}
-		else {
-			# Try to link
-			# Link with common Microsoft runtime libraries
-			$linkArgs = @(
-				"/LIBPATH:$libPath1",
-				"/SUBSYSTEM:CONSOLE",
-				"/OUT:$exeFile",
-				$objFile,
-				"kernel32.lib",
-				"libucrt.lib",
-				"legacy_stdio_definitions.lib"
-			)
-
-			if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
-			if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
-
-			$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
-
-			if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
-				$linkSuccess += $file.Name
-				
-				# Run the executable using call operator for reliable exit code capture
-				$exeFullPath = (Resolve-Path $exeFile).Path
-				$stdErrOutput = & $exeFullPath 2>&1 | Out-String
-				$returnValue = $LASTEXITCODE
-
-				# Check for Windows-specific crash exit codes
-				# Common Windows exception codes that indicate crashes
-				$windowsExceptionCodes = @(
-					-1073741819,  # 0xC0000005 - Access Violation
-					-1073740791,  # 0xC0000409 - Stack Buffer Overrun
-					-1073741571,  # 0xC0000095 - Integer Divide by Zero
-					-1073740940,  # 0xC0000374 - Heap Corruption
-					-1073741795   # 0xC000001D - Illegal Instruction
-				)
-				
-				$isWindowsCrash = $windowsExceptionCodes -contains $returnValue
-				
-				if ($isWindowsCrash) {
-					# Check if this is an expected runtime crash
-					if ($expectedRuntimeCrashes -contains $file.Name) {
-						Write-Host "OK (expected runtime crash)"
-						$runSuccess += $file.Name
-					} else {
-						Write-Host ""
-						Write-Host "[$currentFile/$totalFiles] $($file.Name) - [RUNTIME CRASH]" -ForegroundColor Red
-						if ($returnValue -lt 0) {
-							$signal = $returnValue + 2147483648  # Convert to unsigned for hex
-							Write-Host "  Signal: 0x$($signal.ToString('X8'))" -ForegroundColor Yellow
-						}
-						$runtimeCrashes += $file.Name
-					}
-				} else {
-					# On Windows, process exit codes are 32-bit, but on Linux
-					# they are truncated to 8 bits (0-255). Since test filenames
-					# encode the expected return value as the low byte (matching
-					# Linux behavior), apply the same truncation here.
-					$returnValue = $returnValue -band 0xFF
-
-					# Check if the filename indicates an expected return value
-					if ($expectedReturnValue -ne $null) {
-						if ($returnValue -ne $expectedReturnValue) {
-							Write-Host ""
-							Write-Host "[$currentFile/$totalFiles] $($file.Name) - [RETURN MISMATCH]" -ForegroundColor Red
-							$returnValueStr = [string]$returnValue
-							Write-Host "  Expected: $expectedReturnValue, Got: $returnValueStr" -ForegroundColor Yellow
-							$returnMismatches += $file.Name
-						} else {
-							Write-Host "OK (returned $returnValue)"
-							$runSuccess += $file.Name
-						}
-					} else {
-						# No expected return value in filename, just report OK
-						Write-Host "OK (returned $returnValue)"
-						$runSuccess += $file.Name
-					}
-				}
-				
-				# Clean up after successful link
-				if (Test-Path $exeFile) { Remove-Item $exeFile -Force -ErrorAction SilentlyContinue }
-				if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
-				if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force -ErrorAction SilentlyContinue }
-			}
-			else {
-				# Check if this is an expected failure
-				if ($expectedLinkFailures -contains $file.Name) {
-					Write-Host "OK (expected link fail)"
-					# Don't count expected failures as actual failures
-					$linkSuccess += $file.Name
-				}
-				else {
-					Write-Host ""
-					Write-Host "[$currentFile/$totalFiles] $($file.Name) - [LINK FAILED]" -ForegroundColor Red
-					$linkFailed += $file.Name
-
-					# Extract all errors from link output
-					$errors = ($linkOutput -split "`n" | Where-Object { $_ -match "error" })
-					$unresolved = ($linkOutput -split "`n" | Where-Object { $_ -match "unresolved external symbol" })
-
-					# Store detailed error info for later display
-					$linkErrorDetails[$file.Name] = @{
-						Errors = $errors
-						Unresolved = $unresolved
-						FullOutput = $linkOutput
-					}
-
-					# Show last 10 lines of output immediately
-					if ($errors) {
-						Write-Host "    Link errors (last 10):" -ForegroundColor Yellow
-						foreach ($err in ($errors | Select-Object -Last 10)) {
-							Write-Host "      $err" -ForegroundColor Yellow
-						}
-					}
-					# Also show unresolved external symbols
-					if ($unresolved) {
-						Write-Host "    Unresolved symbols (last 10):" -ForegroundColor Yellow
-						foreach ($sym in ($unresolved | Select-Object -Last 10)) {
-							Write-Host "      $sym" -ForegroundColor Yellow
-						}
-					}
-				}
-			}
-		}
-	}
-	else {
-		# Check if this is an expected compile failure
-		if ($expectedCompileFailures -contains $file.Name) {
-			Write-Host "OK (expected fail)"
-			# Don't count expected failures as actual failures
-		}
-		else {
-			Write-Host ""
-			Write-Host "[$currentFile/$totalFiles] $($file.Name) - [COMPILE FAILED]" -ForegroundColor Red
-			$compileFailed += $file.Name
-			# Show compile output to help diagnose the issue
-			# Filter out the version banner and non-error lines, prioritize showing errors
-			$allLines = $compileOutput -split "`n" | Where-Object {
-				$_.Trim() -ne "" -and
-				$_ -notmatch "===== FLASHCPP VERSION" -and
-				$_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL|\|)"
-			}
-			# Try to show error lines first, otherwise show last 10 lines
-			$errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
-			if ($errorLines) {
-				Write-Host "    Error output:" -ForegroundColor Yellow
-				foreach ($line in ($errorLines | Select-Object -Last 10)) {
-					Write-Host "    $($line.Trim())" -ForegroundColor Yellow
-				}
-			} elseif ($allLines.Count -gt 0) {
-				Write-Host "    Last 10 lines of output:" -ForegroundColor Yellow
-				foreach ($line in ($allLines | Select-Object -Last 10)) {
-					Write-Host "    $($line.Trim())" -ForegroundColor Yellow
-				}
-			} else {
-				Write-Host "    (No error details available - obj file not created)" -ForegroundColor Yellow
-			}
-		}
-	}
-
-	# Clean up obj file after each test (like the shell script does)
-	if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
-}
-
-# Test _fail files - these should fail compilation
-Write-Host ""
-Write-Host "=============================================="
-Write-Host "Testing _fail.cpp files (expected to fail)"
-Write-Host "=============================================="
-Write-Host ""
-
-# Results tracking for fail tests
 $failTestSuccess = @()
 $failTestFailed = @()
+$linkErrorDetails = @{}
 
-$currentFile = 0
-foreach ($file in $failFiles) {
-	$currentFile++
-	$baseName = $file.BaseName
-	$objFile = "$baseName.obj"
-	$ilkFile = "$baseName.ilk"
-	$pdbFile = "$baseName.pdb"
-
-	# Clean up previous artifacts
-	if (Test-Path $objFile) { Remove-Item $objFile -Force }
-	if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
-	if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force }
-
-	Write-Host "[$currentFile/$totalFailFiles] Testing $($file.Name)... " -NoNewline
-
-	# Compile with FlashCpp - we EXPECT this to fail
-	$failOutput = & $flashCppPath --log-level=1 $file.FullName 2>&1 | Out-String
-
-	# Check if compilation succeeded (which is BAD for _fail tests)
-	if (Test-Path $objFile) {
-		Write-Host ""
-		Write-Host "[$currentFile/$totalFailFiles] $($file.Name) - [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
-		$failTestFailed += $file.Name
-		# Clean up the object file
-		Remove-Item $objFile -Force -ErrorAction SilentlyContinue
-		Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue
-		if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force -ErrorAction SilentlyContinue }
+foreach ($file in $referenceFiles) {
+	$resultFile = Join-Path $resultDir "$($file.Name).result"
+	if (-not (Test-Path $resultFile)) {
+		$compileFailed += "$($file.Name) (no result)"
+		continue
 	}
-	else {
-		Write-Host "OK (failed as expected)"
-		$failTestSuccess += $file.Name
-	}
+	$line = Get-Content $resultFile -Raw
+	$parts = $line -split '\|', 4
+	$status = $parts[0]
+		$detail = Get-ResultDetail -Parts $parts
 
-	# Clean up any artifacts
-	if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
-	if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
-	if (Test-Path $pdbFile) { Remove-Item $pdbFile -Force -ErrorAction SilentlyContinue }
+	switch ($status) {
+		"RETURN_OK" {
+			$compileSuccess += $file.Name
+			$linkSuccess += $file.Name
+			$runSuccess += $file.Name
+		}
+		"RETURN_MISMATCH" {
+			$compileSuccess += $file.Name
+			$linkSuccess += $file.Name
+			$returnMismatches += $file.Name
+			if ($useParallel) {
+				Write-Host "$($file.Name) - [RETURN MISMATCH] expected $($parts[2]) got $($parts[3])" -ForegroundColor Red
+			}
+		}
+		"RUNTIME_CRASH" {
+			$compileSuccess += $file.Name
+			$linkSuccess += $file.Name
+			$runtimeCrashes += $file.Name
+			if ($useParallel) {
+				Write-Host "$($file.Name) - [RUNTIME CRASH] $($parts[2])" -ForegroundColor Red
+			}
+		}
+		"EXPECTED_CRASH" {
+			$compileSuccess += $file.Name
+			$linkSuccess += $file.Name
+			$runSuccess += $file.Name
+		}
+		"LINK_FAIL" {
+			$compileSuccess += $file.Name
+			$linkFailed += $file.Name
+			if ($useParallel) {
+				Write-Host "$($file.Name) - [LINK FAILED]" -ForegroundColor Red
+					Write-DetailSnippet -Detail $detail
+			}
+			$linkErrorDetails[$file.Name] = @{
+					Errors = @($detail)
+				Unresolved = @()
+					FullOutput = $detail
+			}
+		}
+		"COMPILE_LINK_OK" {
+			$compileSuccess += $file.Name
+			$linkSuccess += $file.Name
+		}
+		"EXPECTED_LINK_FAIL" {
+			$compileSuccess += $file.Name
+			$linkSuccess += $file.Name
+		}
+		"COMPILE_FAIL" {
+			$compileFailed += $file.Name
+			if ($useParallel) {
+				Write-Host "$($file.Name) - [COMPILE FAILED]" -ForegroundColor Red
+					Write-DetailSnippet -Detail $detail
+			}
+		}
+		"EXPECTED_COMPILE_FAIL" {
+			# Don't count expected compile failures
+		}
+	}
 }
+
+foreach ($file in $failFiles) {
+	$resultFile = Join-Path $resultDir "$($file.Name).result"
+	if (-not (Test-Path $resultFile)) {
+		$failTestFailed += "$($file.Name) (no result)"
+		continue
+	}
+	$line = Get-Content $resultFile -Raw
+	$parts = $line -split '\|', 3
+
+	switch ($parts[0]) {
+		"FAIL_OK"  { $failTestSuccess += $file.Name }
+		"FAIL_BAD" {
+			$failTestFailed += $file.Name
+			if ($useParallel) {
+				Write-Host "$($file.Name) - [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
+			}
+		}
+	}
+}
+
+# Clean up temp directory
+Remove-Item $resultDir -Recurse -Force -ErrorAction SilentlyContinue
 
 # Summary
 Write-Host ""
@@ -491,7 +663,7 @@ Write-Host "=============================================="
 Write-Host "                   SUMMARY"
 Write-Host "=============================================="
 Write-Host ""
-Write-Host "Total files tested: $totalFiles"
+Write-Host "Total files tested: $totalFiles (with $Jobs parallel jobs)"
 Write-Host ""
 Write-Host "Regular Tests:"
 Write-Host "  Compilation:"
@@ -601,7 +773,7 @@ $expectedFailuresWithoutFail = $expectedCompileFailures + $expectedLinkFailures 
 	$_ -notmatch "fail"
 } | Sort-Object -Unique
 
-if ($expectedFailuresWithoutFail.Count -gt 0) {
+if (-not $TestFile -and $expectedFailuresWithoutFail.Count -gt 0) {
 	Write-Host "=== Expected failure files without 'fail' in name ===" -ForegroundColor Yellow
 	Write-Host "(These files are marked as expected failures but may be legitimate tests to fix)" -ForegroundColor Yellow
 	$expectedFailuresWithoutFail | ForEach-Object {
