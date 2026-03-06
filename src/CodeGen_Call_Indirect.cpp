@@ -1426,8 +1426,10 @@
 									}
 									call_op.args.push_back(*result);
 								} else {
-									FLASH_LOG(Codegen, Error, "Failed to generate struct default argument for member function parameter '", param_decl.identifier_token().value(), "'");
+									throw InternalError("Failed to generate struct default argument for member function parameter '" + std::string(param_decl.identifier_token().value()) + "'");
 								}
+							} else {
+								throw InternalError("Unhandled default argument AST node type for member function parameter '" + std::string(param_decl.identifier_token().value()) + "'");
 							}
 						}
 					}
