@@ -1222,8 +1222,8 @@
 		// Fill in default arguments for parameters that weren't explicitly provided
 		if (matched_func_decl) {
 			fillInDefaultArguments(call_op, param_nodes, arg_idx);
-			} else if (cached_param_list) {
-				fillInCachedDefaultArguments(call_op, *cached_param_list, arg_idx);
+		} else if (cached_param_list) {
+			fillInCachedDefaultArguments(call_op, *cached_param_list, arg_idx);
 		}
 
 		// Add the function call instruction with typed payload

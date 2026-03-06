@@ -234,7 +234,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						: ReferenceQualifier::LValueReference;
 				}
 				call_op.args.push_back(std::move(*result));
+			} else {
+				throw InternalError("Failed to generate struct default argument for cached parameter '" + std::string(StringTable::getStringView(param.name)) + "'");
 			}
+		} else {
+			throw InternalError("Unhandled default argument AST node type for cached parameter '" + std::string(StringTable::getStringView(param.name)) + "'");
 		}
 	}
 }
