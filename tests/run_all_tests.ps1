@@ -208,6 +208,44 @@ New-Item -ItemType Directory -Path $resultDir -Force | Out-Null
 # ──────────────────────────────────────────────────────
 $useParallel = ($PSVersionTable.PSVersion.Major -ge 7) -and ($Jobs -gt 1) -and (-not $TestFile)
 
+function Get-ResultDetail {
+	param(
+		[string[]]$Parts,
+		[int]$StartIndex = 2
+	)
+
+	if ($Parts.Count -le $StartIndex) {
+		return ""
+	}
+
+	return (($Parts[$StartIndex..($Parts.Count - 1)] -join '|').Trim())
+}
+
+function Write-DetailSnippet {
+	param(
+		[string]$Detail,
+		[int]$MaxLines = 4
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Detail)) {
+		return
+	}
+
+	$detailLines = @($Detail -split '\r?\n' | Where-Object { $_.Trim() -ne "" })
+	if ($detailLines.Count -eq 0) {
+		return
+	}
+
+	$snippetLines = @($detailLines | Select-Object -First $MaxLines)
+	foreach ($detailLine in $snippetLines) {
+		Write-Host "  $detailLine" -ForegroundColor Yellow
+	}
+
+	if ($detailLines.Count -gt $MaxLines) {
+		Write-Host "  ..." -ForegroundColor Yellow
+	}
+}
+
 # ──────────────────────────────────────────────────────
 # Worker scriptblock for testing a single regular file
 # ──────────────────────────────────────────────────────
@@ -404,6 +442,7 @@ if ($useParallel) {
 		if (Test-Path $resultFile) {
 			$line = Get-Content $resultFile -Raw
 			$parts = $line -split '\|', 4
+				$detail = Get-ResultDetail -Parts $parts
 			switch ($parts[0]) {
 				"RETURN_OK"             { Write-Host "OK (returned $($parts[2]))" }
 				"COMPILE_LINK_OK"       { Write-Host "OK (no main - link skipped)" }
@@ -412,12 +451,12 @@ if ($useParallel) {
 				"EXPECTED_CRASH"        { Write-Host "OK (expected runtime crash)" }
 				"LINK_FAIL"             {
 					Write-Host "[LINK FAILED]" -ForegroundColor Red
-					if ($parts[2]) { Write-Host "  $($parts[2])" -ForegroundColor Yellow }
+						Write-DetailSnippet -Detail $detail
 				}
 				"EXPECTED_LINK_FAIL"    { Write-Host "OK (expected link fail)" }
 				"COMPILE_FAIL"          {
 					Write-Host "[COMPILE FAILED]" -ForegroundColor Red
-					if ($parts[2]) { Write-Host "  $($parts[2])" -ForegroundColor Yellow }
+						Write-DetailSnippet -Detail $detail
 				}
 				"EXPECTED_COMPILE_FAIL" { Write-Host "OK (expected fail)" }
 			}
@@ -484,6 +523,7 @@ foreach ($file in $referenceFiles) {
 	$line = Get-Content $resultFile -Raw
 	$parts = $line -split '\|', 4
 	$status = $parts[0]
+		$detail = Get-ResultDetail -Parts $parts
 
 	switch ($status) {
 		"RETURN_OK" {
@@ -517,11 +557,12 @@ foreach ($file in $referenceFiles) {
 			$linkFailed += $file.Name
 			if ($useParallel) {
 				Write-Host "$($file.Name) - [LINK FAILED]" -ForegroundColor Red
+					Write-DetailSnippet -Detail $detail
 			}
 			$linkErrorDetails[$file.Name] = @{
-				Errors = @($parts[2])
+					Errors = @($detail)
 				Unresolved = @()
-				FullOutput = $parts[2]
+					FullOutput = $detail
 			}
 		}
 		"COMPILE_LINK_OK" {
@@ -536,7 +577,7 @@ foreach ($file in $referenceFiles) {
 			$compileFailed += $file.Name
 			if ($useParallel) {
 				Write-Host "$($file.Name) - [COMPILE FAILED]" -ForegroundColor Red
-				if ($parts[2]) { Write-Host "  $($parts[2])" -ForegroundColor Yellow }
+					Write-DetailSnippet -Detail $detail
 			}
 		}
 		"EXPECTED_COMPILE_FAIL" {
