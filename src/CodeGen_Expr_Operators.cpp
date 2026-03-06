@@ -4,9 +4,14 @@ AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view i
 	GlobalStaticVarInfo info;
 	StringHandle ident_handle = StringTable::getOrInternStringHandle(ident_name);
 
-	// Check if it's a static local variable
+	// Check if it's found in the local symbol table — if so, it's a local variable
+	// and should not be treated as a global/static (even if a static local or static
+	// member with the same name exists).
+	const std::optional<ASTNode> local_sym = symbol_table.lookup(ident_name);
+
+	// Check if it's a static local variable (only when not shadowed by a local)
 	auto static_it = static_local_names_.find(ident_handle);
-	if (static_it != static_local_names_.end()) {
+	if (!local_sym.has_value() && static_it != static_local_names_.end()) {
 		info.is_global_or_static = true;
 		info.store_name = static_it->second.mangled_name;
 		info.type = static_it->second.type;
