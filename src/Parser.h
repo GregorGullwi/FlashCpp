@@ -455,7 +455,14 @@ private:
         // Use FlashCpp::TemplateDepthGuard to increment/decrement; use ScopedState to temporarily
         // suppress (set to 0) during SFINAE and lazy instantiation.
         size_t parsing_template_depth_ = 0;
-        
+
+        // Phase 1 two-phase name lookup enforcement (C++20 [temp.res]/9).
+        // Set to the opening-brace line of the template body being re-parsed.
+        // Zero means we are NOT currently in a Phase 1 re-parse check.
+        size_t phase1_cutoff_line_ = 0;
+        size_t phase1_cutoff_file_idx_ = SIZE_MAX;
+        std::optional<Token> phase1_violation_token_;
+
         // Add parsing depth counter to detect infinite loops
         // This is incremented/decremented in critical parsing functions
         size_t parsing_depth_ = 0;
@@ -1332,8 +1339,23 @@ public:  // Public methods for template instantiation
                 return node;
             }
 
+            // Helper: record a Phase 1 violation if this declaration was added after
+            // the template body opening brace (C++20 [temp.res]/9).
+            auto checkPhase1 = [&](const Token& decl_tok) {
+                if (phase1_cutoff_line_ > 0 && !phase1_violation_token_.has_value() &&
+                    decl_tok.file_index() == phase1_cutoff_file_idx_ &&
+                    decl_tok.line() > phase1_cutoff_line_) {
+                    phase1_violation_token_ = token;
+                }
+            };
+
             // Function or function-template -> Function binding
             if (sym->is<FunctionDeclarationNode>() || sym->is<TemplateFunctionDeclarationNode>()) {
+                if (sym->is<FunctionDeclarationNode>()) {
+                    checkPhase1(sym->as<FunctionDeclarationNode>().decl_node().identifier_token());
+                } else {
+                    checkPhase1(sym->as<TemplateFunctionDeclarationNode>().function_decl_node().decl_node().identifier_token());
+                }
                 node.set_binding(IdentifierBinding::Function);
                 return node;
             }
@@ -1351,6 +1373,7 @@ public:  // Public methods for template instantiation
                 bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
                 if (is_global_scope && tryBindMemberContext()) return node;
                 if (is_global_scope) {
+                    checkPhase1(decl.identifier_token());
                     node.set_binding(IdentifierBinding::Global);
                 } else if (scope_type.has_value()) {
                     node.set_binding(IdentifierBinding::Local);
@@ -1365,6 +1388,7 @@ public:  // Public methods for template instantiation
                 bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
                 if (is_global_scope && tryBindMemberContext()) return node;
                 if (is_global_scope) {
+                    checkPhase1(var_decl.declaration().identifier_token());
                     node.set_binding(IdentifierBinding::Global);
                 } else if (scope_type.has_value()) {
                     if (var_decl.storage_class() == StorageClass::Static) {

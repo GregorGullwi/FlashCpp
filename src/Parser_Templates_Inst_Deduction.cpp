@@ -232,6 +232,17 @@ void Parser::reparse_template_function_body(
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 		populateTemplateParamSubstitutions(template_param_substitutions_, template_params, template_args);
 
+		// Phase 1 (C++20 [temp.res]/9): record the template body's opening-brace line so
+		// createBoundIdentifier can detect names that were not visible at definition time.
+		{
+			auto it = saved_tokens_.find(func_decl.template_body_position());
+			if (it != saved_tokens_.end()) {
+				phase1_cutoff_line_ = it->second.current_token_.line();
+				phase1_cutoff_file_idx_ = it->second.current_token_.file_index();
+				phase1_violation_token_.reset();
+			}
+		}
+
 		// Parse the body, substitute template parameters, then install as definition.
 		{
 			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
@@ -252,6 +263,17 @@ void Parser::reparse_template_function_body(
 	gSymbolTable.exit_scope();
 	restore_lexer_position_only(current_pos);
 	discard_saved_token(current_pos);
+
+	// Check for Phase 1 violations (after full cleanup so RAII guards are still in scope).
+	phase1_cutoff_line_ = 0;
+	phase1_cutoff_file_idx_ = SIZE_MAX;
+	if (phase1_violation_token_.has_value()) {
+		auto tok = *phase1_violation_token_;
+		phase1_violation_token_.reset();
+		throw CompileError(
+			std::string("non-dependent name '").append(tok.value())
+			.append("' was not declared before the template definition (C++20 [temp.res]/9)"));
+	}
 	// template_scope RAII guard removes TypeInfo entries automatically.
 }
 

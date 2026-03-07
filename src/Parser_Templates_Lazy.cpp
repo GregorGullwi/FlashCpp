@@ -124,6 +124,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				converted_template_args
 			);
 			new_ctor_ref.set_definition(substituted_body);
+		} catch (const CompileError&) {
+			throw;  // Phase 1 violations (non-dependent name not declared before template) must propagate
 		} catch (const std::exception& e) {
 			FLASH_LOG(Templates, Error, "Exception during lazy constructor substitution: ", e.what());
 			return std::nullopt;
@@ -178,6 +180,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				converted_template_args
 			);
 			new_dtor_ref.set_definition(substituted_body);
+		} catch (const CompileError&) {
+			throw;  // Phase 1 violations must propagate
 		} catch (const std::exception& e) {
 			FLASH_LOG(Templates, Error, "Exception during lazy destructor substitution: ", e.what());
 			return std::nullopt;
