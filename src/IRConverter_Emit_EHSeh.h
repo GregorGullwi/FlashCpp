@@ -647,10 +647,12 @@
 		// Platform-specific rethrow implementation
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
-			// Call __cxa_rethrow() with no arguments
-			// System V AMD64 calling convention - no arguments needed
-			
-			emitSubRSP(8); // Align stack to 16 bytes before call
+			// Call __cxa_rethrow() with no arguments.
+			// throw; is always executed inside a catch handler (landing pad).
+			// The unwinder restores RSP = CFA before jumping to the landing pad,
+			// which leaves RSP 16-byte aligned (CFA = RBP + 16, RBP even-aligned).
+			// Do NOT emit sub rsp,8 here — that would misalign RSP and crash
+			// movaps instructions inside _Unwind_RaiseException.
 			emitCall("__cxa_rethrow");
 			// Note: __cxa_rethrow never returns
 			

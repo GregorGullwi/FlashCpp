@@ -41,25 +41,14 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 		std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(),
 		         [](const auto& a, const auto& b) { return a.try_start_offset < b.try_start_offset; });
 
-		// Find the minimum landing pad offset (first catch handler)
-		uint32_t min_landing_pad_offset = fde_info.function_length;
-		for (const auto& try_block : sorted_try_blocks) {
-			for (const auto& handler : try_block.catch_handlers) {
-				if (handler.handler_offset < min_landing_pad_offset) {
-					min_landing_pad_offset = handler.handler_offset;
-				}
-			}
-		}
-
 		// Determine function_end_offset for call site coverage.
-		// For simple (non-nested) try blocks, stop at the first landing pad.
-		// For nested try blocks, the outer try may extend past landing pads
-		// (covering the inner catch handler code), so use the max try end offset.
-		uint32_t max_try_end_offset = 0;
-		for (const auto& try_block : sorted_try_blocks) {
-			max_try_end_offset = std::max(max_try_end_offset, try_block.try_end_offset);
-		}
-		uint32_t function_end_offset = std::max(min_landing_pad_offset, max_try_end_offset);
+		// The ENTIRE function must be covered by call site entries.
+		// If the PC during phase-2 unwinding falls in a range not covered by
+		// any call site entry, __gxx_personality_v0 calls std::terminate().
+		// This includes catch handler bodies (code after __cxa_begin_catch all
+		// the way to the function epilogue), which must be mapped with lpad=0
+		// so that rethrows inside a catch handler propagate to the caller.
+		uint32_t function_end_offset = fde_info.function_length;
 
 		// Helper lambda to convert catch handlers for a try block into LSDA format
 		auto convert_catch_handlers = [&](const ObjectFileWriter::TryBlockInfo& try_block) {
