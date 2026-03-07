@@ -33,16 +33,19 @@
 		// Visit try block
 		visit(node.try_block());
 
-		// Disable capture and collect the vars
+		// Disable capture and collect the vars — only converted to StringHandle pairs
+		// when there is actually a first catch handler that needs them.
 		capture_try_cleanup_ = false;
 		std::vector<std::pair<StringHandle, StringHandle>> try_cleanup_vars;
-		for (const auto& var : captured_try_cleanup_vars_) {
-			try_cleanup_vars.push_back({
-				StringTable::getOrInternStringHandle(var.struct_name),
-				StringTable::getOrInternStringHandle(var.variable_name)
-			});
+		if (!captured_try_cleanup_vars_.empty()) {
+			for (const auto& var : captured_try_cleanup_vars_) {
+				try_cleanup_vars.push_back({
+					StringTable::getOrInternStringHandle(var.struct_name),
+					StringTable::getOrInternStringHandle(var.variable_name)
+				});
+			}
+			captured_try_cleanup_vars_.clear();
 		}
-		captured_try_cleanup_vars_.clear();
 
 		// Emit TryEnd marker
 		ir_.addInstruction(IrOpcode::TryEnd, {}, node.try_token());

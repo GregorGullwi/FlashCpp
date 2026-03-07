@@ -723,24 +723,8 @@
 		X64Register this_reg = getIntParamReg<TWriterClass>(0);
 		emitLeaFromFrame(this_reg, var_info->offset);
 
-		std::string_view struct_sv = StringTable::getStringView(struct_name_h);
-		std::string function_name;
-		std::string class_name;
-		size_t last_colon_pos = struct_sv.rfind("::");
-		if (last_colon_pos != std::string::npos) {
-			class_name = std::string(struct_sv.substr(0, last_colon_pos));
-			function_name = "~" + std::string(struct_sv.substr(last_colon_pos + 2));
-		} else {
-			function_name = "~" + std::string(struct_sv);
-			class_name = std::string(struct_sv);
-		}
-
-		std::vector<TypeSpecifierNode> empty_params;
-		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
-		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
-		sig.class_name = class_name;
-
-		auto mangled_name = writer.generateMangledName(function_name, sig);
+		// Build mangled destructor name using the shared helper
+		auto mangled_name = buildDestructorMangledNameFromString(StringTable::getStringView(struct_name_h));
 		std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
@@ -776,7 +760,7 @@
 		}
 
 		// Load saved exception ptr into RDI (first arg on Linux) and call _Unwind_Resume
-		emitMovFromFrame(X64Register::RDI, exc_save_offset);
+		emitMovFromFrameBySize(X64Register::RDI, exc_save_offset, 64);
 		emitCall("_Unwind_Resume");
 	}
 

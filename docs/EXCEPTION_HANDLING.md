@@ -23,7 +23,7 @@ Basic and intermediate exception handling works end-to-end:
 | Nested try blocks | ✅ | Fixed: LSDA multi-handler dispatch, proper selector type entries |
 | Rethrowing (`throw;`) | ✅ | Fixed: correct RSP alignment + full LSDA coverage |
 | Class-type exceptions with destructors | ✅ | Fixed (Linux): proper _ZTI/_ZTS typeinfo with vtable relocs; dtor arg to __cxa_throw |
-| Stack unwinding with local destructors | ❌ | Cleanup landing pads not emitted for non-try functions |
+| Stack unwinding with local destructors | ✅ | Fixed (Linux): cleanup landing pads emitted for try-block-local vars (Phase 1) and function-scope vars (Phase 2) |
 
 ### Windows (COFF / MSVC ABI): ✅ Partial
 
