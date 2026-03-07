@@ -2369,10 +2369,10 @@ ParseResult Parser::parse_template_declaration() {
 				// Set up template parameter names if this is a template member
 				const bool has_template_params = !delayed.template_param_names.empty();
 				FlashCpp::ScopedState guard_delay_param_names(current_template_param_names_, has_template_params);
-				FlashCpp::ScopedState guard_delay_ptb(parsing_template_depth_, has_template_params);
+				std::optional<FlashCpp::TemplateDepthGuard> guard_delay_ptb;
 				if (has_template_params) {
 					current_template_param_names_ = delayed.template_param_names;
-						parsing_template_depth_++;
+					guard_delay_ptb.emplace(parsing_template_depth_);
 				}
 
 				// Add function parameters to scope (handling constructors, destructors, and regular functions)
