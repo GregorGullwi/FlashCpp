@@ -108,6 +108,7 @@ struct FunctionSpecifiers {
 	bool is_noexcept = false;
 	std::optional<ASTNode> noexcept_expr;  // For noexcept(expr)
 	bool is_implicit = false;      // Compiler-generated (implicit copy ctor, operator=, etc.)
+	std::optional<std::string_view> asm_symbol_name;  // GNU asm label suffix: __asm("symbol")
 
 	bool is_pure_virtual() const { return definition == DefinitionSpecifier::PureVirtual; }
 	bool is_defaulted() const { return definition == DefinitionSpecifier::Defaulted; }

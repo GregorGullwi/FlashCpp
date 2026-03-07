@@ -699,7 +699,7 @@ void Parser::skip_noop_gnu_qualifiers()
 	}
 }
 
-bool Parser::skip_asm_suffix()
+bool Parser::skip_asm_suffix(std::optional<std::string_view>* asm_symbol_name)
 {
 	if (peek().is_eof() || !peek().is_identifier()) {
 		return false;
@@ -718,6 +718,19 @@ bool Parser::skip_asm_suffix()
 	}
 
 	discard_saved_token(saved_pos);
+	if (asm_symbol_name != nullptr) {
+		SaveHandle lparen_pos = save_token_position();
+		advance(); // consume '('
+		if (peek().is_string_literal()) {
+			std::string_view literal = peek_info().value();
+			size_t first_quote = literal.find('"');
+			size_t last_quote = literal.rfind('"');
+			if (first_quote != std::string_view::npos && last_quote != std::string_view::npos && first_quote < last_quote) {
+				*asm_symbol_name = literal.substr(first_quote + 1, last_quote - first_quote - 1);
+			}
+		}
+		restore_token_position(lparen_pos);
+	}
 	skip_balanced_parens();
 	return true;
 }

@@ -724,7 +724,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 		}
 
 		// Parse GNU declaration suffix symbol renaming: __asm("symbol")
-		if (skip_asm_suffix()) {
+		if (skip_asm_suffix(&out_specs.asm_symbol_name)) {
 			continue;
 		}
 
@@ -931,6 +931,10 @@ ParseResult Parser::create_function_from_header(
 		if (header.specifiers.noexcept_expr.has_value()) {
 			func_ref.set_noexcept_expression(*header.specifiers.noexcept_expr);
 		}
+	}
+
+	if (header.specifiers.asm_symbol_name.has_value()) {
+		func_ref.set_mangled_name(*header.specifiers.asm_symbol_name);
 	}
 
 	// Set constexpr/consteval
