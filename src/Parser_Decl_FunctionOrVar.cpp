@@ -699,6 +699,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				}
 			}
 		}
+		if (func_specs.asm_symbol_name.has_value()) {
+			if (auto func_node_ptr = function_definition_result.node()) {
+				FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
+				func_node.set_mangled_name(*func_specs.asm_symbol_name);
+			}
+		}
 		
 		if (type_specifier.type() == Type::Auto) {
 			const bool is_trailing_return_type = (peek() == "->"_tok);

@@ -723,6 +723,11 @@ ParseResult Parser::parse_function_trailing_specifiers(
 			continue;
 		}
 
+		// Parse GNU declaration suffix symbol renaming: __asm("symbol")
+		if (skip_asm_suffix(&out_specs.asm_symbol_name)) {
+			continue;
+		}
+
 		// Not a trailing specifier, stop
 		break;
 	}
@@ -928,10 +933,13 @@ ParseResult Parser::create_function_from_header(
 		}
 	}
 
+	if (header.specifiers.asm_symbol_name.has_value()) {
+		func_ref.set_mangled_name(*header.specifiers.asm_symbol_name);
+	}
+
 	// Set constexpr/consteval
 	func_ref.set_is_constexpr(header.storage.is_constexpr());
 	func_ref.set_is_consteval(header.storage.is_consteval());
 
 	return func_node;
 }
-

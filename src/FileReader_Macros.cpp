@@ -168,8 +168,13 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									}
 									destringized += pragma_content[i];
 								}
-								// Process as #pragma: handle pack, skip others
-								if (destringized.find("pack") == 0) {
+								// Process as #pragma: handle once/pack, skip others
+								if (destringized == "once") {
+									if (!filestack_.empty()) {
+										processedHeaders_.insert(std::string(filestack_.top().file_name));
+									}
+								}
+								else if (destringized.find("pack") == 0) {
 									std::string pragma_line = "#pragma " + destringized;
 									processPragmaPack(pragma_line);
 								}
@@ -1378,7 +1383,6 @@ void FileReader::addBuiltinDefines() {
 	defines_["__GNUC_MINOR__"] = DefineDirective{ "2", {} };
 	defines_["__GNUC_PATCHLEVEL__"] = DefineDirective{ "0", {} };
 	defines_["__GNUG__"] = DefineDirective{ "12", {} };  // C++ compiler version
-	defines_["__restrict"] = DefineDirective{};  // Strip __restrict keyword (not supported yet)
 	defines_["__extension__"] = DefineDirective{};  // Strip __extension__ keyword (GCC extension)
 	
 	// GCC atomic memory ordering macros (used by <atomic>, <iostream> via atomicity.h)
@@ -1418,11 +1422,6 @@ void FileReader::addBuiltinDefines() {
 	defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
 	defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
 	defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
-	// GCC assembler symbol renaming directive - strip it
-	// Used in glibc headers like: extern wchar_t *wcschr() __asm ("wcschr");
-	// Also strip __asm__ variant (with two underscores on each side)
-	defines_["__asm"] = DefineDirective{ "", { "x" }, true };  // Strip __asm("symbol_name") directives
-	defines_["__asm__"] = DefineDirective{ "", { "x" }, true };  // Strip __asm__("symbol_name") directives
 	defines_["_GLIBCXX_USE_CXX11_ABI"] = DefineDirective{ "1", {} };  // Use C++11 ABI for std::string and std::list
 	// C++11 ABI namespace macros (when _GLIBCXX_USE_CXX11_ABI is 1)
 	defines_["_GLIBCXX_NAMESPACE_CXX11"] = DefineDirective{ "__cxx11::", {} };
@@ -1504,9 +1503,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_concepts"] = DefineDirective{ "201907L", {} };  // C++20 concepts
 	defines_["__cpp_conditional_explicit"] = DefineDirective{ "201806L", {} };  // explicit(bool)
 	defines_["__cpp_conditional_trivial"] = DefineDirective{ "202002L", {} };  // Conditional trivial special members
-	defines_["__cpp_consteval"] = DefineDirective{ "201811L", {} };  // consteval
-	defines_["__cpp_constexpr"] = DefineDirective{ "202002L", {} };  // C++20 constexpr extensions
-	defines_["__cpp_constexpr_dynamic_alloc"] = DefineDirective{ "201907L", {} };  // constexpr dynamic alloc
+	defines_["__cpp_constexpr"] = DefineDirective{ "201603L", {} };  // C++17 relaxed constexpr
 	defines_["__cpp_constexpr_in_decltype"] = DefineDirective{ "201711L", {} };  // decltype during constant eval
 	defines_["__cpp_constinit"] = DefineDirective{ "201907L", {} };  // constinit
 	defines_["__cpp_decltype"] = DefineDirective{ "200707L", {} };  // decltype
