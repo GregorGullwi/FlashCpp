@@ -212,7 +212,7 @@
 							final_size_bits = static_cast<int>(ts.size_in_bits());
 						}
 					}
-					is_global_or_static = true;
+					is_global_or_static = (final_type != Type::Void);
 				} else if (binding == IdentifierBinding::StaticLocal) {
 					auto it = static_local_names_.find(identifier.nameHandle());
 					if (it != static_local_names_.end()) {
