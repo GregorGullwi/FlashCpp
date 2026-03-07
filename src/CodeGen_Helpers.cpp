@@ -6,7 +6,7 @@ void AstToIr::exitScope() {
 	if (!scope_stack_.empty()) {
 		// If try-cleanup capture is active and this is the target scope depth,
 		// record vars in LIFO order before emitting their destructors.
-		if (capture_try_cleanup_ && (int)scope_stack_.size() == capture_try_cleanup_depth_) {
+		if (capture_try_cleanup_ && scope_stack_.size() == capture_try_cleanup_depth_) {
 			for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
 				captured_try_cleanup_vars_.push_back(*it);
 			}

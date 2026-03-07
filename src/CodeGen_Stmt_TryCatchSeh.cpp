@@ -28,7 +28,7 @@
 		// Enable capture of try-block-scope vars for Phase 1 cleanup
 		captured_try_cleanup_vars_.clear();
 		capture_try_cleanup_ = true;
-		capture_try_cleanup_depth_ = static_cast<int>(scope_stack_.size()) + 1;
+		capture_try_cleanup_depth_ = scope_stack_.size() + 1;
 
 		// Visit try block
 		visit(node.try_block());

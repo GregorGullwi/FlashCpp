@@ -714,7 +714,11 @@
 	void emitInlineDestructorCall(const std::pair<StringHandle, StringHandle>& cleanup_var) {
 		const auto& [struct_name_h, var_name_h] = cleanup_var;
 		const VariableInfo* var_info = findVariableInfo(var_name_h);
-		if (!var_info) return;
+		if (!var_info) {
+			FLASH_LOG(Codegen, Warning, "emitInlineDestructorCall: variable not found: ",
+			          StringTable::getStringView(var_name_h));
+			return;
+		}
 
 		X64Register this_reg = getIntParamReg<TWriterClass>(0);
 		emitLeaFromFrame(this_reg, var_info->offset);

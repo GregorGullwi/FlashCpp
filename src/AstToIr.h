@@ -103,7 +103,7 @@ private:
 
 	// Phase 1 capture state: vars declared in the innermost try block scope
 	bool capture_try_cleanup_ = false;
-	int capture_try_cleanup_depth_ = -1;
+	size_t capture_try_cleanup_depth_ = 0;
 	std::vector<ScopeVariableInfo> captured_try_cleanup_vars_;
 
 	// Phase 2 capture state: vars captured by exitFunctionScope() awaiting LP emission

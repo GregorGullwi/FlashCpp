@@ -8,7 +8,7 @@ int main() {
         Tracked t{1};
         throw 42;
     } catch (int e) {
-        return (e == 42 && g_dtor_calls >= 1) ? 0 : 1;
+        return (e == 42 && g_dtor_calls == 1) ? 0 : 1;
     }
     return 2;
 }
