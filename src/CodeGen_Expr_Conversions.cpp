@@ -223,14 +223,14 @@
 					}
 				} else if (binding == IdentifierBinding::StaticMember) {
 					store_name = identifier.resolved_name();
-					is_global_or_static = store_name.isValid();
-					if (is_global_or_static && current_struct_name_.isValid()) {
+					if (store_name.isValid() && current_struct_name_.isValid()) {
 						auto struct_it = gTypesByName.find(current_struct_name_);
 						if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
 							const auto* sm = struct_it->second->getStructInfo()->findStaticMember(identifier.nameHandle());
 							if (sm) {
 								final_type = sm->type;
 								final_size_bits = static_cast<int>(sm->size * 8);
+								is_global_or_static = true;
 							}
 						}
 					}

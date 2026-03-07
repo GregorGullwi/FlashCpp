@@ -522,12 +522,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					}
 				} else if (lhs_ident.binding() == IdentifierBinding::StaticMember) {
 					gsi.store_name = lhs_ident.resolved_name();
-					gsi.is_global_or_static = gsi.store_name.isValid();
-					if (gsi.is_global_or_static && current_struct_name_.isValid()) {
+					if (gsi.store_name.isValid() && current_struct_name_.isValid()) {
 						auto struct_it = gTypesByName.find(current_struct_name_);
 						if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
 							const auto* sm = struct_it->second->getStructInfo()->findStaticMember(lhs_ident.nameHandle());
-							if (sm) { gsi.type = sm->type; gsi.size_in_bits = static_cast<int>(sm->size * 8); }
+							if (sm) {
+								gsi.type = sm->type;
+								gsi.size_in_bits = static_cast<int>(sm->size * 8);
+								gsi.is_global_or_static = true;
+							}
 						}
 					}
 				}
