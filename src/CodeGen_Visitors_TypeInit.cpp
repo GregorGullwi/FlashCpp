@@ -318,11 +318,18 @@
 		auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value, const StructTypeInfo* struct_info) -> bool {
 			ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 			ctx.storage_duration = ConstExpr::StorageDuration::Static;
-			// Enable on-demand template instantiation when static member initializers
-			// reference uninstantiated template members during constexpr evaluation
 			ctx.parser = parser_;
-			// Set struct_info so that sizeof(T) can be resolved from template arguments in struct name
 			ctx.struct_info = struct_info;
+			
+			fprintf(stderr, "[DBG3] evaluate_static_initializer: is_expr=%d is_ExpressionNode=%d struct_info=%p\n",
+				(int)expr_node.is<ExpressionNode>(), 
+				(int)expr_node.is<ExpressionNode>(),
+				(void*)struct_info);
+			if (expr_node.is<ExpressionNode>()) {
+				const auto& expr = expr_node.as<ExpressionNode>();
+				fprintf(stderr, "[DBG3]   expr index=%zu holds_FunctionCallNode=%d\n",
+					expr.index(), (int)std::holds_alternative<FunctionCallNode>(expr));
+			}
 			
 			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 			if (!eval_result.success()) {
@@ -662,6 +669,7 @@
 							}
 						} else {
 							unsigned long long evaluated_value = 0;
+							fprintf(stderr, "[DBG2] Calling evaluate_static_initializer for '%s'\n", std::string(qualified_name).c_str());
 							if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
 								FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
 								qualified_name, "' = ", evaluated_value);

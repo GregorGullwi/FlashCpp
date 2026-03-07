@@ -1,10 +1,17 @@
-namespace Util {
-	int compute(int x) { return x - x; }      // returns 0 for any input
-	int compute(int x, int y) { return x - y; }  // returns 0 when x==y
+namespace First {
+	int select(double) {
+		return 1;
+	}
 }
 
-using Util::compute;
+namespace Second {
+	int select(int) {
+		return 0;
+	}
+}
 
 int main() {
-	return compute(5);  // calls compute(int) -> returns 5-5 = 0
+	using Second::select;
+	using First::select;
+	return select(0);
 }

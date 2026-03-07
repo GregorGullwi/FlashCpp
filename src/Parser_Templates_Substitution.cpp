@@ -168,7 +168,7 @@ ASTNode Parser::substituteTemplateParameters(
 							if (result->is<VariableDeclarationNode>()) {
 								const auto& var_decl = result->as<VariableDeclarationNode>();
 								Token ref_token = var_decl.declaration().identifier_token();
-								return emplace_node<ExpressionNode>(IdentifierNode(ref_token));
+								return emplace_node<ExpressionNode>(createBoundIdentifier(ref_token));
 							}
 							return *result;
 						}
@@ -490,7 +490,7 @@ ASTNode Parser::substituteTemplateParameters(
 					Token param_token(Token::Type::Identifier, param_name,
 									 fold.get_token().line(), fold.get_token().column(),
 									 fold.get_token().file_index());
-					pack_values.push_back(emplace_node<ExpressionNode>(IdentifierNode(param_token)));
+					pack_values.push_back(emplace_node<ExpressionNode>(createBoundIdentifier(param_token)));
 				}
 			}
 		
@@ -1223,7 +1223,7 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 				expanded_name.append(element_index);
 				std::string_view expanded_sv = expanded_name.commit();
 				Token new_token(Token::Type::Identifier, expanded_sv, 0, 0, 0);
-				return emplace_node<ExpressionNode>(IdentifierNode(new_token));
+				return emplace_node<ExpressionNode>(createBoundIdentifier(new_token));
 			}
 			return expr;
 		}

@@ -652,6 +652,15 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
 					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 					eval_ctx.parser = this;
+					// Provide struct context so the evaluator prefers same-struct member functions over globals.
+					eval_ctx.struct_info = struct_info;
+					// Provide template args so sizeof(T) etc. resolve correctly.
+					for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
+						if (lazy_info.template_params[i].is<TemplateParameterNode>()) {
+							eval_ctx.template_param_names.push_back(lazy_info.template_params[i].as<TemplateParameterNode>().name());
+							eval_ctx.template_args.push_back(lazy_info.template_args[i]);
+						}
+					}
 					auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
 					if (eval_result.success()) {
 						int64_t val = eval_result.as_int();

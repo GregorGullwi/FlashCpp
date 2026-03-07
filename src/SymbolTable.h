@@ -321,6 +321,15 @@ public:
 		return symbol_table_stack_.back().scope_type;
 	}
 
+	std::optional<ScopeType> get_scope_type(ScopeHandle handle) const {
+		for (const Scope& scope : symbol_table_stack_) {
+			if (scope.scope_handle.scope_level == handle.scope_level) {
+				return scope.scope_type;
+			}
+		}
+		return std::nullopt;
+	}
+
 	ScopeHandle get_current_scope_handle() const {
 		return ScopeHandle{ .scope_level = symbol_table_stack_.size() };
 	}

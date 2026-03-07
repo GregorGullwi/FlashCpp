@@ -516,35 +516,27 @@ ParseResult Parser::parse_variable_declaration()
 	TypeSpecifierNode& type_specifier = first_decl.type_node().as<TypeSpecifierNode>();
 
 	// C++20 [basic.scope.pdecl]: the variable name is visible from the point immediately
-	// after its declarator, before the initializer.  When we are in block scope we
-	// pre-insert a stub VariableDeclarationNode (no init) so that unevaluated operands
-	// such as sizeof(x) in the initializer can find the variable's type.  The stub is
-	// replaced with the real node once the initializer has been parsed.
-	bool pre_inserted_first_var = false;
+	// after its declarator, before the initializer.  We create and register the
+	// VariableDeclarationNode before parsing the initializer so that unevaluated
+	// operands such as sizeof(x) in the initializer can find the variable's type.
+	// Helper lambda to create and register a variable declaration before parsing its initializer.
+	auto create_var_decl = [&](ASTNode decl_node) -> ParseResult {
+		DeclarationNode& decl = decl_node.as<DeclarationNode>();
 
-	// Helper lambda to create a single variable declaration
-	auto create_var_decl = [&](DeclarationNode& decl, std::optional<ASTNode> init_expr) -> ParseResult {
-
-		// Create and return a VariableDeclarationNode with storage class
-		ASTNode var_decl_node = emplace_node<VariableDeclarationNode>(
-			emplace_node<DeclarationNode>(decl),
-			init_expr,
+		auto [var_decl_node, var_decl] = emplace_node_ref<VariableDeclarationNode>(
+			decl_node,
+			std::nullopt,
 			storage_class
 		);
 
 		// Set constexpr/constinit flags
-		VariableDeclarationNode& var_decl = var_decl_node.as<VariableDeclarationNode>();
 		var_decl.set_is_constexpr(is_constexpr);
 		var_decl.set_is_constinit(is_constinit);
 
 		// Add the VariableDeclarationNode to the symbol table
 		// This preserves the is_constexpr flag and initializer for constant expression evaluation
 		const Token& identifier_token = decl.identifier_token();
-		if (pre_inserted_first_var) {
-			// Replace the stub that was pre-inserted before the initializer was parsed.
-			gSymbolTable.replace_variable(identifier_token.value(), var_decl_node);
-			pre_inserted_first_var = false;
-		} else if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
+		if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
 			// Duplicate variable declaration in the same scope
 			FLASH_LOG(Parser, Warning, "Variable '", identifier_token.value(), 
 					  "' is being redeclared in the same scope");
@@ -659,22 +651,13 @@ ParseResult Parser::parse_variable_declaration()
 		}
 	}
 
-	// C++20 [basic.scope.pdecl]: Pre-insert a stub for block-scope variables so the
-	// variable name is already visible when the initializer is parsed.  This allows
-	// unevaluated operands such as sizeof(x) in "int x = sizeof(x)" to resolve
-	// correctly.  Global-scope declarations are excluded (their initializers are
-	// evaluated at a later phase where the variable is already registered).
-	if (gSymbolTable.get_current_scope_type() != ScopeType::Global) {
-		ASTNode stub = emplace_node<VariableDeclarationNode>(
-			emplace_node<DeclarationNode>(first_decl),
-			std::nullopt,
-			storage_class
-		);
-		VariableDeclarationNode& stub_var = stub.as<VariableDeclarationNode>();
-		stub_var.set_is_constexpr(is_constexpr);
-		stub_var.set_is_constinit(is_constinit);
-		pre_inserted_first_var = gSymbolTable.insert(first_decl.identifier_token().value(), stub);
+	// Register the variable before parsing its initializer (C++20 point-of-declaration).
+	ParseResult first_result = create_var_decl(type_and_name_result.node().value());
+	if (first_result.is_error()) {
+		return first_result;
 	}
+	ASTNode first_var_node = first_result.node().value();
+	VariableDeclarationNode& first_var_decl = first_var_node.as<VariableDeclarationNode>();
 
 	// Phase 3 Consolidation: Use shared initialization helpers
 	// Check for direct initialization with parentheses: Type var(args)
@@ -712,6 +695,7 @@ ParseResult Parser::parse_variable_declaration()
 	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
 	}
+	first_var_decl.set_initializer(first_init_expr);
 
 	// Check for use of deleted default constructor: Struct s{} where default ctor is deleted
 	if (type_specifier.type() == Type::Struct && !type_specifier.is_pointer() &&
@@ -734,11 +718,7 @@ ParseResult Parser::parse_variable_declaration()
 		auto [block_node, block_ref] = create_node_ref(BlockNode());
 
 		// Add the first declaration to the block
-		ParseResult first_result = create_var_decl(first_decl, first_init_expr);
-		if (first_result.is_error()) {
-			return first_result;
-		}
-		block_ref.add_statement_node(*first_result.node());
+		block_ref.add_statement_node(first_var_node);
 
 		// Parse additional declarations
 		while (consume(","_tok)) {
@@ -749,10 +729,18 @@ ParseResult Parser::parse_variable_declaration()
 			}
 
 			// Create a new DeclarationNode with the same type
-			DeclarationNode& new_decl = emplace_node<DeclarationNode>(
+			ASTNode new_decl_node = emplace_node<DeclarationNode>(
 				emplace_node<TypeSpecifierNode>(type_specifier),
 				identifier_tok
-			).as<DeclarationNode>();
+			);
+			DeclarationNode& new_decl = new_decl_node.as<DeclarationNode>();
+
+			// Register before parsing initializer (point-of-declaration)
+			ParseResult decl_result = create_var_decl(new_decl_node);
+			if (decl_result.is_error()) {
+				return decl_result;
+			}
+			ASTNode var_decl_node = decl_result.node().value();
 
 			// Check for initialization
 			std::optional<ASTNode> init_expr;
@@ -793,12 +781,10 @@ ParseResult Parser::parse_variable_declaration()
 				init_expr = init_list_result.node();
 			}
 
+			var_decl_node.as<VariableDeclarationNode>().set_initializer(init_expr);
+
 			// Add this declaration to the block
-			ParseResult decl_result = create_var_decl(new_decl, init_expr);
-			if (decl_result.is_error()) {
-				return decl_result;
-			}
-			block_ref.add_statement_node(*decl_result.node());
+			block_ref.add_statement_node(var_decl_node);
 		}
 
 		// Return the block containing all declarations
@@ -806,7 +792,7 @@ ParseResult Parser::parse_variable_declaration()
 	}
 	else {
 		// Single declaration - return it directly
-		return create_var_decl(first_decl, first_init_expr);
+		return first_result;
 	}
 }
 

@@ -184,6 +184,11 @@ struct EvaluationContext {
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
+
+	// Template parameter names and arguments for evaluating template-dependent expressions
+	// (e.g., sizeof(T) inside a template member function)
+	std::vector<std::string_view> template_param_names;
+	std::vector<TemplateTypeArg> template_args;
 	
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;

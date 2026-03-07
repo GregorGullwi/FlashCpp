@@ -25,6 +25,7 @@
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
 #include "ParserTypes.h"       // Unified parsing types (Phase 1)
 #include "ParserScopeGuards.h" // RAII scope guards (Phase 3)
+#include "LazyMemberResolver.h" // For gLazyMemberResolver used in createBoundIdentifier
 
 #ifndef WITH_DEBUG_INFO
 #define WITH_DEBUG_INFO 0
@@ -1198,33 +1199,138 @@ public:  // Public methods for template instantiation
         }
 
         // Create an IdentifierNode and perform ordinary unqualified lookup to classify its binding.
+        // Non-const because it may call instantiateLazyStaticMember.
         // Returns Unresolved when the name cannot be classified (template-dependent names,
         // 'this', unknown identifiers, etc.). Safe to call for any token; the Unresolved
         // fallback preserves all existing codegen behaviour.
-        IdentifierNode createBoundIdentifier(Token token) const {
+        IdentifierNode createBoundIdentifier(Token token) {
             IdentifierNode node(token);
 
             // In template bodies with active template parameters, names may be dependent.
-            // lookup_symbol() already handles this by returning TemplateParameterReferenceNode.
             auto sym = lookup_symbol(token.handle());
+
+            // Lambda capture bindings: check lambda_capture_stack_ for explicit captures
+            if (sym.has_value() && sym->is<DeclarationNode>()) {
+                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+                bool is_local = scope_type.has_value() &&
+                    scope_type != ScopeType::Global && scope_type != ScopeType::Namespace;
+                if (is_local && !lambda_capture_stack_.empty()) {
+                    auto cap_it = lambda_capture_stack_.back().find(token.handle());
+                    if (cap_it != lambda_capture_stack_.back().end()) {
+                        if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
+                            node.set_binding(IdentifierBinding::CapturedByValue);
+                        else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
+                            node.set_binding(IdentifierBinding::CapturedByRef);
+                        return node;
+                    }
+                }
+            }
+            if (sym.has_value() && sym->is<VariableDeclarationNode>()) {
+                const auto& var_decl = sym->as<VariableDeclarationNode>();
+                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+                bool is_local = scope_type.has_value() &&
+                    scope_type != ScopeType::Global && scope_type != ScopeType::Namespace;
+                if (is_local && var_decl.storage_class() != StorageClass::Static && !lambda_capture_stack_.empty()) {
+                    auto cap_it = lambda_capture_stack_.back().find(token.handle());
+                    if (cap_it != lambda_capture_stack_.back().end()) {
+                        if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
+                            node.set_binding(IdentifierBinding::CapturedByValue);
+                        else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
+                            node.set_binding(IdentifierBinding::CapturedByRef);
+                        return node;
+                    }
+                }
+            }
+
+            // Helper lambdas for member context binding
+            auto bindStaticMemberFromStructInfo = [&](const StructTypeInfo* struct_info) -> bool {
+                if (!struct_info) return false;
+                StringHandle member_handle = token.handle();
+                instantiateLazyStaticMember(struct_info->name, member_handle);
+                auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+                if (!static_member || !owner_struct) return false;
+                bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+                if (is_template_member_context && owner_struct != struct_info) return false;
+                node.set_binding(IdentifierBinding::StaticMember);
+                node.set_resolved_name(StringTable::getOrInternStringHandle(
+                    StringBuilder().append(owner_struct->getName()).append("::"sv).append(member_handle).commit()));
+                return true;
+            };
+
+            auto bindNonStaticMemberFromContext = [&](TypeIndex struct_type_index, const StructTypeInfo* local_struct_info) -> bool {
+                const StructTypeInfo* current_struct_info = local_struct_info;
+                if (!current_struct_info && struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+                    current_struct_info = gTypeInfo[struct_type_index].getStructInfo();
+                }
+                if (!current_struct_info) return false;
+                bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+                if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+                    auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, token.handle());
+                    if (!member_result) return false;
+                    if (is_template_member_context && member_result.owner_struct != current_struct_info) return false;
+                    node.set_binding(IdentifierBinding::NonStaticMember);
+                    return true;
+                }
+                for (const auto& member : current_struct_info->members) {
+                    if (member.getName() == token.handle()) {
+                        node.set_binding(IdentifierBinding::NonStaticMember);
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            auto tryBindMemberContext = [&]() -> bool {
+                if (!member_function_context_stack_.empty()) {
+                    const auto& member_ctx = member_function_context_stack_.back();
+                    const StructTypeInfo* struct_info = member_ctx.local_struct_info;
+                    if (!struct_info && member_ctx.struct_type_index > 0 && member_ctx.struct_type_index < gTypeInfo.size()) {
+                        struct_info = gTypeInfo[member_ctx.struct_type_index].getStructInfo();
+                    }
+                    if (bindStaticMemberFromStructInfo(struct_info)) return true;
+                    if (bindNonStaticMemberFromContext(member_ctx.struct_type_index, member_ctx.local_struct_info)) return true;
+                }
+                if (!struct_parsing_context_stack_.empty()) {
+                    const auto& struct_ctx = struct_parsing_context_stack_.back();
+                    const StructTypeInfo* struct_info = struct_ctx.local_struct_info;
+                    if (!struct_info) {
+                        auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+                        if (struct_it != gTypesByName.end()) {
+                            struct_info = struct_it->second->getStructInfo();
+                        }
+                    }
+                    if (bindStaticMemberFromStructInfo(struct_info)) return true;
+                    TypeIndex struct_type_index = 0;
+                    if (!struct_ctx.struct_name.empty()) {
+                        auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+                        if (struct_it != gTypesByName.end()) {
+                            struct_type_index = struct_it->second->type_index_;
+                        }
+                    }
+                    if (bindNonStaticMemberFromContext(struct_type_index, struct_ctx.local_struct_info)) return true;
+                }
+                return false;
+            };
+
             if (!sym.has_value()) {
+                // Not found in symbol table -> check member context
+                if (tryBindMemberContext()) return node;
                 return node; // Unresolved
             }
 
-            // Template parameter reference - set TemplateParameter binding so consumers
-            // can distinguish "deferred for instantiation" from "genuinely unknown".
+            // Template parameter reference
             if (sym->is<TemplateParameterReferenceNode>()) {
                 node.set_binding(IdentifierBinding::TemplateParameter);
                 return node;
             }
 
-            // Function or function-template -> Function binding.
+            // Function or function-template -> Function binding
             if (sym->is<FunctionDeclarationNode>() || sym->is<TemplateFunctionDeclarationNode>()) {
                 node.set_binding(IdentifierBinding::Function);
                 return node;
             }
 
-            // DeclarationNode: may be an enum constant, variable, or parameter.
+            // DeclarationNode
             if (sym->is<DeclarationNode>()) {
                 const auto& decl = sym->as<DeclarationNode>();
                 if (decl.type_node().is<TypeSpecifierNode>()) {
@@ -1234,51 +1340,41 @@ public:  // Public methods for template instantiation
                     }
                 }
                 auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
-                if (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace) {
+                bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
+                if (is_global_scope && tryBindMemberContext()) return node;
+                if (is_global_scope) {
                     node.set_binding(IdentifierBinding::Global);
                 } else if (scope_type.has_value()) {
                     node.set_binding(IdentifierBinding::Local);
-                    // If we're inside a lambda body and this name is an explicit capture, upgrade binding.
-                    if (!lambda_capture_stack_.empty()) {
-                        auto cap_it = lambda_capture_stack_.back().find(token.handle());
-                        if (cap_it != lambda_capture_stack_.back().end()) {
-                            if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
-                                node.set_binding(IdentifierBinding::CapturedByValue);
-                            else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
-                                node.set_binding(IdentifierBinding::CapturedByRef);
-                        }
-                    }
                 }
                 return node;
             }
 
-            // VariableDeclarationNode.
+            // VariableDeclarationNode
             if (sym->is<VariableDeclarationNode>()) {
                 const auto& var_decl = sym->as<VariableDeclarationNode>();
                 auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
-                if (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace) {
+                bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
+                if (is_global_scope && tryBindMemberContext()) return node;
+                if (is_global_scope) {
                     node.set_binding(IdentifierBinding::Global);
                 } else if (scope_type.has_value()) {
                     if (var_decl.storage_class() == StorageClass::Static) {
                         node.set_binding(IdentifierBinding::StaticLocal);
                     } else {
                         node.set_binding(IdentifierBinding::Local);
-                        // If we're inside a lambda body and this name is an explicit capture, upgrade binding.
-                        if (!lambda_capture_stack_.empty()) {
-                            auto cap_it = lambda_capture_stack_.back().find(token.handle());
-                            if (cap_it != lambda_capture_stack_.back().end()) {
-                                if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
-                                    node.set_binding(IdentifierBinding::CapturedByValue);
-                                else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
-                                    node.set_binding(IdentifierBinding::CapturedByRef);
-                            }
-                        }
                     }
                 }
                 return node;
             }
 
-            return node; // Unresolved for other symbol types (types, structs, etc.)
+            // EnumeratorNode
+            if (sym->is<EnumeratorNode>()) {
+                node.set_binding(IdentifierBinding::EnumConstant);
+                return node;
+            }
+
+            return node; // Unresolved for other symbol types
         }
 
         SaveHandle save_token_position();

@@ -567,8 +567,10 @@ private:
 	CompileContext* context_;  // Reference to compile context for flags
 	Parser* parser_;  // Reference to parser for template instantiation
 
-	// Current function name (for mangling static local variables)
+	// Current function name (plain, used for friend access checks and diagnostics)
 	StringHandle current_function_name_;
+	// Current function mangled name (used for static local variable namespacing)
+	StringHandle current_function_mangled_name_;
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits

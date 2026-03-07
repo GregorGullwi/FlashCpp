@@ -329,6 +329,140 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 	// Add more node types as needed
 }
 
+// Helper function to find capture candidates and detect implicit [this] usage in lambdas
+static void collectLambdaCaptureCandidates(const ASTNode& node,
+    std::unordered_set<StringHandle>& capture_candidates,
+    bool& uses_implicit_this_capture) {
+    if (node.is<IdentifierNode>()) {
+        const auto& identifier = node.as<IdentifierNode>();
+        if (identifier.name() == "this"sv || identifier.binding() == IdentifierBinding::NonStaticMember) {
+            uses_implicit_this_capture = true;
+            return;
+        }
+        if (identifier.binding() == IdentifierBinding::Local ||
+            identifier.binding() == IdentifierBinding::Unresolved) {
+            capture_candidates.insert(identifier.nameHandle());
+        }
+        return;
+    } else if (node.is<ExpressionNode>()) {
+        const auto& expr = node.as<ExpressionNode>();
+        std::visit([&](const auto& inner_node) {
+            using T = std::decay_t<decltype(inner_node)>;
+            if constexpr (std::is_same_v<T, IdentifierNode>) {
+                if (inner_node.name() == "this"sv || inner_node.binding() == IdentifierBinding::NonStaticMember) {
+                    uses_implicit_this_capture = true;
+                } else if (inner_node.binding() == IdentifierBinding::Local ||
+                    inner_node.binding() == IdentifierBinding::Unresolved) {
+                    capture_candidates.insert(inner_node.nameHandle());
+                }
+            } else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
+                return; // Don't descend into nested lambdas
+            } else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+                collectLambdaCaptureCandidates(inner_node.get_lhs(), capture_candidates, uses_implicit_this_capture);
+                collectLambdaCaptureCandidates(inner_node.get_rhs(), capture_candidates, uses_implicit_this_capture);
+            } else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+                collectLambdaCaptureCandidates(inner_node.get_operand(), capture_candidates, uses_implicit_this_capture);
+            } else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+                collectLambdaCaptureCandidates(inner_node.condition(), capture_candidates, uses_implicit_this_capture);
+                collectLambdaCaptureCandidates(inner_node.true_expr(), capture_candidates, uses_implicit_this_capture);
+                collectLambdaCaptureCandidates(inner_node.false_expr(), capture_candidates, uses_implicit_this_capture);
+            } else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+                collectLambdaCaptureCandidates(ASTNode(&inner_node), capture_candidates, uses_implicit_this_capture);
+            } else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+                for (const auto& argument : inner_node.arguments()) {
+                    collectLambdaCaptureCandidates(argument, capture_candidates, uses_implicit_this_capture);
+                }
+            } else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+                collectLambdaCaptureCandidates(inner_node.object(), capture_candidates, uses_implicit_this_capture);
+            } else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+                collectLambdaCaptureCandidates(inner_node.object(), capture_candidates, uses_implicit_this_capture);
+                collectLambdaCaptureCandidates(inner_node.member_pointer(), capture_candidates, uses_implicit_this_capture);
+            } else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+                collectLambdaCaptureCandidates(inner_node.object(), capture_candidates, uses_implicit_this_capture);
+                for (const auto& argument : inner_node.arguments()) {
+                    collectLambdaCaptureCandidates(argument, capture_candidates, uses_implicit_this_capture);
+                }
+            } else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+                collectLambdaCaptureCandidates(inner_node.array_expr(), capture_candidates, uses_implicit_this_capture);
+                collectLambdaCaptureCandidates(inner_node.index_expr(), capture_candidates, uses_implicit_this_capture);
+            } else if constexpr (std::is_same_v<T, StaticCastNode> ||
+                                 std::is_same_v<T, ConstCastNode> ||
+                                 std::is_same_v<T, ReinterpretCastNode> ||
+                                 std::is_same_v<T, DynamicCastNode>) {
+                collectLambdaCaptureCandidates(inner_node.expr(), capture_candidates, uses_implicit_this_capture);
+            }
+        }, expr);
+    } else if (node.is<BinaryOperatorNode>()) {
+        const auto& binop = node.as<BinaryOperatorNode>();
+        collectLambdaCaptureCandidates(binop.get_lhs(), capture_candidates, uses_implicit_this_capture);
+        collectLambdaCaptureCandidates(binop.get_rhs(), capture_candidates, uses_implicit_this_capture);
+    } else if (node.is<UnaryOperatorNode>()) {
+        const auto& unop = node.as<UnaryOperatorNode>();
+        collectLambdaCaptureCandidates(unop.get_operand(), capture_candidates, uses_implicit_this_capture);
+    } else if (node.is<FunctionCallNode>()) {
+        const auto& call = node.as<FunctionCallNode>();
+        for (size_t i = 0; i < call.arguments().size(); ++i) {
+            collectLambdaCaptureCandidates(call.arguments()[i], capture_candidates, uses_implicit_this_capture);
+        }
+    } else if (node.is<ReturnStatementNode>()) {
+        const auto& ret = node.as<ReturnStatementNode>();
+        if (ret.expression().has_value()) {
+            collectLambdaCaptureCandidates(*ret.expression(), capture_candidates, uses_implicit_this_capture);
+        }
+    } else if (node.is<BlockNode>()) {
+        const auto& block = node.as<BlockNode>();
+        const auto& stmts = block.get_statements();
+        for (size_t i = 0; i < stmts.size(); ++i) {
+            collectLambdaCaptureCandidates(stmts[i], capture_candidates, uses_implicit_this_capture);
+        }
+    } else if (node.is<IfStatementNode>()) {
+        const auto& if_stmt = node.as<IfStatementNode>();
+        collectLambdaCaptureCandidates(if_stmt.get_condition(), capture_candidates, uses_implicit_this_capture);
+        collectLambdaCaptureCandidates(if_stmt.get_then_statement(), capture_candidates, uses_implicit_this_capture);
+        if (if_stmt.get_else_statement().has_value()) {
+            collectLambdaCaptureCandidates(*if_stmt.get_else_statement(), capture_candidates, uses_implicit_this_capture);
+        }
+    } else if (node.is<WhileStatementNode>()) {
+        const auto& while_stmt = node.as<WhileStatementNode>();
+        collectLambdaCaptureCandidates(while_stmt.get_condition(), capture_candidates, uses_implicit_this_capture);
+        collectLambdaCaptureCandidates(while_stmt.get_body_statement(), capture_candidates, uses_implicit_this_capture);
+    } else if (node.is<DoWhileStatementNode>()) {
+        const auto& do_while = node.as<DoWhileStatementNode>();
+        collectLambdaCaptureCandidates(do_while.get_body_statement(), capture_candidates, uses_implicit_this_capture);
+        collectLambdaCaptureCandidates(do_while.get_condition(), capture_candidates, uses_implicit_this_capture);
+    } else if (node.is<ForStatementNode>()) {
+        const auto& for_stmt = node.as<ForStatementNode>();
+        if (for_stmt.get_init_statement().has_value()) {
+            collectLambdaCaptureCandidates(*for_stmt.get_init_statement(), capture_candidates, uses_implicit_this_capture);
+        }
+        if (for_stmt.get_condition().has_value()) {
+            collectLambdaCaptureCandidates(*for_stmt.get_condition(), capture_candidates, uses_implicit_this_capture);
+        }
+        if (for_stmt.get_update_expression().has_value()) {
+            collectLambdaCaptureCandidates(*for_stmt.get_update_expression(), capture_candidates, uses_implicit_this_capture);
+        }
+        collectLambdaCaptureCandidates(for_stmt.get_body_statement(), capture_candidates, uses_implicit_this_capture);
+    } else if (node.is<MemberAccessNode>()) {
+        const auto& member = node.as<MemberAccessNode>();
+        collectLambdaCaptureCandidates(member.object(), capture_candidates, uses_implicit_this_capture);
+    } else if (node.is<MemberFunctionCallNode>()) {
+        const auto& member_call = node.as<MemberFunctionCallNode>();
+        collectLambdaCaptureCandidates(member_call.object(), capture_candidates, uses_implicit_this_capture);
+        for (size_t i = 0; i < member_call.arguments().size(); ++i) {
+            collectLambdaCaptureCandidates(member_call.arguments()[i], capture_candidates, uses_implicit_this_capture);
+        }
+    } else if (node.is<ArraySubscriptNode>()) {
+        const auto& subscript = node.as<ArraySubscriptNode>();
+        collectLambdaCaptureCandidates(subscript.array_expr(), capture_candidates, uses_implicit_this_capture);
+        collectLambdaCaptureCandidates(subscript.index_expr(), capture_candidates, uses_implicit_this_capture);
+    } else if (node.is<VariableDeclarationNode>()) {
+        const auto& var_decl = node.as<VariableDeclarationNode>();
+        if (var_decl.initializer().has_value()) {
+            collectLambdaCaptureCandidates(*var_decl.initializer(), capture_candidates, uses_implicit_this_capture);
+        }
+    }
+}
+
 Parser::Parser(Lexer& lexer, CompileContext& context)
     : lexer_(lexer), context_(context), current_token_(lexer_.next_token()) {
     initialize_native_types();

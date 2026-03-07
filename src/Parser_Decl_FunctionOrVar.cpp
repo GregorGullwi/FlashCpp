@@ -915,6 +915,21 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Per [dcl.attr.grammar], attributes can appear after a declarator.
 		skip_cpp_attributes();
 
+		// A variable's point of declaration is immediately after its declarator and
+		// before its initializer is parsed, so register the declaration first.
+		auto [global_var_node, global_decl_node] = emplace_node_ref<VariableDeclarationNode>(
+			type_and_name_result.node().value(),
+			std::nullopt,
+			specs.storage_class
+		);
+		global_decl_node.set_is_constexpr(is_constexpr);
+		global_decl_node.set_is_constinit(is_constinit);
+
+		const Token& identifier_token = decl_node.identifier_token();
+		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
+			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+		}
+
 		// Phase 3 Consolidation: Use shared copy initialization helper for = and = {} forms
 		if (peek() == "="_tok) {
 			auto init_result = parse_copy_initialization(decl_node, type_specifier);
@@ -969,18 +984,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 		}
 
-		// Create a variable declaration node for the first variable
-		// Reuse the existing decl_node from type_and_name_result
-		auto [global_var_node, global_decl_node] = emplace_node_ref<VariableDeclarationNode>(
-			type_and_name_result.node().value(),  // Use the existing DeclarationNode
-			initializer,
-			specs.storage_class
-		);
-		global_decl_node.set_is_constexpr(is_constexpr);
-		global_decl_node.set_is_constinit(is_constinit);
-
-		// Get identifier token for error reporting
-		const Token& identifier_token = decl_node.identifier_token();
+		global_decl_node.set_initializer(initializer);
 
 		// Semantic checks for constexpr/constinit - only enforce for global/static variables
 		// For local constexpr variables, they can fall back to runtime initialization (like const)
@@ -1046,11 +1050,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// but doesn't require compile-time evaluation for local variables
 
 
-		// Add to symbol table
-		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
-			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
-		}
-
 		// Handle comma-separated declarations (e.g., int x, y, z;)
 		// When there are additional variables, collect them all in a BlockNode
 		if (peek() == ","_tok) {
@@ -1070,11 +1069,25 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				}
 
 				// Create a new DeclarationNode with the same type
-				DeclarationNode& next_decl = emplace_node<DeclarationNode>(
+				ASTNode next_decl_node = emplace_node<DeclarationNode>(
 					emplace_node<TypeSpecifierNode>(type_specifier),
 					next_identifier_token
-				).as<DeclarationNode>();
+				);
+				DeclarationNode& next_decl = next_decl_node.as<DeclarationNode>();
 				TypeSpecifierNode& next_type_spec = next_decl.type_node().as<TypeSpecifierNode>();
+
+				// Pre-register the variable before parsing its initializer (point-of-declaration)
+				auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
+					next_decl_node,
+					std::nullopt,
+					specs.storage_class
+				);
+				next_var_decl.set_is_constexpr(is_constexpr);
+				next_var_decl.set_is_constinit(is_constinit);
+
+				if (!gSymbolTable.insert(next_identifier_token.value(), next_var_node)) {
+					return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, next_identifier_token);
+				}
 
 				// Phase 3 Consolidation: Use shared copy initialization helper
 				std::optional<ASTNode> next_initializer;
@@ -1102,19 +1115,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					next_initializer = init_list_result.node();
 				}
 
-				// Create a variable declaration node for this additional variable
-				auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
-					emplace_node<DeclarationNode>(next_decl),
-					next_initializer,
-					specs.storage_class
-				);
-				next_var_decl.set_is_constexpr(is_constexpr);
-				next_var_decl.set_is_constinit(is_constinit);
-
-				// Add to symbol table
-				if (!gSymbolTable.insert(next_identifier_token.value(), next_var_node)) {
-					return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, next_identifier_token);
-				}
+				next_var_decl.set_initializer(next_initializer);
 				
 				// Add to block
 				block_ref.add_statement_node(next_var_node);

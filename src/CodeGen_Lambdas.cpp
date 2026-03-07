@@ -1083,7 +1083,7 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 	current_lambda_context_ = {};
 	current_lambda_context_.closure_type = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);
 	current_lambda_context_.enclosing_struct_type_index = lambda_info.enclosing_struct_type_index;
-	current_lambda_context_.has_copy_this = lambda_info.enclosing_struct_type_index > 0;
+	current_lambda_context_.has_copy_this = false;
 	current_lambda_context_.has_this_pointer = false;
 	current_lambda_context_.is_mutable = lambda_info.is_mutable;
 

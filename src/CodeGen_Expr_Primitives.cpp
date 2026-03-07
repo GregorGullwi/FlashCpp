@@ -484,6 +484,79 @@
 			// Has using override: fall through to cascade for correct qualified name resolution
 		}
 
+		// If binding is NonStaticMember, handle member access directly
+		if (identifierNode.binding() == IdentifierBinding::NonStaticMember) {
+			if (current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer &&
+				current_lambda_context_.enclosing_struct_type_index > 0) {
+				if (auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str)) {
+					const StructMember* member = result.member;
+					if (auto this_ptr = emitLoadThisPointer(Token())) {
+						TempVar result_temp = var_counter.next();
+						MemberLoadOp member_load;
+						member_load.result.value = result_temp;
+						member_load.result.type = member->type;
+						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.object = *this_ptr;
+						member_load.member_name = member->getName();
+						member_load.offset = static_cast<int>(result.adjusted_offset);
+						member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+						member_load.struct_type_info = nullptr;
+						member_load.is_pointer_to_member = true;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Member,
+							*this_ptr,
+							static_cast<int>(result.adjusted_offset)
+						);
+						lvalue_info.member_name = member->getName();
+						lvalue_info.is_pointer_to_member = true;
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
+							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
+						}
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+					}
+				}
+			}
+
+			if (current_struct_name_.isValid()) {
+				auto type_it = gTypesByName.find(current_struct_name_);
+				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+					TypeIndex struct_type_index = type_it->second->type_index_;
+					if (auto result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, var_name_str)) {
+						const StructMember* member = result.member;
+						TempVar result_temp = var_counter.next();
+						MemberLoadOp member_load;
+						member_load.result.value = result_temp;
+						member_load.result.type = member->type;
+						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.object = StringTable::getOrInternStringHandle("this");
+						member_load.member_name = member->getName();
+						member_load.offset = static_cast<int>(result.adjusted_offset);
+						member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+						member_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Member,
+							StringTable::getOrInternStringHandle("this"),
+							static_cast<int>(result.adjusted_offset)
+						);
+						lvalue_info.member_name = member->getName();
+						lvalue_info.is_pointer_to_member = true;
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
+							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
+						}
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+					}
+				}
+			}
+		}
+
 		// Check using declarations from local scope FIRST, before local symbol table lookup
 		// This handles cases like: using ::globalValue; return globalValue;
 		// where globalValue should resolve to the global namespace version even if there's
