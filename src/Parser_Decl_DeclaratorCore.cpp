@@ -81,6 +81,8 @@ ParseResult Parser::parse_type_and_name() {
         type_spec.set_concept_constraint(concept_name);
     }
 
+    skip_noop_gnu_qualifiers();
+
     // Extract calling convention specifiers that can appear after the type
     // Example: void __cdecl func(); or int __stdcall* func();
     // We consume them here and save to last_calling_convention_ for the caller to retrieve
@@ -97,6 +99,8 @@ ParseResult Parser::parse_type_and_name() {
             break;  // Not a calling convention keyword, stop scanning
         }
     }
+
+    skip_noop_gnu_qualifiers();
 
     // Check if this might be a function pointer declaration
     // Function pointers have the pattern: type (*identifier)(params)
@@ -354,6 +358,7 @@ ParseResult Parser::parse_type_and_name() {
 
         // Check for CV-qualifiers after the *
         CVQualifier ptr_cv = parse_cv_qualifiers();
+        skip_noop_gnu_qualifiers();
 
         type_spec.add_pointer_level(ptr_cv);
     }
@@ -389,11 +394,13 @@ ParseResult Parser::parse_type_and_name() {
     // This handles C++ postfix const/volatile syntax like: typename _Str::value_type const*
     CVQualifier postfix_cv = parse_cv_qualifiers();
     type_spec.add_cv_qualifier(postfix_cv);
+    skip_noop_gnu_qualifiers();
 
     // After postfix cv-qualifiers, parse pointer and reference declarators.
     // This handles patterns like: typename _Str::value_type const* __lhs
     // where const appears between the dependent type and the pointer.
     consume_pointer_ref_modifiers(type_spec);
+    skip_noop_gnu_qualifiers();
 
     // Function pointer check after reference declarators have been consumed.
     // This handles patterns like: int& (*fp)(int) or ostream& (*__pf)(ostream&)
@@ -578,6 +585,8 @@ ParseResult Parser::parse_type_and_name() {
         advance(); // consume ']'
     }
 
+    skip_asm_suffix();
+
     // Unwrap the optional ASTNode before passing it to emplace_node
     if (auto node = type_specifier_result.node()) {
         ASTNode decl_node;
@@ -749,6 +758,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
         // Parse CV-qualifiers after the * (if any)
         CVQualifier ptr_cv = parse_cv_qualifiers();
+        skip_noop_gnu_qualifiers();
         skip_cpp_attributes();   // Handle [[...]] / __attribute__((...)) on the pointer declarator
 
         // Check for unnamed function pointer parameter: type (*)(params)
@@ -881,9 +891,12 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
         // Parse CV-qualifiers after the *
         CVQualifier ptr_cv = parse_cv_qualifiers();
+        skip_noop_gnu_qualifiers();
 
         base_type.add_pointer_level(ptr_cv);
     }
+
+    skip_noop_gnu_qualifiers();
 
     // Parse direct declarator (identifier, function, array)
     Token identifier_token;
@@ -931,10 +944,12 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
                 TypeSpecifierNode& param_type =
                     param_type_result.node()->as<TypeSpecifierNode>();
+                skip_noop_gnu_qualifiers();
                 
                 // Parse pointer and reference declarators: * [const] [volatile] *... & &&
                 // Example: void* or const int* const* or int&
                 consume_pointer_ref_modifiers(param_type);
+                skip_noop_gnu_qualifiers();
                 
                 param_types.push_back(param_type.type());
 
@@ -977,6 +992,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
         // Check for noexcept specifier on function pointer type
         // Pattern: void (*)(Args...) noexcept or void (*)(Args...) noexcept(expr)
         skip_noexcept_specifier();
+        skip_asm_suffix();
 
         // This is a function pointer!
         // The base_type is the return type
@@ -999,6 +1015,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
     }
 
     // Create and return declaration node
+    skip_asm_suffix();
     return ParseResult::success(
         emplace_node<DeclarationNode>(
             emplace_node<TypeSpecifierNode>(base_type),
@@ -1283,4 +1300,3 @@ ParseResult Parser::parse_declaration(FlashCpp::DeclarationContext context)
 			return ParseResult::error("Unknown declaration context", current_token_);
 	}
 }
-

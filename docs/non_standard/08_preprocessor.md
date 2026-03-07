@@ -7,8 +7,8 @@ handling also touches `src/FileReader_Core.cpp`.
 
 > **Legend** · ✅ Correct · ⚠️ Partial · ❌ Missing / Wrong
 
-Audit status (2026-03-07): 7.1 and 7.3 were updated after implementation work; 7.2, 7.4, and
-7.5 were rechecked against the current implementation and remain accurate.
+Audit status (2026-03-07): 7.1, 7.3, 7.4, and 7.5 were updated after implementation work; 7.2
+was rechecked against the current implementation and remains accurate.
 
 ---
 
@@ -76,31 +76,45 @@ may expect from a mature C++17/C++20 compiler.
 
 ---
 
-### 7.4 `__asm` / `__asm__` Stripped to Empty String ⚠️
+### 7.4 `__asm` / `__asm__` Parsed as No-Op Suffixes; Symbol Rename Still Ignored ⚠️
 
 **Context:** `asm` declarations (`extern T f() __asm("impl_name")`) appear in system headers
 for symbol renaming.
 
-**FlashCpp:** Both `__asm` and `__asm__` are defined as function-like macros that expand to
-the empty string (FileReader_Macros.cpp:1424–1425). Any `extern T f() __asm("f_impl")`
-declaration will have its rename silently dropped; `f()` links as `f` rather than `f_impl`,
-producing undefined-symbol linker errors when the system library exposes `f_impl`.
+**Status update (2026-03-07):**
+- `__asm("...")` and `__asm__("...")` are no longer preprocessor macros.
+- The parser now accepts them as ignorable declaration suffixes on variables and functions.
 
-**Location:** `src/FileReader_Macros.cpp:1424–1425`
+This fixes the keyword-vs-macro mismatch and makes `#ifdef __asm` / `#ifdef __asm__` evaluate
+to false, matching GCC-style keyword behavior more closely.
+
+**Remaining gap:** FlashCpp still discards the requested assembler symbol rename. Any
+`extern T f() __asm("f_impl")` declaration still behaves as though the rename were absent,
+so `f()` links as `f` rather than `f_impl`.
+
+**Regression coverage:** `tests/test_asm_suffix_keyword_ret0.cpp`
+
+**Location:** parser handling in `src/Parser_Expr_BinaryPrecedence.cpp` and
+`src/Parser_Decl_DeclaratorCore.cpp`
 
 ---
 
-### 7.5 `__restrict` Defined as an Empty Macro ⚠️
+### 7.5 `__restrict` Parsed as a No-Op Keyword ✅
 
 **Context:** `__restrict` is a GCC/Clang extension that appears pervasively in system headers.
 The correct handling is to treat it as a no-op keyword (not a macro).
 
-**FlashCpp:** `defines_["__restrict"] = DefineDirective{};` expands `__restrict` to the empty
-string. This works for the common case but means `#ifdef __restrict` evaluates to *true*
-(defined, but as an empty macro), which differs from GCC/Clang where `__restrict` is a keyword,
-not a macro, so `#ifdef __restrict` would be *false*.
+**Status update (2026-03-07):**
+- `__restrict` is no longer defined as a preprocessor macro.
+- The parser now treats `__restrict` as an ignorable qualifier in declarators.
 
-**Location:** `src/FileReader_Macros.cpp:1381`
+This keeps common header declarations working while making `#ifdef __restrict` evaluate to
+*false*, matching GCC/Clang behavior much more closely.
+
+**Regression coverage:** `tests/test_restrict_keyword_ret42.cpp`
+
+**Location:** parser handling in `src/Parser_Expr_BinaryPrecedence.cpp` and
+`src/Parser_Decl_DeclaratorCore.cpp`
 
 ---
 

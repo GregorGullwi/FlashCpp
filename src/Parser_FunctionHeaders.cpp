@@ -723,6 +723,13 @@ ParseResult Parser::parse_function_trailing_specifiers(
 			continue;
 		}
 
+		// Parse GNU declaration suffix symbol renaming: __asm("symbol")
+		if (token.type() == Token::Type::Identifier &&
+		    (token.value() == "__asm" || token.value() == "__asm__")) {
+			skip_asm_suffix();
+			continue;
+		}
+
 		// Not a trailing specifier, stop
 		break;
 	}
@@ -934,4 +941,3 @@ ParseResult Parser::create_function_from_header(
 
 	return func_node;
 }
-

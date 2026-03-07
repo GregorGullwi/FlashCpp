@@ -1383,7 +1383,6 @@ void FileReader::addBuiltinDefines() {
 	defines_["__GNUC_MINOR__"] = DefineDirective{ "2", {} };
 	defines_["__GNUC_PATCHLEVEL__"] = DefineDirective{ "0", {} };
 	defines_["__GNUG__"] = DefineDirective{ "12", {} };  // C++ compiler version
-	defines_["__restrict"] = DefineDirective{};  // Strip __restrict keyword (not supported yet)
 	defines_["__extension__"] = DefineDirective{};  // Strip __extension__ keyword (GCC extension)
 	
 	// GCC atomic memory ordering macros (used by <atomic>, <iostream> via atomicity.h)
@@ -1423,11 +1422,6 @@ void FileReader::addBuiltinDefines() {
 	defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
 	defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
 	defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
-	// GCC assembler symbol renaming directive - strip it
-	// Used in glibc headers like: extern wchar_t *wcschr() __asm ("wcschr");
-	// Also strip __asm__ variant (with two underscores on each side)
-	defines_["__asm"] = DefineDirective{ "", { "x" }, true };  // Strip __asm("symbol_name") directives
-	defines_["__asm__"] = DefineDirective{ "", { "x" }, true };  // Strip __asm__("symbol_name") directives
 	defines_["_GLIBCXX_USE_CXX11_ABI"] = DefineDirective{ "1", {} };  // Use C++11 ABI for std::string and std::list
 	// C++11 ABI namespace macros (when _GLIBCXX_USE_CXX11_ABI is 1)
 	defines_["_GLIBCXX_NAMESPACE_CXX11"] = DefineDirective{ "__cxx11::", {} };
