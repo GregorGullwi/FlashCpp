@@ -1,4 +1,4 @@
-#include "CodeGen.h"
+﻿#include "CodeGen.h"
 #include "LambdaHelpers.h"
 
 	std::vector<IrOperand> AstToIr::generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
@@ -259,6 +259,13 @@
 			result.total_member_offset = accumulated_offset;
 			result.final_type = type_node->type();
 			result.final_size_bits = static_cast<int>(type_node->size_in_bits());
+			if (result.final_type == Type::Struct && result.final_size_bits == 0 &&
+				type_node->type_index() > 0 && type_node->type_index() < gTypeInfo.size()) {
+				if (const StructTypeInfo* struct_info = gTypeInfo[type_node->type_index()].getStructInfo()) {
+					result.final_size_bits = static_cast<int>(struct_info->total_size * 8);
+				}
+			}
+			result.pointer_depth = type_node->pointer_depth();
 			return result;
 		}
 		
@@ -1654,9 +1661,72 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 	Type operandType,
 	TempVar result_var
 ) {
+	auto getOperandPointerDepth = [&]() -> int {
+		if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
+			return static_cast<int>(std::get<unsigned long long>(operandIrOperands[3]));
+		}
+		return 0;
+	};
+
+	int operand_pointer_depth = getOperandPointerDepth();
+
+	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
+		if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3]) &&
+		    (typed_value.type == Type::Struct || typed_value.type == Type::Enum)) {
+			typed_value.type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operandIrOperands[3]));
+		}
+		if (operand_pointer_depth > 0) {
+			typed_value.pointer_depth = operand_pointer_depth;
+			typed_value.size_in_bits = 64;
+		}
+	};
+
+	auto storeBackUpdatedValue = [&](const std::vector<IrOperand>& rhs_operands) -> bool {
+		if (operandIrOperands.size() < 3) {
+			return false;
+		}
+		if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+			AssignmentOp assign_op;
+			auto lhs_value = std::get<StringHandle>(operandIrOperands[2]);
+			assign_op.result = lhs_value;
+			assign_op.lhs = { std::get<Type>(operandIrOperands[0]), std::get<int>(operandIrOperands[1]), lhs_value };
+			populateIncDecTypedValueMetadata(assign_op.lhs);
+			assign_op.rhs = toTypedValue(rhs_operands);
+			populateIncDecTypedValueMetadata(assign_op.rhs);
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), unaryOperatorNode.get_token()));
+			return true;
+		}
+		if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
+			if (handleLValueAssignment(operandIrOperands, rhs_operands, unaryOperatorNode.get_token())) {
+				return true;
+			}
+			AssignmentOp assign_op;
+			auto lhs_value = std::get<TempVar>(operandIrOperands[2]);
+			assign_op.result = lhs_value;
+			assign_op.lhs = { std::get<Type>(operandIrOperands[0]), std::get<int>(operandIrOperands[1]), lhs_value };
+			populateIncDecTypedValueMetadata(assign_op.lhs);
+			assign_op.rhs = toTypedValue(rhs_operands);
+			populateIncDecTypedValueMetadata(assign_op.rhs);
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), unaryOperatorNode.get_token()));
+			return true;
+		}
+		return false;
+	};
+
 	// Check if this is a pointer increment/decrement (requires pointer arithmetic)
 	bool is_pointer = false;
 	int element_size = 1;
+	if (operand_pointer_depth > 0) {
+		is_pointer = true;
+		if (operand_pointer_depth > 1) {
+			element_size = 8;
+		} else {
+			element_size = getSizeInBytes(operandType, 0, get_type_size_bits(operandType));
+			if (element_size == 0) {
+				element_size = 1;
+			}
+		}
+	}
 	if (operandHandledAsIdentifier && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(operandExpr)) {
@@ -1672,6 +1742,7 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 				
 				if (type_node && type_node->pointer_depth() > 0) {
 					is_pointer = true;
+					operand_pointer_depth = static_cast<int>(type_node->pointer_depth());
 					if (type_node->pointer_depth() > 1) {
 						element_size = 8;  // Multi-level pointer: element is a pointer
 					} else {
@@ -1692,8 +1763,7 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 	if (is_pointer) {
 		// For pointers, use a BinaryOp to add/subtract element_size
 		// Extract the pointer operand value once (used in multiple BinaryOp/AssignmentOp below)
-		IrValue ptr_operand = std::holds_alternative<StringHandle>(operandIrOperands[2])
-			? IrValue(std::get<StringHandle>(operandIrOperands[2])) : IrValue{};
+		IrValue ptr_operand = toIrValue(operandIrOperands[2]);
 		
 		if (is_prefix) {
 			BinaryOp bin_op{
@@ -1701,41 +1771,34 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 				.result = result_var,
 			};
-			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), Token()));
-			// Store back to the pointer variable
-			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-				AssignmentOp assign_op;
-				assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
-				assign_op.lhs = { Type::UnsignedLongLong, 64, ptr_operand };
-				assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
+			std::vector<IrOperand> rhs_operands{ operandType, 64, result_var };
+			if (!storeBackUpdatedValue(rhs_operands)) {
+				FLASH_LOG(Codegen, Error, "Failed to store back pointer increment/decrement result");
+				return {};
 			}
-			return { operandType, 64, result_var, 0ULL };
+			return { operandType, 64, result_var, static_cast<unsigned long long>(operand_pointer_depth) };
 		} else {
 			// Postfix: save old value, modify, return old value
 			TempVar old_value = var_counter.next();
-			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-				AssignmentOp save_op;
-				save_op.result = old_value;
-				save_op.lhs = { Type::UnsignedLongLong, 64, old_value };
-				save_op.rhs = toTypedValue(operandIrOperands);
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
-			}
+			AssignmentOp save_op;
+			save_op.result = old_value;
+			save_op.lhs = { Type::UnsignedLongLong, 64, old_value };
+			save_op.rhs = toTypedValue(operandIrOperands);
+			populateIncDecTypedValueMetadata(save_op.rhs);
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
 			BinaryOp bin_op{
 				.lhs = { Type::UnsignedLongLong, 64, ptr_operand },
 				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 				.result = result_var,
 			};
-			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), Token()));
-			// Store back to the pointer variable
-			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-				AssignmentOp assign_op;
-				assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
-				assign_op.lhs = { Type::UnsignedLongLong, 64, ptr_operand };
-				assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
+			std::vector<IrOperand> rhs_operands{ operandType, 64, result_var };
+			if (!storeBackUpdatedValue(rhs_operands)) {
+				FLASH_LOG(Codegen, Error, "Failed to store back pointer postfix increment/decrement result");
+				return {};
 			}
-			return { operandType, 64, old_value, 0ULL };
+			return { operandType, 64, old_value, static_cast<unsigned long long>(operand_pointer_depth) };
 		}
 	} else {
 		// Regular integer increment/decrement
@@ -1782,7 +1845,7 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 					.rhs = {Type::Int, 32, 1ULL},
 					.result = result_var,
 				};
-				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), Token()));
+				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), unaryOperatorNode.get_token()));
 				std::vector<IrOperand> store_ops;
 				store_ops.emplace_back(gsi.store_name);
 				store_ops.emplace_back(result_var);
@@ -1794,14 +1857,14 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 				save_op.result = old_val;
 				save_op.lhs = {elem_type, elem_size, old_val};
 				save_op.rhs = {elem_type, elem_size, loaded_val};
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
 
 				BinaryOp bin_op{
 					.lhs = {elem_type, elem_size, loaded_val},
 					.rhs = {Type::Int, 32, 1ULL},
 					.result = result_var,
 				};
-				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), Token()));
+				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), unaryOperatorNode.get_token()));
 				std::vector<IrOperand> store_ops;
 				store_ops.emplace_back(gsi.store_name);
 				store_ops.emplace_back(result_var);
@@ -1809,7 +1872,7 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 				return { operandType, elem_size, old_val, 0ULL };
 			}
 		} else {
-			ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, Token()));
+			ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, unaryOperatorNode.get_token()));
 		}
 	}
 	
