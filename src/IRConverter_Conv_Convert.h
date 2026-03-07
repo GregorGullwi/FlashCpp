@@ -374,6 +374,9 @@
 			case IrOpcode::Rethrow:
 				handleRethrow(instruction);
 				break;
+			case IrOpcode::FunctionCleanupLP:
+				handleFunctionCleanupLP(instruction);
+				break;
 			// Windows SEH (Structured Exception Handling)
 			case IrOpcode::SehTryBegin:
 				handleSehTryBegin(instruction);

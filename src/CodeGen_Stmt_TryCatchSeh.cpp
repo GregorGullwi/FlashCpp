@@ -25,8 +25,24 @@
 		// Emit TryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
 
+		// Enable capture of try-block-scope vars for Phase 1 cleanup
+		captured_try_cleanup_vars_.clear();
+		capture_try_cleanup_ = true;
+		capture_try_cleanup_depth_ = static_cast<int>(scope_stack_.size()) + 1;
+
 		// Visit try block
 		visit(node.try_block());
+
+		// Disable capture and collect the vars
+		capture_try_cleanup_ = false;
+		std::vector<std::pair<StringHandle, StringHandle>> try_cleanup_vars;
+		for (const auto& var : captured_try_cleanup_vars_) {
+			try_cleanup_vars.push_back({
+				StringTable::getOrInternStringHandle(var.struct_name),
+				StringTable::getOrInternStringHandle(var.variable_name)
+			});
+		}
+		captured_try_cleanup_vars_.clear();
 
 		// Emit TryEnd marker
 		ir_.addInstruction(IrOpcode::TryEnd, {}, node.try_token());
@@ -75,6 +91,10 @@
 				catch_op.is_const = type_node.is_const();
 				catch_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_lvalue_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				catch_op.is_catch_all = false;  // This is a typed catch, not catch(...)
+				// Phase 1: first handler gets the cleanup vars for try-block-local destructors
+				if (catch_index == 0) {
+					catch_op.cleanup_vars = try_cleanup_vars;
+				}
 				ir_.addInstruction(IrInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token()));
 
 				// Add the exception variable to the symbol table for the catch block scope
@@ -121,6 +141,10 @@
 				catch_op.is_const = false;
 				catch_op.ref_qualifier = CVReferenceQualifier::None;
 				catch_op.is_catch_all = true;  // This IS catch(...)
+				// Phase 1: first handler gets the cleanup vars for try-block-local destructors
+				if (catch_index == 0) {
+					catch_op.cleanup_vars = try_cleanup_vars;
+				}
 				ir_.addInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token());
 				symbol_table.enter_scope(ScopeType::Block);
 			}

@@ -179,6 +179,7 @@
 	std::vector<ElfCatchFilterPatch> elf_catch_filter_patches_;
 	int32_t elf_exc_ptr_offset_ = 0;   // Stack offset for saved exception pointer
 	int32_t elf_selector_offset_ = 0;  // Stack offset for saved selector value
+	uint32_t current_function_cleanup_lp_offset_ = 0;  // Offset of function-level cleanup LP (ELF Phase 2)
 
 	// Windows SEH (Structured Exception Handling) tracking
 	struct SehExceptHandler {

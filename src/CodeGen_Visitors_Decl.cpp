@@ -854,7 +854,7 @@
 		// Exit the function body scope and call destructors before returning
 		// Only do this for user-defined function bodies where we called enterScope()
 		if (!node.is_implicit() || !node.is_member_function()) {
-			exitScope();
+			exitFunctionScope();
 		}
 
 		// Add implicit return if needed
@@ -882,6 +882,9 @@
 					func_decl.identifier_token().value());
 			}
 		}
+
+		// Emit function-level cleanup landing pad (ELF Phase 2: after return, before function end)
+		emitPendingFunctionCleanupLP(func_decl.identifier_token());
 
 		symbol_table.exit_scope();
 		// Don't clear current_function_name_ here - let the top-level visitor manage it

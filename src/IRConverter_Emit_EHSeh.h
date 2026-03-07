@@ -123,6 +123,12 @@
 				emitMovToFrame(X64Register::RAX, elf_exc_ptr_offset_, 64);
 				// mov [rbp+selector_offset], edx (32-bit)
 				emitMovToFrameBySize(X64Register::RDX, elf_selector_offset_, 32);
+
+				// Phase 1: call destructors for variables declared in the try block scope.
+				// These must be destroyed before dispatching to the catch handler.
+				for (const auto& cv : catch_op.cleanup_vars) {
+					emitInlineDestructorCall(cv);
+				}
 			}
 			
 			// For non-last handlers, emit selector comparison + skip jump.
@@ -699,6 +705,75 @@
 			// Same PDATA range fix: emit int 3 so the return address is within the function range.
 			textSectionData.push_back(static_cast<char>(0xCC)); // int 3 (unreachable)
 		}
+	}
+
+	// ============================================================================
+	// Inline destructor call helper (shared by Phase 1 and Phase 2 cleanup LP)
+	// ============================================================================
+
+	void emitInlineDestructorCall(const std::pair<StringHandle, StringHandle>& cleanup_var) {
+		const auto& [struct_name_h, var_name_h] = cleanup_var;
+		const VariableInfo* var_info = findVariableInfo(var_name_h);
+		if (!var_info) return;
+
+		X64Register this_reg = getIntParamReg<TWriterClass>(0);
+		emitLeaFromFrame(this_reg, var_info->offset);
+
+		std::string_view struct_sv = StringTable::getStringView(struct_name_h);
+		std::string function_name;
+		std::string class_name;
+		size_t last_colon_pos = struct_sv.rfind("::");
+		if (last_colon_pos != std::string::npos) {
+			class_name = std::string(struct_sv.substr(0, last_colon_pos));
+			function_name = "~" + std::string(struct_sv.substr(last_colon_pos + 2));
+		} else {
+			function_name = "~" + std::string(struct_sv);
+			class_name = std::string(struct_sv);
+		}
+
+		std::vector<TypeSpecifierNode> empty_params;
+		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
+		sig.class_name = class_name;
+
+		auto mangled_name = writer.generateMangledName(function_name, sig);
+		std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
+		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+		writer.add_relocation(textSectionData.size() - 4, mangled_name);
+		regAlloc.invalidateCallerSavedRegisters();
+	}
+
+	// ============================================================================
+	// Phase 2: Function-level cleanup landing pad (ELF/Linux only)
+	// ============================================================================
+
+	void handleFunctionCleanupLP(const IrInstruction& instruction) {
+		if (!g_enable_exceptions) return;
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) return;
+
+		const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
+		if (op.cleanup_vars.empty()) return;
+
+		// Record the offset of this cleanup landing pad within the function
+		current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+		// Flush any dirty virtual registers before the LP code
+		flushAllDirtyRegisters();
+
+		// Allocate a frame slot to save the _Unwind_Exception* arriving in RAX
+		int32_t exc_save_offset = allocateElfTempStackSlot(8);
+
+		// Save _Unwind_Exception* (RAX) to frame slot
+		emitMovToFrame(X64Register::RAX, exc_save_offset, 64);
+
+		// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
+		for (const auto& cv : op.cleanup_vars) {
+			emitInlineDestructorCall(cv);
+		}
+
+		// Load saved exception ptr into RDI (first arg on Linux) and call _Unwind_Resume
+		emitMovFromFrame(X64Register::RDI, exc_save_offset);
+		emitCall("_Unwind_Resume");
 	}
 
 	// ============================================================================

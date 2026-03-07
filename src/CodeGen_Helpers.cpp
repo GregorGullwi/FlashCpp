@@ -4,6 +4,13 @@
 
 void AstToIr::exitScope() {
 	if (!scope_stack_.empty()) {
+		// If try-cleanup capture is active and this is the target scope depth,
+		// record vars in LIFO order before emitting their destructors.
+		if (capture_try_cleanup_ && (int)scope_stack_.size() == capture_try_cleanup_depth_) {
+			for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
+				captured_try_cleanup_vars_.push_back(*it);
+			}
+		}
 		// Generate destructor calls for all variables in this scope (in reverse order)
 		const auto& scope_vars = scope_stack_.back();
 		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
@@ -15,6 +22,34 @@ void AstToIr::exitScope() {
 		}
 		scope_stack_.pop_back();
 	}
+}
+
+
+
+void AstToIr::exitFunctionScope() {
+	if (scope_stack_.empty()) return;
+
+	// Capture vars in LIFO order for the cleanup LP, but only those with destructors
+	pending_function_cleanup_vars_.clear();
+	for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
+		pending_function_cleanup_vars_.push_back({
+			StringTable::getOrInternStringHandle(it->struct_name),
+			StringTable::getOrInternStringHandle(it->variable_name)
+		});
+	}
+
+	// Call normal exitScope to emit destructor IR instructions
+	exitScope();
+}
+
+
+
+void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
+	if (pending_function_cleanup_vars_.empty()) return;
+
+	FunctionCleanupLPOp cleanup_op;
+	cleanup_op.cleanup_vars = std::move(pending_function_cleanup_vars_);
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCleanupLP, std::move(cleanup_op), token));
 }
 
 
