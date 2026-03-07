@@ -1523,8 +1523,10 @@
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
-		// Release source XMM
-		regAlloc.release(source_xmm);
+		// Release source XMM (guard against source == result under register pressure)
+		if (source_xmm != result_xmm) {
+			regAlloc.release(source_xmm);
+		}
 
 		// Store result XMM to stack
 		auto result_offset = getStackOffsetFromTempVar(op.result);
