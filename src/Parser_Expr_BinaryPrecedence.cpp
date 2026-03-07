@@ -986,7 +986,8 @@ bool Parser::parse_static_member_function(
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
-	const InlineVector<StringHandle, 4>& current_template_param_names
+	const InlineVector<StringHandle, 4>& current_template_param_names,
+	bool add_to_struct_info
 ) {
 	// Check if this is a function (has '(')
 	if (peek() != "("_tok) {
@@ -1134,17 +1135,19 @@ bool Parser::parse_static_member_function(
 	                               member_quals.cv_qualifier);
 	FLASH_LOG(Templates, Debug, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
 	
-	// Also register in StructTypeInfo
-	auto& registered = struct_info->member_functions.emplace_back(
-		decl_node.identifier_token().handle(),
-		member_func_node,
-		current_access,
-		false,  // is_constructor
-		false   // is_destructor
-	);
-	registered.cv_qualifier = member_quals.cv_qualifier;
-	// Extract noexcept from the underlying function declaration node
-	registered.is_noexcept = member_func_node.as<FunctionDeclarationNode>().is_noexcept();
+	// Also register in StructTypeInfo (unless deferred to the struct finalization loop)
+	if (add_to_struct_info) {
+		auto& registered = struct_info->member_functions.emplace_back(
+			decl_node.identifier_token().handle(),
+			member_func_node,
+			current_access,
+			false,  // is_constructor
+			false   // is_destructor
+		);
+		registered.cv_qualifier = member_quals.cv_qualifier;
+		// Extract noexcept from the underlying function declaration node
+		registered.is_noexcept = member_func_node.as<FunctionDeclarationNode>().is_noexcept();
+	}
 
 	return true;  // Successfully handled as a function
 }

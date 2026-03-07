@@ -1054,7 +1054,8 @@ public:  // Public methods for template instantiation
             StructDeclarationNode& struct_ref,
             StructTypeInfo* struct_info,
             AccessSpecifier current_access,
-            const InlineVector<StringHandle, 4>& current_template_param_names
+            const InlineVector<StringHandle, 4>& current_template_param_names,
+            bool add_to_struct_info = true  // false when finalization loop will register the function
         );
         
         // Helper to parse entire static member block (data or function) - reduces code duplication

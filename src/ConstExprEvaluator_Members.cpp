@@ -1952,6 +1952,86 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	
 	auto symbol_opt = context.symbols->lookup(var_name);
 	if (!symbol_opt.has_value()) {
+		// When symbol is not found (e.g., implicit this for static member calls),
+		// try to evaluate as a member function of the current struct context.
+		if (context.struct_info) {
+			StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
+			bool needs_inst = context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+					context.struct_info->name, fn_handle);
+			if (needs_inst) {
+				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+					context.struct_info->name, fn_handle);
+				if (lazy_info_opt.has_value()) {
+					context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
+					LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+						context.struct_info->name, fn_handle);
+				}
+			}
+			auto saved_pn = context.template_param_names;
+			auto saved_ta = context.template_args;
+			bool tmpl_loaded = false;
+			if (const LazyClassInstantiationInfo* lci =
+					LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
+				context.template_param_names.clear();
+				context.template_args = lci->template_args;
+				for (const auto& tp : lci->template_params) {
+					if (tp.is<TemplateParameterNode>())
+						context.template_param_names.push_back(tp.as<TemplateParameterNode>().name());
+				}
+				tmpl_loaded = true;
+			}
+			if (!tmpl_loaded) {
+				auto tmpl_sit = gTypesByName.find(context.struct_info->name);
+				if (tmpl_sit != gTypesByName.end() && tmpl_sit->second->isTemplateInstantiation()) {
+					const TypeInfo* tmpl_st = tmpl_sit->second;
+					auto ph_list = gTemplateRegistry.getTemplateParameters(tmpl_st->baseTemplateName());
+					context.template_param_names.clear();
+					context.template_args.clear();
+					if (ph_list.empty()) {
+						// Class templates don't register param names via registerTemplateParameters.
+						// Fall back to the TemplateClassDeclarationNode in the template registry.
+						auto template_node_opt = gTemplateRegistry.lookupTemplate(tmpl_st->baseTemplateName());
+						if (template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
+							for (std::string_view pname : template_node_opt->as<TemplateClassDeclarationNode>().template_param_names()) {
+								context.template_param_names.push_back(pname);
+							}
+						}
+					} else {
+						for (StringHandle ph : ph_list)
+							context.template_param_names.push_back(StringTable::getStringView(ph));
+					}
+					for (const auto& ai : tmpl_st->templateArgs())
+						context.template_args.push_back(toTemplateTypeArg(ai));
+				}
+			}
+			auto tryStructMember = [&](const StructTypeInfo* si) -> std::optional<EvalResult> {
+				for (const auto& mf : si->member_functions) {
+					if (mf.getName() != fn_handle || !mf.function_decl.is<FunctionDeclarationNode>()) continue;
+					const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+					if (fd.parameter_nodes().size() != member_func_call.arguments().size()) continue;
+					bool can_eval = fd.is_constexpr() ||
+						(context.storage_duration == ConstExpr::StorageDuration::Static);
+					if (!can_eval || !fd.get_definition().has_value()) continue;
+					std::unordered_map<std::string_view, EvalResult> empty_b;
+					return evaluate_function_call_with_bindings(fd, member_func_call.arguments(), empty_b, context);
+				}
+				return std::nullopt;
+			};
+			auto sm_res = tryStructMember(context.struct_info);
+			if (!sm_res) {
+				auto base_sit = gTypesByName.find(context.struct_info->name);
+				if (base_sit != gTypesByName.end() && base_sit->second->isTemplateInstantiation()) {
+					auto base_tit = gTypesByName.find(base_sit->second->baseTemplateName());
+					if (base_tit != gTypesByName.end() && base_tit->second->isStruct()) {
+						if (const StructTypeInfo* tsi = base_tit->second->getStructInfo())
+							sm_res = tryStructMember(tsi);
+					}
+				}
+			}
+			context.template_param_names = std::move(saved_pn);
+			context.template_args = std::move(saved_ta);
+			if (sm_res) return *sm_res;
+		}
 		return EvalResult::error("Undefined variable in member function call: " + std::string(var_name));
 	}
 	
@@ -1971,7 +2051,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	if (!initializer.has_value()) {
 		return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
 	}
-	
+
 	// Check if this is a lambda call (operator() on a lambda object)
 	if (is_operator_call) {
 		const LambdaExpressionNode* lambda = extract_lambda_from_initializer(initializer);

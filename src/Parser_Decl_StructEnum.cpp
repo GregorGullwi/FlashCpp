@@ -1331,9 +1331,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 			
 			// Check if this is a static member function (has '(')
+			// Pass false for add_to_struct_info: the finalization loop below will register it
 			if (parse_static_member_function(type_and_name_result, is_static_constexpr,
 			                                   qualified_struct_name, struct_ref, struct_info.get(),
-			                                   current_access, current_template_param_names_)) {
+			                                   current_access, current_template_param_names_, false)) {
 				// Function was handled (or error occurred)
 				if (type_and_name_result.is_error()) {
 					return type_and_name_result;
@@ -2703,7 +2704,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Add member function to struct type info
-			// Phase 7B: Intern function name and use StringHandle overload
 			struct_info->addMemberFunction(
 				func_name_handle,
 				func_decl.function_declaration,
@@ -2713,9 +2713,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				func_decl.is_override,
 				func_decl.is_final
 			);
-			// Propagate const/volatile qualifiers from the AST node to StructTypeInfo
+			// Propagate const/volatile qualifiers and noexcept from the AST node to StructTypeInfo
 			auto& registered_func = struct_info->member_functions.back();
 			registered_func.cv_qualifier = func_decl.cv_qualifier;
+			if (func_decl.function_declaration.is<FunctionDeclarationNode>()) {
+				registered_func.is_noexcept = func_decl.function_declaration.as<FunctionDeclarationNode>().is_noexcept();
+			}
 	}
 }
 
@@ -4287,4 +4290,5 @@ void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl
 		struct_info->addFriendMemberFunction(friend_decl.class_name(), friend_decl.name());
 	}
 }
+
 

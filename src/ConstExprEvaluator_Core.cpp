@@ -398,7 +398,27 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 			unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
 			// sizeof never returns 0 in valid C++ (sizeof(char) == 1, all complete types >= 1).
 			// A zero result indicates an incomplete or template-dependent type.
-			// Return a template-dependent error so static_assert can be deferred in template contexts.
+			// Before returning an error, try context.template_param_names (e.g., T=int from Box<int>).
+			if (size_in_bytes == 0 && !context.template_param_names.empty()) {
+				std::string_view type_name = type_spec.token().value();
+				for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
+					if (context.template_param_names[i] == type_name) {
+						const TemplateTypeArg& arg = context.template_args[i];
+						if (arg.isTypeArgument()) {
+							size_t param_size = get_type_size_bits(arg.base_type) / 8;
+							if (param_size == 0 && arg.base_type == Type::Struct && arg.type_index > 0 &&
+									arg.type_index < gTypeInfo.size()) {
+								const StructTypeInfo* si = gTypeInfo[arg.type_index].getStructInfo();
+								if (si) param_size = si->total_size;
+							}
+							if (param_size > 0) {
+								return EvalResult::from_int(static_cast<long long>(param_size));
+							}
+						}
+						break;
+					}
+				}
+			}
 			if (size_in_bytes == 0) {
 				return EvalResult::error(
 					"sizeof evaluated to 0 for type '" + std::string(type_spec.token().value()) + "' (incomplete or dependent type)",
@@ -1723,15 +1743,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
 	auto tryEvaluateCurrentStructStaticMemberFunction = [&]() -> std::optional<EvalResult> {
 		if (!context.struct_info) {
-			FLASH_LOG(ConstExpr, Debug, "tryEvaluateCurrentStructStaticMemberFunction: struct_info is null for func=", func_name);
 			return std::nullopt;
 		}
-
-		FLASH_LOG(ConstExpr, Debug, "tryEvaluateCurrentStructStaticMemberFunction: checking struct=", context.struct_info->name, " func=", func_name);
-		fprintf(stderr, "[DBG] tryEvalCurrentStruct: struct=%s func=%s member_funcs=%zu\n",
-			StringTable::getStringView(context.struct_info->name).data(),
-			std::string(func_name).c_str(),
-			context.struct_info->member_functions.size());
 
 		const auto& arguments = func_call.arguments();
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
