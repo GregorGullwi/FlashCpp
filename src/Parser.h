@@ -1024,7 +1024,7 @@ public:  // Public methods for template instantiation
         void skip_cpp_attributes();                   // Skip C++ standard [[...]] attributes
         void skip_gcc_attributes();                   // Skip GCC __attribute__((...)) specifications
         void skip_noop_gnu_qualifiers();              // Skip GNU-style no-op qualifiers like __restrict
-        void skip_asm_suffix();                       // Skip declaration-suffix __asm("...") / __asm__("...")
+        bool skip_asm_suffix();                       // Skip declaration-suffix __asm("...") / __asm__("...")
         void skip_noexcept_specifier();               // Skip noexcept or noexcept(expr) specifier
         void skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals);     // Skip all trailing specifiers after function parameters (stops before 'requires')
         void skip_trailing_requires_clause();         // Parse and discard trailing requires clause (if present)

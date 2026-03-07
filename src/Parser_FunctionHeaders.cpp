@@ -724,9 +724,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 		}
 
 		// Parse GNU declaration suffix symbol renaming: __asm("symbol")
-		if (token.type() == Token::Type::Identifier &&
-		    (token.value() == "__asm" || token.value() == "__asm__")) {
-			skip_asm_suffix();
+		if (skip_asm_suffix()) {
 			continue;
 		}
 

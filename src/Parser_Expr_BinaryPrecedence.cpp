@@ -699,24 +699,27 @@ void Parser::skip_noop_gnu_qualifiers()
 	}
 }
 
-void Parser::skip_asm_suffix()
+bool Parser::skip_asm_suffix()
 {
-	while (!peek().is_eof() && peek().is_identifier()) {
-		std::string_view token = peek_info().value();
-		if (token != "__asm" && token != "__asm__") {
-			break;
-		}
-
-		SaveHandle saved_pos = save_token_position();
-		advance(); // consume __asm / __asm__
-		if (peek() != "("_tok) {
-			restore_token_position(saved_pos);
-			break;
-		}
-
-		discard_saved_token(saved_pos);
-		skip_balanced_parens();
+	if (peek().is_eof() || !peek().is_identifier()) {
+		return false;
 	}
+
+	std::string_view token = peek_info().value();
+	if (token != "__asm" && token != "__asm__") {
+		return false;
+	}
+
+	SaveHandle saved_pos = save_token_position();
+	advance(); // consume __asm / __asm__
+	if (peek() != "("_tok) {
+		restore_token_position(saved_pos);
+		return false;
+	}
+
+	discard_saved_token(saved_pos);
+	skip_balanced_parens();
+	return true;
 }
 
 // Skip noexcept specifier: noexcept or noexcept(expression)
@@ -847,8 +850,7 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 		}
 
 		// Handle GNU declaration suffix symbol renaming: __asm("symbol")
-		if (token.value() == "__asm" || token.value() == "__asm__") {
-			skip_asm_suffix();
+		if (skip_asm_suffix()) {
 			continue;
 		}
 		
