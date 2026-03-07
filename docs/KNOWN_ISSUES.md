@@ -35,6 +35,35 @@ Linux now correctly use the two-register convention, matching what `va_arg` expe
 Implementing the full two-register callee prologue (unpack RDI + RSI into a local
 stack slot) is needed for full ABI compatibility with non-variadic external code.
 
+## Abbreviated Function Templates: `decltype` Trailing Return Using Parameter Names
+
+### Status: Open (verified 2026-03-07)
+
+When an abbreviated function template uses `auto` parameters and a trailing
+return type that references those parameter names via `decltype`, the compiler
+fails with "Missing identifier":
+
+```cpp
+// Fails: parser does not have auto param names in scope when parsing trailing return
+auto max_val(auto a, auto b) -> decltype(a > b ? a : b) { return a > b ? a : b; }
+
+// Works: explicit template parameters are in scope for the trailing return type
+template <typename A, typename B>
+auto max_val(A a, B b) -> decltype(a > b ? a : b) { return a > b ? a : b; }
+
+// Works: trailing return type that does not reference param names
+auto max_val(auto a, auto b) -> int { return a > b ? a : b; }
+```
+
+The root cause is that abbreviated function templates synthesize their implicit
+template parameters after the return type is parsed, so `a` and `b` are not yet
+visible during trailing-return-type parsing. Workaround: use explicit `template<>`
+syntax when `decltype` on parameter names is needed in the trailing return.
+
+All other abbreviated function template forms work correctly: `auto`/`const auto&`/
+`auto*`/`auto&` parameters, multiple independent `auto` parameters, constrained
+`auto` (e.g., `Concept auto`), mixed explicit template params, and member functions.
+
 ## Default Argument Codegen Silently Skips Unrecognized Expression Types
 
 ### Status: Open (verified 2026-03-06)
