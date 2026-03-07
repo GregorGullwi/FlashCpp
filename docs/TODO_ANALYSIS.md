@@ -255,3 +255,12 @@ Assigning through a reference returned by a member function (e.g., `h.getRef() =
 
 ## 37. `if constexpr` in Template Bodies — Long-Term Conformance Follow-up
 `src/Parser_Templates_Inst_Deduction.cpp`, `src/Parser_Templates_Substitution.cpp`, `src/Parser_Expr_ControlFlowStmt.cpp` — Current work now prefers substituting an already-parsed template body AST before falling back to token-level body re-parsing, which reduces reliance on parser-time dead-branch skipping. The long-term standards-aligned solution is to preserve template function bodies as AST consistently, evaluate dependent `if constexpr` conditions during instantiation/substitution, and instantiate only the selected substatement once the condition becomes non-dependent. Token-level branch skipping during body re-parse should remain only as a compatibility fallback for bodies that still cannot be represented faithfully as AST during initial parse.
+
+---
+
+## 38. Preprocessor Conformance Follow-Ups (Open)
+
+- Preserve declaration-suffix assembler rename metadata for variables declared with `__asm("symbol")` / `__asm__("symbol")`; function declarations now retain the requested external symbol.
+- Stop defining both `__GNUC__` and `_MSC_VER` simultaneously once header-compatibility strategy is in place for both library families.
+- Only raise `__cpp_consteval`, `__cpp_constexpr_dynamic_alloc`, or a higher `__cpp_constexpr` level again after the underlying constexpr/consteval features are actually implemented.
+- Re-evaluate `__cpp_exceptions` once exception handling is complete enough for standard-library throw paths.

@@ -687,6 +687,52 @@ void Parser::skip_gcc_attributes()
 	}
 }
 
+void Parser::skip_noop_gnu_qualifiers()
+{
+	while (!peek().is_eof() && peek().is_identifier()) {
+		std::string_view token = peek_info().value();
+		if (token == "__restrict" || token == "__restrict__") {
+			advance();
+			continue;
+		}
+		break;
+	}
+}
+
+bool Parser::skip_asm_suffix(std::optional<std::string_view>* asm_symbol_name)
+{
+	if (peek().is_eof() || !peek().is_identifier()) {
+		return false;
+	}
+
+	std::string_view token = peek_info().value();
+	if (token != "__asm" && token != "__asm__") {
+		return false;
+	}
+
+	SaveHandle saved_pos = save_token_position();
+	advance(); // consume __asm / __asm__
+	if (peek() != "("_tok) {
+		restore_token_position(saved_pos);
+		return false;
+	}
+
+	discard_saved_token(saved_pos);
+	if (asm_symbol_name != nullptr) {
+		const Token& literal_token = peek_info(1);
+		if (literal_token.type() == Token::Type::StringLiteral) {
+			std::string_view literal = literal_token.value();
+			size_t first_quote = literal.find('"');
+			size_t last_quote = literal.rfind('"');
+			if (first_quote != std::string_view::npos && last_quote != std::string_view::npos && first_quote < last_quote) {
+				*asm_symbol_name = literal.substr(first_quote + 1, last_quote - first_quote - 1);
+			}
+		}
+	}
+	skip_balanced_parens();
+	return true;
+}
+
 // Skip noexcept specifier: noexcept or noexcept(expression)
 void Parser::skip_noexcept_specifier()
 {
@@ -813,6 +859,11 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 			skip_gcc_attributes();
 			continue;
 		}
+
+		// Handle GNU declaration suffix symbol renaming: __asm("symbol")
+		if (skip_asm_suffix()) {
+			continue;
+		}
 		
 		// Stop before trailing requires clause - don't consume it here.
 		// Callers like parse_static_member_function need to handle requires clauses
@@ -887,6 +938,8 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	while (peek() == "*"_tok) {
 		advance(); // consume '*'
 		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
+		skip_noop_gnu_qualifiers(); // Skip __restrict / __restrict__ after pointer CV-qualifiers
+		ptr_cv |= parse_cv_qualifiers(); // Re-parse CV-qualifiers that may follow __restrict
 		// Consume and ignore Microsoft-specific pointer modifiers
 		while (peek().is_keyword() && is_msvc_pointer_modifier(peek_info().value())) {
 			advance();
@@ -908,6 +961,15 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 			}
 			advance();
 		}
+		// Skip __restrict / __restrict__ that may appear between CV-qualifiers and & / &&
+		while (!peek().is_eof() && peek().is_identifier()) {
+			std::string_view tok = peek_info().value();
+			if (tok == "__restrict" || tok == "__restrict__") {
+				advance();
+			} else {
+				break;
+			}
+		}
 		if (trailing_cv != CVQualifier::None && (peek() == "&"_tok || peek() == "&&"_tok)) {
 			found_ref = true;
 		}
@@ -918,6 +980,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 			restore_token_position(cv_check);
 		}
 	}
+	skip_noop_gnu_qualifiers(); // Skip __restrict / __restrict__ before reference qualifiers
 	if (peek() == "&&"_tok) {
 		advance();
 		type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
