@@ -37,7 +37,7 @@ Move identifier name resolution from codegen (runtime multi-table lookups on eve
 | Phase 5 — ConstExprEvaluator fast paths | ✅ Done | `61d1bd1b` | `Local`-binding fast paths added at 2 sites in `ConstExprEvaluator_Members.cpp` — skip multi-table lookup for locally-bound identifiers. All 1337 tests pass. |
 
 > [!NOTE]
-> All 1337 tests pass after Phase 5 (all runtime, 0 crashes, 0 mismatches, 26/26 _fail). All phases complete.
+> All 1357 tests pass after all phases. Two minor items from Phase 3 were not implemented but are covered by the `Unresolved` codegen fallback: (1) the `has_deferred_base_classes` guard in `createBoundIdentifier()` and (2) a post-substitution re-binding walk in `Parser_Templates_Inst_Substitution.cpp`. See the Files Summary notes for details.
 
 ## Recommended Session Breakdown
 
@@ -326,26 +326,33 @@ This is the largest missing correctness area if we want the refactor to be genui
 
 | Phase | File | Change |
 |-------|------|--------|
-| 1 ✅ | `AstNodeTypes_DeclNodes.h` | Added `IdentifierBinding` enum (12 variants + `TemplateParameter` to add), extended `IdentifierNode` |
-| 1 ✅ | `Parser.h` | Added `createBoundIdentifier()`, `get_scope_type_of_symbol()` |
+| 1 ✅ | `AstNodeTypes_DeclNodes.h` | Added `IdentifierBinding` enum (13 variants incl. `TemplateParameter`), extended `IdentifierNode` |
+| 1 ✅ | `Parser.h` | Added `createBoundIdentifier()`, `get_scope_type_of_symbol()`; `TemplateParameter` case; `tryBindMemberContext()` helper |
 | 1 ✅ | `Parser_Expr_PrimaryExpr.cpp` | 16 creation sites updated to `createBoundIdentifier()`; typo `idenfifier_token` fixed |
 | 1 ✅ | `AstToIr.h` | Removed `GlobalStaticVarInfo`, `detectGlobalOrStaticVar()` |
 | 1 ✅ | `CodeGen_Expr_Operators.cpp` | Removed `detectGlobalOrStaticVar()`; all assignment paths use `binding()` |
 | 1 ✅ | `CodeGen_Expr_Conversions.cpp` | Inc/dec and `analyzeAddressExpression` use `binding()` |
 | 1 ✅ | `CodeGen_Expr_Primitives.cpp` | `generateIdentifierIr()` switches on `binding()` |
-| 2 | `Parser_Expr_PrimaryExpr.cpp` | Bind lambda captures |
-| 2 | `CodeGen_Expr_Operators.cpp` | Remove ad-hoc lambda capture checks |
-| 3 | `AstNodeTypes_DeclNodes.h` | Add `TemplateParameter` to `IdentifierBinding` enum |
-| 3 | `Parser.h` | Replace `parsing_template_body_` bool with depth counter; add `TemplateParameter` case and dependent-base guard to `createBoundIdentifier()` |
-| 3 | `Parser_Templates_Class.cpp` | Replace `parsing_template_body_` set/clear with RAII depth-counter guards |
-| 3 | `Parser_Templates_Function.cpp` | Same RAII depth-counter guard |
-| 3 | `Parser_Templates_Inst_Substitution.cpp` | After substitution: walk `Unresolved`/`TemplateParameter` IdentifierNodes and re-bind via `createBoundIdentifier()` |
-| 4 | `SymbolTable.h` | Preserve overload-set formation and add ADL support |
-| 4 | `Parser_Expr_PrimaryExpr.cpp` | Combine ordinary lookup with ADL for unqualified calls |
-| 5 | `ConstExprEvaluator_Members.cpp` | Use binding for fast-path evaluation |
+| 2 ✅ | `Parser_Expr_PrimaryExpr.cpp` | Lambda captures set `CapturedByValue`/`CapturedByRef` in `createBoundIdentifier()` via `lambda_capture_stack_` |
+| 2 ✅ | `CodeGen_Expr_Operators.cpp` | CapturedByRef assignment uses `binding()` check; NonStaticMember block retains ad-hoc fallback (see note) |
+| 3 ✅ | `AstNodeTypes_DeclNodes.h` | `TemplateParameter` added to `IdentifierBinding` enum |
+| 3 ✅ | `Parser.h` | `parsing_template_body_` → `parsing_template_depth_` counter; `TemplateParameter` case in `createBoundIdentifier()`; dependent-base guard deferred to `Unresolved` fallback (see note) |
+| 3 ✅ | `Parser_Templates_Class.cpp` | `parsing_template_body_` set/clear replaced with `TemplateDepthGuard` RAII |
+| 3 ✅ | `Parser_Templates_Function.cpp` | Same `TemplateDepthGuard` RAII |
+| 3 ⚠️ | `Parser_Templates_Inst_Substitution.cpp` | Post-substitution re-binding walk not implemented; deferred names stay `Unresolved` and rely on codegen fallback — all current tests pass |
+| 4 ✅ | `SymbolTable.h` | Overload-set preserved; `lookup_adl()` added for ADL; `insert_into_namespace()` for hidden friends |
+| 4 ✅ | `Parser_Expr_PrimaryExpr.cpp` | Unqualified calls combine ordinary lookup with ADL |
+| 5 ✅ | `ConstExprEvaluator_Members.cpp` | `Local`-binding fast paths added at 2 sites |
 
 Also touched (secondary — `IdentifierNode` creation sites):
 - `Parser_Expr_BinaryPrecedence.cpp`, `Parser_FunctionHeaders.cpp`, `Parser_Decl_StructEnum.cpp`, `CodeGen_Stmt_Control.cpp`, `Parser_Expr_PostfixCalls.cpp`
+
+> [!NOTE]
+> **Two deferred items from Phase 3 (correctness currently covered by `Unresolved` fallback):**
+>
+> 1. **Dependent-base guard in `createBoundIdentifier()`**: The plan specifies that when the current struct has `has_deferred_base_classes == true`, the `NonStaticMember` lookup should be skipped so the name stays `Unresolved` and resolves at instantiation. This guard is not yet added. In practice, codegen's existing `Unresolved` fallback (runtime lookup) handles all current dependent-base tests correctly (`test_dependent_base_this_lookup_ret0`, `test_template_dependent_base_unqualified_ret0` both pass). The guard would prevent a theoretical wrong eager binding if a dependent-base member name happens to collide with a local in scope.
+>
+> 2. **Post-substitution re-binding walk**: The plan describes walking `Unresolved`/`TemplateParameter` `IdentifierNode`s after template substitution and calling `createBoundIdentifier()` to update bindings with concrete type information. This walk is not implemented. `test_template_rebind_after_instantiation_ret42` passes because the `Unresolved` fallback in codegen looks up the global at instantiation time.
 
 ## Verification Plan
 
