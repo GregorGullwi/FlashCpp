@@ -7,8 +7,8 @@ handling also touches `src/FileReader_Core.cpp`.
 
 > **Legend** · ✅ Correct · ⚠️ Partial · ❌ Missing / Wrong
 
-Audit status (2026-03-07): claims 7.2–7.5 were rechecked against the current implementation and
-remain accurate; 7.1 was updated after `_Pragma("once")` support was implemented.
+Audit status (2026-03-07): 7.1 and 7.3 were updated after implementation work; 7.2, 7.4, and
+7.5 were rechecked against the current implementation and remain accurate.
 
 ---
 
@@ -48,21 +48,31 @@ take unexpected paths.
 
 ---
 
-### 7.3 Feature-Test Macros Advertise Unimplemented Features ❌
+### 7.3 `constexpr` Feature-Test Macros Partially Corrected ⚠️
 
 **Standard (SD-6):** `__cpp_*` macros shall only be defined if the corresponding feature is
 fully implemented.
 
-**FlashCpp** defines the following at full C++20 values even though the features are
-incomplete or absent:
+**Status update (2026-03-07):**
+- `__cpp_consteval` is no longer defined.
+- `__cpp_constexpr_dynamic_alloc` is no longer defined.
+- `__cpp_constexpr` has been reduced from `202002L` to `201603L`.
+
+This avoids advertising full C++20 `consteval` / constexpr-dynamic-allocation support to system
+headers, but FlashCpp's constexpr evaluator still has documented gaps beyond what real-world code
+may expect from a mature C++17/C++20 compiler.
+
+**Previously over-advertised macros:**
 
 | Macro | Value | Gap |
 |-------|-------|-----|
-| `__cpp_consteval` | `201811L` | Compile-time-only enforcement not implemented (§4.3) |
-| `__cpp_constexpr` | `202002L` | Multi-statement bodies, body-assignment ctors, `new`/`delete` in constexpr absent |
-| `__cpp_constexpr_dynamic_alloc` | `201907L` | `constexpr std::string` / `std::vector` explicitly not implemented |
+| `__cpp_consteval` | *(now undefined)* | Compile-time-only enforcement not implemented (§4.3) |
+| `__cpp_constexpr` | `201603L` | Some constexpr evaluator gaps remain; see `docs/non_standard/05_constexpr.md` and `docs/CONSTEXPR_LIMITATIONS.md` |
+| `__cpp_constexpr_dynamic_alloc` | *(now undefined)* | `constexpr std::string` / `std::vector` and dynamic allocation in constexpr are not implemented |
 
-**Location:** `src/FileReader_Macros.cpp:1492–1560`
+**Regression coverage:** `tests/test_constexpr_feature_macros_ret0.cpp`
+
+**Location:** `src/FileReader_Macros.cpp:1497–1514`
 
 ---
 

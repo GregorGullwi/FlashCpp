@@ -1509,9 +1509,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_concepts"] = DefineDirective{ "201907L", {} };  // C++20 concepts
 	defines_["__cpp_conditional_explicit"] = DefineDirective{ "201806L", {} };  // explicit(bool)
 	defines_["__cpp_conditional_trivial"] = DefineDirective{ "202002L", {} };  // Conditional trivial special members
-	defines_["__cpp_consteval"] = DefineDirective{ "201811L", {} };  // consteval
-	defines_["__cpp_constexpr"] = DefineDirective{ "202002L", {} };  // C++20 constexpr extensions
-	defines_["__cpp_constexpr_dynamic_alloc"] = DefineDirective{ "201907L", {} };  // constexpr dynamic alloc
+	defines_["__cpp_constexpr"] = DefineDirective{ "201603L", {} };  // C++17 relaxed constexpr
 	defines_["__cpp_constexpr_in_decltype"] = DefineDirective{ "201711L", {} };  // decltype during constant eval
 	defines_["__cpp_constinit"] = DefineDirective{ "201907L", {} };  // constinit
 	defines_["__cpp_decltype"] = DefineDirective{ "200707L", {} };  // decltype
