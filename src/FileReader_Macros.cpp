@@ -168,8 +168,13 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									}
 									destringized += pragma_content[i];
 								}
-								// Process as #pragma: handle pack, skip others
-								if (destringized.find("pack") == 0) {
+								// Process as #pragma: handle once/pack, skip others
+								if (destringized == "once") {
+									if (!filestack_.empty()) {
+										processedHeaders_.insert(std::string(filestack_.top().file_name));
+									}
+								}
+								else if (destringized.find("pack") == 0) {
 									std::string pragma_line = "#pragma " + destringized;
 									processPragmaPack(pragma_line);
 								}

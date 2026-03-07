@@ -2,23 +2,33 @@
 
 [← Index](../NON_STANDARD_BEHAVIOR.md)
 
-All items in this section are in `src/FileReader_Macros.cpp`.
+Most items in this section are implemented in `src/FileReader_Macros.cpp`; direct `#pragma once`
+handling also touches `src/FileReader_Core.cpp`.
 
 > **Legend** · ✅ Correct · ⚠️ Partial · ❌ Missing / Wrong
 
+Audit status (2026-03-07): claims 7.2–7.5 were rechecked against the current implementation and
+remain accurate; 7.1 was updated after `_Pragma("once")` support was implemented.
+
 ---
 
-### 7.1 `_Pragma()` Only Processes `pack`; All Other Pragmas Silently Discarded ⚠️
+### 7.1 `_Pragma()` Only Processes `once` / `pack`; All Other Pragmas Silently Discarded ⚠️
 
 **Standard (C++20 [cpp.pragma.op]):** `_Pragma(string-literal)` destringises its argument
 and processes it as a `#pragma` directive.
 
-**FlashCpp:** Only `#pragma pack` is processed; `#pragma once`, `#pragma comment`,
-`#pragma warning`, `#pragma GCC`, `#pragma clang`, and all others reached via `_Pragma(…)` are
-silently discarded. In particular, `_Pragma("once")` as used in some third-party headers
-will silently fail to guard against double-inclusion.
+**FlashCpp:** `_Pragma("once")` and `_Pragma("pack(...)")` are processed. Other pragmas such
+as `_Pragma("comment")`, `_Pragma("warning")`, `_Pragma("GCC ...")`, and
+`_Pragma("clang ...")` are silently discarded.
 
-**Location:** `src/FileReader_Macros.cpp:173–176`
+Direct `#pragma once` support already existed in `src/FileReader_Core.cpp`; `_Pragma("once")`
+now feeds the same `processedHeaders_` mechanism, so third-party headers using `_Pragma("once")`
+are guarded correctly.
+
+**Status update (2026-03-07):** `_Pragma("once")` support implemented and covered by
+`tests/test_pragma_once_operator_ret42.cpp`.
+
+**Location:** `src/FileReader_Macros.cpp:171–180`, `src/FileReader_Core.cpp:427–428`
 
 ---
 
