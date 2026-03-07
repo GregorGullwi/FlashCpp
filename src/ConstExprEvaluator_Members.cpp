@@ -1379,6 +1379,54 @@ const StructTypeInfo* Evaluator::get_struct_info_from_type(const TypeSpecifierNo
 	return type_info.getStructInfo();
 }
 
+std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
+	const IdentifierNode* object_identifier,
+	std::string_view object_name,
+	EvaluationContext& context,
+	std::string_view usage_name,
+	ResolvedConstexprObject& resolved_object) {
+	resolved_object = {};
+
+	if (!context.symbols) {
+		return EvalResult::error("Cannot evaluate " + std::string(usage_name) + ": no symbol table provided");
+	}
+
+	if (object_identifier && object_identifier->binding() == IdentifierBinding::StaticMember && context.struct_info != nullptr) {
+		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(object_identifier->nameHandle());
+		if (static_member && owner_struct) {
+			resolved_object.initializer = &static_member->initializer;
+			resolved_object.declared_type_index = static_member->type_index;
+			return std::nullopt;
+		}
+	}
+
+	std::optional<ASTNode> symbol_opt;
+	if (object_identifier && object_identifier->resolved_name().isValid()) {
+		symbol_opt = context.symbols->lookup(object_identifier->resolved_name());
+	}
+	if (!symbol_opt.has_value()) {
+		symbol_opt = context.symbols->lookup(object_name);
+	}
+	if (!symbol_opt.has_value()) {
+		return EvalResult::error("Undefined variable in " + std::string(usage_name) + ": " + std::string(object_name));
+	}
+
+	const ASTNode& symbol_node = symbol_opt.value();
+	if (!symbol_node.is<VariableDeclarationNode>()) {
+		return EvalResult::error("Identifier in " + std::string(usage_name) + " is not a variable: " + std::string(object_name));
+	}
+
+	resolved_object.var_decl = &symbol_node.as<VariableDeclarationNode>();
+	resolved_object.initializer = &resolved_object.var_decl->initializer();
+
+	const DeclarationNode& decl = resolved_object.var_decl->declaration();
+	if (decl.type_node().is<TypeSpecifierNode>()) {
+		resolved_object.declared_type_index = decl.type_node().as<TypeSpecifierNode>().type_index();
+	}
+
+	return std::nullopt;
+}
+
 // Evaluate nested member access (e.g., obj.inner.value)
 EvalResult Evaluator::evaluate_nested_member_access(
 	const MemberAccessNode& inner_access,
@@ -1682,34 +1730,74 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 	const ArraySubscriptNode& subscript,
 	std::string_view member_name,
 	EvaluationContext& context) {
-	auto getArrayElementsForIdentifier = [&context](std::string_view array_name) -> const std::vector<ASTNode>* {
-		if (!context.symbols) {
-			return nullptr;
-		}
+	auto get_array_elements_for_identifier =
+		[&context](const IdentifierNode& identifier, bool& found_preferred_static_member) -> std::optional<std::vector<ASTNode>> {
+			std::string_view array_name = identifier.name();
+			found_preferred_static_member = false;
 
-		auto symbol_opt = context.symbols->lookup(array_name);
-		if (!symbol_opt.has_value()) {
-			return nullptr;
-		}
+			if (!context.symbols) {
+				return std::nullopt;
+			}
 
-		const ASTNode& symbol_node = symbol_opt.value();
-		if (!symbol_node.is<VariableDeclarationNode>()) {
-			return nullptr;
-		}
+			auto extract_elements = [](const std::optional<ASTNode>& initializer) -> std::optional<std::vector<ASTNode>> {
+				if (!initializer.has_value() || !initializer->is<InitializerListNode>()) {
+					return std::nullopt;
+				}
 
-		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-		if (!var_decl.is_constexpr()) {
-			return nullptr;
-		}
+				const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+				return init_list.initializers();
+			};
 
-		const auto& initializer = var_decl.initializer();
-		if (!initializer.has_value() || !initializer->is<InitializerListNode>()) {
-			return nullptr;
-		}
+			if ((identifier.binding() == IdentifierBinding::StaticMember ||
+			     identifier.binding() == IdentifierBinding::Global ||
+			     identifier.binding() == IdentifierBinding::Unresolved) &&
+			    context.struct_info != nullptr) {
+				auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(identifier.nameHandle());
+				if (static_member && owner_struct) {
+					found_preferred_static_member = true;
+					if (auto elements = extract_elements(static_member->initializer)) {
+						return elements;
+					}
 
-		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-		return &init_list.initializers();
-	};
+					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+						StringBuilder().append(owner_struct->getName()).append("::"sv).append(identifier.nameHandle()).commit());
+					auto qualified_symbol = context.symbols->lookup(qualified_handle);
+					if (qualified_symbol.has_value() && qualified_symbol->is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& qualified_var = qualified_symbol->as<VariableDeclarationNode>();
+						if (qualified_var.is_constexpr()) {
+							if (auto elements = extract_elements(qualified_var.initializer())) {
+								return elements;
+							}
+						}
+					}
+
+					return std::nullopt;
+				}
+			}
+
+			std::optional<ASTNode> symbol_opt;
+			if (identifier.resolved_name().isValid()) {
+				symbol_opt = context.symbols->lookup(identifier.resolved_name());
+			}
+			if (!symbol_opt.has_value()) {
+				symbol_opt = context.symbols->lookup(array_name);
+			}
+			if (!symbol_opt.has_value()) {
+				return std::nullopt;
+			}
+
+			const ASTNode& symbol_node = symbol_opt.value();
+			if (!symbol_node.is<VariableDeclarationNode>()) {
+				return std::nullopt;
+			}
+
+			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+			if (!var_decl.is_constexpr()) {
+				return std::nullopt;
+			}
+
+			return extract_elements(var_decl.initializer());
+		};
 
 	auto extractConstructorCall = [](const ASTNode& element) -> const ConstructorCallNode* {
 		if (element.is<ConstructorCallNode>()) {
@@ -1775,8 +1863,8 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 				const TypeSpecifierNode& cast_type = cast_type_node.as<TypeSpecifierNode>();
 				const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 				if (cast_type.type() != param_type.type() ||
-					cast_type.type_index() != param_type.type_index() ||
-					cast_type.pointer_depth() != param_type.pointer_depth()) {
+				    cast_type.type_index() != param_type.type_index() ||
+				    cast_type.pointer_depth() != param_type.pointer_depth()) {
 					matches_cast_targets = false;
 					break;
 				}
@@ -1844,13 +1932,25 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 	}
 
 	const ASTNode& array_expr = subscript.array_expr();
-	std::string_view array_name = getIdentifierNameFromAstNode(array_expr);
-	if (array_name.empty()) {
+	const IdentifierNode* array_identifier = nullptr;
+	if (array_expr.is<ExpressionNode>()) {
+		const ExpressionNode& expr = array_expr.as<ExpressionNode>();
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			array_identifier = &std::get<IdentifierNode>(expr);
+		}
+	} else if (array_expr.is<IdentifierNode>()) {
+		array_identifier = &array_expr.as<IdentifierNode>();
+	}
+	if (!array_identifier) {
 		return EvalResult::error("Array subscript followed by member access requires identifier base");
 	}
 
-	const auto* elements = getArrayElementsForIdentifier(array_name);
+	bool found_preferred_static_member = false;
+	auto elements = get_array_elements_for_identifier(*array_identifier, found_preferred_static_member);
 	if (!elements) {
+		if (found_preferred_static_member) {
+			return EvalResult::error("Array subscript member access requires a constexpr initializer list on the preferred static member array");
+		}
 		return EvalResult::error("Array subscript member access requires constexpr array initializer list");
 	}
 
@@ -1921,43 +2021,12 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	
 	// Get the function declaration to determine return type
 	const DeclarationNode& func_decl_node = func_call.function_declaration();
-	
-	// Look up the function in the symbol table
-	if (!context.symbols) {
-		return EvalResult::error("Cannot evaluate function call member access: no symbol table provided");
-	}
-	
-	std::string_view func_name = func_decl_node.identifier_token().value();
-	auto symbol_opt = context.symbols->lookup(func_name);
-	
-	if (!symbol_opt.has_value()) {
-		return EvalResult::error("Function not found: " + std::string(func_name));
-	}
-	
-	const ASTNode& symbol_node = symbol_opt.value();
-	
 	// Convert member_name to StringHandle once for efficient comparison
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 	
-	// Extract FunctionDeclarationNode from either regular or template function
-	const FunctionDeclarationNode* func_decl = nullptr;
-	
-	if (symbol_node.is<FunctionDeclarationNode>()) {
-		func_decl = &symbol_node.as<FunctionDeclarationNode>();
-	} else if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
-		const TemplateFunctionDeclarationNode& template_func = symbol_node.as<TemplateFunctionDeclarationNode>();
-		const ASTNode& func_node = template_func.function_declaration();
-		if (func_node.is<FunctionDeclarationNode>()) {
-			func_decl = &func_node.as<FunctionDeclarationNode>();
-		}
-	}
-	
-	if (!func_decl) {
-		return EvalResult::error("Unsupported function type for member access");
-	}
-	
-	// Get the return type from the declaration node
-	const ASTNode& type_node = func_decl->decl_node().type_node();
+	// Prefer the declaration already attached to the FunctionCallNode.
+	// This preserves member-vs-global resolution decisions that were already made by the parser.
+	const ASTNode& type_node = func_decl_node.type_node();
 	if (!type_node.is<TypeSpecifierNode>()) {
 		return EvalResult::error("Function return type is not a TypeSpecifierNode");
 	}
@@ -2001,148 +2070,165 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	
 	// For lambda calls (operator()), we need special handling
 	const bool is_operator_call = (func_name == "operator()");
+
+	auto try_evaluate_current_struct_static_member = [&]() -> std::optional<EvalResult> {
+		if (!context.struct_info) {
+			return std::nullopt;
+		}
+
+		StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
+		bool needs_inst = context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+				context.struct_info->name, fn_handle);
+		if (needs_inst) {
+			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+				context.struct_info->name, fn_handle);
+			if (lazy_info_opt.has_value()) {
+				context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
+				LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+					context.struct_info->name, fn_handle);
+			}
+		}
+
+		auto saved_pn = context.template_param_names;
+		auto saved_ta = context.template_args;
+		bool tmpl_loaded = false;
+		if (const LazyClassInstantiationInfo* lci =
+				LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
+			context.template_param_names.clear();
+			context.template_args = lci->template_args;
+			for (const auto& tp : lci->template_params) {
+				if (tp.is<TemplateParameterNode>()) {
+					context.template_param_names.push_back(tp.as<TemplateParameterNode>().name());
+				}
+			}
+			tmpl_loaded = true;
+		}
+		if (!tmpl_loaded) {
+			auto tmpl_sit = gTypesByName.find(context.struct_info->name);
+			if (tmpl_sit != gTypesByName.end() && tmpl_sit->second->isTemplateInstantiation()) {
+				const TypeInfo* tmpl_st = tmpl_sit->second;
+				auto ph_list = gTemplateRegistry.getTemplateParameters(tmpl_st->baseTemplateName());
+				context.template_param_names.clear();
+				context.template_args.clear();
+				if (ph_list.empty()) {
+					auto template_node_opt = gTemplateRegistry.lookupTemplate(tmpl_st->baseTemplateName());
+					if (template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
+						for (std::string_view pname : template_node_opt->as<TemplateClassDeclarationNode>().template_param_names()) {
+							context.template_param_names.push_back(pname);
+						}
+					}
+				} else {
+					for (StringHandle ph : ph_list) {
+						context.template_param_names.push_back(StringTable::getStringView(ph));
+					}
+				}
+				for (const auto& ai : tmpl_st->templateArgs()) {
+					context.template_args.push_back(toTemplateTypeArg(ai));
+				}
+			}
+		}
+
+		auto try_struct_member = [&](const StructTypeInfo* si) -> std::optional<EvalResult> {
+			for (const auto& mf : si->member_functions) {
+				if (mf.getName() != fn_handle || !mf.function_decl.is<FunctionDeclarationNode>()) continue;
+				const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+				if (!fd.is_static() || fd.parameter_nodes().size() != member_func_call.arguments().size()) continue;
+				bool can_eval = fd.is_constexpr() ||
+					(context.storage_duration == ConstExpr::StorageDuration::Static);
+				if (!can_eval || !fd.get_definition().has_value()) continue;
+				std::unordered_map<std::string_view, EvalResult> empty_b;
+				return evaluate_function_call_with_bindings(fd, member_func_call.arguments(), empty_b, context);
+			}
+			return std::nullopt;
+		};
+
+		auto sm_res = try_struct_member(context.struct_info);
+		if (!sm_res) {
+			auto base_sit = gTypesByName.find(context.struct_info->name);
+			if (base_sit != gTypesByName.end() && base_sit->second->isTemplateInstantiation()) {
+				auto base_tit = gTypesByName.find(base_sit->second->baseTemplateName());
+				if (base_tit != gTypesByName.end() && base_tit->second->isStruct()) {
+					if (const StructTypeInfo* tsi = base_tit->second->getStructInfo()) {
+						sm_res = try_struct_member(tsi);
+					}
+				}
+			}
+		}
+
+		context.template_param_names = std::move(saved_pn);
+		context.template_args = std::move(saved_ta);
+		return sm_res;
+	};
 	
 	// First, we need to get the struct type from the object to look up the actual function
 	std::string_view var_name;
+	const IdentifierNode* object_identifier = nullptr;
 	
 	if (object_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
 		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
 			return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
 		}
-		const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
-		var_name = id_node.name();
+		object_identifier = &std::get<IdentifierNode>(expr_node);
+		var_name = object_identifier->name();
 	} else if (object_expr.is<IdentifierNode>()) {
-		const IdentifierNode& id_node = object_expr.as<IdentifierNode>();
-		var_name = id_node.name();
+		object_identifier = &object_expr.as<IdentifierNode>();
+		var_name = object_identifier->name();
 	} else {
 		return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
 	}
-	
-	// Look up the variable in the symbol table
-	if (!context.symbols) {
-		return EvalResult::error("Cannot evaluate member function call: no symbol table provided");
-	}
-	
-	auto symbol_opt = context.symbols->lookup(var_name);
-	if (!symbol_opt.has_value()) {
-		// When symbol is not found (e.g., implicit this for static member calls),
-		// try to evaluate as a member function of the current struct context.
-		if (context.struct_info) {
-			StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
-			bool needs_inst = context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
-					context.struct_info->name, fn_handle);
-			if (needs_inst) {
-				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
-					context.struct_info->name, fn_handle);
-				if (lazy_info_opt.has_value()) {
-					context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
-					LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-						context.struct_info->name, fn_handle);
-				}
-			}
-			auto saved_pn = context.template_param_names;
-			auto saved_ta = context.template_args;
-			bool tmpl_loaded = false;
-			if (const LazyClassInstantiationInfo* lci =
-					LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
-				context.template_param_names.clear();
-				context.template_args = lci->template_args;
-				for (const auto& tp : lci->template_params) {
-					if (tp.is<TemplateParameterNode>())
-						context.template_param_names.push_back(tp.as<TemplateParameterNode>().name());
-				}
-				tmpl_loaded = true;
-			}
-			if (!tmpl_loaded) {
-				auto tmpl_sit = gTypesByName.find(context.struct_info->name);
-				if (tmpl_sit != gTypesByName.end() && tmpl_sit->second->isTemplateInstantiation()) {
-					const TypeInfo* tmpl_st = tmpl_sit->second;
-					auto ph_list = gTemplateRegistry.getTemplateParameters(tmpl_st->baseTemplateName());
-					context.template_param_names.clear();
-					context.template_args.clear();
-					if (ph_list.empty()) {
-						// Class templates don't register param names via registerTemplateParameters.
-						// Fall back to the TemplateClassDeclarationNode in the template registry.
-						auto template_node_opt = gTemplateRegistry.lookupTemplate(tmpl_st->baseTemplateName());
-						if (template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
-							for (std::string_view pname : template_node_opt->as<TemplateClassDeclarationNode>().template_param_names()) {
-								context.template_param_names.push_back(pname);
-							}
-						}
-					} else {
-						for (StringHandle ph : ph_list)
-							context.template_param_names.push_back(StringTable::getStringView(ph));
-					}
-					for (const auto& ai : tmpl_st->templateArgs())
-						context.template_args.push_back(toTemplateTypeArg(ai));
-				}
-			}
-			auto tryStructMember = [&](const StructTypeInfo* si) -> std::optional<EvalResult> {
-				for (const auto& mf : si->member_functions) {
-					if (mf.getName() != fn_handle || !mf.function_decl.is<FunctionDeclarationNode>()) continue;
-					const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
-					if (fd.parameter_nodes().size() != member_func_call.arguments().size()) continue;
-					bool can_eval = fd.is_constexpr() ||
-						(context.storage_duration == ConstExpr::StorageDuration::Static);
-					if (!can_eval || !fd.get_definition().has_value()) continue;
-					std::unordered_map<std::string_view, EvalResult> empty_b;
-					return evaluate_function_call_with_bindings(fd, member_func_call.arguments(), empty_b, context);
-				}
-				return std::nullopt;
-			};
-			auto sm_res = tryStructMember(context.struct_info);
-			if (!sm_res) {
-				auto base_sit = gTypesByName.find(context.struct_info->name);
-				if (base_sit != gTypesByName.end() && base_sit->second->isTemplateInstantiation()) {
-					auto base_tit = gTypesByName.find(base_sit->second->baseTemplateName());
-					if (base_tit != gTypesByName.end() && base_tit->second->isStruct()) {
-						if (const StructTypeInfo* tsi = base_tit->second->getStructInfo())
-							sm_res = tryStructMember(tsi);
-					}
-				}
-			}
-			context.template_param_names = std::move(saved_pn);
-			context.template_args = std::move(saved_ta);
-			if (sm_res) return *sm_res;
+
+	if (placeholder_func.is_static() && object_identifier && object_identifier->name() == "this") {
+		if (auto static_member_result = try_evaluate_current_struct_static_member()) {
+			return *static_member_result;
 		}
-		return EvalResult::error("Undefined variable in member function call: " + std::string(var_name));
 	}
-	
-	const ASTNode& symbol_node = symbol_opt.value();
-	
-	if (!symbol_node.is<VariableDeclarationNode>()) {
-		return EvalResult::error("Identifier in member function call is not a variable: " + std::string(var_name));
+
+	const VariableDeclarationNode* var_decl = nullptr;
+	ResolvedConstexprObject resolved_object;
+	if (auto resolve_error = resolve_constexpr_object_source(
+		object_identifier,
+		var_name,
+		context,
+		"member function call",
+		resolved_object)) {
+		return *resolve_error;
 	}
-	
-	const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-	
-	if (!var_decl.is_constexpr()) {
+
+	var_decl = resolved_object.var_decl;
+	if (var_decl && !var_decl->is_constexpr()) {
 		return EvalResult::error("Variable in member function call must be constexpr: " + std::string(var_name));
 	}
-	
-	const auto& initializer = var_decl.initializer();
-	if (!initializer.has_value()) {
+
+	const std::optional<ASTNode>* initializer = resolved_object.initializer;
+	TypeIndex declared_type_index = resolved_object.declared_type_index;
+	if (!initializer->has_value()) {
 		return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
+	}
+
+	if (!var_decl) {
+		if (auto static_member_result = try_evaluate_current_struct_static_member()) {
+			return *static_member_result;
+		}
 	}
 
 	// Check if this is a lambda call (operator() on a lambda object)
 	if (is_operator_call) {
-		const LambdaExpressionNode* lambda = extract_lambda_from_initializer(initializer);
+		const LambdaExpressionNode* lambda = extract_lambda_from_initializer(*initializer);
 		if (lambda) {
 			return evaluate_lambda_call(*lambda, member_func_call.arguments(), context);
 		}
 		// Brace-initialized or ConstructorCallNode-initialized callable: delegate to evaluate_callable_object
-		if (initializer.has_value() && (initializer->is<InitializerListNode>() || extract_constructor_call(initializer))) {
-			if (!symbol_node.is<VariableDeclarationNode>()) {
+		if (initializer->has_value() && ((*initializer)->is<InitializerListNode>() || extract_constructor_call(*initializer))) {
+			if (!var_decl) {
 				return EvalResult::error("Callable object is not a variable");
 			}
-			return evaluate_callable_object(symbol_node.as<VariableDeclarationNode>(), member_func_call.arguments(), context);
+			return evaluate_callable_object(*var_decl, member_func_call.arguments(), context);
 		}
 	}
 	
-	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
-	if (!ctor_call_ptr && !initializer->is<InitializerListNode>()) {
+	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(*initializer);
+	if (!ctor_call_ptr && !(*initializer)->is<InitializerListNode>()) {
 		return EvalResult::error("Member function calls require struct/class objects");
 	}
 	
@@ -2168,19 +2254,11 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		}
 		struct_info = gTypeInfo[type_index].getStructInfo();
 	} else {
-		// Brace-initialized object: resolve type from variable declaration
-		const DeclarationNode& decl = var_decl.declaration();
-		if (!decl.type_node().is<TypeSpecifierNode>()) {
+		// Brace-initialized object: resolve type from the declared object type.
+		if (declared_type_index == TypeIndex{0} || declared_type_index >= gTypeInfo.size()) {
 			return EvalResult::error("Brace-initialized object has invalid type in member function call");
 		}
-		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-		if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
-			return EvalResult::error("Member function call requires a struct type");
-		}
-		type_index = type_spec.type_index();
-		if (type_index >= gTypeInfo.size()) {
-			return EvalResult::error("Invalid type index in member function call");
-		}
+		type_index = declared_type_index;
 		struct_info = gTypeInfo[type_index].getStructInfo();
 	}
 	
@@ -2323,66 +2401,57 @@ EvalResult Evaluator::extract_object_members(
 	
 	// Get the object variable name
 	std::string_view var_name;
+	const IdentifierNode* object_identifier = nullptr;
 	
 	if (object_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
 		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
 			return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
 		}
-		const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
-		var_name = id_node.name();
+		object_identifier = &std::get<IdentifierNode>(expr_node);
+		var_name = object_identifier->name();
 	} else if (object_expr.is<IdentifierNode>()) {
-		const IdentifierNode& id_node = object_expr.as<IdentifierNode>();
-		var_name = id_node.name();
+		object_identifier = &object_expr.as<IdentifierNode>();
+		var_name = object_identifier->name();
 	} else {
 		return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
 	}
-	
-	// Look up the variable in the symbol table
-	if (!context.symbols) {
-		return EvalResult::error("Cannot evaluate member function call: no symbol table provided");
+
+	const VariableDeclarationNode* var_decl = nullptr;
+	ResolvedConstexprObject resolved_object;
+	if (auto resolve_error = resolve_constexpr_object_source(
+		object_identifier,
+		var_name,
+		context,
+		"member function call",
+		resolved_object)) {
+		return *resolve_error;
 	}
-	
-	auto symbol_opt = context.symbols->lookup(var_name);
-	if (!symbol_opt.has_value()) {
-		return EvalResult::error("Undefined variable in member function call: " + std::string(var_name));
-	}
-	
-	const ASTNode& symbol_node = symbol_opt.value();
-	
-	if (!symbol_node.is<VariableDeclarationNode>()) {
-		return EvalResult::error("Identifier in member function call is not a variable: " + std::string(var_name));
-	}
-	
-	const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-	
-	if (!var_decl.is_constexpr()) {
+
+	var_decl = resolved_object.var_decl;
+	if (var_decl && !var_decl->is_constexpr()) {
 		return EvalResult::error("Variable in member function call must be constexpr: " + std::string(var_name));
 	}
-	
-	const auto& initializer = var_decl.initializer();
-	if (!initializer.has_value()) {
+
+	const std::optional<ASTNode>* initializer = resolved_object.initializer;
+	TypeIndex declared_type_index = resolved_object.declared_type_index;
+	if (!initializer->has_value()) {
 		return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
 	}
 	
 	// Handle brace-initialized objects (aggregate init): extract member values by position.
-	if (initializer->is<InitializerListNode>()) {
-		const DeclarationNode& decl = var_decl.declaration();
-		if (!decl.type_node().is<TypeSpecifierNode>()) {
+	if ((*initializer)->is<InitializerListNode>()) {
+		if (declared_type_index == TypeIndex{0} || declared_type_index >= gTypeInfo.size()) {
 			return EvalResult::error("Brace-initialized object has invalid type");
 		}
-		const TypeSpecifierNode& agg_type_spec = decl.type_node().as<TypeSpecifierNode>();
-		TypeIndex agg_type_index = agg_type_spec.type_index();
-		if (agg_type_index >= gTypeInfo.size())
-			return EvalResult::error("Invalid type index in brace-initialized object");
-		const StructTypeInfo* agg_struct_info = gTypeInfo[agg_type_index].getStructInfo();
+		const StructTypeInfo* agg_struct_info = gTypeInfo[declared_type_index].getStructInfo();
 		if (!agg_struct_info)
 			return EvalResult::error("Brace-initialized object is not a struct");
-		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+		const InitializerListNode& init_list = (*initializer)->as<InitializerListNode>();
 		return bind_members_from_initializer_list(agg_struct_info, init_list, member_bindings, context);
 	}
 
-	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
+	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(*initializer);
 	if (!ctor_call_ptr) {
 		return EvalResult::error("Member function calls require struct/class objects");
 	}
@@ -2484,8 +2553,11 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 			return evaluate_member_array_subscript(std::get<MemberAccessNode>(expr), static_cast<size_t>(index), context);
 		}
 		if (std::holds_alternative<IdentifierNode>(expr)) {
-			return evaluate_variable_array_subscript(std::get<IdentifierNode>(expr).name(), static_cast<size_t>(index), context);
+			return evaluate_variable_array_subscript(std::get<IdentifierNode>(expr), static_cast<size_t>(index), context);
 		}
+	}
+	if (array_expr.is<IdentifierNode>()) {
+		return evaluate_variable_array_subscript(array_expr.as<IdentifierNode>(), static_cast<size_t>(index), context);
 	}
 	
 	return EvalResult::error("Array subscript on unsupported expression type");
@@ -2499,117 +2571,212 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 	
 	const ASTNode& object_expr = member_access.object();
 	std::string_view member_name = member_access.member_name();
-	
-	// Get the base variable name
 	std::string_view var_name;
-	
+	const IdentifierNode* object_identifier = nullptr;
+
 	if (object_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
 		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
 			return EvalResult::error("Complex expressions in array member access not supported");
 		}
-		var_name = std::get<IdentifierNode>(expr_node).name();
+		object_identifier = &std::get<IdentifierNode>(expr_node);
+		var_name = object_identifier->name();
 	} else if (object_expr.is<IdentifierNode>()) {
-		var_name = object_expr.as<IdentifierNode>().name();
+		object_identifier = &object_expr.as<IdentifierNode>();
+		var_name = object_identifier->name();
 	} else {
 		return EvalResult::error("Invalid object expression in array member access");
 	}
-	
-	// Look up the variable
-	if (!context.symbols) {
-		return EvalResult::error("Cannot evaluate array subscript: no symbol table provided");
-	}
-	
-	auto symbol_opt = context.symbols->lookup(var_name);
-	if (!symbol_opt.has_value()) {
-		return EvalResult::error("Undefined variable in array subscript: " + std::string(var_name));
-	}
-	
-	const ASTNode& symbol_node = symbol_opt.value();
-	if (!symbol_node.is<VariableDeclarationNode>()) {
-		return EvalResult::error("Identifier in array subscript is not a variable");
-	}
-	
-	const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-	if (!var_decl.is_constexpr()) {
-		return EvalResult::error("Variable in array subscript must be constexpr");
-	}
-	
-	const auto& initializer = var_decl.initializer();
-	if (!initializer.has_value() || !initializer->is<ConstructorCallNode>()) {
-		return EvalResult::error("Array subscript requires a struct with constructor");
-	}
-	
-	const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
-	
-	// Get the struct type info
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Invalid type specifier in array subscript");
-	}
-	
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
-	if (!struct_info) {
-		return EvalResult::error("Type is not a struct in array subscript");
-	}
-	
-	// Get the array member's initializer
-	auto member_init_opt = get_member_initializer(ctor_call, struct_info, member_name, context);
-	if (!member_init_opt.has_value()) {
-		return EvalResult::error("Array member '" + std::string(member_name) + "' not found");
-	}
-	
-	const ASTNode& member_init = member_init_opt.value();
-	
-	// The member initializer should be an InitializerListNode for arrays
-	if (member_init.is<InitializerListNode>()) {
-		const InitializerListNode& init_list = member_init.as<InitializerListNode>();
-		const auto& elements = init_list.initializers();
-		
-		if (index >= elements.size()) {
-			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
-		}
-		
-		// Build parameter bindings for the constructor
-		const auto& ctor_args = ctor_call.arguments();
-		std::unordered_map<std::string_view, EvalResult> param_bindings;
-		
-		// Find matching constructor
-		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
-		
-		if (matching_ctor) {
-			const auto& params = matching_ctor->parameter_nodes();
-			for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
-				if (params[i].is<DeclarationNode>()) {
-					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-					std::string_view param_name = param_decl.identifier_token().value();
-					auto arg_result = evaluate(ctor_args[i], context);
-					if (!arg_result.success()) {
-						return arg_result;
+
+	auto evaluate_array_member_element_from_initializer =
+		[&](const std::optional<ASTNode>& initializer_opt, TypeIndex declared_type_index) -> EvalResult {
+			if (initializer_opt.has_value() && initializer_opt->is<InitializerListNode>()) {
+				if (declared_type_index == TypeIndex{0} || declared_type_index >= gTypeInfo.size()) {
+					return EvalResult::error("Array member object has invalid type in array subscript");
+				}
+
+				const StructTypeInfo* aggr_struct = gTypeInfo[declared_type_index].getStructInfo();
+				if (!aggr_struct) {
+					return EvalResult::error("Array member object is not a struct in array subscript");
+				}
+
+				const InitializerListNode& aggr_list = initializer_opt->as<InitializerListNode>();
+				StringHandle req_handle = StringTable::getOrInternStringHandle(member_name);
+				const ASTNode* member_init = nullptr;
+				size_t pos_idx = 0;
+				for (size_t mi = 0; mi < aggr_list.size(); ++mi) {
+					StringHandle mname;
+					if (aggr_list.is_designated(mi)) {
+						mname = aggr_list.member_name(mi);
+					} else if (pos_idx < aggr_struct->members.size()) {
+						mname = aggr_struct->members[pos_idx].getName();
+						pos_idx++;
+					} else {
+						break;
 					}
-					param_bindings[param_name] = arg_result;
+					if (mname == req_handle) {
+						member_init = &aggr_list.initializers()[mi];
+						break;
+					}
+				}
+
+				if (!member_init) {
+					for (const auto& member : aggr_struct->members) {
+						if (member.getName() == req_handle && member.default_initializer.has_value()) {
+							member_init = &member.default_initializer.value();
+							break;
+						}
+					}
+				}
+
+				if (!member_init) {
+					return EvalResult::error("Array member '" + std::string(member_name) + "' not found");
+				}
+
+				if (!member_init->is<InitializerListNode>()) {
+					return EvalResult::error("Array member is not initialized with an array initializer");
+				}
+
+				const InitializerListNode& init_list = member_init->as<InitializerListNode>();
+				const auto& elements = init_list.initializers();
+				if (index >= elements.size()) {
+					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
+				}
+
+				return evaluate(elements[index], context);
+			}
+
+			const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer_opt);
+			if (!ctor_call_ptr) {
+				return EvalResult::error("Array subscript requires a struct with constructor");
+			}
+
+			const ConstructorCallNode& ctor_call = *ctor_call_ptr;
+			const ASTNode& type_node = ctor_call.type_node();
+			if (!type_node.is<TypeSpecifierNode>()) {
+				return EvalResult::error("Invalid type specifier in array subscript");
+			}
+
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+			const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
+			if (!struct_info) {
+				return EvalResult::error("Type is not a struct in array subscript");
+			}
+
+			auto member_init_opt = get_member_initializer(ctor_call, struct_info, member_name, context);
+			if (!member_init_opt.has_value()) {
+				return EvalResult::error("Array member '" + std::string(member_name) + "' not found");
+			}
+
+			const ASTNode& member_init = member_init_opt.value();
+			if (!member_init.is<InitializerListNode>()) {
+				return EvalResult::error("Array member is not initialized with an array initializer");
+			}
+
+			const InitializerListNode& init_list = member_init.as<InitializerListNode>();
+			const auto& elements = init_list.initializers();
+			if (index >= elements.size()) {
+				return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
+			}
+
+			const auto& ctor_args = ctor_call.arguments();
+			std::unordered_map<std::string_view, EvalResult> param_bindings;
+			const ConstructorDeclarationNode* matching_ctor =
+				find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+			if (matching_ctor) {
+				const auto& params = matching_ctor->parameter_nodes();
+				for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
+					if (params[i].is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+						std::string_view param_name = param_decl.identifier_token().value();
+						auto arg_result = evaluate(ctor_args[i], context);
+						if (!arg_result.success()) {
+							return arg_result;
+						}
+						param_bindings[param_name] = arg_result;
+					}
 				}
 			}
-		}
-		
-		return evaluate_expression_with_bindings(elements[index], param_bindings, context);
+
+			return evaluate_expression_with_bindings(elements[index], param_bindings, context);
+		};
+
+	ResolvedConstexprObject resolved_object;
+	if (auto resolve_error = resolve_constexpr_object_source(
+		object_identifier,
+		var_name,
+		context,
+		"array subscript",
+		resolved_object)) {
+		return *resolve_error;
 	}
-	
-	return EvalResult::error("Array member is not initialized with an array initializer");
+
+	if (resolved_object.var_decl && !resolved_object.var_decl->is_constexpr()) {
+		return EvalResult::error("Variable in array subscript must be constexpr");
+	}
+
+	const std::optional<ASTNode>* initializer = resolved_object.initializer;
+	TypeIndex declared_type_index = resolved_object.declared_type_index;
+	return evaluate_array_member_element_from_initializer(*initializer, declared_type_index);
 }
 
 // Evaluate array subscript on a variable (e.g., arr[0] where arr is constexpr)
 EvalResult Evaluator::evaluate_variable_array_subscript(
-	std::string_view var_name,
+	const IdentifierNode& identifier,
 	size_t index,
 	EvaluationContext& context) {
+	std::string_view var_name = identifier.name();
+	auto evaluate_array_initializer = [&](const std::optional<ASTNode>& initializer_opt) -> std::optional<EvalResult> {
+		if (!initializer_opt.has_value() || !initializer_opt->is<InitializerListNode>()) {
+			return std::nullopt;
+		}
+
+		const InitializerListNode& init_list = initializer_opt->as<InitializerListNode>();
+		const auto& elements = init_list.initializers();
+		if (index >= elements.size()) {
+			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
+		}
+		return evaluate(elements[index], context);
+	};
 	
 	if (!context.symbols) {
 		return EvalResult::error("Cannot evaluate array subscript: no symbol table provided");
 	}
+
+	if ((identifier.binding() == IdentifierBinding::StaticMember ||
+	     identifier.binding() == IdentifierBinding::Global ||
+	     identifier.binding() == IdentifierBinding::Unresolved) &&
+	    context.struct_info != nullptr) {
+		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(identifier.nameHandle());
+		if (static_member && owner_struct) {
+			if (auto static_result = evaluate_array_initializer(static_member->initializer)) {
+				return *static_result;
+			}
+
+			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+				StringBuilder().append(owner_struct->getName()).append("::"sv).append(identifier.nameHandle()).commit());
+			auto qualified_symbol = context.symbols->lookup(qualified_handle);
+			if (qualified_symbol.has_value() && qualified_symbol->is<VariableDeclarationNode>()) {
+				const VariableDeclarationNode& qualified_var = qualified_symbol->as<VariableDeclarationNode>();
+				if (!qualified_var.is_constexpr()) {
+					return EvalResult::error("Static member array in array subscript must be constexpr");
+				}
+				if (auto qualified_result = evaluate_array_initializer(qualified_var.initializer())) {
+					return *qualified_result;
+				}
+			}
+
+			return EvalResult::error("Static member array has no usable initializer in array subscript: " + std::string(var_name));
+		}
+	}
 	
-	auto symbol_opt = context.symbols->lookup(var_name);
+	std::optional<ASTNode> symbol_opt;
+	if (identifier.resolved_name().isValid()) {
+		symbol_opt = context.symbols->lookup(identifier.resolved_name());
+	}
+	if (!symbol_opt.has_value()) {
+		symbol_opt = context.symbols->lookup(var_name);
+	}
 	if (!symbol_opt.has_value()) {
 		return EvalResult::error("Undefined variable in array subscript: " + std::string(var_name));
 	}

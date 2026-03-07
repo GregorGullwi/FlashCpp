@@ -84,6 +84,197 @@ static void registerNestedMemberFunctionsForLazy(
 	}
 }
 
+static std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStaticMemberFunctionForInitializer(
+	const StructTypeInfo* struct_info,
+	StringHandle function_name)
+{
+	if (!struct_info) {
+		return {nullptr, nullptr};
+	}
+
+	auto find_in_struct = [function_name](const StructTypeInfo* candidate_struct)
+		-> std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> {
+		if (!candidate_struct) {
+			return {nullptr, nullptr};
+		}
+
+		for (const auto& member_func : candidate_struct->member_functions) {
+			if (member_func.getName() != function_name || !member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (func_decl.is_static()) {
+				return {&func_decl, candidate_struct};
+			}
+		}
+
+		return {nullptr, nullptr};
+	};
+
+	if (auto found = find_in_struct(struct_info); found.first) {
+		return found;
+	}
+
+	auto struct_type_it = gTypesByName.find(struct_info->name);
+	if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+		const TypeInfo* struct_type = struct_type_it->second;
+		auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
+		if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
+			if (auto found = find_in_struct(template_type_it->second->getStructInfo()); found.first) {
+				return found;
+			}
+		}
+	}
+
+	return {nullptr, nullptr};
+}
+
+static ASTNode rebindStaticMemberInitializerFunctionCalls(
+	const ASTNode& node,
+	const StructTypeInfo* struct_info)
+{
+	if (!struct_info || !node.has_value() || !node.is<ExpressionNode>()) {
+		return node;
+	}
+
+	const auto& expr = node.as<ExpressionNode>();
+
+	if (std::holds_alternative<FunctionCallNode>(expr)) {
+		const auto& call = std::get<FunctionCallNode>(expr);
+		ChunkedVector<ASTNode> rebound_args;
+		for (const auto& arg : call.arguments()) {
+			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info));
+		}
+
+		std::vector<ASTNode> rebound_template_args;
+		if (call.has_template_arguments()) {
+			rebound_template_args.reserve(call.template_arguments().size());
+			for (const auto& template_arg : call.template_arguments()) {
+				rebound_template_args.push_back(rebindStaticMemberInitializerFunctionCalls(template_arg, struct_info));
+			}
+		}
+
+		const FunctionDeclarationNode* rebound_function = nullptr;
+		const StructTypeInfo* rebound_owner = nullptr;
+		if (call.called_from().kind().is_identifier()) {
+			auto [found_function, found_owner] =
+				findStaticMemberFunctionForInitializer(struct_info, call.called_from().handle());
+			rebound_function = found_function;
+			rebound_owner = found_owner;
+		}
+
+		const DeclarationNode& target_decl = rebound_function ? rebound_function->decl_node() : call.function_declaration();
+		ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
+			FunctionCallNode(target_decl, std::move(rebound_args), call.called_from()));
+		auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
+
+		if (!rebound_template_args.empty()) {
+			rebound_call_ref.set_template_arguments(std::move(rebound_template_args));
+		}
+		rebound_call_ref.set_indirect_call(call.is_indirect_call());
+
+		if (rebound_function && rebound_function->has_mangled_name()) {
+			rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
+		} else if (call.has_mangled_name()) {
+			rebound_call_ref.set_mangled_name(call.mangled_name());
+		}
+		if (!rebound_function && call.has_qualified_name()) {
+			rebound_call_ref.set_qualified_name(call.qualified_name());
+		} else if (rebound_function && rebound_owner) {
+			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+				StringBuilder().append(rebound_owner->getName()).append("::"sv).append(call.called_from().handle()).commit());
+			rebound_call_ref.set_qualified_name(qualified_handle.view());
+		}
+
+		return rebound_call;
+	}
+
+	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
+		ChunkedVector<ASTNode> rebound_args;
+		for (const auto& arg : member_call.arguments()) {
+			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info));
+		}
+
+		bool is_implicit_this_call = false;
+		if (member_call.object().is<ExpressionNode>()) {
+			const auto& object_expr = member_call.object().as<ExpressionNode>();
+			is_implicit_this_call =
+				std::holds_alternative<IdentifierNode>(object_expr) &&
+				std::get<IdentifierNode>(object_expr).name() == "this";
+		}
+
+		if (is_implicit_this_call) {
+			const FunctionDeclarationNode* rebound_function = nullptr;
+			const StructTypeInfo* rebound_owner = nullptr;
+			if (member_call.called_from().kind().is_identifier()) {
+				auto [found_function, found_owner] =
+					findStaticMemberFunctionForInitializer(struct_info, member_call.called_from().handle());
+				rebound_function = found_function;
+				rebound_owner = found_owner;
+			}
+
+			if (rebound_function || member_call.function_declaration().is_static()) {
+				const DeclarationNode& target_decl =
+					rebound_function ? rebound_function->decl_node() : member_call.function_declaration().decl_node();
+				ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
+					FunctionCallNode(target_decl, std::move(rebound_args), member_call.called_from()));
+				auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
+
+				if (rebound_function && rebound_function->has_mangled_name()) {
+					rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
+				} else if (member_call.function_declaration().has_mangled_name()) {
+					rebound_call_ref.set_mangled_name(member_call.function_declaration().mangled_name());
+				}
+				if (rebound_function && rebound_owner) {
+					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+						StringBuilder().append(rebound_owner->getName()).append("::"sv).append(member_call.called_from().handle()).commit());
+					rebound_call_ref.set_qualified_name(qualified_handle.view());
+				}
+
+				return rebound_call;
+			}
+		}
+	}
+
+	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+		const auto& binop = std::get<BinaryOperatorNode>(expr);
+		return ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(
+			binop.get_token(),
+			rebindStaticMemberInitializerFunctionCalls(binop.get_lhs(), struct_info),
+			rebindStaticMemberInitializerFunctionCalls(binop.get_rhs(), struct_info)));
+	}
+
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const auto& unop = std::get<UnaryOperatorNode>(expr);
+		return ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(
+			unop.get_token(),
+			rebindStaticMemberInitializerFunctionCalls(unop.get_operand(), struct_info),
+			unop.is_prefix(),
+			unop.is_builtin_addressof()));
+	}
+
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		const auto& ternary = std::get<TernaryOperatorNode>(expr);
+		return ASTNode::emplace_node<ExpressionNode>(TernaryOperatorNode(
+			rebindStaticMemberInitializerFunctionCalls(ternary.condition(), struct_info),
+			rebindStaticMemberInitializerFunctionCalls(ternary.true_expr(), struct_info),
+			rebindStaticMemberInitializerFunctionCalls(ternary.false_expr(), struct_info),
+			ternary.get_token()));
+	}
+
+	if (std::holds_alternative<StaticCastNode>(expr)) {
+		const auto& cast = std::get<StaticCastNode>(expr);
+		return ASTNode::emplace_node<ExpressionNode>(StaticCastNode(
+			cast.target_type(),
+			rebindStaticMemberInitializerFunctionCalls(cast.expr(), struct_info),
+			cast.cast_token()));
+	}
+
+	return node;
+}
+
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
@@ -4067,22 +4258,37 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ExpressionSubstitutor substitutor(param_map, *this);
 					substituted_initializer = substitutor.substitute(substituted_initializer.value());
 					FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
-					
-					// Try to evaluate the substituted expression to a constant value
-					// This turns expressions like "1 + 2" into a single NumericLiteralNode(3)
-					if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
-						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-						eval_ctx.parser = this;
-						auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
-						if (eval_result.success()) {
-							int64_t val = eval_result.as_int();
-							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
-							Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-							substituted_initializer = emplace_node<ExpressionNode>(
-								NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 32)
-							);
-							FLASH_LOG(Templates, Debug, "Evaluated substituted static member initializer to: ", val);
+				}
+
+				if (substituted_initializer.has_value()) {
+					substituted_initializer = rebindStaticMemberInitializerFunctionCalls(
+						substituted_initializer.value(),
+						struct_info.get());
+				}
+
+				// Try to evaluate the substituted expression to a constant value
+				// This turns expressions like "1 + 2" into a single NumericLiteralNode(3)
+				if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					eval_ctx.parser = this;
+					eval_ctx.struct_info = struct_info.get();
+					eval_ctx.template_args = template_args_to_use;
+					eval_ctx.template_param_names.reserve(template_params.size());
+					for (const auto& template_param : template_params) {
+						if (template_param.is<TemplateParameterNode>()) {
+							eval_ctx.template_param_names.push_back(
+								template_param.as<TemplateParameterNode>().name());
 						}
+					}
+					auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
+					if (eval_result.success()) {
+						int64_t val = eval_result.as_int();
+						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
+						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+						substituted_initializer = emplace_node<ExpressionNode>(
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 32)
+						);
+						FLASH_LOG(Templates, Debug, "Evaluated substituted static member initializer to: ", val);
 					}
 				}
 			}
@@ -4732,7 +4938,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
-
+				InlineVector<StringHandle, 4> outer_template_param_names;
+				outer_template_param_names.reserve(template_params.size());
+				for (const auto& template_param : template_params) {
+					if (template_param.is<TemplateParameterNode>()) {
+						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+					}
+				}
+				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 				// Substitute and copy parameters
 				for (const auto& param : func_decl.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
@@ -4825,6 +5038,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (!struct_info_ptr->member_functions.empty()) {
 					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
 				}
+
+				StringBuilder qualified_name_builder;
+				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
+					.append("::")
+					.append(decl.identifier_token().value());
+				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+				OuterTemplateBinding outer_binding;
+				for (const auto& tp : template_params) {
+					if (tp.is<TemplateParameterNode>()) {
+						outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
+					}
+				}
+				outer_binding.param_args = template_args_to_use;
+				gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 				
 				// Skip to next function - body will be instantiated on-demand
 				continue;
@@ -4863,6 +5090,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
+				InlineVector<StringHandle, 4> outer_template_param_names;
+				outer_template_param_names.reserve(template_params.size());
+				for (const auto& template_param : template_params) {
+					if (template_param.is<TemplateParameterNode>()) {
+						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+					}
+				}
+				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 
 				// Substitute and copy parameters
 				for (const auto& param : func_decl.parameter_nodes()) {
@@ -5433,6 +5668,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_return_type, decl_node.identifier_token());
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_decl_ref);
+				InlineVector<StringHandle, 4> outer_template_param_names;
+				outer_template_param_names.reserve(template_params.size());
+				for (const auto& template_param : template_params) {
+					if (template_param.is<TemplateParameterNode>()) {
+						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+					}
+				}
+				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 				
 				// Copy parameter nodes with outer template parameter substitution
 				for (const auto& param : func_decl.parameter_nodes()) {
