@@ -400,7 +400,6 @@ ParseResult Parser::parse_type_and_name() {
     // This handles patterns like: typename _Str::value_type const* __lhs
     // where const appears between the dependent type and the pointer.
     consume_pointer_ref_modifiers(type_spec);
-    skip_noop_gnu_qualifiers();
 
     // Function pointer check after reference declarators have been consumed.
     // This handles patterns like: int& (*fp)(int) or ostream& (*__pf)(ostream&)
@@ -949,7 +948,6 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
                 // Parse pointer and reference declarators: * [const] [volatile] *... & &&
                 // Example: void* or const int* const* or int&
                 consume_pointer_ref_modifiers(param_type);
-                skip_noop_gnu_qualifiers();
                 
                 param_types.push_back(param_type.type());
 

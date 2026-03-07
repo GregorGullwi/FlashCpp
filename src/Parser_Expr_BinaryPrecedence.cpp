@@ -927,6 +927,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	while (peek() == "*"_tok) {
 		advance(); // consume '*'
 		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
+		skip_noop_gnu_qualifiers(); // Skip __restrict / __restrict__ after pointer CV-qualifiers
 		// Consume and ignore Microsoft-specific pointer modifiers
 		while (peek().is_keyword() && is_msvc_pointer_modifier(peek_info().value())) {
 			advance();
@@ -948,6 +949,15 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 			}
 			advance();
 		}
+		// Skip __restrict / __restrict__ that may appear between CV-qualifiers and & / &&
+		while (!peek().is_eof() && peek().is_identifier()) {
+			std::string_view tok = peek_info().value();
+			if (tok == "__restrict" || tok == "__restrict__") {
+				advance();
+			} else {
+				break;
+			}
+		}
 		if (trailing_cv != CVQualifier::None && (peek() == "&"_tok || peek() == "&&"_tok)) {
 			found_ref = true;
 		}
@@ -958,6 +968,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 			restore_token_position(cv_check);
 		}
 	}
+	skip_noop_gnu_qualifiers(); // Skip __restrict / __restrict__ before reference qualifiers
 	if (peek() == "&&"_tok) {
 		advance();
 		type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
