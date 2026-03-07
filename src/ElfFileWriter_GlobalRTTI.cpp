@@ -131,35 +131,92 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 	StringBuilder builder;
 	builder.append("_ZTI").append(class_name.length()).append(class_name);
 	std::string typeinfo_symbol(builder.commit());
-	
+
 	// Check if we've already created this symbol
 	static std::set<std::string> created_class_typeinfos;
 	if (created_class_typeinfos.find(typeinfo_symbol) != created_class_typeinfos.end()) {
 		return typeinfo_symbol;
 	}
-	
-	// For class types, create a minimal __class_type_info structure
-	// This is just vtable pointer + name pointer (16 bytes total)
-	char typeinfo_data_buf[16] = {0};
-	
-	// Add typeinfo data to .rodata
+
+	// Build the type-name symbol: _ZTS + length + name
+	std::string typename_symbol = "_ZTS" + std::to_string(class_name.length()) + std::string(class_name);
+
+	// ------------------------------------------------------------------
+	// 1. Create _ZTS<classname> in .rodata: the null-terminated type name
+	//    string, e.g. "11MyException\0" for class MyException.
+	// ------------------------------------------------------------------
+	std::string type_name_str = std::to_string(class_name.length()) + std::string(class_name);
 	auto* rodata = getSectionByName(".rodata");
 	if (!rodata) {
 		throw std::runtime_error(".rodata section not found");
 	}
-	
-	uint32_t typeinfo_offset = rodata->get_size();
-	rodata->append_data(typeinfo_data_buf, sizeof(typeinfo_data_buf));
-	
-	// Add typeinfo symbol as weak (may be provided by other translation units)
+	uint32_t name_offset = rodata->get_size();
+	rodata->append_data(type_name_str.c_str(), type_name_str.size() + 1);  // +1 for '\0'
+
+	// Expose _ZTS as a weak symbol (may be defined in multiple TUs)
+	getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+	                  rodata->get_index(), name_offset, type_name_str.size() + 1);
+
+	// ------------------------------------------------------------------
+	// 2. Create _ZTI<classname> in .data.rel.ro: 16-byte structure with
+	//    two 8-byte absolute pointers filled in by linker relocations:
+	//      [0] vtable: _ZTVN10__cxxabiv117__class_type_infoE + 16
+	//      [8] name:   _ZTS<classname>
+	// ------------------------------------------------------------------
+	// Get or create the .data.rel.ro section
+	auto* data_rel_ro = getSectionByName(".data.rel.ro");
+	if (!data_rel_ro) {
+		data_rel_ro = elf_writer_.sections.add(".data.rel.ro");
+		data_rel_ro->set_type(ELFIO::SHT_PROGBITS);
+		data_rel_ro->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
+		data_rel_ro->set_addr_align(8);
+		// Keep section_name_cache_ in sync
+		section_name_cache_[".data.rel.ro"] = data_rel_ro;
+	}
+
+	const char zeros[16] = {};
+	uint32_t ti_offset = data_rel_ro->get_size();
+	data_rel_ro->append_data(zeros, 16);
+
+	// Expose _ZTI as a weak symbol so multiple TUs can define it
 	getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
-	                  rodata->get_index(), typeinfo_offset, sizeof(typeinfo_data_buf));
-	
+	                  data_rel_ro->get_index(), ti_offset, 16);
+
+	// ------------------------------------------------------------------
+	// 3. Add R_X86_64_64 relocations for both pointer slots
+	// ------------------------------------------------------------------
+	// Get or create .rela.data.rel.ro
+	ELFIO::relocation_section_accessor* rela_acc = getRelocationAccessor(".rela.data.rel.ro");
+	if (!rela_acc) {
+		auto* rela_sec = elf_writer_.sections.add(".rela.data.rel.ro");
+		rela_sec->set_type(ELFIO::SHT_RELA);
+		rela_sec->set_flags(ELFIO::SHF_INFO_LINK);
+		rela_sec->set_info(data_rel_ro->get_index());
+		rela_sec->set_link(symtab_section_->get_index());
+		rela_sec->set_addr_align(8);
+		rela_sec->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+		rela_accessors_[".rela.data.rel.ro"] =
+			std::make_unique<ELFIO::relocation_section_accessor>(elf_writer_, rela_sec);
+		rela_acc = rela_accessors_[".rela.data.rel.ro"].get();
+	}
+
+	// Relocation 1: vtable pointer
+	// __class_type_info vtable is _ZTVN10__cxxabiv117__class_type_infoE.
+	// The typeinfo vtable pointer points 16 bytes into the vtable (past the
+	// offset-to-top and RTTI pointer fields), i.e., addend = 16.
+	auto vtable_sym_idx = getOrCreateSymbol(
+		"_ZTVN10__cxxabiv117__class_type_infoE", ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+	rela_acc->add_entry(ti_offset,     vtable_sym_idx, ELFIO::R_X86_64_64, 16);
+
+	// Relocation 2: type name pointer
+	auto name_sym_idx = getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+	rela_acc->add_entry(ti_offset + 8, name_sym_idx,   ELFIO::R_X86_64_64, 0);
+
 	created_class_typeinfos.insert(typeinfo_symbol);
-	
-	FLASH_LOG_FORMAT(Codegen, Debug, "Created class typeinfo '{}' for class '{}'", 
-	                 typeinfo_symbol, class_name);
-	
+
+	FLASH_LOG_FORMAT(Codegen, Debug, "Created class typeinfo '{}' for class '{}' with ZTS '{}'",
+	                 typeinfo_symbol, class_name, typename_symbol);
+
 	return typeinfo_symbol;
 }
 

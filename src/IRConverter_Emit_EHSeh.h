@@ -180,14 +180,21 @@
 						std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
 					}
 					emitMovToFrame(X64Register::RAX, stack_offset, 64);
+					// Mark the slot as holding a reference pointer so that the
+					// subsequent VariableDecl reference-initialization uses MOV
+					// (load the stored pointer) rather than LEA (take address).
+					setReferenceInfo(stack_offset, catch_op.exception_type,
+					                 64,  // The slot holds a 64-bit pointer
+					                 catch_op.is_rvalue_reference(),
+					                 catch_op.exception_temp);
 				} else {
-					// Get type size for dereferencing
-					// For built-in types, use get_type_size_bits directly
-					// For user-defined types, look up in gTypeInfo
+					// Non-reference catch: __cxa_begin_catch returns a pointer to the
+					// exception object. Store the pointer and mark the slot as a
+					// reference so VarDecl's struct-copy path dereferences it when
+					// initializing the catch variable (e.g., `catch (MyEx e)`).
+					// For built-in scalar types, dereference directly here since
+					// VarDecl does not use setReferenceInfo for small PODs.
 					int type_size_bits = 0;
-					
-					// Check if this is a built-in type that get_type_size_bits can handle
-					// These are types where the Type enum directly maps to a size
 					bool is_builtin = false;
 					switch (catch_op.exception_type) {
 						case Type::Bool:
@@ -216,36 +223,43 @@
 					}
 					
 					if (is_builtin) {
-						// Built-in type - use direct lookup
 						type_size_bits = get_type_size_bits(catch_op.exception_type);
 					} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
-						// User-defined type - look up in gTypeInfo
 						const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
 						type_size_bits = type_info.type_size_;
 					}
-					size_t type_size = type_size_bits / 8;  // Convert bits to bytes
-					
+					size_t type_size = type_size_bits / 8;
+
 					if (g_enable_debug_output) {
 						std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exception_type)
 						          << " type_size_bits=" << type_size_bits
 						          << " type_size=" << type_size << std::endl;
 					}
-					
-					// Load value from exception object and store to catch variable
-					if (type_size <= 8 && type_size > 0) {
-						// Small POD: load from [RAX] and store to frame
-						// Move value from [RAX] to RCX
+
+					if (is_builtin && type_size <= 8 && type_size > 0) {
+						// Small scalar POD: dereference directly and store value
 						if (g_enable_debug_output) {
 							std::cerr << "[DEBUG][Codegen] CatchBegin: dereferencing exception value" << std::endl;
 						}
 						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
 						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
 					} else {
-						// Large type or unknown size: just store pointer (64-bit pointer)
+						// Struct or large type: store the pointer and let VarDecl
+						// dereference it via the reference_stack_info_ mechanism.
 						if (g_enable_debug_output) {
-							std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (large or unknown type)" << std::endl;
+							std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (struct/large type)" << std::endl;
 						}
 						emitMovToFrame(X64Register::RAX, stack_offset, 64);
+						// Mark this slot so VarDecl's struct-copy path dereferences it.
+						// type_size_bits may be 0 if the type was not found in gTypeInfo
+						// (e.g., a forward-declared type). Using 64 as a fallback is safe
+						// because this field in ReferenceInfo is used as a hint to select
+						// between MOV and LEA — it does not control the actual copy size
+						// (that comes from the VarDecl initializer's own size_in_bits).
+						setReferenceInfo(stack_offset, catch_op.exception_type,
+						                 type_size_bits > 0 ? type_size_bits : 64,
+						                 false,
+						                 catch_op.exception_temp);
 					}
 				}
 			}
@@ -528,8 +542,22 @@
 				emitXorRegReg(X64Register::RSI);
 			}
 			
-			// RDX = destructor function pointer (NULL for POD types)
-			emitXorRegReg(X64Register::RDX);
+			// RDX = destructor function pointer (NULL for POD types; for class types,
+			// pass the complete-object destructor so __cxa_end_catch can call it when
+			// the exception object's refcount reaches zero).
+			std::string destructor_symbol;
+			if (exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
+				const TypeInfo& ti_ref = gTypeInfo[throw_op.type_index];
+				const StructTypeInfo* si = ti_ref.getStructInfo();
+				if (si) {
+					destructor_symbol = buildDestructorMangledName(*si);
+				}
+			}
+			if (!destructor_symbol.empty()) {
+				emitLeaRipRelativeWithRelocation(X64Register::RDX, destructor_symbol);
+			} else {
+				emitXorRegReg(X64Register::RDX);
+			}
 			
 			emitCall("__cxa_throw");
 			// Note: __cxa_throw never returns

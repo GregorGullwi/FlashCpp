@@ -9,9 +9,9 @@ For the `__cpp_exceptions` macro deviation see [08_preprocessor.md](08_preproces
 |-----------|----------|--------|
 | Nested `try` blocks crash (SIGABRT) | Linux (Itanium EH) | ✅ Fixed |
 | `throw;` (rethrow) not implemented | Linux | ✅ Fixed |
-| Class-type exception object destructors not called | Both | ❌ Known |
+| Class-type exception object destructors not called | Both | ✅ Fixed (Linux) |
 | Stack unwinding with local destructors not implemented | Both | ❌ Known |
 | Cross-function `catch` fails at runtime | Windows | ❌ Known |
-| `_CxxThrowException` called with NULL `ThrowInfo` | Windows | ❌ Known |
+| `_CxxThrowException` called with NULL `ThrowInfo` | Windows | ✅ Fixed |
 
 **See:** `docs/EXCEPTION_HANDLING.md` for full details on each item.
