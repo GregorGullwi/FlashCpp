@@ -1265,7 +1265,14 @@ public:  // Public methods for template instantiation
                 }
                 if (!current_struct_info) return false;
                 bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
-                if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+                // When parsing a template body and the struct has dependent (deferred) base classes,
+                // skip gLazyMemberResolver which traverses concrete base classes — a dependent base
+                // may also provide the same name, making eager binding to a concrete base incorrect
+                // (C++20 [temp.res]/2: dependent names must not be bound at first-phase parse time).
+                // Only own-declared members are safe to bind eagerly; names inherited from concrete
+                // bases stay Unresolved so codegen's runtime lookup handles them at instantiation.
+                bool skip_base_traversal = is_template_member_context && current_struct_info->has_deferred_base_classes;
+                if (!skip_base_traversal && struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
                     auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, token.handle());
                     if (!member_result) return false;
                     if (is_template_member_context && member_result.owner_struct != current_struct_info) return false;

@@ -37,7 +37,9 @@ Move identifier name resolution from codegen (runtime multi-table lookups on eve
 | Phase 5 — ConstExprEvaluator fast paths | ✅ Done | `61d1bd1b` | `Local`-binding fast paths added at 2 sites in `ConstExprEvaluator_Members.cpp` — skip multi-table lookup for locally-bound identifiers. All 1337 tests pass. |
 
 > [!NOTE]
-> All 1357 tests pass after all phases. Two minor items from Phase 3 were not implemented but are covered by the `Unresolved` codegen fallback: (1) the `has_deferred_base_classes` guard in `createBoundIdentifier()` and (2) a post-substitution re-binding walk in `Parser_Templates_Inst_Substitution.cpp`. See the Files Summary notes for details.
+> All 1359 tests pass after all phases. The two previously-deferred Phase 3 items are now implemented:
+> 1. **`has_deferred_base_classes` guard** in `createBoundIdentifier()` (`Parser.h`) — skips `gLazyMemberResolver` base traversal when parsing a template with dependent base classes, preventing incorrect eager binding of concrete-base members.
+> 2. **Post-substitution re-binding** in `substituteTemplateParameters()` (`Parser_Templates_Substitution.cpp`) — `Unresolved` `IdentifierNode`s that match globals/functions/locals after template parameter substitution are promoted to concrete bindings inline, enabling fast-path codegen.
 
 ## Recommended Session Breakdown
 
@@ -336,10 +338,10 @@ This is the largest missing correctness area if we want the refactor to be genui
 | 2 ✅ | `Parser_Expr_PrimaryExpr.cpp` | Lambda captures set `CapturedByValue`/`CapturedByRef` in `createBoundIdentifier()` via `lambda_capture_stack_` |
 | 2 ✅ | `CodeGen_Expr_Operators.cpp` | CapturedByRef assignment uses `binding()` check; NonStaticMember block retains ad-hoc fallback (see note) |
 | 3 ✅ | `AstNodeTypes_DeclNodes.h` | `TemplateParameter` added to `IdentifierBinding` enum |
-| 3 ✅ | `Parser.h` | `parsing_template_body_` → `parsing_template_depth_` counter; `TemplateParameter` case in `createBoundIdentifier()`; dependent-base guard deferred to `Unresolved` fallback (see note) |
+| 3 ✅ | `Parser.h` | `parsing_template_body_` → `parsing_template_depth_` counter; `TemplateParameter` case in `createBoundIdentifier()`; `has_deferred_base_classes` guard added: skips `gLazyMemberResolver` base traversal when struct has dependent bases in a template context |
 | 3 ✅ | `Parser_Templates_Class.cpp` | `parsing_template_body_` set/clear replaced with `TemplateDepthGuard` RAII |
 | 3 ✅ | `Parser_Templates_Function.cpp` | Same `TemplateDepthGuard` RAII |
-| 3 ⚠️ | `Parser_Templates_Inst_Substitution.cpp` | Post-substitution re-binding walk not implemented; deferred names stay `Unresolved` and rely on codegen fallback — all current tests pass |
+| 3 ✅ | `Parser_Templates_Substitution.cpp` | Post-substitution re-binding: `Unresolved` `IdentifierNode`s re-bound inline in `substituteTemplateParameters()` when a non-member binding (Global/Local/Function/EnumConstant/StaticLocal) is found |
 | 4 ✅ | `SymbolTable.h` | Overload-set preserved; `lookup_adl()` added for ADL; `insert_into_namespace()` for hidden friends |
 | 4 ✅ | `Parser_Expr_PrimaryExpr.cpp` | Unqualified calls combine ordinary lookup with ADL |
 | 5 ✅ | `ConstExprEvaluator_Members.cpp` | `Local`-binding fast paths added at 2 sites |
@@ -348,11 +350,11 @@ Also touched (secondary — `IdentifierNode` creation sites):
 - `Parser_Expr_BinaryPrecedence.cpp`, `Parser_FunctionHeaders.cpp`, `Parser_Decl_StructEnum.cpp`, `CodeGen_Stmt_Control.cpp`, `Parser_Expr_PostfixCalls.cpp`
 
 > [!NOTE]
-> **Two deferred items from Phase 3 (correctness currently covered by `Unresolved` fallback):**
+> **Phase 3 deferred items — now fully implemented:**
 >
-> 1. **Dependent-base guard in `createBoundIdentifier()`**: The plan specifies that when the current struct has `has_deferred_base_classes == true`, the `NonStaticMember` lookup should be skipped so the name stays `Unresolved` and resolves at instantiation. This guard is not yet added. In practice, codegen's existing `Unresolved` fallback (runtime lookup) handles all current dependent-base tests correctly (`test_dependent_base_this_lookup_ret0`, `test_template_dependent_base_unqualified_ret0` both pass). The guard would prevent a theoretical wrong eager binding if a dependent-base member name happens to collide with a local in scope.
+> 1. **Dependent-base guard in `createBoundIdentifier()`**: When the current struct has `has_deferred_base_classes == true` and we're inside a template body (`parsing_template_depth_ > 0`), `gLazyMemberResolver` base traversal is skipped. Only own-declared members are checked; names from concrete base classes stay `Unresolved` and are resolved at instantiation. Tests: `test_template_concrete_and_dependent_base_member_ret42` (new) plus pre-existing `test_dependent_base_this_lookup_ret0`, `test_template_dependent_base_unqualified_ret0`.
 >
-> 2. **Post-substitution re-binding walk**: The plan describes walking `Unresolved`/`TemplateParameter` `IdentifierNode`s after template substitution and calling `createBoundIdentifier()` to update bindings with concrete type information. This walk is not implemented. `test_template_rebind_after_instantiation_ret42` passes because the `Unresolved` fallback in codegen looks up the global at instantiation time.
+> 2. **Post-substitution re-binding**: `substituteTemplateParameters()` now re-calls `createBoundIdentifier()` for any `Unresolved` `IdentifierNode` that wasn't substituted as a template parameter. If the result is a non-member binding (Global/Local/Function/EnumConstant/StaticLocal), the identifier is updated immediately, enabling fast-path codegen instead of the runtime `Unresolved` fallback. Test: `test_template_rebind_late_global_ret0` (new).
 
 ## Verification Plan
 

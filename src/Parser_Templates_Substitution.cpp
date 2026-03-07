@@ -177,6 +177,24 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 			} // end of '$' check
 		}
+		// Attempt to re-bind any Unresolved IdentifierNodes that may now be resolvable
+		// after template parameter substitution (e.g., globals declared after the template
+		// definition but before instantiation).  Only non-member bindings are accepted here
+		// since the member-context stack is not set up during substitution.
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+			if (id_node.binding() == IdentifierBinding::Unresolved) {
+				IdentifierNode rebound = createBoundIdentifier(id_node.identifier_token());
+				IdentifierBinding new_binding = rebound.binding();
+				if (new_binding == IdentifierBinding::Global    ||
+				    new_binding == IdentifierBinding::Local     ||
+				    new_binding == IdentifierBinding::Function  ||
+				    new_binding == IdentifierBinding::EnumConstant ||
+				    new_binding == IdentifierBinding::StaticLocal) {
+					return emplace_node<ExpressionNode>(std::move(rebound));
+				}
+			}
+		}
 		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 			const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr);
 			ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);

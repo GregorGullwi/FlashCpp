@@ -1214,6 +1214,7 @@ public:
 
 	std::string_view name() const { return identifier_.value(); }
 	StringHandle nameHandle() const { return identifier_.handle(); }
+	const Token& identifier_token() const { return identifier_; }
 	std::optional<Token> try_get_parent_token() { return parent_token_; }
 
 	IdentifierBinding binding() const { return binding_; }
