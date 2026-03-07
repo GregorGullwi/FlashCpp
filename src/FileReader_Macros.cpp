@@ -1515,9 +1515,9 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_delegating_constructors"] = DefineDirective{ "200604L", {} };  // Delegating constructors
 	defines_["__cpp_designated_initializers"] = DefineDirective{ "201707L", {} };  // Designated initializers
 	defines_["__cpp_enumerator_attributes"] = DefineDirective{ "201411L", {} };  // Enumerator attributes
-	// __cpp_exceptions intentionally NOT defined - FlashCpp does not implement exception handling.
-	// Standard library headers use #if __cpp_exceptions guards around try/catch code,
-	// falling back to simpler non-exception alternatives when it's not defined.
+	// __cpp_exceptions intentionally NOT defined.
+	// Enabling it currently exposes additional libstdc++ exception code paths that FlashCpp
+	// does not parse successfully yet (for example, <stdexcept> regresses during this audit).
 	defines_["__cpp_fold_expressions"] = DefineDirective{ "201603L", {} };  // Fold expressions
 	defines_["__cpp_generic_lambdas"] = DefineDirective{ "201707L", {} };  // Generic lambdas with template params
 	defines_["__cpp_guaranteed_copy_elision"] = DefineDirective{ "201606L", {} };  // Guaranteed copy elision
