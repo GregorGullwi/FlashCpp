@@ -764,13 +764,57 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	}
 
 	std::string_view var_name = identifier.name();
-	auto symbol_opt = context.symbols->lookup(var_name);
+	StringHandle name_handle = identifier.nameHandle();
+	if (!name_handle.isValid()) {
+		name_handle = StringTable::getOrInternStringHandle(var_name);
+	}
+
+	std::optional<ASTNode> symbol_opt;
+	if (identifier.binding() == IdentifierBinding::StaticMember) {
+		bool found_bound_static_member = false;
+
+		if (context.struct_info != nullptr) {
+			auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(name_handle);
+			if (static_member && owner_struct) {
+				found_bound_static_member = true;
+				if (static_member->initializer.has_value()) {
+					return evaluate(static_member->initializer.value(), context);
+				}
+			}
+		}
+
+		if (!found_bound_static_member && context.struct_node != nullptr) {
+			for (const auto& static_member : context.struct_node->static_members()) {
+				if (static_member.name != name_handle) {
+					continue;
+				}
+
+				found_bound_static_member = true;
+				if (static_member.initializer.has_value()) {
+					return evaluate(static_member.initializer.value(), context);
+				}
+				break;
+			}
+		}
+
+		if (identifier.resolved_name().isValid()) {
+			symbol_opt = context.symbols->lookup(identifier.resolved_name());
+		}
+
+		if (!symbol_opt.has_value()) {
+			if (found_bound_static_member) {
+				return EvalResult::error("Static member has no initializer: " + std::string(var_name));
+			}
+			return EvalResult::error("Bound static member not found in constant expression: " + std::string(var_name));
+		}
+	} else {
+		symbol_opt = context.symbols->lookup(var_name);
+	}
 	
 	// If not found in symbol table, check for static members in the current struct
 	if (!symbol_opt.has_value()) {
 		// Check StructDeclarationNode first (for AST-based static members)
 		if (context.struct_node != nullptr) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
 			for (const auto& static_member : context.struct_node->static_members()) {
 				if (static_member.name == name_handle) {
 					// Found static member in struct AST node
@@ -786,7 +830,6 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		
 		// Check StructTypeInfo (for runtime-built struct info)
 		if (context.struct_info != nullptr) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
 			for (const auto& static_member : context.struct_info->static_members) {
 				if (static_member.getName() == name_handle) {
 					// Found static member in StructTypeInfo
@@ -835,7 +878,6 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 					const TypeInfo& ti = gTypeInfo[type_index];
 					const EnumTypeInfo* enum_info = ti.getEnumInfo();
 					if (enum_info) {
-						StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
 						const Enumerator* e = enum_info->findEnumerator(name_handle);
 						if (e) {
 							return EvalResult(static_cast<int64_t>(e->value));
@@ -1738,6 +1780,27 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
+	auto lookupFunctionSymbol = [&]() -> std::optional<ASTNode> {
+		if (func_call.has_mangled_name()) {
+			auto mangled_symbol = context.symbols->lookup(func_call.mangled_name_handle());
+			if (mangled_symbol.has_value()) {
+				return mangled_symbol;
+			}
+		}
+
+		if (func_call.has_qualified_name()) {
+			QualifiedIdentifier qi = QualifiedIdentifier::fromQualifiedName(
+				func_call.qualified_name_handle(),
+				context.symbols->get_current_namespace_handle());
+			auto qualified_symbol = context.symbols->lookup_qualified(qi);
+			if (qualified_symbol.has_value()) {
+				return qualified_symbol;
+			}
+		}
+
+		return context.symbols->lookup(func_name);
+	};
+
 	// If we have a struct context, prefer static member functions from the current struct.
 	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
@@ -1937,8 +2000,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		return EvalResult::from_bool(true);
 	}
 	
-	// First try simple name lookup in symbol table
-	auto symbol_opt = context.symbols->lookup(func_name);
+	// Prefer the parser-stored exact call target before falling back to raw name lookup.
+	auto symbol_opt = lookupFunctionSymbol();
 	
 	// If not found in symbol table, try the global template registry
 	// This handles cases where a template function is defined but not yet instantiated
