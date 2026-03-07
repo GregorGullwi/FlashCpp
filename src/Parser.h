@@ -1363,10 +1363,21 @@ public:  // Public methods for template instantiation
             // DeclarationNode
             if (sym->is<DeclarationNode>()) {
                 const auto& decl = sym->as<DeclarationNode>();
+                // Check if this DeclarationNode is actually an enumerator constant
+                // (unscoped enum values are registered as DeclarationNode with Type::Enum).
+                // Variables/parameters of enum type are also DeclarationNode with Type::Enum,
+                // so we must verify via EnumTypeInfo::findEnumerator before classifying.
                 if (decl.type_node().is<TypeSpecifierNode>()) {
-                    if (decl.type_node().as<TypeSpecifierNode>().type() == Type::Enum) {
-                        node.set_binding(IdentifierBinding::EnumConstant);
-                        return node;
+                    const auto& ts = decl.type_node().as<TypeSpecifierNode>();
+                    if (ts.type() == Type::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
+                        size_t enum_idx = ts.type_index();
+                        if (enum_idx < gTypeInfo.size()) {
+                            const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
+                            if (enum_info && enum_info->findEnumerator(token.handle())) {
+                                node.set_binding(IdentifierBinding::EnumConstant);
+                                return node;
+                            }
+                        }
                     }
                 }
                 auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
