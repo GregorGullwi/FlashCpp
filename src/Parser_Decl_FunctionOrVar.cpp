@@ -461,10 +461,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			
 			// Note: const qualification is handled by the member function's StructMemberFunction entry
 			
-			if (function_name_token.value() == "get_func_val") {
-				fprintf(stderr, "[DBG-FV] addMemberFunction(gfv) struct=%s size=%zu\n",
-				        StringTable::getStringView(struct_info->getName()).data(), struct_info->member_functions.size());
-			}
 			struct_info->addMemberFunction(function_name_token.handle(), func_node,
 				AccessSpecifier::Public,
 				/*is_virtual=*/false,

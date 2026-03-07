@@ -733,8 +733,6 @@ ParseResult Parser::parse_variable_declaration()
 				emplace_node<TypeSpecifierNode>(type_specifier),
 				identifier_tok
 			);
-			DeclarationNode& new_decl = new_decl_node.as<DeclarationNode>();
-
 			// Register before parsing initializer (point-of-declaration)
 			ParseResult decl_result = create_var_decl(new_decl_node);
 			if (decl_result.is_error()) {
