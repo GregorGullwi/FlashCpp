@@ -359,6 +359,7 @@ ParseResult Parser::parse_type_and_name() {
         // Check for CV-qualifiers after the *
         CVQualifier ptr_cv = parse_cv_qualifiers();
         skip_noop_gnu_qualifiers();
+        ptr_cv |= parse_cv_qualifiers();
 
         type_spec.add_pointer_level(ptr_cv);
     }
@@ -891,6 +892,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
         // Parse CV-qualifiers after the *
         CVQualifier ptr_cv = parse_cv_qualifiers();
         skip_noop_gnu_qualifiers();
+        ptr_cv |= parse_cv_qualifiers();
 
         base_type.add_pointer_level(ptr_cv);
     }

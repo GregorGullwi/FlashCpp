@@ -939,6 +939,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		advance(); // consume '*'
 		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
 		skip_noop_gnu_qualifiers(); // Skip __restrict / __restrict__ after pointer CV-qualifiers
+		ptr_cv |= parse_cv_qualifiers(); // Re-parse CV-qualifiers that may follow __restrict
 		// Consume and ignore Microsoft-specific pointer modifiers
 		while (peek().is_keyword() && is_msvc_pointer_modifier(peek_info().value())) {
 			advance();
