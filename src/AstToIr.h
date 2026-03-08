@@ -58,17 +58,13 @@ private:
 		std::string struct_name;
 	};
 
-	// Result of detecting whether a variable identifier refers to a global or static variable
-	struct GlobalStaticVarInfo {
+	struct GlobalStaticBindingInfo {
 		bool is_global_or_static = false;
-		StringHandle store_name;   // Mangled name for static locals, or identifier handle for globals
+		StringHandle store_name;
 		Type type = Type::Void;
 		int size_in_bits = 0;
 	};
 
-	// Detect if a variable name refers to a global variable, static local, or static struct member.
-	// Returns info needed to generate a GlobalStore for mutations on such variables.
-	GlobalStaticVarInfo detectGlobalOrStaticVar(std::string_view ident_name);
 
 	// Generate aggregate initialization of a struct from an InitializerListNode as a default argument.
 	// Emits ConstructorCallOp + MemberStoreOps for the struct, returns a TypedValue for the temporary.
@@ -145,6 +141,7 @@ private:
 	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token);
 	std::vector<IrOperand>
 		generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
+	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(
 		const ExpressionNode& expr, 
 		int accumulated_offset = 0);
@@ -578,8 +575,10 @@ private:
 	CompileContext* context_;  // Reference to compile context for flags
 	Parser* parser_;  // Reference to parser for template instantiation
 
-	// Current function name (for mangling static local variables)
+	// Current function name (plain, used for friend access checks and diagnostics)
 	StringHandle current_function_name_;
+	// Current function mangled name (used for static local variable namespacing)
+	StringHandle current_function_mangled_name_;
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits

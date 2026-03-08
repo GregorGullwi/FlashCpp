@@ -1,58 +1,95 @@
 #include "CodeGen.h"
 
-AstToIr::GlobalStaticVarInfo AstToIr::detectGlobalOrStaticVar(std::string_view ident_name) {
-	GlobalStaticVarInfo info;
-	StringHandle ident_handle = StringTable::getOrInternStringHandle(ident_name);
 
-	// Check if it's found in the local symbol table — if so, it's a local variable
-	// and should not be treated as a global/static (even if a static local or static
-	// member with the same name exists).
-	const std::optional<ASTNode> local_sym = symbol_table.lookup(ident_name);
-
-	// Check if it's a static local variable (only when not shadowed by a local)
-	auto static_it = static_local_names_.find(ident_handle);
-	if (!local_sym.has_value() && static_it != static_local_names_.end()) {
-		info.is_global_or_static = true;
-		info.store_name = static_it->second.mangled_name;
-		info.type = static_it->second.type;
-		info.size_in_bits = static_it->second.size_in_bits;
-		return info;
+AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const IdentifierNode& identifier) {
+	GlobalStaticBindingInfo info;
+	StringHandle identifier_handle = identifier.nameHandle();
+	if (!identifier_handle.isValid()) {
+		identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
 	}
 
-	// Check if it's a global variable (not found locally, found globally)
-	if (!local_sym.has_value() && global_symbol_table_) {
-		const std::optional<ASTNode> global_sym = global_symbol_table_->lookup(ident_name);
-		if (global_sym.has_value() && global_sym->is<VariableDeclarationNode>()) {
-			const auto& var_decl = global_sym->as<VariableDeclarationNode>();
-			const auto& ts = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			info.is_global_or_static = true;
-			info.store_name = ident_handle;
-			info.type = ts.type();
-			info.size_in_bits = static_cast<int>(ts.size_in_bits());
-			return info;
+	auto tryPopulateTypeFromDeclaration = [&](const ASTNode& symbol) {
+		const DeclarationNode* decl_ptr = nullptr;
+		if (symbol.is<VariableDeclarationNode>()) {
+			decl_ptr = &symbol.as<VariableDeclarationNode>().declaration();
+		} else if (symbol.is<DeclarationNode>()) {
+			decl_ptr = &symbol.as<DeclarationNode>();
 		}
-	}
 
-	// Check if it's a static member of the current struct (only when not shadowed by a local)
-	if (!local_sym.has_value() && current_struct_name_.isValid()) {
-		auto struct_it = gTypesByName.find(current_struct_name_);
-		if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
-			const auto* static_member = struct_it->second->getStructInfo()->findStaticMember(ident_handle);
-			if (static_member) {
-				info.is_global_or_static = true;
-				StringBuilder sb;
-				sb.append(current_struct_name_);
-				sb.append("::"sv);
-				sb.append(ident_name);
-				info.store_name = StringTable::getOrInternStringHandle(sb.commit());
-				info.type = static_member->type;
-				info.size_in_bits = static_cast<int>(static_member->size * 8);
-				return info;
+		if (!decl_ptr || !decl_ptr->type_node().is<TypeSpecifierNode>()) {
+			return;
+		}
+
+		const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
+		info.type = ts.type();
+		info.size_in_bits = static_cast<int>(ts.size_in_bits());
+	};
+
+	switch (identifier.binding()) {
+	case IdentifierBinding::Global: {
+		auto mangle_it = global_variable_names_.find(identifier_handle);
+		info.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : identifier_handle;
+		info.is_global_or_static = info.store_name.isValid();
+
+		if (global_symbol_table_) {
+			const auto symbol = global_symbol_table_->lookup(identifier.name());
+			if (symbol.has_value()) {
+				tryPopulateTypeFromDeclaration(*symbol);
 			}
 		}
+		return info;
 	}
+	case IdentifierBinding::StaticLocal: {
+		auto it = static_local_names_.find(identifier_handle);
+		if (it == static_local_names_.end()) {
+			return info;
+		}
 
-	return info;
+		info.is_global_or_static = true;
+		info.store_name = it->second.mangled_name;
+		info.type = it->second.type;
+		info.size_in_bits = it->second.size_in_bits;
+		return info;
+	}
+	case IdentifierBinding::StaticMember: {
+		info.store_name = identifier.resolved_name();
+		info.is_global_or_static = info.store_name.isValid();
+		if (!info.store_name.isValid()) {
+			return info;
+		}
+
+		const auto findStaticMemberInStruct = [&](StringHandle struct_name) -> const StructStaticMember* {
+			if (!struct_name.isValid()) {
+				return nullptr;
+			}
+
+			auto struct_it = gTypesByName.find(struct_name);
+			if (struct_it == gTypesByName.end() || !struct_it->second || !struct_it->second->getStructInfo()) {
+				return nullptr;
+			}
+
+			return struct_it->second->getStructInfo()->findStaticMember(identifier_handle);
+		};
+
+		const std::string_view resolved_name = info.store_name.view();
+		const size_t last_scope_pos = resolved_name.rfind("::");
+		const StringHandle owner_name = (last_scope_pos == std::string_view::npos)
+			? StringHandle{}
+			: StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
+
+		const StructStaticMember* static_member = findStaticMemberInStruct(owner_name);
+		if (!static_member && current_struct_name_.isValid() && current_struct_name_ != owner_name) {
+			static_member = findStaticMemberInStruct(current_struct_name_);
+		}
+		if (static_member) {
+			info.type = static_member->type;
+			info.size_in_bits = static_cast<int>(static_member->size * 8);
+		}
+		return info;
+	}
+	default:
+		return info;
+	}
 }
 
 std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type) {
@@ -412,37 +449,33 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			}
 		}
 
-		// Special handling for assignment to captured-by-reference variable inside lambda
-		// Now that captured-by-reference identifiers are marked with lvalue metadata, use unified handler
-		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_lambda_context_.isActive()) {
+		// Captured-by-reference assignment.
+		// Explicit [&x] captures have CapturedByRef binding set at parse time.
+		// Capture-all [&] variables keep Local binding but appear in current_lambda_context_.capture_kinds.
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				std::string_view lhs_name = lhs_ident.name();
-				StringHandle lhs_name_str = StringTable::getOrInternStringHandle(lhs_name);
-
-				// Check if this is a captured-by-reference variable
-				auto capture_it = current_lambda_context_.captures.find(lhs_name_str);
-				if (capture_it != current_lambda_context_.captures.end()) {
-					auto kind_it = current_lambda_context_.capture_kinds.find(lhs_name_str);
-					if (kind_it != current_lambda_context_.capture_kinds.end() &&
-					kind_it->second == LambdaCaptureNode::CaptureKind::ByReference) {
-						// This is assignment to a captured-by-reference variable
-						// Handle via unified handler (identifiers are now marked as lvalues)
-						auto lhsIrOperands = visitExpressionNode(lhs_expr);
-						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-						
-						// Handle assignment using unified lvalue metadata handler
-						if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
-							// Assignment was handled successfully via metadata
-							FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
-							return rhsIrOperands;
-						}
-						
-						// This shouldn't happen with proper metadata, but log for debugging
-						FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
-						return { Type::Int, 32, TempVar{0} };
+				bool is_captured_by_ref = (lhs_ident.binding() == IdentifierBinding::CapturedByRef);
+				if (!is_captured_by_ref && current_lambda_context_.isActive()) {
+					StringHandle lhs_name_str = StringTable::getOrInternStringHandle(lhs_ident.name());
+					auto capture_it = current_lambda_context_.captures.find(lhs_name_str);
+					if (capture_it != current_lambda_context_.captures.end()) {
+						auto kind_it = current_lambda_context_.capture_kinds.find(lhs_name_str);
+						is_captured_by_ref = (kind_it != current_lambda_context_.capture_kinds.end() &&
+						    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 					}
+				}
+				if (is_captured_by_ref) {
+					std::string_view lhs_name = lhs_ident.name();
+					auto lhsIrOperands = visitExpressionNode(lhs_expr);
+					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+						FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
+						return rhsIrOperands;
+					}
+					FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
+					return { Type::Int, 32, TempVar{0} };
 				}
 			}
 		}
@@ -488,8 +521,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				auto gsi = detectGlobalOrStaticVar(lhs_ident.name());
-				
+				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
+
 				if (gsi.is_global_or_static) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
@@ -535,9 +568,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				auto gsi = detectGlobalOrStaticVar(lhs_ident.name());
+				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static) {
+				if (gsi.is_global_or_static && gsi.type != Type::Void && gsi.size_in_bits > 0) {
 					// Load current value from global
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;

@@ -1,12 +1,14 @@
 #pragma once
 
 #include <unordered_map>
+#include <unordered_set>
 #include <string_view>
 #include <stack>
 #include <optional>
 #include <span>
 #include <vector>
 #include <functional>
+#include <algorithm>
 #include "AstNodeTypes.h"
 #include "Token.h"
 #include "StackString.h"
@@ -275,6 +277,23 @@ public:
 		return true;
 	}
 
+	// Replace a non-function symbol in the current scope with a new node.
+	// Used to implement C++20 [basic.scope.pdecl]: a variable's name is visible in its own
+	// initializer, so a stub is pre-inserted before parsing the initializer and then replaced
+	// with the fully-initialised VariableDeclarationNode once parsing completes.
+	bool replace_variable(std::string_view identifier, ASTNode new_node) {
+		auto& current_scope = symbol_table_stack_.back();
+		auto it = current_scope.symbols.find(identifier);
+		if (it == current_scope.symbols.end() || it->second.empty()) {
+			return false;
+		}
+		if (is_function_or_template_function(it->second[0])) {
+			return false;
+		}
+		it->second[0] = new_node;
+		return true;
+	}
+
 	// Insert a symbol into the global scope (scope_level 0) regardless of current scope
 	// This is useful for variable template instantiations that happen during function parsing
 	bool insertGlobal(std::string_view identifier, ASTNode node) {
@@ -300,6 +319,15 @@ public:
 
 	ScopeType get_current_scope_type() const {
 		return symbol_table_stack_.back().scope_type;
+	}
+
+	std::optional<ScopeType> get_scope_type(ScopeHandle handle) const {
+		for (const Scope& scope : symbol_table_stack_) {
+			if (scope.scope_handle.scope_level == handle.scope_level) {
+				return scope.scope_type;
+			}
+		}
+		return std::nullopt;
 	}
 
 	ScopeHandle get_current_scope_handle() const {
@@ -354,7 +382,15 @@ public:
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 
-			// First, check using declarations in this scope (they introduce names into the current scope)
+			// First, check direct symbols in this scope. Using declarations are materialized
+			// here so they correctly participate in shadowing and overload formation.
+			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
+				// Return the first match for backward compatibility
+				return symbolIt->second[0];
+			}
+
+			// Second, fall back to unresolved using declarations in this scope.
 			auto using_handle_it = scope.using_declarations_handles.find(identifier);
 			if (using_handle_it != scope.using_declarations_handles.end()) {
 				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
@@ -362,12 +398,6 @@ public:
 				if (result.has_value()) {
 					return result;
 				}
-			}
-			// Second, check direct symbols in this scope
-			auto symbolIt = scope.symbols.find(identifier);
-			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
-				// Return the first match for backward compatibility
-				return symbolIt->second[0];
 			}
 
 			// Third, check using directives in this scope
@@ -429,7 +459,14 @@ public:
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 			
-			// First, check using declarations in this scope
+			// First, check direct symbols in this scope. Using declarations are materialized
+			// into this map so ordinary lookup sees the full reachable overload set.
+			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end()) {
+				return symbolIt->second;
+			}
+
+			// Second, fall back to unresolved using declarations in this scope.
 			auto using_handle_it = scope.using_declarations_handles.find(identifier);
 			if (using_handle_it != scope.using_declarations_handles.end()) {
 				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
@@ -437,11 +474,6 @@ public:
 				if (!result.empty()) {
 					return result;
 				}
-			}
-			// Second, check direct symbols in this scope
-			auto symbolIt = scope.symbols.find(identifier);
-			if (symbolIt != scope.symbols.end()) {
-				return symbolIt->second;
 			}
 			
 			// Third, check using directives in this scope
@@ -496,6 +528,53 @@ public:
 	template<typename StringContainer>
 	std::vector<ASTNode> lookup_qualified_all(const StringContainer& namespaces, std::string_view identifier) const {
 		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
+	}
+
+	// Register a symbol directly into a namespace's persistent symbol table.
+	// Used for hidden friend functions defined inside class bodies so that
+	// lookup_adl() can find them even though the current scope is the struct scope.
+	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node) {
+		if (!ns.isValid()) return;
+		auto& ns_map = namespace_symbols_[ns];
+		auto it = ns_map.find(name_handle);
+		if (it == ns_map.end()) {
+			ns_map[name_handle] = std::vector<ASTNode>{node};
+		} else {
+			it->second.push_back(node);
+		}
+	}
+
+	// Collect ADL candidates per C++20 [basic.lookup.argdep].
+	// For each argument type that is a struct/class, searches the namespace in which
+	// the struct was declared, plus namespaces of all its direct base classes.
+	// Suppressed when ordinary lookup already found a blocking non-function declaration.
+	std::vector<ASTNode> lookup_adl(std::string_view func_name,
+	                                const std::vector<TypeSpecifierNode>& arg_types) const {
+		std::vector<ASTNode> result;
+		std::unordered_set<NamespaceHandle> visited;
+
+		auto search_ns = [&](NamespaceHandle ns) {
+			if (!ns.isValid() || ns.isGlobal() || !visited.insert(ns).second) return;
+			auto candidates = lookup_qualified_all(ns, func_name);
+			result.insert(result.end(), candidates.begin(), candidates.end());
+		};
+
+		for (const auto& arg_type : arg_types) {
+			TypeIndex ti = arg_type.type_index();
+			if (ti > 0 && ti < gTypeInfo.size()) {
+				if (const StructTypeInfo* si = gTypeInfo[ti].getStructInfo()) {
+					search_ns(si->namespace_handle);
+					for (const auto& base : si->base_classes) {
+						if (base.type_index > 0 && base.type_index < gTypeInfo.size()) {
+							if (const StructTypeInfo* bsi = gTypeInfo[base.type_index].getStructInfo()) {
+								search_ns(bsi->namespace_handle);
+							}
+						}
+					}
+				}
+			}
+		}
+		return result;
 	}
 
 	// Resolve function overload based on argument types (full type info)
@@ -585,6 +664,28 @@ public:
  		return std::nullopt;
  	}
 
+	// Return the ScopeType of the scope that directly contains this identifier.
+	// Searches scope.symbols (innermost first), then falls back to namespace_symbols_.
+	// Returns nullopt if not found anywhere.
+	std::optional<ScopeType> get_scope_type_of_symbol(std::string_view identifier) const {
+		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			const Scope& scope = *stackIt;
+			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
+				return scope.scope_type;
+			}
+		}
+		// Symbol may be in namespace_symbols_ (e.g. found via using-directive) but not
+		// materialised into any scope's symbols map. Treat that as namespace-scope.
+		StringHandle key = StringTable::getOrInternStringHandle(identifier);
+		for (const auto& [ns_handle, symbols] : namespace_symbols_) {
+			if (symbols.find(key) != symbols.end()) {
+				return ScopeType::Namespace;
+			}
+		}
+		return std::nullopt;
+	}
+
 	void enter_scope(ScopeType scopeType) {
 		symbol_table_stack_.emplace_back(Scope(scopeType, symbol_table_stack_.size()));
 	}
@@ -658,14 +759,9 @@ public:
 		}
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
-		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
-		auto resolved = lookup_qualified(namespace_handle, orig_name);
-		if (resolved.has_value()) {
-			auto sym_it = current_scope.symbols.find(key);
-			if (sym_it == current_scope.symbols.end()) {
-				current_scope.symbols[key] = std::vector<ASTNode>{ resolved.value() };
-			}
-		}
+		// Materialize the referenced declaration(s) into the current scope so they
+		// participate in ordinary lookup and overload-set formation.
+		materialize_using_declaration_symbols(current_scope, key, namespace_handle, orig_name);
 	}
 
 	void add_using_declaration(std::string_view local_name, NamespaceHandle namespace_handle, std::string_view original_name) {
@@ -677,14 +773,9 @@ public:
 		std::string_view orig_name = intern_string(original_name);
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
-		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
-		auto resolved = lookup_qualified(namespace_handle, orig_name);
-		if (resolved.has_value()) {
-			auto sym_it = current_scope.symbols.find(key);
-			if (sym_it == current_scope.symbols.end()) {
-				current_scope.symbols[key] = std::vector<ASTNode>{ resolved.value() };
-			}
-		}
+		// Materialize the referenced declaration(s) into the current scope so they
+		// participate in ordinary lookup and overload-set formation.
+		materialize_using_declaration_symbols(current_scope, key, namespace_handle, orig_name);
 	}
 
 	// Add a namespace alias to the current scope
@@ -962,6 +1053,52 @@ private:
 		}
 	}
 
+	static bool is_pure_function_set(const std::vector<ASTNode>& nodes) {
+		return !nodes.empty() && std::all_of(nodes.begin(), nodes.end(), [](const ASTNode& node) {
+			return is_function_or_template_function(node);
+		});
+	}
+
+	static bool contains_same_function_decl(const std::vector<ASTNode>& nodes, const ASTNode& candidate) {
+		const FunctionDeclarationNode* candidate_func = get_function_decl_node(candidate);
+		if (!candidate_func) {
+			return false;
+		}
+		for (const auto& existing : nodes) {
+			if (get_function_decl_node(existing) == candidate_func) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static void append_unique_function_overloads(std::vector<ASTNode>& existing_nodes, const std::vector<ASTNode>& new_nodes) {
+		for (const auto& node : new_nodes) {
+			if (!contains_same_function_decl(existing_nodes, node)) {
+				existing_nodes.push_back(node);
+			}
+		}
+	}
+
+	void materialize_using_declaration_symbols(Scope& current_scope, std::string_view key, NamespaceHandle namespace_handle, std::string_view original_name) {
+		auto resolved_nodes = lookup_qualified_all(namespace_handle, original_name);
+		if (resolved_nodes.empty()) {
+			return;
+		}
+
+		auto sym_it = current_scope.symbols.find(key);
+		if (sym_it == current_scope.symbols.end()) {
+			current_scope.symbols[key] = std::move(resolved_nodes);
+			return;
+		}
+
+		if (!is_pure_function_set(sym_it->second) || !is_pure_function_set(resolved_nodes)) {
+			return;
+		}
+
+		append_unique_function_overloads(sym_it->second, resolved_nodes);
+	}
+
 	// Using directives are stored as handles and checked in insertion order.
 	// The first match is returned to match the legacy lookup behavior.
 	std::optional<ASTNode> lookup_using_directives_first(const Scope& scope, std::string_view identifier) const {
@@ -976,13 +1113,25 @@ private:
 
 	// Returns the first non-empty result to match the legacy lookup_all behavior.
 	std::vector<ASTNode> lookup_all_using_directives_first(const Scope& scope, std::string_view identifier) const {
+		std::vector<ASTNode> merged_overloads;
 		for (const auto& using_ns : scope.using_directive_paths) {
 			auto result = lookup_qualified_all(using_ns, identifier);
-			if (!result.empty()) {
-				return result;
+			if (result.empty()) {
+				continue;
 			}
+
+			if (merged_overloads.empty()) {
+				merged_overloads = std::move(result);
+				continue;
+			}
+
+			if (!is_pure_function_set(merged_overloads) || !is_pure_function_set(result)) {
+				return merged_overloads;
+			}
+
+			append_unique_function_overloads(merged_overloads, result);
 		}
-		return {};
+		return merged_overloads;
 	}
 
 	NamespaceHandle get_or_create_namespace_handle_from_path(std::span<const StringType<>> namespaces) const {

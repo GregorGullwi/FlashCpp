@@ -25,6 +25,7 @@
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
 #include "ParserTypes.h"       // Unified parsing types (Phase 1)
 #include "ParserScopeGuards.h" // RAII scope guards (Phase 3)
+#include "LazyMemberResolver.h" // For gLazyMemberResolver used in createBoundIdentifier
 
 #ifndef WITH_DEBUG_INFO
 #define WITH_DEBUG_INFO 0
@@ -408,6 +409,7 @@ private:
                 InlineVector<StringHandle, 4> template_param_names; // For template member functions
                 bool is_member_function_template = false; // True when this is a member function template (template<T> void f())
                                                           // as opposed to a regular member of a template class
+                bool is_free_function = false;            // True for non-member friend functions defined inside a class body
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
@@ -448,9 +450,19 @@ private:
         };
         InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 
-        // Track if we're parsing a template body (for template parameter reference recognition)
-        bool parsing_template_body_ = false;
-        
+        // Track nesting depth of template body parsing (for template parameter reference recognition).
+        // A value > 0 means we are inside one or more template definitions.
+        // Use FlashCpp::TemplateDepthGuard to increment/decrement; use ScopedState to temporarily
+        // suppress (set to 0) during SFINAE and lazy instantiation.
+        size_t parsing_template_depth_ = 0;
+
+        // Phase 1 two-phase name lookup enforcement (C++20 [temp.res]/9).
+        // Set to the opening-brace line of the template body being re-parsed.
+        // Zero means we are NOT currently in a Phase 1 re-parse check.
+        size_t phase1_cutoff_line_ = 0;
+        size_t phase1_cutoff_file_idx_ = SIZE_MAX;
+        std::optional<Token> phase1_violation_token_;
+
         // Add parsing depth counter to detect infinite loops
         // This is incremented/decremented in critical parsing functions
         size_t parsing_depth_ = 0;
@@ -581,6 +593,11 @@ private:
         };
         std::vector<DeferredLambdaDeduction> deferred_lambda_deductions_;
 
+        // Stack tracking explicit lambda capture kinds while parsing lambda bodies.
+        // Each entry maps a captured variable's StringHandle to its CaptureKind.
+        // Pushed before parse_block() and popped after.
+        std::vector<std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind>> lambda_capture_stack_;
+
         // Track ASTNode addresses currently being processed in get_expression_type to prevent infinite recursion
         mutable std::unordered_set<const void*> expression_type_resolution_stack_;
 
@@ -589,6 +606,11 @@ private:
 
         // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
         std::vector<ASTNode> pending_struct_variables_;
+
+        // Pending hidden friend function definitions from inline friend bodies inside class/struct.
+        // These need to be added to the enclosing namespace's declaration list (or the top-level
+        // AST) so the IR converter generates code for them, since they are not regular members.
+        std::vector<ASTNode> pending_hidden_friend_defs_;
 
         template <typename T>
         std::pair<ASTNode, T&> create_node_ref(T&& node) {
@@ -1041,7 +1063,8 @@ public:  // Public methods for template instantiation
             StructDeclarationNode& struct_ref,
             StructTypeInfo* struct_info,
             AccessSpecifier current_access,
-            const InlineVector<StringHandle, 4>& current_template_param_names
+            const InlineVector<StringHandle, 4>& current_template_param_names,
+            bool add_to_struct_info = true  // false when finalization loop will register the function
         );
         
         // Helper to parse entire static member block (data or function) - reduces code duplication
@@ -1151,7 +1174,7 @@ public:  // Public methods for template instantiation
 
         // Unified symbol lookup that automatically provides template parameters when parsing templates
         std::optional<ASTNode> lookup_symbol(StringHandle identifier) const {
-            if (parsing_template_body_ && !current_template_param_names_.empty()) {
+            if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
                 return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
             } else {
                 return gSymbolTable.lookup(identifier);
@@ -1160,7 +1183,7 @@ public:  // Public methods for template instantiation
 
         // Overload for qualified lookups with vector of strings
         std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
-            if (parsing_template_body_ && !current_template_param_names_.empty()) {
+            if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
                 // For qualified lookups, we still need template params for the base lookup
                 // But qualified lookups are less common in template bodies
                 return gSymbolTable.lookup_qualified(namespaces, identifier);
@@ -1183,6 +1206,220 @@ public:  // Public methods for template instantiation
                 return &symbol.as<VariableDeclarationNode>().declaration();
             }
             return nullptr;
+        }
+
+        // Create an IdentifierNode and perform ordinary unqualified lookup to classify its binding.
+        // Non-const because it may call instantiateLazyStaticMember.
+        // Returns Unresolved when the name cannot be classified (template-dependent names,
+        // 'this', unknown identifiers, etc.). Safe to call for any token; the Unresolved
+        // fallback preserves all existing codegen behaviour.
+        IdentifierNode createBoundIdentifier(Token token) {
+            IdentifierNode node(token);
+
+            // In template bodies with active template parameters, names may be dependent.
+            auto sym = lookup_symbol(token.handle());
+
+            // Lambda capture bindings: check lambda_capture_stack_ for explicit captures
+            if (sym.has_value() && sym->is<DeclarationNode>()) {
+                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+                bool is_local = scope_type.has_value() &&
+                    scope_type != ScopeType::Global && scope_type != ScopeType::Namespace;
+                if (is_local && !lambda_capture_stack_.empty()) {
+                    auto cap_it = lambda_capture_stack_.back().find(token.handle());
+                    if (cap_it != lambda_capture_stack_.back().end()) {
+                        if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
+                            node.set_binding(IdentifierBinding::CapturedByValue);
+                        else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
+                            node.set_binding(IdentifierBinding::CapturedByRef);
+                        return node;
+                    }
+                }
+            }
+            if (sym.has_value() && sym->is<VariableDeclarationNode>()) {
+                const auto& var_decl = sym->as<VariableDeclarationNode>();
+                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+                bool is_local = scope_type.has_value() &&
+                    scope_type != ScopeType::Global && scope_type != ScopeType::Namespace;
+                if (is_local && var_decl.storage_class() != StorageClass::Static && !lambda_capture_stack_.empty()) {
+                    auto cap_it = lambda_capture_stack_.back().find(token.handle());
+                    if (cap_it != lambda_capture_stack_.back().end()) {
+                        if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
+                            node.set_binding(IdentifierBinding::CapturedByValue);
+                        else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
+                            node.set_binding(IdentifierBinding::CapturedByRef);
+                        return node;
+                    }
+                }
+            }
+
+            // Helper lambdas for member context binding
+            auto bindStaticMemberFromStructInfo = [&](const StructTypeInfo* struct_info) -> bool {
+                if (!struct_info) return false;
+                StringHandle member_handle = token.handle();
+                instantiateLazyStaticMember(struct_info->name, member_handle);
+                auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+                if (!static_member || !owner_struct) return false;
+                bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+                if (is_template_member_context && owner_struct != struct_info) return false;
+                node.set_binding(IdentifierBinding::StaticMember);
+                node.set_resolved_name(StringTable::getOrInternStringHandle(
+                    StringBuilder().append(owner_struct->getName()).append("::"sv).append(member_handle).commit()));
+                return true;
+            };
+
+            auto bindNonStaticMemberFromContext = [&](TypeIndex struct_type_index, const StructTypeInfo* local_struct_info) -> bool {
+                const StructTypeInfo* current_struct_info = local_struct_info;
+                if (!current_struct_info && struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+                    current_struct_info = gTypeInfo[struct_type_index].getStructInfo();
+                }
+                if (!current_struct_info) return false;
+                bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+                // When parsing a template body and the struct has dependent (deferred) base classes,
+                // skip gLazyMemberResolver which traverses concrete base classes — a dependent base
+                // may also provide the same name, making eager binding to a concrete base incorrect
+                // (C++20 [temp.res]/2: dependent names must not be bound at first-phase parse time).
+                // Only own-declared members are safe to bind eagerly; names inherited from concrete
+                // bases stay Unresolved so codegen's runtime lookup handles them at instantiation.
+                bool skip_base_traversal = is_template_member_context && current_struct_info->has_deferred_base_classes;
+                if (!skip_base_traversal && struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+                    auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, token.handle());
+                    if (!member_result) return false;
+                    if (is_template_member_context && member_result.owner_struct != current_struct_info) return false;
+                    node.set_binding(IdentifierBinding::NonStaticMember);
+                    return true;
+                }
+                for (const auto& member : current_struct_info->members) {
+                    if (member.getName() == token.handle()) {
+                        node.set_binding(IdentifierBinding::NonStaticMember);
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            auto tryBindMemberContext = [&]() -> bool {
+                if (!member_function_context_stack_.empty()) {
+                    const auto& member_ctx = member_function_context_stack_.back();
+                    const StructTypeInfo* struct_info = member_ctx.local_struct_info;
+                    if (!struct_info && member_ctx.struct_type_index > 0 && member_ctx.struct_type_index < gTypeInfo.size()) {
+                        struct_info = gTypeInfo[member_ctx.struct_type_index].getStructInfo();
+                    }
+                    if (bindStaticMemberFromStructInfo(struct_info)) return true;
+                    if (bindNonStaticMemberFromContext(member_ctx.struct_type_index, member_ctx.local_struct_info)) return true;
+                }
+                if (!struct_parsing_context_stack_.empty()) {
+                    const auto& struct_ctx = struct_parsing_context_stack_.back();
+                    const StructTypeInfo* struct_info = struct_ctx.local_struct_info;
+                    if (!struct_info) {
+                        auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+                        if (struct_it != gTypesByName.end()) {
+                            struct_info = struct_it->second->getStructInfo();
+                        }
+                    }
+                    if (bindStaticMemberFromStructInfo(struct_info)) return true;
+                    TypeIndex struct_type_index = 0;
+                    if (!struct_ctx.struct_name.empty()) {
+                        auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+                        if (struct_it != gTypesByName.end()) {
+                            struct_type_index = struct_it->second->type_index_;
+                        }
+                    }
+                    if (bindNonStaticMemberFromContext(struct_type_index, struct_ctx.local_struct_info)) return true;
+                }
+                return false;
+            };
+
+            if (!sym.has_value()) {
+                // Not found in symbol table -> check member context
+                if (tryBindMemberContext()) return node;
+                return node; // Unresolved
+            }
+
+            // Template parameter reference
+            if (sym->is<TemplateParameterReferenceNode>()) {
+                node.set_binding(IdentifierBinding::TemplateParameter);
+                return node;
+            }
+
+            // Helper: record a Phase 1 violation if this declaration was added after
+            // the template body opening brace (C++20 [temp.res]/9).
+            auto checkPhase1 = [&](const Token& decl_tok) {
+                if (phase1_cutoff_line_ > 0 && !phase1_violation_token_.has_value() &&
+                    decl_tok.file_index() == phase1_cutoff_file_idx_ &&
+                    decl_tok.line() > phase1_cutoff_line_) {
+                    phase1_violation_token_ = token;
+                }
+            };
+
+            // Function or function-template -> Function binding
+            if (sym->is<FunctionDeclarationNode>() || sym->is<TemplateFunctionDeclarationNode>()) {
+                if (sym->is<FunctionDeclarationNode>()) {
+                    checkPhase1(sym->as<FunctionDeclarationNode>().decl_node().identifier_token());
+                } else {
+                    checkPhase1(sym->as<TemplateFunctionDeclarationNode>().function_decl_node().decl_node().identifier_token());
+                }
+                node.set_binding(IdentifierBinding::Function);
+                return node;
+            }
+
+            // DeclarationNode
+            if (sym->is<DeclarationNode>()) {
+                const auto& decl = sym->as<DeclarationNode>();
+                // Check if this DeclarationNode is actually an enumerator constant
+                // (unscoped enum values are registered as DeclarationNode with Type::Enum).
+                // Variables/parameters of enum type are also DeclarationNode with Type::Enum,
+                // so we must verify via EnumTypeInfo::findEnumerator before classifying.
+                if (decl.type_node().is<TypeSpecifierNode>()) {
+                    const auto& ts = decl.type_node().as<TypeSpecifierNode>();
+                    if (ts.type() == Type::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
+                        size_t enum_idx = ts.type_index();
+                        if (enum_idx < gTypeInfo.size()) {
+                            const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
+                            if (enum_info && enum_info->findEnumerator(token.handle())) {
+                                node.set_binding(IdentifierBinding::EnumConstant);
+                                return node;
+                            }
+                        }
+                    }
+                }
+                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+                bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
+                if (is_global_scope && tryBindMemberContext()) return node;
+                if (is_global_scope) {
+                    checkPhase1(decl.identifier_token());
+                    node.set_binding(IdentifierBinding::Global);
+                } else if (scope_type.has_value()) {
+                    node.set_binding(IdentifierBinding::Local);
+                }
+                return node;
+            }
+
+            // VariableDeclarationNode
+            if (sym->is<VariableDeclarationNode>()) {
+                const auto& var_decl = sym->as<VariableDeclarationNode>();
+                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+                bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
+                if (is_global_scope && tryBindMemberContext()) return node;
+                if (is_global_scope) {
+                    checkPhase1(var_decl.declaration().identifier_token());
+                    node.set_binding(IdentifierBinding::Global);
+                } else if (scope_type.has_value()) {
+                    if (var_decl.storage_class() == StorageClass::Static) {
+                        node.set_binding(IdentifierBinding::StaticLocal);
+                    } else {
+                        node.set_binding(IdentifierBinding::Local);
+                    }
+                }
+                return node;
+            }
+
+            // EnumeratorNode
+            if (sym->is<EnumeratorNode>()) {
+                node.set_binding(IdentifierBinding::EnumConstant);
+                return node;
+            }
+
+            return node; // Unresolved for other symbol types
         }
 
         SaveHandle save_token_position();

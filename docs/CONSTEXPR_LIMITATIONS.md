@@ -195,9 +195,13 @@ static_assert(obj.inner.value == 42);  // ✅ Works - nested access supported!
 **Note:** Multi-level nesting (e.g., `a.b.c.d`) is supported. The evaluator recursively 
 evaluates each level of member access.
 
-### ❌ Array and Pointer Member Access
+### ⚠️ Array Access Has Partial Support
 
-Array subscripting and pointer dereferencing have limited support:
+Several array-related constexpr forms are supported in simple/supported shapes:
+
+- direct array subscripts such as `values[1]`
+- array-element member access such as `items[1].value`
+- member-array subscripts such as `box.data[1]`
 
 ```cpp
 struct Container {
@@ -206,23 +210,89 @@ struct Container {
 };
 
 constexpr Container c;
-static_assert(c.data[0] == 1);  // ❌ Error: Member array subscript limited
+static_assert(c.data[0] == 1);  // ✅ Works in this simple form
 ```
 
-**Note:** Array subscript code has been implemented in `ConstExprEvaluator.h` but is 
-blocked by two parser limitations:
+Array support is still incomplete in more complex cases.
 
-1. **Inferred array size**: `int arr[] = {1,2,3}` syntax is not parsed correctly
-2. **Multi-statement functions**: Constexpr functions with local variables require 
-   statement-level evaluation which is not yet supported
+**Known remaining limitations include:**
 
-**Workaround for array access:** Use explicit array size and avoid local arrays:
+1. **Inferred array size**: `int arr[] = {1,2,3}` syntax is not parsed correctly in some contexts
+2. **Statement-heavy constexpr evaluation**: more complex local/function-driven array cases can still run into broader statement-evaluation limits
+
+**Guidance for array access:** Prefer explicit array sizes and straightforward direct/member array patterns.
+
+### ❌ Pointer Dereference in Constexpr
+
+Pointer dereferencing still has limited/unsupported constexpr support:
+
 ```cpp
-struct Data {
-    int arr[3] = {10, 20, 30};
-};
-// Direct member array access may work in simple cases
+constexpr int value = 42;
+constexpr const int* ptr = &value;
+static_assert(*ptr == 42);  // ❌ Pointer constexpr support is still limited
 ```
+
+### ❌ Dynamic Allocation in Constexpr (`new` / `delete`)
+
+`new`, `new[]`, `delete`, and `delete[]` should currently be treated as unsupported in constexpr evaluation.
+
+```cpp
+constexpr int f() {
+    int* p = new int(42);
+    int v = *p;
+    delete p;
+    return v;
+}
+
+static_assert(f() == 42);  // ❌ Not currently supported
+```
+
+**Reason:** The parser has AST nodes for these expressions, but the constexpr evaluator does not currently implement `NewExpressionNode` / `DeleteExpressionNode` handling.
+
+**Workaround:** Avoid dynamic allocation in constexpr code for now; prefer direct objects, aggregates, and fixed-size arrays.
+
+### ⚠️ Constexpr Lambdas Have Capture Limits
+
+Basic constexpr lambdas work, including explicit capture-by-value in supported shapes, but capture support is still incomplete.
+
+**Currently unsupported in constexpr lambda evaluation:**
+
+- implicit capture `[=]`
+- implicit capture `[&]`
+- capture of `this`
+- capture of `*this`
+
+```cpp
+constexpr int base = 10;
+constexpr auto ok = [base](int x) { return base + x; };  // ✅ explicit capture supported
+
+struct S {
+    int value = 42;
+    constexpr int f() const {
+        auto bad = [this]() { return value; };
+        return bad();
+    }
+};
+```
+
+**Workaround:** Prefer explicit capture-by-value of the exact constexpr data you need.
+
+### ⚠️ Some Constant-Expression Forms Are Still Partial or Unsupported
+
+Some parsed expression kinds are not yet fully handled by the constexpr evaluator.
+
+**Partial support:**
+
+- fold expressions require template instantiation context
+- pack expansions require template instantiation context
+
+**Currently unsupported in constexpr evaluation:**
+
+- `noexcept(expr)`
+- `offsetof(T, member)`
+- `throw` expressions used in expression contexts
+
+These may currently fail with a generic "expression type not supported in constant expressions" error rather than a specialized diagnostic.
 
 ## Implementation Details
 
@@ -230,13 +300,13 @@ struct Data {
 
 When evaluating `p1.x` in a constant expression:
 
-1. **Identify the object**: `p1` must be an identifier referring to a constexpr variable
-2. **Get the initializer**: Look up `p1` in the symbol table and get its `ConstructorCallNode` initializer
-3. **Find the constructor**: Locate the constructor in the struct definition that matches the argument count
-4. **Locate the member**: Find the member `x` in the constructor's member initializer list
-5. **Extract the initializer expression**: Get the expression used to initialize `x` (e.g., `x_val`)
-6. **Match parameter to argument**: Find which parameter `x_val` refers to and get the corresponding constructor argument
-7. **Evaluate the argument**: Recursively evaluate the argument expression (e.g., the literal `10`)
+1. **Identify the object**: `p1` must refer to a constexpr object/value source
+2. **Get the initializer**: Look up `p1` and obtain its constexpr initializer
+3. **Resolve the object shape**: Handle constructor-initialized and aggregate-initialized forms
+4. **Locate the member**: Find the member `x` in the object initializer data
+5. **Extract the member expression**: Get the expression used to initialize `x` (for example `x_val`)
+6. **Match parameter to argument when needed**: If constructor parameters are involved, bind the referenced parameter to the corresponding argument
+7. **Evaluate the resulting expression**: Recursively evaluate the resulting value expression
 
 ### Why Constructor Body Execution is Complex
 
@@ -275,17 +345,22 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
 - ✅ Unary `-` and `+` operators
 - ✅ Constexpr member function calls (single expression body)
-- ✅ Nested member access (e.g., `obj.inner.value`) **NEW**
-- ✅ Array subscript evaluation (code complete, blocked by parser limitations) **NEW**
+- ✅ Basic constexpr lambdas with explicit captures in supported shapes
+- ✅ Nested member access (e.g., `obj.inner.value`)
+- ✅ Direct/member array subscript support in current supported shapes
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
 - ⚠️ Inferred array size parsing (`int arr[] = {1,2,3}`)
+- ⚠️ Fold expressions / pack expansions require template instantiation context
 
 ### Hard
 - ❌ Constructor body statement execution
+- ❌ Dynamic allocation in constexpr (`new` / `delete`)
+- ❌ Implicit lambda captures (`[=]`, `[&]`) and `this` / `*this` capture in constexpr lambdas
 - ❌ Multi-statement constexpr function bodies
 - ❌ Control flow (if/while/for) in constexpr contexts
+- ❌ `noexcept(expr)`, `offsetof(...)`, and `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
 ## Recommendations
@@ -293,9 +368,11 @@ Potential areas for enhancement (in order of complexity):
 ### For Users
 
 1. **Use member initializer lists** instead of constructor body assignments when you need constexpr evaluation
-2. **Keep struct hierarchies flat** - avoid nested structs for constexpr member access
+2. **Nested member access is okay in supported shapes** - prefer simple, directly initialized object graphs
 3. **Use single-expression member functions** - multi-statement bodies are not supported
-4. **Prefer scalar members over arrays** for constexpr access
+4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
+5. **Use explicit lambda captures** - avoid `[=]`, `[&]`, and `this`-capture in constexpr code paths
+6. **Avoid `new` / `delete`, `noexcept(expr)`, and `offsetof(...)` in constexpr code** for now
 
 ### For Contributors
 
@@ -352,6 +429,17 @@ struct Calculator {
 };
 constexpr Calculator calc{3, 4};
 static_assert(calc.sum() == 7);
+
+// Good: Nested member access
+struct Inner { int value; constexpr Inner(int v) : value(v) {} };
+struct Outer { Inner inner; constexpr Outer(int v) : inner(v) {} };
+constexpr Outer outer{42};
+static_assert(outer.inner.value == 42);
+
+// Good: Simple member array access
+struct Data { int arr[3]; constexpr Data() : arr{1, 2, 3} {} };
+constexpr Data data{};
+static_assert(data.arr[1] == 2);
 ```
 
 ### ❌ Patterns to Avoid
@@ -366,16 +454,31 @@ struct Point {
     }
 };
 
-// Bad: Nested member access
-struct Inner { int value; };
-struct Outer { Inner inner; };
-constexpr Outer o{.inner = {42}};
-static_assert(o.inner.value == 42);  // Nested access not supported
+// Bad: Dynamic allocation in constexpr
+constexpr int f() {
+    int* p = new int(42);
+    delete p;
+    return 42;
+}
+static_assert(f() == 42);  // Dynamic allocation not supported
 
-// Bad: Array element access  
-struct Data { int arr[3]; };
-constexpr Data d{.arr = {1, 2, 3}};
-static_assert(d.arr[1] == 2);  // Array subscripting not supported
+// Bad: Implicit capture / this-capture in constexpr lambdas
+struct CaptureExample {
+    int x = 7;
+    constexpr int value() const {
+        auto bad = [this]() { return x; };
+        return bad();
+    }
+};
+
+// Bad: Complex statement-heavy constexpr member logic
+struct Data {
+    int arr[3];
+    constexpr int getSecond() const {
+        int idx = 1;
+        return arr[idx];
+    }
+};
 ```
 
 ## Related Features

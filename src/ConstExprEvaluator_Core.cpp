@@ -398,7 +398,27 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 			unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
 			// sizeof never returns 0 in valid C++ (sizeof(char) == 1, all complete types >= 1).
 			// A zero result indicates an incomplete or template-dependent type.
-			// Return a template-dependent error so static_assert can be deferred in template contexts.
+			// Before returning an error, try context.template_param_names (e.g., T=int from Box<int>).
+			if (size_in_bytes == 0 && !context.template_param_names.empty()) {
+				std::string_view type_name = type_spec.token().value();
+				for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
+					if (context.template_param_names[i] == type_name) {
+						const TemplateTypeArg& arg = context.template_args[i];
+						if (arg.isTypeArgument()) {
+							size_t param_size = get_type_size_bits(arg.base_type) / 8;
+							if (param_size == 0 && arg.base_type == Type::Struct && arg.type_index > 0 &&
+									arg.type_index < gTypeInfo.size()) {
+								const StructTypeInfo* si = gTypeInfo[arg.type_index].getStructInfo();
+								if (si) param_size = si->total_size;
+							}
+							if (param_size > 0) {
+								return EvalResult::from_int(static_cast<long long>(param_size));
+							}
+						}
+						break;
+					}
+				}
+			}
 			if (size_in_bytes == 0) {
 				return EvalResult::error(
 					"sizeof evaluated to 0 for type '" + std::string(type_spec.token().value()) + "' (incomplete or dependent type)",
@@ -744,13 +764,57 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	}
 
 	std::string_view var_name = identifier.name();
-	auto symbol_opt = context.symbols->lookup(var_name);
+	StringHandle name_handle = identifier.nameHandle();
+	if (!name_handle.isValid()) {
+		name_handle = StringTable::getOrInternStringHandle(var_name);
+	}
+
+	std::optional<ASTNode> symbol_opt;
+	if (identifier.binding() == IdentifierBinding::StaticMember) {
+		bool found_bound_static_member = false;
+
+		if (context.struct_info != nullptr) {
+			auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(name_handle);
+			if (static_member && owner_struct) {
+				found_bound_static_member = true;
+				if (static_member->initializer.has_value()) {
+					return evaluate(static_member->initializer.value(), context);
+				}
+			}
+		}
+
+		if (!found_bound_static_member && context.struct_node != nullptr) {
+			for (const auto& static_member : context.struct_node->static_members()) {
+				if (static_member.name != name_handle) {
+					continue;
+				}
+
+				found_bound_static_member = true;
+				if (static_member.initializer.has_value()) {
+					return evaluate(static_member.initializer.value(), context);
+				}
+				break;
+			}
+		}
+
+		if (identifier.resolved_name().isValid()) {
+			symbol_opt = context.symbols->lookup(identifier.resolved_name());
+		}
+
+		if (!symbol_opt.has_value()) {
+			if (found_bound_static_member) {
+				return EvalResult::error("Static member has no initializer: " + std::string(var_name));
+			}
+			return EvalResult::error("Bound static member not found in constant expression: " + std::string(var_name));
+		}
+	} else {
+		symbol_opt = context.symbols->lookup(var_name);
+	}
 	
 	// If not found in symbol table, check for static members in the current struct
 	if (!symbol_opt.has_value()) {
 		// Check StructDeclarationNode first (for AST-based static members)
 		if (context.struct_node != nullptr) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
 			for (const auto& static_member : context.struct_node->static_members()) {
 				if (static_member.name == name_handle) {
 					// Found static member in struct AST node
@@ -766,7 +830,6 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		
 		// Check StructTypeInfo (for runtime-built struct info)
 		if (context.struct_info != nullptr) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
 			for (const auto& static_member : context.struct_info->static_members) {
 				if (static_member.getName() == name_handle) {
 					// Found static member in StructTypeInfo
@@ -815,7 +878,6 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 					const TypeInfo& ti = gTypeInfo[type_index];
 					const EnumTypeInfo* enum_info = ti.getEnumInfo();
 					if (enum_info) {
-						StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
 						const Enumerator* e = enum_info->findEnumerator(name_handle);
 						if (e) {
 							return EvalResult(static_cast<int64_t>(e->value));
@@ -1717,7 +1779,160 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		qualified_name = func_call.qualified_name();
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
-	
+
+	auto lookupFunctionSymbol = [&]() -> std::optional<ASTNode> {
+		if (func_call.has_mangled_name()) {
+			auto mangled_symbol = context.symbols->lookup(func_call.mangled_name_handle());
+			if (mangled_symbol.has_value()) {
+				return mangled_symbol;
+			}
+		}
+
+		if (func_call.has_qualified_name()) {
+			QualifiedIdentifier qi = QualifiedIdentifier::fromQualifiedName(
+				func_call.qualified_name_handle(),
+				context.symbols->get_current_namespace_handle());
+			auto qualified_symbol = context.symbols->lookup_qualified(qi);
+			if (qualified_symbol.has_value()) {
+				return qualified_symbol;
+			}
+		}
+
+		return context.symbols->lookup(func_name);
+	};
+
+	// If we have a struct context, prefer static member functions from the current struct.
+	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
+	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
+	auto tryEvaluateCurrentStructStaticMemberFunction = [&]() -> std::optional<EvalResult> {
+		if (!context.struct_info) {
+			return std::nullopt;
+		}
+
+		const auto& arguments = func_call.arguments();
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+
+		// Trigger lazy member function instantiation if needed
+		if (context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+				context.struct_info->name, func_name_handle)) {
+			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+				context.struct_info->name, func_name_handle);
+			if (lazy_info_opt.has_value()) {
+				context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
+				LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+					context.struct_info->name, func_name_handle);
+			}
+		}
+
+		const FunctionDeclarationNode* matched_function = nullptr;
+
+		for (const auto& member_func : context.struct_info->member_functions) {
+			if (member_func.getName() != func_name_handle ||
+					!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (func_decl.parameter_nodes().size() != arguments.size()) {
+				continue;
+			}
+
+			bool can_evaluate = func_decl.is_constexpr() ||
+				(context.storage_duration == ConstExpr::StorageDuration::Static);
+			if (!can_evaluate || !func_decl.get_definition().has_value()) {
+				continue;
+			}
+
+			if (matched_function) {
+				return EvalResult::error("Ambiguous static member function overload in constant expression");
+			}
+			matched_function = &func_decl;
+		}
+
+		// If not found in the instantiated struct, check the base template struct
+		if (!matched_function) {
+			auto struct_type_it = gTypesByName.find(context.struct_info->name);
+			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+				const TypeInfo* struct_type = struct_type_it->second;
+				auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
+				if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
+					const StructTypeInfo* template_struct_info = template_type_it->second->getStructInfo();
+					if (template_struct_info) {
+						for (const auto& member_func : template_struct_info->member_functions) {
+							if (member_func.getName() != func_name_handle ||
+									!member_func.function_decl.is<FunctionDeclarationNode>()) {
+								continue;
+							}
+							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+							if (func_decl.parameter_nodes().size() != arguments.size()) {
+								continue;
+							}
+							bool can_evaluate = func_decl.is_constexpr() ||
+								(context.storage_duration == ConstExpr::StorageDuration::Static);
+							if (!can_evaluate || !func_decl.get_definition().has_value()) {
+								continue;
+							}
+							matched_function = &func_decl;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		if (!matched_function) {
+			return std::nullopt;
+		}
+
+		// Load template bindings for proper evaluation of sizeof(T) etc.
+		std::unordered_map<std::string_view, EvalResult> empty_bindings;
+		auto saved_template_param_names = context.template_param_names;
+		auto saved_template_args = context.template_args;
+
+		bool loaded_template_bindings = false;
+		if (const LazyClassInstantiationInfo* lazy_class_info =
+				LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
+			context.template_param_names.clear();
+			context.template_args = lazy_class_info->template_args;
+			context.template_param_names.reserve(lazy_class_info->template_params.size());
+			for (const auto& template_param : lazy_class_info->template_params) {
+				if (template_param.is<TemplateParameterNode>()) {
+					context.template_param_names.push_back(
+						template_param.as<TemplateParameterNode>().name());
+				}
+			}
+			loaded_template_bindings = true;
+		}
+
+		if (!loaded_template_bindings) {
+			auto struct_type_it = gTypesByName.find(context.struct_info->name);
+			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+				const TypeInfo* struct_type = struct_type_it->second;
+				auto param_handles = gTemplateRegistry.getTemplateParameters(struct_type->baseTemplateName());
+				context.template_param_names.clear();
+				context.template_args.clear();
+				context.template_param_names.reserve(param_handles.size());
+				context.template_args.reserve(struct_type->templateArgs().size());
+				for (StringHandle param_handle : param_handles) {
+					context.template_param_names.push_back(StringTable::getStringView(param_handle));
+				}
+				for (const auto& arg_info : struct_type->templateArgs()) {
+					context.template_args.push_back(toTemplateTypeArg(arg_info));
+				}
+			}
+		}
+
+		EvalResult result = evaluate_function_call_with_bindings(
+			*matched_function, arguments, empty_bindings, context);
+		context.template_param_names = std::move(saved_template_param_names);
+		context.template_args = std::move(saved_template_args);
+		return result;
+	};
+
+	if (auto current_struct_result = tryEvaluateCurrentStructStaticMemberFunction()) {
+		return *current_struct_result;
+	}
+
 	// Special handling for std::__is_complete_or_unbounded
 	// This is a helper function in the standard library that checks if a type is complete
 	// __is_complete_or_unbounded evaluates to true if either:
@@ -1785,8 +2000,26 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		return EvalResult::from_bool(true);
 	}
 	
-	// First try simple name lookup in symbol table
-	auto symbol_opt = context.symbols->lookup(func_name);
+	// Prefer the parser-stored exact call target before falling back to raw name lookup.
+	auto symbol_opt = lookupFunctionSymbol();
+
+	auto load_template_bindings_from_type = [&](const TypeInfo* source_type) {
+		if (!source_type || !source_type->isTemplateInstantiation()) {
+			return;
+		}
+
+		auto param_handles = gTemplateRegistry.getTemplateParameters(source_type->baseTemplateName());
+		context.template_param_names.clear();
+		context.template_args.clear();
+		context.template_param_names.reserve(param_handles.size());
+		context.template_args.reserve(source_type->templateArgs().size());
+		for (StringHandle param_handle : param_handles) {
+			context.template_param_names.push_back(StringTable::getStringView(param_handle));
+		}
+		for (const auto& arg_info : source_type->templateArgs()) {
+			context.template_args.push_back(toTemplateTypeArg(arg_info));
+		}
+	};
 	
 	// If not found in symbol table, try the global template registry
 	// This handles cases where a template function is defined but not yet instantiated
@@ -1858,7 +2091,35 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 								if (arguments.size() == parameters.size()) {
 									// Pass empty bindings for static member function calls
 									std::unordered_map<std::string_view, EvalResult> empty_bindings;
-									return evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+									auto saved_template_param_names = context.template_param_names;
+									auto saved_template_args = context.template_args;
+
+									if (context.template_param_names.empty() && context.template_args.empty() && context.struct_info) {
+										if (const LazyClassInstantiationInfo* lazy_class_info =
+												LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
+											context.template_param_names.clear();
+											context.template_args = lazy_class_info->template_args;
+											context.template_param_names.reserve(lazy_class_info->template_params.size());
+											for (const auto& template_param : lazy_class_info->template_params) {
+												if (template_param.is<TemplateParameterNode>()) {
+													context.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
+												}
+											}
+										} else {
+											auto current_struct_it = gTypesByName.find(context.struct_info->name);
+											if (current_struct_it != gTypesByName.end()) {
+												load_template_bindings_from_type(current_struct_it->second);
+											}
+										}
+									}
+									if (context.template_param_names.empty() && context.template_args.empty()) {
+										load_template_bindings_from_type(&type_info);
+									}
+
+									EvalResult result = evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+									context.template_param_names = std::move(saved_template_param_names);
+									context.template_args = std::move(saved_template_args);
+									return result;
 								}
 							}
 						}
@@ -1925,7 +2186,32 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 
 		// Pass empty bindings for top-level function calls
 		std::unordered_map<std::string_view, EvalResult> empty_bindings;
-		return evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+		auto saved_template_param_names = context.template_param_names;
+		auto saved_template_args = context.template_args;
+
+		if (context.template_param_names.empty() && context.template_args.empty() && context.struct_info) {
+			if (const LazyClassInstantiationInfo* lazy_class_info =
+					LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
+				context.template_param_names.clear();
+				context.template_args = lazy_class_info->template_args;
+				context.template_param_names.reserve(lazy_class_info->template_params.size());
+				for (const auto& template_param : lazy_class_info->template_params) {
+					if (template_param.is<TemplateParameterNode>()) {
+						context.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
+					}
+				}
+			} else {
+				auto current_struct_it = gTypesByName.find(context.struct_info->name);
+				if (current_struct_it != gTypesByName.end()) {
+					load_template_bindings_from_type(current_struct_it->second);
+				}
+			}
+		}
+
+		EvalResult result = evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+		context.template_param_names = std::move(saved_template_param_names);
+		context.template_args = std::move(saved_template_args);
+		return result;
 	}
 	
 	// Check if it's a TemplateFunctionDeclarationNode (template function)
@@ -2044,6 +2330,26 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		param_bindings[param_name] = arg_result;
 	}
 
+	auto saved_template_param_names = context.template_param_names;
+	auto saved_template_args = context.template_args;
+	auto restore_template_bindings = [&]() {
+		context.template_param_names = std::move(saved_template_param_names);
+		context.template_args = std::move(saved_template_args);
+	};
+
+	if (func_decl.has_outer_template_bindings()) {
+		context.template_param_names.clear();
+		context.template_args.clear();
+		context.template_param_names.reserve(func_decl.outer_template_param_names().size());
+		context.template_args.reserve(func_decl.outer_template_args().size());
+		for (StringHandle param_name : func_decl.outer_template_param_names()) {
+			context.template_param_names.push_back(StringTable::getStringView(param_name));
+		}
+		for (const auto& arg : func_decl.outer_template_args()) {
+			context.template_args.push_back(toTemplateTypeArg(arg));
+		}
+	}
+
 	// Increase recursion depth
 	context.current_depth++;
 	
@@ -2051,6 +2357,7 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	const ASTNode& body_node = definition.value();
 	if (!body_node.is<BlockNode>()) {
 		context.current_depth--;
+		restore_template_bindings();
 		return EvalResult::error("Function body is not a block");
 	}
 	
@@ -2069,6 +2376,7 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		// from an if/while/for statement that contains a return
 		if (result.success()) {
 			context.current_depth--;
+			restore_template_bindings();
 			return result;
 		}
 		
@@ -2077,11 +2385,13 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		if (!result.success() && result.error_message != "Statement executed (not a return)") {
 			// An actual error occurred
 			context.current_depth--;
+			restore_template_bindings();
 			return result;
 		}
 	}
-	
+
 	context.current_depth--;
+	restore_template_bindings();
 	return EvalResult::error("Constexpr function did not return a value");
 }
 

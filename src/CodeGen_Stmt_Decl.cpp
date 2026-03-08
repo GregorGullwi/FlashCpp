@@ -38,13 +38,21 @@
 
 		if (is_global || is_static_local) {
 			// Handle global variable or static local variable
+			if (is_static_local) {
+				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
+					throw InternalError("Expected identifier to be unique");
+				}
+			}
 			// For static locals, mangle the name to include the function name
 			// Use StringBuilder to create a persistent string_view
 			// (string_view in GlobalVariableDeclOp would dangle if we used local std::string)
 			StringBuilder sb;
 			if (is_static_local) {
-				// Mangle name as: function_name.variable_name
-				sb.append(current_function_name_).append(".").append(decl.identifier_token().value());
+				// Use the mangled function name (per instantiation) to ensure uniqueness
+				// across template instantiations (e.g. Box<int>::next vs Box<char>::next).
+				StringHandle fn_name = current_function_mangled_name_.isValid()
+					? current_function_mangled_name_ : current_function_name_;
+				sb.append(fn_name).append(".").append(decl.identifier_token().value());
 			} else {
 				// For global variables, include namespace path for proper mangling
 				if (!current_namespace_stack_.empty()) {
@@ -118,7 +126,14 @@
 			
 			// Helper to evaluate a constexpr and get the raw value
 			auto evalToValue = [&](const ASTNode& expr, Type target_type) -> unsigned long long {
-				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				ConstExpr::EvaluationContext ctx(is_static_local ? symbol_table : gSymbolTable);
+				if (is_static_local && global_symbol_table_) {
+					ctx.global_symbols = global_symbol_table_;
+				}
+				// C++20: variables with static storage duration allow evaluating non-constexpr
+				// initializers whose bodies are available (dynamic initialization as-if-constexpr).
+				ctx.storage_duration = ConstExpr::StorageDuration::Static;
+				ctx.parser = parser_;
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 				
 				if (!eval_result.success()) {
@@ -473,6 +488,21 @@
 			return;
 		}
 
+		// C++20 [basic.scope.pdecl]: register the variable in the local symbol table
+		// before evaluating its initializer, so that sizeof(x) in "int x = sizeof(x)"
+		// can look up x's type even when x is the variable being declared.
+		bool symbol_registered = false;
+		auto ensure_symbol_registered = [&]() {
+			if (symbol_registered) {
+				return;
+			}
+			if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
+				throw InternalError("Expected identifier to be unique");
+			}
+			symbol_registered = true;
+		};
+		ensure_symbol_registered();
+
 		// Handle constexpr variables with function call initializers
 		// For constexpr, we try to evaluate at compile-time
 		if (node.is_constexpr() && node.initializer().has_value()) {
@@ -493,10 +523,7 @@
 				auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 				
 				if (eval_result.success()) {
-					// Insert into symbol table first
-					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						throw InternalError("Expected identifier to be unique");
-					}
+					ensure_symbol_registered();
 					
 					// Generate variable declaration with compile-time value
 					VariableDeclOp decl_op;
@@ -614,10 +641,7 @@
 					// Append the initializer operands
 					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
 					
-					// Add to symbol table
-					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						throw InternalError("Expected identifier to be unique");
-					}
+					ensure_symbol_registered();
 
 					// Generate VariableDecl with initializer
 					VariableDeclOp decl_op;
@@ -636,10 +660,7 @@
 				} else {
 					// Handle brace initialization for structs or multi-element initializers
 					
-					// Add to symbol table first
-					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-						throw InternalError("Expected identifier to be unique");
-					}
+					ensure_symbol_registered();
 
 					// Add the variable declaration without initializer
 					VariableDeclOp decl_op;
@@ -1092,9 +1113,7 @@
 					operands.emplace_back(func_addr_var);
 				}
 				// Lambda expression already emitted VariableDecl, so return early
-				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-					throw InternalError("Expected identifier to be unique");
-				}
+				ensure_symbol_registered();
 				return;
 			} else if (init_node.is<ExpressionNode>() && 
 			std::holds_alternative<LambdaExpressionNode>(init_node.as<ExpressionNode>())) {
@@ -1112,9 +1131,7 @@
 					operands.emplace_back(func_addr_var);
 				}
 				// Lambda expression already emitted VariableDecl, so return early
-				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-					throw InternalError("Expected identifier to be unique");
-				}
+				ensure_symbol_registered();
 				return;
 			} else {
 				// Regular expression initializer
@@ -1142,6 +1159,8 @@
 
 
 				if (!is_copy_init_for_struct) {
+					// Already registered via ensure_symbol_registered() above.
+
 					// For reference types, use LValueAddress context to get the address of the initializer
 					ExpressionContext ref_context = (type_node.is_reference() || type_node.is_rvalue_reference())
 						? ExpressionContext::LValueAddress
@@ -1297,9 +1316,7 @@
 			}
 		}
 
-		if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-			throw InternalError("Expected identifier to be unique");
-		}
+		ensure_symbol_registered();
 
 		VariableDeclOp decl_op;
 		decl_op.type = type_node.type();

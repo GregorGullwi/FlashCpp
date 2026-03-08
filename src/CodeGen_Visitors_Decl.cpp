@@ -41,6 +41,7 @@
 		const DeclarationNode& func_decl = node.decl_node();
 		const std::string_view func_name_view = func_decl.identifier_token().value();
 		current_function_name_ = StringTable::getOrInternStringHandle(func_name_view);
+		current_function_mangled_name_ = StringHandle(); // will be set after mangled name is computed
 		
 		// Set current function return type and size for type checking in return statements
 		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
@@ -253,6 +254,7 @@
 			mangled_name = generateMangledNameForCall(node, struct_name_for_function, namespace_for_mangling);
 		}
 		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled_name);
+		current_function_mangled_name_ = func_decl_op.mangled_name;
 
 		// Skip duplicate function definitions to prevent multiple codegen of the same function
 		// This is especially important for inline functions from standard headers (like std::abs)
@@ -1078,6 +1080,7 @@
 		// a member function context (e.g., after visiting constructors which set current_function_name_)
 		// Nested classes are always at class scope, not function scope
 		current_function_name_ = StringHandle();
+		current_function_mangled_name_ = StringHandle();
 		
 		// Save current_struct_name_ before visiting nested classes so each nested class
 		// gets the correct parent context (important when there are multiple nested classes)
@@ -1244,6 +1247,7 @@
 			} else {
 				assert(false && "Unhandled name mangling type");
 			}
+			current_function_mangled_name_ = ctor_decl_op.mangled_name;
 		}
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
@@ -2027,6 +2031,7 @@
 	// Use the dedicated mangling function for destructors to ensure correct platform-specific mangling
 	// (e.g., MSVC uses ??1ClassName@... format)
 	dtor_decl_op.mangled_name = NameMangling::generateMangledNameFromNode(node);
+	current_function_mangled_name_ = dtor_decl_op.mangled_name;
 
 	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 	// We don't add it here to avoid duplication

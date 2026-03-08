@@ -5,6 +5,51 @@
 		regAlloc.release(ctx.rhs_physical_reg);
 	}
 
+	void reserveDivisionFixedRegisters() {
+		flushAllDirtyRegisters();
+
+		regAlloc.release(X64Register::RAX);
+		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
+
+		regAlloc.release(X64Register::RDX);
+		regAlloc.allocateSpecific(X64Register::RDX, INT_MIN);
+	}
+
+	X64Register allocateDivisionScratchRegister(X64Register avoid1, X64Register avoid2 = X64Register::Count, X64Register avoid3 = X64Register::Count) {
+		static constexpr std::array<X64Register, 5> candidates = {
+			X64Register::RCX,
+			X64Register::R8,
+			X64Register::R9,
+			X64Register::R10,
+			X64Register::R11,
+		};
+
+		for (X64Register candidate : candidates) {
+			if (candidate == avoid1 || candidate == avoid2 || candidate == avoid3) {
+				continue;
+			}
+
+			regAlloc.release(candidate);
+			regAlloc.allocateSpecific(candidate, INT_MIN);
+			return candidate;
+		}
+
+		throw InternalError("No scratch register available for division");
+	}
+
+	// If the divisor is already in RAX (which IDIV needs for the dividend), move it
+	// to a scratch register first so the dividend-to-RAX move doesn't clobber it.
+	X64Register preserveDivisorAcrossRaxMove(X64Register divisor_reg, X64Register result_reg, int operand_size_in_bits) {
+		if (divisor_reg != X64Register::RAX) {
+			return divisor_reg;
+		}
+
+		X64Register scratch_reg = allocateDivisionScratchRegister(X64Register::RAX, X64Register::RDX, result_reg);
+		auto movDivisor = regAlloc.get_reg_reg_move_op_code(scratch_reg, divisor_reg, operand_size_in_bits / 8);
+		textSectionData.insert(textSectionData.end(), movDivisor.op_codes.begin(), movDivisor.op_codes.begin() + movDivisor.size_in_bytes);
+		return scratch_reg;
+	}
+
 	void handleAdd(const IrInstruction& instruction) {
 		handleBinaryArithmetic(instruction, 0x01, "addition"); // ADD dst, src
 	}
@@ -52,16 +97,11 @@
 	}
 
 	void handleDivide(const IrInstruction& instruction) {
-		flushAllDirtyRegisters();	// we do this so that RDX is free to use
-
-		regAlloc.release(X64Register::RAX);
-		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
-
-		regAlloc.release(X64Register::RDX);
-		regAlloc.allocateSpecific(X64Register::RDX, INT_MIN);
+		reserveDivisionFixedRegisters();
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "division");
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
 
 		// Division requires special handling: dividend must be in RAX
 		// Move result_physical_reg to RAX (dividend must be in RAX for idiv)
@@ -79,27 +119,28 @@
 			textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
 		}
 
-	    // idiv rhs_physical_reg
+	    // idiv divisor_reg
 		uint8_t rex = 0x40; // Base REX prefix
 		if (ctx.result_value.size_in_bits == 64) {
 			rex |= 0x08; // Set REX.W for 64-bit operation
 		}
 
 		// Check if we need REX.B for the divisor register
-		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+		if (static_cast<uint8_t>(divisor_reg) >= static_cast<uint8_t>(X64Register::R8)) {
 			rex |= 0x01; // Set REX.B
 		}
 
 		std::array<uint8_t, 3> divInst = {
 			rex,
 			0xF7,  // Opcode for IDIV
-			static_cast<uint8_t>(0xF8 + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07))  // ModR/M: 11 111 reg (opcode extension 7 for IDIV)
+			static_cast<uint8_t>(0xF8 + (static_cast<uint8_t>(divisor_reg) & 0x07))  // ModR/M: 11 111 reg (opcode extension 7 for IDIV)
 		};
 		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
 
 		// Store the result from RAX (quotient) to the appropriate destination
 		storeArithmeticResult(ctx, X64Register::RAX);
 
+		regAlloc.release(divisor_reg);
 		regAlloc.release(X64Register::RDX);
 	}
 
@@ -137,16 +178,11 @@
 	}
 
 	void handleUnsignedDivide(const IrInstruction& instruction) {
-		flushAllDirtyRegisters();	// we do this so that RDX is free to use
-
-		regAlloc.release(X64Register::RAX);
-		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
-
-		regAlloc.release(X64Register::RDX);
-		regAlloc.allocateSpecific(X64Register::RDX, INT_MIN);
+		reserveDivisionFixedRegisters();
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned division");
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
 
 		// Division requires special handling: dividend must be in RAX
 		// Move result_physical_reg to RAX (dividend must be in RAX for div)
@@ -157,12 +193,13 @@
 		std::array<uint8_t, 2> xorEdxInst = { 0x31, 0xD2 };
 		textSectionData.insert(textSectionData.end(), xorEdxInst.begin(), xorEdxInst.end());
 
-		// div rhs_physical_reg (unsigned division)
-		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, ctx.rhs_physical_reg, ctx.result_value.size_in_bits);
+		// div divisor_reg (unsigned division)
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, divisor_reg, ctx.result_value.size_in_bits);
 
 		// Store the result from RAX (quotient) to the appropriate destination
 		storeArithmeticResult(ctx, X64Register::RAX);
 
+		regAlloc.release(divisor_reg);
 		regAlloc.release(X64Register::RDX);
 	}
 
@@ -203,16 +240,11 @@
 	}
 
 	void handleModulo(const IrInstruction& instruction) {
-		flushAllDirtyRegisters();	// we do this so that RDX is free to use
-
-		regAlloc.release(X64Register::RAX);
-		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
-
-		regAlloc.release(X64Register::RDX);
-		regAlloc.allocateSpecific(X64Register::RDX, INT_MIN);
+		reserveDivisionFixedRegisters();
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo");
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
 
 		// For x86-64, modulo is implemented using division
 		// idiv instruction computes both quotient (RAX) and remainder (RDX)
@@ -236,21 +268,21 @@
 			textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
 		}
 
-	    // idiv rhs_physical_reg
+	    // idiv divisor_reg
 		uint8_t rex = 0x40; // Base REX prefix
 		if (ctx.result_value.size_in_bits == 64) {
 			rex |= 0x08; // Set REX.W for 64-bit operation
 		}
 
 		// Check if we need REX.B for the divisor register
-		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+		if (static_cast<uint8_t>(divisor_reg) >= static_cast<uint8_t>(X64Register::R8)) {
 			rex |= 0x01; // Set REX.B
 		}
 
 		std::array<uint8_t, 3> divInst = {
 			rex,
 			0xF7,  // Opcode for IDIV
-			static_cast<uint8_t>(0xF8 + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07))  // ModR/M: 11 111 reg (opcode extension 7 for IDIV)
+			static_cast<uint8_t>(0xF8 + (static_cast<uint8_t>(divisor_reg) & 0x07))  // ModR/M: 11 111 reg (opcode extension 7 for IDIV)
 		};
 		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
 
@@ -271,6 +303,7 @@
 			);
 		}
 
+		regAlloc.release(divisor_reg);
 		regAlloc.release(X64Register::RDX);
 	}
 
@@ -1490,8 +1523,10 @@
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
-		// Release source XMM
-		regAlloc.release(source_xmm);
+		// Release source XMM (guard against source == result under register pressure)
+		if (source_xmm != result_xmm) {
+			regAlloc.release(source_xmm);
+		}
 
 		// Store result XMM to stack
 		auto result_offset = getStackOffsetFromTempVar(op.result);
@@ -1596,11 +1631,11 @@
 	}
 
 	void handleDivAssign(const IrInstruction& instruction) {
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "divide assignment");
-		
+		const BinaryOp& bin_op = instruction.getTypedPayload<BinaryOp>();
+
 		// Check if this is floating-point division
-		if (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double) {
-			// Use SSE divss (scalar single-precision) or divsd (scalar double-precision)
+		if (bin_op.lhs.type == Type::Float || bin_op.lhs.type == Type::Double) {
+			auto ctx = setupAndLoadArithmeticOperation(instruction, "divide assignment");
 			if (ctx.result_value.type == Type::Float) {
 				// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
 				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
@@ -1610,50 +1645,18 @@
 				auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 			}
-		} else {
-			// Integer division
-			// Use correct register size based on operand size
-			bool include_rex_w = (ctx.operand_size_in_bits == 64);
-			
-			// mov rax, result_reg (move dividend to RAX)
-			auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
-			if (mov_to_rax.rex_prefix != 0) {
-				textSectionData.push_back(mov_to_rax.rex_prefix);
-			}
-			textSectionData.push_back(0x89);
-			textSectionData.push_back(mov_to_rax.modrm_byte);
-			
-			// Sign extend based on operand size
-			if (ctx.operand_size_in_bits == 64) {
-				// cqo (sign extend RAX to RDX:RAX)
-				std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
-				textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
-			} else {
-				// cdq (sign extend EAX to EDX:EAX) - 32-bit
-				textSectionData.push_back(0x99);
-			}
-			
-			// idiv rhs_reg (divide RDX:RAX by rhs_reg, quotient in RAX)
-			emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.operand_size_in_bits);
-			
-			// mov result_reg, rax (move quotient to result)
-			auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg, include_rex_w);
-			if (mov_from_rax.rex_prefix != 0) {
-				textSectionData.push_back(mov_from_rax.rex_prefix);
-			}
-			textSectionData.push_back(0x89);
-			textSectionData.push_back(mov_from_rax.modrm_byte);
+			storeArithmeticResult(ctx);
+			return;
 		}
-		
-		storeArithmeticResult(ctx);
-	}
 
-	void handleModAssign(const IrInstruction& instruction) {
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo assignment");
-		
+		// Integer division
+		reserveDivisionFixedRegisters();
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "divide assignment");
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
+
 		// Use correct register size based on operand size
 		bool include_rex_w = (ctx.operand_size_in_bits == 64);
-		
+
 		// mov rax, result_reg (move dividend to RAX)
 		auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
 		if (mov_to_rax.rex_prefix != 0) {
@@ -1661,7 +1664,7 @@
 		}
 		textSectionData.push_back(0x89);
 		textSectionData.push_back(mov_to_rax.modrm_byte);
-		
+
 		// Sign extend based on operand size
 		if (ctx.operand_size_in_bits == 64) {
 			// cqo (sign extend RAX to RDX:RAX)
@@ -1671,10 +1674,52 @@
 			// cdq (sign extend EAX to EDX:EAX) - 32-bit
 			textSectionData.push_back(0x99);
 		}
-		
-		// idiv rhs_reg (divide RDX:RAX by rhs_reg, remainder in RDX)
-		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.operand_size_in_bits);
-		
+
+		// idiv divisor_reg (divide RDX:RAX by divisor_reg, quotient in RAX)
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, divisor_reg, ctx.operand_size_in_bits);
+
+		// mov result_reg, rax (move quotient to result)
+		auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg, include_rex_w);
+		if (mov_from_rax.rex_prefix != 0) {
+			textSectionData.push_back(mov_from_rax.rex_prefix);
+		}
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(mov_from_rax.modrm_byte);
+
+		regAlloc.release(divisor_reg);
+		regAlloc.release(X64Register::RDX);
+		storeArithmeticResult(ctx);
+	}
+
+	void handleModAssign(const IrInstruction& instruction) {
+		reserveDivisionFixedRegisters();
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo assignment");
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
+
+		// Use correct register size based on operand size
+		bool include_rex_w = (ctx.operand_size_in_bits == 64);
+
+		// mov rax, result_reg (move dividend to RAX)
+		auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
+		if (mov_to_rax.rex_prefix != 0) {
+			textSectionData.push_back(mov_to_rax.rex_prefix);
+		}
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(mov_to_rax.modrm_byte);
+
+		// Sign extend based on operand size
+		if (ctx.operand_size_in_bits == 64) {
+			// cqo (sign extend RAX to RDX:RAX)
+			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
+			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+		} else {
+			// cdq (sign extend EAX to EDX:EAX) - 32-bit
+			textSectionData.push_back(0x99);
+		}
+
+		// idiv divisor_reg (divide RDX:RAX by divisor_reg, remainder in RDX)
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, divisor_reg, ctx.operand_size_in_bits);
+
 		// mov result_reg, rdx (move remainder to result)
 		auto mov_from_rdx = encodeRegToRegInstruction(X64Register::RDX, ctx.result_physical_reg, include_rex_w);
 		if (mov_from_rdx.rex_prefix != 0) {
@@ -1682,7 +1727,9 @@
 		}
 		textSectionData.push_back(0x89);
 		textSectionData.push_back(mov_from_rdx.modrm_byte);
-		
+
+		regAlloc.release(divisor_reg);
+		regAlloc.release(X64Register::RDX);
 		storeArithmeticResult(ctx);
 	}
 

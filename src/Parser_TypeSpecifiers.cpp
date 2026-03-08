@@ -278,7 +278,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// Check if the argument is marked as a template parameter in current context
-		if (parsing_template_body_ || !current_template_param_names_.empty()) {
+		if (parsing_template_depth_ > 0 || !current_template_param_names_.empty()) {
 			// Check if arg_type refers to a template parameter
 			std::string_view arg_type_name = arg_type.token().value();
 			for (const auto& param_name : current_template_param_names_) {
@@ -1253,7 +1253,7 @@ ParseResult Parser::parse_type_specifier()
 				// When parsing a template body, if the type name is a template parameter (type or template template param),
 				// we should NOT try to instantiate it - it's a dependent type that will be resolved during instantiation
 				bool is_dependent_template_param = false;
-				if (parsing_template_body_ && !current_template_param_names_.empty()) {
+				if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
 					for (const auto& param_name : current_template_param_names_) {
 						if (param_name == type_name) {
 							is_dependent_template_param = true;
@@ -1515,6 +1515,11 @@ ParseResult Parser::parse_type_specifier()
 				// Whether instantiation succeeded or returned nullopt (for specializations),
 				// the type should now be registered. Look it up using filled args.
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
+				// If try_instantiate_class_template returned a struct, use its actual name (which includes
+				// all default args filled in internally) to ensure the ::member lookup is correct.
+				if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
+					instantiated_name = StringTable::getStringView(instantiated_class->as<StructDeclarationNode>().name());
+				}
 				
 				// Check if any template arguments are dependent or pack expansions
 				// If so, we cannot instantiate the template, but we can still parse ::member syntax
@@ -1557,7 +1562,7 @@ ParseResult Parser::parse_type_specifier()
 				}
 				// If we're in a template body and the template wasn't found/instantiated,
 				// treat the type as dependent (e.g., self-referential templates)
-				if (!has_dependent_args && (parsing_template_body_ || !current_template_param_names_.empty())) {
+				if (!has_dependent_args && (parsing_template_depth_ > 0 || !current_template_param_names_.empty())) {
 					if (!instantiated_class.has_value() && !gTemplateRegistry.lookupTemplate(type_name).has_value()) {
 						has_dependent_args = true;
 						FLASH_LOG_FORMAT(Templates, Debug, "Template '{}' not found in template body - treating as dependent", type_name);
@@ -1940,7 +1945,7 @@ ParseResult Parser::parse_type_specifier()
 					auto inst_type_it = gTypesByName.find(inst_name_handle);
 					bool inst_is_incomplete = inst_type_it != gTypesByName.end()
 						&& inst_type_it->second->is_incomplete_instantiation_;
-					if (parsing_template_body_ && inst_is_incomplete) {
+					if (parsing_template_depth_ > 0 && inst_is_incomplete) {
 						// Create a placeholder UserDefined type for template-dependent nested types
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							Type::UserDefined, 0, 0, type_name_token, cv_qualifier));
@@ -2137,7 +2142,7 @@ ParseResult Parser::parse_type_specifier()
 		// IMPORTANT: Skip this check during SFINAE context (in_sfinae_context_), because in that case
 		// the template parameters have been substituted with concrete types in gTypesByName, and we
 		// should use the substituted types instead of creating dependent type placeholders.
-		if (parsing_template_body_ && !current_template_param_names_.empty() && !in_sfinae_context_) {
+		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty() && !in_sfinae_context_) {
 			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 			for (const auto& param_name : current_template_param_names_) {
 				if (param_name == type_name_handle) {
@@ -2334,7 +2339,7 @@ ParseResult Parser::parse_decltype_specifier()
 		// trailing return type) even in SFINAE context so the error doesn't cascade.
 		bool is_recursion_error = expr_result.error_message().find("recursion depth") != std::string::npos ||
 		                          expr_result.error_message().find("recursion") != std::string::npos;
-		bool should_recover = (parsing_template_body_ || !current_template_param_names_.empty()) &&
+		bool should_recover = (parsing_template_depth_ > 0 || !current_template_param_names_.empty()) &&
 		                      (!in_sfinae_context_ || is_recursion_error);
 		if (should_recover) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for failed decltype expression in template context");
@@ -2375,7 +2380,7 @@ ParseResult Parser::parse_decltype_specifier()
 			// In template context, create dependent type and skip to closing paren.
 			// Restore to position before the failed parse_expression to ensure
 			// reliable paren depth counting (mirrors the first-expression recovery above).
-			if ((parsing_template_body_ || !current_template_param_names_.empty()) && !in_sfinae_context_) {
+			if ((parsing_template_depth_ > 0 || !current_template_param_names_.empty()) && !in_sfinae_context_) {
 				restore_token_position(comma_expr_pos);
 				int paren_depth = 1;
 				while (!peek().is_eof() && paren_depth > 0) {
@@ -2409,10 +2414,10 @@ ParseResult Parser::parse_decltype_specifier()
 	if (!type_spec_opt.has_value()) {
 		// If we're in a template body/declaration and the expression is dependent,
 		// create a dependent type placeholder that will be resolved during instantiation.
-		// Check both parsing_template_body_ and current_template_param_names_ since
+		// Check both parsing_template_depth_ > 0 and current_template_param_names_ since
 		// some template contexts (like member function templates in structs) might not
-		// set parsing_template_body_ but will have template parameter names.
-		if (parsing_template_body_ || !current_template_param_names_.empty()) {
+		// set parsing_template_depth_ > 0 but will have template parameter names.
+		if (parsing_template_depth_ > 0 || !current_template_param_names_.empty()) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
 			// Create a placeholder type for the dependent decltype expression
 			// Store the expression so it can be re-evaluated during instantiation

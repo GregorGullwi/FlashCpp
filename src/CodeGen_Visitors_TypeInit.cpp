@@ -323,8 +323,109 @@
 			ctx.parser = parser_;
 			// Set struct_info so that sizeof(T) can be resolved from template arguments in struct name
 			ctx.struct_info = struct_info;
+			if (struct_info) {
+				if (const LazyClassInstantiationInfo* lazy_class_info =
+						LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(struct_info->name)) {
+					ctx.template_args = lazy_class_info->template_args;
+					ctx.template_param_names.reserve(lazy_class_info->template_params.size());
+					for (const auto& template_param : lazy_class_info->template_params) {
+						if (template_param.is<TemplateParameterNode>()) {
+							ctx.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
+						}
+					}
+				} else {
+					auto struct_type_it = gTypesByName.find(struct_info->name);
+					if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+						const TypeInfo* struct_type = struct_type_it->second;
+						auto param_handles = gTemplateRegistry.getTemplateParameters(struct_type->baseTemplateName());
+						if (param_handles.empty()) {
+							if (auto template_node_opt = gTemplateRegistry.lookupTemplate(struct_type->baseTemplateName());
+								template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
+								for (std::string_view param_name : template_node_opt->as<TemplateClassDeclarationNode>().template_param_names()) {
+									ctx.template_param_names.push_back(param_name);
+								}
+							}
+						}
+						ctx.template_param_names.reserve(ctx.template_param_names.size() + param_handles.size());
+						ctx.template_args.reserve(struct_type->templateArgs().size());
+						for (StringHandle param_handle : param_handles) {
+							ctx.template_param_names.push_back(StringTable::getStringView(param_handle));
+						}
+						for (const auto& arg_info : struct_type->templateArgs()) {
+							ctx.template_args.push_back(toTemplateTypeArg(arg_info));
+						}
+					}
+				}
+			}
 			
 			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+			if (!eval_result.success()) {
+				if (struct_info && expr_node.is<ExpressionNode>()) {
+					const auto& expr = expr_node.as<ExpressionNode>();
+					if (std::holds_alternative<FunctionCallNode>(expr)) {
+						const auto& func_call = std::get<FunctionCallNode>(expr);
+						StringHandle func_name_handle = func_call.function_declaration().identifier_token().handle();
+
+						if (parser_ && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_info->name, func_name_handle)) {
+							if (auto lazy_info = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(struct_info->name, func_name_handle)) {
+								parser_->instantiateLazyMemberFunction(*lazy_info);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_info->name, func_name_handle);
+							}
+						}
+
+						const ASTNode* member_function_node = nullptr;
+						const FunctionDeclarationNode* member_function_decl = nullptr;
+						for (const auto& member_func : struct_info->member_functions) {
+							if (member_func.getName() != func_name_handle || !member_func.function_decl.is<FunctionDeclarationNode>()) {
+								continue;
+							}
+
+							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+							if (!func_decl.is_static() || !func_decl.get_definition().has_value() ||
+								func_decl.parameter_nodes().size() != func_call.arguments().size()) {
+								continue;
+							}
+
+							member_function_node = &member_func.function_decl;
+							member_function_decl = &func_decl;
+							break;
+						}
+
+						if (member_function_node) {
+							global_symbol_table_->enter_scope(ScopeType::Block);
+							global_symbol_table_->insert(func_call.function_declaration().identifier_token().value(), *member_function_node);
+
+							ConstExpr::EvaluationContext rebound_ctx(*global_symbol_table_);
+							rebound_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+							rebound_ctx.parser = parser_;
+							rebound_ctx.template_param_names = ctx.template_param_names;
+							rebound_ctx.template_args = ctx.template_args;
+							if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() && member_function_decl) {
+								StringBuilder qualified_name_builder;
+								StringHandle qualified_name = StringTable::getOrInternStringHandle(
+									qualified_name_builder
+										.append(member_function_decl->parent_struct_name())
+										.append("::")
+										.append(member_function_decl->decl_node().identifier_token().value())
+										.commit());
+								if (const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name)) {
+									rebound_ctx.template_args.assign(outer_binding->param_args.begin(), outer_binding->param_args.end());
+									rebound_ctx.template_param_names.reserve(outer_binding->param_names.size());
+									for (StringHandle param_name : outer_binding->param_names) {
+										rebound_ctx.template_param_names.push_back(StringTable::getStringView(param_name));
+									}
+								}
+							}
+
+							auto rebound_result = ConstExpr::Evaluator::evaluate(expr_node, rebound_ctx);
+							global_symbol_table_->exit_scope();
+							if (rebound_result.success()) {
+								eval_result = std::move(rebound_result);
+							}
+						}
+					}
+				}
+			}
 			if (!eval_result.success()) {
 				return false;
 			}
@@ -948,10 +1049,13 @@
 				for (const auto& base : struct_info->base_classes) {
 					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
 					if (base_type_it != gTypesByName.end()) {
-						// Only call base constructor if the base class actually has constructors
-						// This avoids link errors when inheriting from classes without constructors
+						// Call base constructor if the base has user-defined constructors OR needs a trivial
+						// default constructor (e.g., template-instantiated class with member default-
+						// initializers but no explicit constructors). hasConstructor() covers the trivial
+						// constructor case (needs_default_constructor==true) that arises with template
+						// base classes like Base<T> resolved to a concrete type.
 						const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
-						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
+						if (base_struct_info && base_struct_info->hasConstructor()) {
 							ConstructorCallOp call_op;
 							call_op.struct_name = base_type_it->second->name();
 							call_op.object = StringTable::getOrInternStringHandle("this");
