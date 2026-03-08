@@ -283,7 +283,7 @@
 									if (elem_init.is<InitializerListNode>()) {
 										// Reuse fillStructData for correct bitfield + nested-struct handling
 										fillStructData(elem_struct, elem_init.as<InitializerListNode>(),
-											elem_i * element_size, 0);
+											elem_i * elem_struct->total_size, 0);
 									} else {
 										unsigned long long value = evalToValue(elem_init, type_node.type());
 										size_t byte_off = elem_i * elem_struct->total_size;
