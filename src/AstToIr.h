@@ -58,6 +58,13 @@ private:
 		std::string struct_name;
 	};
 
+	struct GlobalStaticBindingInfo {
+		bool is_global_or_static = false;
+		StringHandle store_name;
+		Type type = Type::Void;
+		int size_in_bits = 0;
+	};
+
 
 	// Generate aggregate initialization of a struct from an InitializerListNode as a default argument.
 	// Emits ConstructorCallOp + MemberStoreOps for the struct, returns a TypedValue for the temporary.
@@ -134,6 +141,7 @@ private:
 	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token);
 	std::vector<IrOperand>
 		generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
+	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(
 		const ExpressionNode& expr, 
 		int accumulated_offset = 0);

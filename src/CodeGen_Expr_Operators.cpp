@@ -1,6 +1,97 @@
 #include "CodeGen.h"
 
 
+AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const IdentifierNode& identifier) {
+	GlobalStaticBindingInfo info;
+	StringHandle identifier_handle = identifier.nameHandle();
+	if (!identifier_handle.isValid()) {
+		identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
+	}
+
+	auto tryPopulateTypeFromDeclaration = [&](const ASTNode& symbol) {
+		const DeclarationNode* decl_ptr = nullptr;
+		if (symbol.is<VariableDeclarationNode>()) {
+			decl_ptr = &symbol.as<VariableDeclarationNode>().declaration();
+		} else if (symbol.is<DeclarationNode>()) {
+			decl_ptr = &symbol.as<DeclarationNode>();
+		}
+
+		if (!decl_ptr || !decl_ptr->type_node().is<TypeSpecifierNode>()) {
+			return;
+		}
+
+		const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
+		info.type = ts.type();
+		info.size_in_bits = static_cast<int>(ts.size_in_bits());
+	};
+
+	switch (identifier.binding()) {
+	case IdentifierBinding::Global: {
+		auto mangle_it = global_variable_names_.find(identifier_handle);
+		info.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : identifier_handle;
+		info.is_global_or_static = info.store_name.isValid();
+
+		if (global_symbol_table_) {
+			const auto symbol = global_symbol_table_->lookup(identifier.name());
+			if (symbol.has_value()) {
+				tryPopulateTypeFromDeclaration(*symbol);
+			}
+		}
+		return info;
+	}
+	case IdentifierBinding::StaticLocal: {
+		auto it = static_local_names_.find(identifier_handle);
+		if (it == static_local_names_.end()) {
+			return info;
+		}
+
+		info.is_global_or_static = true;
+		info.store_name = it->second.mangled_name;
+		info.type = it->second.type;
+		info.size_in_bits = it->second.size_in_bits;
+		return info;
+	}
+	case IdentifierBinding::StaticMember: {
+		info.store_name = identifier.resolved_name();
+		info.is_global_or_static = info.store_name.isValid();
+		if (!info.store_name.isValid()) {
+			return info;
+		}
+
+		const auto findStaticMemberInStruct = [&](StringHandle struct_name) -> const StructStaticMember* {
+			if (!struct_name.isValid()) {
+				return nullptr;
+			}
+
+			auto struct_it = gTypesByName.find(struct_name);
+			if (struct_it == gTypesByName.end() || !struct_it->second || !struct_it->second->getStructInfo()) {
+				return nullptr;
+			}
+
+			return struct_it->second->getStructInfo()->findStaticMember(identifier_handle);
+		};
+
+		const std::string_view resolved_name = info.store_name.view();
+		const size_t last_scope_pos = resolved_name.rfind("::");
+		const StringHandle owner_name = (last_scope_pos == std::string_view::npos)
+			? StringHandle{}
+			: StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
+
+		const StructStaticMember* static_member = findStaticMemberInStruct(owner_name);
+		if (!static_member && current_struct_name_.isValid() && current_struct_name_ != owner_name) {
+			static_member = findStaticMemberInStruct(current_struct_name_);
+		}
+		if (static_member) {
+			info.type = static_member->type;
+			info.size_in_bits = static_cast<int>(static_member->size * 8);
+		}
+		return info;
+	}
+	default:
+		return info;
+	}
+}
+
 std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type) {
 	// Look up the struct type info
 	TypeIndex type_idx = param_type.type_index();
@@ -430,22 +521,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				struct { bool is_global_or_static = false; StringHandle store_name; } gsi;
-				if (lhs_ident.binding() == IdentifierBinding::Global) {
-					gsi.is_global_or_static = true;
-					StringHandle simple = lhs_ident.nameHandle();
-					auto mangle_it = global_variable_names_.find(simple);
-					gsi.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : simple;
-				} else if (lhs_ident.binding() == IdentifierBinding::StaticLocal) {
-					auto it = static_local_names_.find(lhs_ident.nameHandle());
-					if (it != static_local_names_.end()) {
-						gsi.is_global_or_static = true;
-						gsi.store_name = it->second.mangled_name;
-					}
-				} else if (lhs_ident.binding() == IdentifierBinding::StaticMember) {
-					gsi.store_name = lhs_ident.resolved_name();
-					gsi.is_global_or_static = gsi.store_name.isValid();
-				}
+				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
 				if (gsi.is_global_or_static) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
@@ -492,51 +568,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-				struct { bool is_global_or_static = false; StringHandle store_name; Type type = Type::Void; int size_in_bits = 0; } gsi;
-				if (lhs_ident.binding() == IdentifierBinding::Global && global_symbol_table_) {
-					const auto fast_sym = global_symbol_table_->lookup(lhs_ident.name());
-					if (fast_sym.has_value()) {
-						const DeclarationNode* decl_ptr = nullptr;
-						if (fast_sym->is<VariableDeclarationNode>()) {
-							decl_ptr = &fast_sym->as<VariableDeclarationNode>().declaration();
-						} else if (fast_sym->is<DeclarationNode>()) {
-							decl_ptr = &fast_sym->as<DeclarationNode>();
-						}
-						if (decl_ptr) {
-							const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
-							gsi.is_global_or_static = true;
-							StringHandle simple = lhs_ident.nameHandle();
-							auto mangle_it = global_variable_names_.find(simple);
-							gsi.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : simple;
-							gsi.type = ts.type();
-							gsi.size_in_bits = static_cast<int>(ts.size_in_bits());
-						}
-					}
-				} else if (lhs_ident.binding() == IdentifierBinding::StaticLocal) {
-					auto it = static_local_names_.find(lhs_ident.nameHandle());
-					if (it != static_local_names_.end()) {
-						gsi.is_global_or_static = true;
-						gsi.store_name = it->second.mangled_name;
-						gsi.type = it->second.type;
-						gsi.size_in_bits = it->second.size_in_bits;
-					}
-				} else if (lhs_ident.binding() == IdentifierBinding::StaticMember) {
-					gsi.store_name = lhs_ident.resolved_name();
-					if (gsi.store_name.isValid() && current_struct_name_.isValid()) {
-						auto struct_it = gTypesByName.find(current_struct_name_);
-						if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
-							const auto* sm = struct_it->second->getStructInfo()->findStaticMember(lhs_ident.nameHandle());
-							if (sm) {
-								gsi.type = sm->type;
-								gsi.size_in_bits = static_cast<int>(sm->size * 8);
-								gsi.is_global_or_static = true;
-							}
-						}
-					}
-				}
-				// Local/Function/etc: gsi.is_global_or_static stays false
+				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static) {
+				if (gsi.is_global_or_static && gsi.type != Type::Void && gsi.size_in_bits > 0) {
 					// Load current value from global
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
