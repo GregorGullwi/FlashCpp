@@ -532,15 +532,18 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		restore_lexer_position_only(func_decl.trailing_return_type_position());
 		advance();  // consume '->'
 
-		// Register function parameters so they're visible in decltype expressions
-		gSymbolTable.enter_scope(ScopeType::Function);
+		// Register function parameters so they're visible in decltype expressions.
+		// Use SymbolTableScope RAII to ensure exit_scope on all paths (including exceptions).
+		FlashCpp::SymbolTableScope sfinae_param_scope(ScopeType::Function);
 		register_parameters_in_scope(func_decl.parameter_nodes());
 
 		FlashCpp::TemplateParameterScope sfinae_scope;
 		registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
 		auto return_type_result = parse_type_specifier();
+		// Explicitly exit the param scope before restoring the lexer position.
 		gSymbolTable.exit_scope();
+		sfinae_param_scope.dismiss();  // prevent double exit in destructor
 		restore_lexer_position_only(sfinae_pos);
 		in_sfinae_context_ = prev_sfinae_context;
 		// guard_ptb, guard_param_names and guard_sfinae_map restore their fields automatically

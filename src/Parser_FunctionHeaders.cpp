@@ -853,27 +853,42 @@ ParseResult Parser::parse_function_header(
 
 	// Parse trailing return type if present (for auto return type)
 	if (peek() == "->"_tok) {
-		advance();  // consume '->'
-		auto trailing_result = parse_type_specifier();
+		auto trailing_result = parse_trailing_return_type_with_params(out_header.params.parameters);
 		if (trailing_result.is_error()) {
 			return trailing_result;
 		}
-		
-		// Apply pointer and reference qualifiers (e.g., T*, T&, T&&)
-		if (trailing_result.node().has_value() && trailing_result.node()->is<TypeSpecifierNode>()) {
-			TypeSpecifierNode& type_spec = trailing_result.node()->as<TypeSpecifierNode>();
-			
-			consume_pointer_ref_modifiers(type_spec);
-		}
-		
 		out_header.trailing_return_type = trailing_result.node();
 	}
 
 	return ParseResult::success();
 }
 
+// Helper: Parse trailing return type with parameters visible for decltype expressions.
+// Expects '->' as the next token. Registers params in a temporary SymbolTableScope so that
+// decltype(param_name) resolves correctly (C++11/C++20 trailing-return-type rule).
+// Uses RAII (SymbolTableScope) to ensure the temporary scope is always popped, even on exceptions.
+ParseResult Parser::parse_trailing_return_type_with_params(const std::vector<ASTNode>& params)
+{
+	if (peek() != "->"_tok)
+		return ParseResult::error("Expected '->' for trailing return type", peek_info());
+	advance();  // consume '->'
+
+	FlashCpp::SymbolTableScope param_scope(ScopeType::Function);
+	register_parameters_in_scope(params);
+
+	auto trailing_result = parse_type_specifier();
+	if (trailing_result.is_error())
+		return trailing_result;
+
+	if (trailing_result.node().has_value() && trailing_result.node()->is<TypeSpecifierNode>()) {
+		TypeSpecifierNode& type_spec = trailing_result.node()->as<TypeSpecifierNode>();
+		consume_pointer_ref_modifiers(type_spec);
+	}
+
+	return trailing_result;
+}
+
 // Phase 4: Create a FunctionDeclarationNode from a ParsedFunctionHeader
-// This bridges the unified header parsing with the existing AST node creation
 ParseResult Parser::create_function_from_header(
 	const FlashCpp::ParsedFunctionHeader& header,
 	[[maybe_unused]] const FlashCpp::FunctionParsingContext& ctx
