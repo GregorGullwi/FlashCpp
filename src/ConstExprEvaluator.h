@@ -349,6 +349,10 @@ private:
 		const IdentifierNode* identifier,
 		std::string_view fallback_name,
 		const SymbolTable& symbols);
+	static std::optional<ASTNode> lookup_function_symbol(
+		const FunctionCallNode& func_call,
+		std::string_view fallback_name,
+		const SymbolTable& symbols);
 	static ResolvedCurrentStructStaticMember resolve_current_struct_static_member(
 		const IdentifierNode* identifier,
 		const EvaluationContext& context,

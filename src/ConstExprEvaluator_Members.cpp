@@ -51,6 +51,30 @@ std::optional<ASTNode> Evaluator::lookup_identifier_symbol(
 	return symbols.lookup(fallback_name);
 }
 
+std::optional<ASTNode> Evaluator::lookup_function_symbol(
+	const FunctionCallNode& func_call,
+	std::string_view fallback_name,
+	const SymbolTable& symbols) {
+	if (func_call.has_mangled_name()) {
+		auto mangled_symbol = symbols.lookup(func_call.mangled_name_handle());
+		if (mangled_symbol.has_value()) {
+			return mangled_symbol;
+		}
+	}
+
+	if (func_call.has_qualified_name()) {
+		QualifiedIdentifier qi = QualifiedIdentifier::fromQualifiedName(
+			func_call.qualified_name_handle(),
+			symbols.get_current_namespace_handle());
+		auto qualified_symbol = symbols.lookup_qualified(qi);
+		if (qualified_symbol.has_value()) {
+			return qualified_symbol;
+		}
+	}
+
+	return symbols.lookup(fallback_name);
+}
+
 Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_static_member(
 	const IdentifierNode* identifier,
 	const EvaluationContext& context,
@@ -320,28 +344,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			return EvalResult::error("Cannot evaluate function call: no symbol table provided");
 		}
 		
-		auto lookupFunctionSymbol = [&]() -> std::optional<ASTNode> {
-			if (func_call.has_mangled_name()) {
-				auto mangled_symbol = context.symbols->lookup(func_call.mangled_name_handle());
-				if (mangled_symbol.has_value()) {
-					return mangled_symbol;
-				}
-			}
-
-			if (func_call.has_qualified_name()) {
-				QualifiedIdentifier qi = QualifiedIdentifier::fromQualifiedName(
-					func_call.qualified_name_handle(),
-					context.symbols->get_current_namespace_handle());
-				auto qualified_symbol = context.symbols->lookup_qualified(qi);
-				if (qualified_symbol.has_value()) {
-					return qualified_symbol;
-				}
-			}
-
-			return context.symbols->lookup(func_name);
-		};
-
-		auto symbol_opt = lookupFunctionSymbol();
+		auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
 		if (!symbol_opt.has_value()) {
 			// Try variable template instantiation before giving up
 			if (func_call.has_template_arguments() && context.parser) {
@@ -454,28 +457,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 			return EvalResult::error("Cannot evaluate function call: no symbol table provided");
 		}
 		
-		auto lookupFunctionSymbol = [&]() -> std::optional<ASTNode> {
-			if (func_call.has_mangled_name()) {
-				auto mangled_symbol = context.symbols->lookup(func_call.mangled_name_handle());
-				if (mangled_symbol.has_value()) {
-					return mangled_symbol;
-				}
-			}
-
-			if (func_call.has_qualified_name()) {
-				QualifiedIdentifier qi = QualifiedIdentifier::fromQualifiedName(
-					func_call.qualified_name_handle(),
-					context.symbols->get_current_namespace_handle());
-				auto qualified_symbol = context.symbols->lookup_qualified(qi);
-				if (qualified_symbol.has_value()) {
-					return qualified_symbol;
-				}
-			}
-
-			return context.symbols->lookup(func_name);
-		};
-
-		auto symbol_opt = lookupFunctionSymbol();
+		auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
 		if (!symbol_opt.has_value()) {
 			// Try variable template instantiation before giving up
 			if (func_call.has_template_arguments() && context.parser) {

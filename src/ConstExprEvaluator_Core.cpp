@@ -1744,27 +1744,6 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
-	auto lookupFunctionSymbol = [&]() -> std::optional<ASTNode> {
-		if (func_call.has_mangled_name()) {
-			auto mangled_symbol = context.symbols->lookup(func_call.mangled_name_handle());
-			if (mangled_symbol.has_value()) {
-				return mangled_symbol;
-			}
-		}
-
-		if (func_call.has_qualified_name()) {
-			QualifiedIdentifier qi = QualifiedIdentifier::fromQualifiedName(
-				func_call.qualified_name_handle(),
-				context.symbols->get_current_namespace_handle());
-			auto qualified_symbol = context.symbols->lookup_qualified(qi);
-			if (qualified_symbol.has_value()) {
-				return qualified_symbol;
-			}
-		}
-
-		return context.symbols->lookup(func_name);
-	};
-
 	// If we have a struct context, prefer static member functions from the current struct.
 	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
@@ -1965,7 +1944,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	}
 	
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.
-	auto symbol_opt = lookupFunctionSymbol();
+	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
 
 	auto load_template_bindings_from_type = [&](const TypeInfo* source_type) {
 		if (!source_type || !source_type->isTemplateInstantiation()) {
