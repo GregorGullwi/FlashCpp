@@ -336,6 +336,16 @@ private:
 		EvaluationContext& context,
 		std::string_view usage_name,
 		ResolvedConstexprObject& resolved_object);
+	static std::optional<ASTNode> find_aggregate_member_initializer(
+		const InitializerListNode& init_list,
+		const StructTypeInfo* struct_info,
+		StringHandle member_name_handle);
+	static EvalResult evaluate_member_from_initializer(
+		const std::optional<ASTNode>& initializer_opt,
+		TypeIndex declared_type_index,
+		std::string_view member_name,
+		std::string_view object_name_for_error,
+		EvaluationContext& context);
 	static const ConstructorDeclarationNode* find_matching_constructor_by_parameter_count(
 		const StructTypeInfo* struct_info,
 		size_t parameter_count);
