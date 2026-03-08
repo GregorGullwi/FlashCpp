@@ -275,6 +275,16 @@ public:
 	};
 
 private:
+	enum class CurrentStructStaticLookupMode {
+		BoundOnly,
+		PreferCurrentStruct,
+	};
+
+	struct ResolvedCurrentStructStaticMember {
+		const StructStaticMember* static_member = nullptr;
+		const StructTypeInfo* owner_struct = nullptr;
+	};
+
 	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
 	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
@@ -330,6 +340,14 @@ private:
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	static std::optional<ASTNode> lookup_identifier_symbol(
+		const IdentifierNode* identifier,
+		std::string_view fallback_name,
+		const SymbolTable& symbols);
+	static ResolvedCurrentStructStaticMember resolve_current_struct_static_member(
+		const IdentifierNode* identifier,
+		const EvaluationContext& context,
+		CurrentStructStaticLookupMode lookup_mode);
 	static std::optional<EvalResult> resolve_constexpr_object_source(
 		const IdentifierNode* object_identifier,
 		std::string_view object_name,

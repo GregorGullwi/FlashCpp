@@ -37,6 +37,54 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_parame
 	return constexpr_match ? constexpr_match : non_constexpr_match;
 }
 
+std::optional<ASTNode> Evaluator::lookup_identifier_symbol(
+	const IdentifierNode* identifier,
+	std::string_view fallback_name,
+	const SymbolTable& symbols) {
+	if (identifier && identifier->resolved_name().isValid()) {
+		auto resolved_symbol = symbols.lookup(identifier->resolved_name());
+		if (resolved_symbol.has_value()) {
+			return resolved_symbol;
+		}
+	}
+
+	return symbols.lookup(fallback_name);
+}
+
+Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_static_member(
+	const IdentifierNode* identifier,
+	const EvaluationContext& context,
+	CurrentStructStaticLookupMode lookup_mode) {
+	if (!identifier || context.struct_info == nullptr) {
+		return {};
+	}
+
+	bool should_try_current_struct = false;
+	switch (lookup_mode) {
+	case CurrentStructStaticLookupMode::BoundOnly:
+		should_try_current_struct = identifier->binding() == IdentifierBinding::StaticMember;
+		break;
+	case CurrentStructStaticLookupMode::PreferCurrentStruct:
+		should_try_current_struct =
+			identifier->binding() == IdentifierBinding::StaticMember ||
+			identifier->binding() == IdentifierBinding::Global ||
+			identifier->binding() == IdentifierBinding::Unresolved;
+		break;
+	}
+
+	if (!should_try_current_struct) {
+		return {};
+	}
+
+	StringHandle member_name_handle = identifier->nameHandle();
+	if (!member_name_handle.isValid()) {
+		member_name_handle = StringTable::getOrInternStringHandle(identifier->name());
+	}
+
+	auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(member_name_handle);
+	return { static_member, owner_struct };
+}
+
 EvalResult Evaluator::evaluate_expression_with_bindings(
 	const ASTNode& expr_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -1249,83 +1297,68 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		return EvalResult::error("Member '" + std::string(member_name) + "' not found in constructor initializer list and has no default value");
 	};
 
-	if (object_identifier && object_identifier->binding() == IdentifierBinding::StaticMember && context.struct_info != nullptr) {
-		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(object_identifier->nameHandle());
-		if (static_member && owner_struct) {
-			return evaluateMemberFromInitializer(static_member->initializer, static_member->type_index, var_name);
-		}
+	ResolvedConstexprObject resolved_object;
+	if (auto resolve_error = resolve_constexpr_object_source(
+		object_identifier,
+		var_name,
+		context,
+		"member access",
+		resolved_object)) {
+		return *resolve_error;
 	}
-	
-	// Look up the variable in the symbol table
-	if (!context.symbols) {
-		return EvalResult::error("Cannot evaluate member access: no symbol table provided");
+
+	if (resolved_object.initializer == nullptr) {
+		return EvalResult::error("Internal error: unresolved member access object source");
 	}
-	
-	std::optional<ASTNode> symbol_opt;
-	if (object_identifier && object_identifier->resolved_name().isValid()) {
-		symbol_opt = context.symbols->lookup(object_identifier->resolved_name());
-	}
-	if (!symbol_opt.has_value()) {
-		symbol_opt = context.symbols->lookup(var_name);
-	}
-	if (!symbol_opt.has_value()) {
-		return EvalResult::error("Undefined variable in member access: " + std::string(var_name));
-	}
-	
-	const ASTNode& symbol_node = symbol_opt.value();
-	
-	// Check if it's a VariableDeclarationNode
-	if (!symbol_node.is<VariableDeclarationNode>()) {
-		return EvalResult::error("Identifier in member access is not a variable: " + std::string(var_name));
-	}
-	
-	const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+
+	const VariableDeclarationNode* var_decl = resolved_object.var_decl;
+	TypeIndex var_type_index = resolved_object.declared_type_index;
 	
 	// Before checking if the variable is constexpr, check if we're accessing a static member
 	// Static members can be accessed through any instance (even non-constexpr)
 	// because they don't depend on the instance
 	
-	// Get the type of the variable to look up the struct info
-	const DeclarationNode& var_declaration = var_decl.declaration();
-	const ASTNode& var_type_node = var_declaration.type_node();
-	TypeIndex var_type_index = TypeIndex{0};
-	if (var_type_node.is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
-		var_type_index = var_type_spec.type_index();
-		
-		if (var_type_index != TypeIndex{0} && var_type_index < gTypeInfo.size()) {
-			const TypeInfo& var_type_info = gTypeInfo[var_type_index];
-			const StructTypeInfo* struct_info = var_type_info.getStructInfo();
+	if (var_decl) {
+		const DeclarationNode& var_declaration = var_decl->declaration();
+		const ASTNode& var_type_node = var_declaration.type_node();
+		if (var_type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
+			var_type_index = var_type_spec.type_index();
 			
-			if (struct_info) {
-				// Look for static member
-				StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
-				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+			if (var_type_index != TypeIndex{0} && var_type_index < gTypeInfo.size()) {
+				const TypeInfo& var_type_info = gTypeInfo[var_type_index];
+				const StructTypeInfo* struct_info = var_type_info.getStructInfo();
 				
-				if (static_member && owner_struct) {
-					FLASH_LOG(ConstExpr, Debug, "Accessing static member through instance: ", member_name);
-					
-					// Found a static member - evaluate its initializer if available
-					if (static_member->initializer.has_value()) {
-						return evaluate(static_member->initializer.value(), context);
+				if (struct_info) {
+					// Look for static member
+					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+
+					if (static_member && owner_struct) {
+						FLASH_LOG(ConstExpr, Debug, "Accessing static member through instance: ", member_name);
+
+						// Found a static member - evaluate its initializer if available
+						if (static_member->initializer.has_value()) {
+							return evaluate(static_member->initializer.value(), context);
+						}
+
+						// If no initializer, return default value based on type
+						if (static_member->type == Type::Bool) {
+							return EvalResult::from_bool(false);
+						}
+						return EvalResult::from_int(0);
 					}
-					
-					// If no initializer, return default value based on type
-					if (static_member->type == Type::Bool) {
-						return EvalResult::from_bool(false);
-					}
-					return EvalResult::from_int(0);
 				}
 			}
 		}
+	
+		// If not a static member access, check if it's a constexpr variable
+		if (!var_decl->is_constexpr()) {
+			return EvalResult::error("Variable in member access must be constexpr: " + std::string(var_name));
+		}
 	}
 	
-	// If not a static member access, check if it's a constexpr variable
-	if (!var_decl.is_constexpr()) {
-		return EvalResult::error("Variable in member access must be constexpr: " + std::string(var_name));
-	}
-	
-	return evaluateMemberFromInitializer(var_decl.initializer(), var_type_index, var_name);
+	return evaluateMemberFromInitializer(*resolved_object.initializer, var_type_index, var_name);
 }
 
 
@@ -1387,26 +1420,21 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 	ResolvedConstexprObject& resolved_object) {
 	resolved_object = {};
 
+	if (auto static_member_result = resolve_current_struct_static_member(
+		object_identifier,
+		context,
+		CurrentStructStaticLookupMode::BoundOnly);
+		static_member_result.static_member) {
+		resolved_object.initializer = &static_member_result.static_member->initializer;
+		resolved_object.declared_type_index = static_member_result.static_member->type_index;
+		return std::nullopt;
+	}
+
 	if (!context.symbols) {
 		return EvalResult::error("Cannot evaluate " + std::string(usage_name) + ": no symbol table provided");
 	}
 
-	if (object_identifier && object_identifier->binding() == IdentifierBinding::StaticMember && context.struct_info != nullptr) {
-		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(object_identifier->nameHandle());
-		if (static_member && owner_struct) {
-			resolved_object.initializer = &static_member->initializer;
-			resolved_object.declared_type_index = static_member->type_index;
-			return std::nullopt;
-		}
-	}
-
-	std::optional<ASTNode> symbol_opt;
-	if (object_identifier && object_identifier->resolved_name().isValid()) {
-		symbol_opt = context.symbols->lookup(object_identifier->resolved_name());
-	}
-	if (!symbol_opt.has_value()) {
-		symbol_opt = context.symbols->lookup(object_name);
-	}
+	std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(object_identifier, object_name, *context.symbols);
 	if (!symbol_opt.has_value()) {
 		return EvalResult::error("Undefined variable in " + std::string(usage_name) + ": " + std::string(object_name));
 	}
@@ -1466,50 +1494,26 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		return EvalResult::error("Invalid base expression in nested member access");
 	}
 
-	const std::optional<ASTNode>* initializer = nullptr;
-	TypeIndex base_declared_type_index{0};
-	std::optional<ASTNode> symbol_opt;
-
-	if (base_identifier && base_identifier->binding() == IdentifierBinding::StaticMember && context.struct_info != nullptr) {
-		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(base_identifier->nameHandle());
-		if (static_member && owner_struct) {
-			initializer = &static_member->initializer;
-			base_declared_type_index = static_member->type_index;
-		}
-	}
-	
-	// Look up the base variable
-	if (!context.symbols) {
-		return EvalResult::error("Cannot evaluate nested member access: no symbol table provided");
+	ResolvedConstexprObject resolved_object;
+	if (auto resolve_error = resolve_constexpr_object_source(
+		base_identifier,
+		base_var_name,
+		context,
+		"nested member access",
+		resolved_object)) {
+		return *resolve_error;
 	}
 
-	if (initializer == nullptr) {
-		if (base_identifier && base_identifier->resolved_name().isValid()) {
-			symbol_opt = context.symbols->lookup(base_identifier->resolved_name());
-		}
-		if (!symbol_opt.has_value()) {
-			symbol_opt = context.symbols->lookup(base_var_name);
-		}
-		if (!symbol_opt.has_value()) {
-			return EvalResult::error("Undefined variable in nested member access: " + std::string(base_var_name));
-		}
-
-		const ASTNode& symbol_node = symbol_opt.value();
-		if (!symbol_node.is<VariableDeclarationNode>()) {
-			return EvalResult::error("Identifier in nested member access is not a variable");
-		}
-
-		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-		if (!var_decl.is_constexpr()) {
-			return EvalResult::error("Variable in nested member access must be constexpr");
-		}
-
-		initializer = &var_decl.initializer();
-		const DeclarationNode& base_decl = var_decl.declaration();
-		if (base_decl.type_node().is<TypeSpecifierNode>()) {
-			base_declared_type_index = base_decl.type_node().as<TypeSpecifierNode>().type_index();
-		}
+	if (resolved_object.initializer == nullptr) {
+		return EvalResult::error("Internal error: unresolved nested member access object source");
 	}
+
+	if (resolved_object.var_decl && !resolved_object.var_decl->is_constexpr()) {
+		return EvalResult::error("Variable in nested member access must be constexpr");
+	}
+
+	const std::optional<ASTNode>* initializer = resolved_object.initializer;
+	TypeIndex base_declared_type_index = resolved_object.declared_type_index;
 
 	if (!initializer->has_value()) {
 		return EvalResult::error("Constexpr variable has no initializer in nested member access");
@@ -1748,40 +1752,32 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 				return init_list.initializers();
 			};
 
-			if ((identifier.binding() == IdentifierBinding::StaticMember ||
-			     identifier.binding() == IdentifierBinding::Global ||
-			     identifier.binding() == IdentifierBinding::Unresolved) &&
-			    context.struct_info != nullptr) {
-				auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(identifier.nameHandle());
-				if (static_member && owner_struct) {
-					found_preferred_static_member = true;
-					if (auto elements = extract_elements(static_member->initializer)) {
-						return elements;
-					}
+			if (auto static_member_result = resolve_current_struct_static_member(
+				&identifier,
+				context,
+				CurrentStructStaticLookupMode::PreferCurrentStruct);
+				static_member_result.static_member) {
+				found_preferred_static_member = true;
+				if (auto elements = extract_elements(static_member_result.static_member->initializer)) {
+					return elements;
+				}
 
-					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
-						StringBuilder().append(owner_struct->getName()).append("::"sv).append(identifier.nameHandle()).commit());
-					auto qualified_symbol = context.symbols->lookup(qualified_handle);
-					if (qualified_symbol.has_value() && qualified_symbol->is<VariableDeclarationNode>()) {
-						const VariableDeclarationNode& qualified_var = qualified_symbol->as<VariableDeclarationNode>();
-						if (qualified_var.is_constexpr()) {
-							if (auto elements = extract_elements(qualified_var.initializer())) {
-								return elements;
-							}
+				StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+					StringBuilder().append(static_member_result.owner_struct->getName()).append("::"sv).append(identifier.nameHandle()).commit());
+				auto qualified_symbol = context.symbols->lookup(qualified_handle);
+				if (qualified_symbol.has_value() && qualified_symbol->is<VariableDeclarationNode>()) {
+					const VariableDeclarationNode& qualified_var = qualified_symbol->as<VariableDeclarationNode>();
+					if (qualified_var.is_constexpr()) {
+						if (auto elements = extract_elements(qualified_var.initializer())) {
+							return elements;
 						}
 					}
-
-					return std::nullopt;
 				}
+
+				return std::nullopt;
 			}
 
-			std::optional<ASTNode> symbol_opt;
-			if (identifier.resolved_name().isValid()) {
-				symbol_opt = context.symbols->lookup(identifier.resolved_name());
-			}
-			if (!symbol_opt.has_value()) {
-				symbol_opt = context.symbols->lookup(array_name);
-			}
+			std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(&identifier, array_name, *context.symbols);
 			if (!symbol_opt.has_value()) {
 				return std::nullopt;
 			}
@@ -2743,40 +2739,32 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		return EvalResult::error("Cannot evaluate array subscript: no symbol table provided");
 	}
 
-	if ((identifier.binding() == IdentifierBinding::StaticMember ||
-	     identifier.binding() == IdentifierBinding::Global ||
-	     identifier.binding() == IdentifierBinding::Unresolved) &&
-	    context.struct_info != nullptr) {
-		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(identifier.nameHandle());
-		if (static_member && owner_struct) {
-			if (auto static_result = evaluate_array_initializer(static_member->initializer)) {
-				return *static_result;
-			}
-
-			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
-				StringBuilder().append(owner_struct->getName()).append("::"sv).append(identifier.nameHandle()).commit());
-			auto qualified_symbol = context.symbols->lookup(qualified_handle);
-			if (qualified_symbol.has_value() && qualified_symbol->is<VariableDeclarationNode>()) {
-				const VariableDeclarationNode& qualified_var = qualified_symbol->as<VariableDeclarationNode>();
-				if (!qualified_var.is_constexpr()) {
-					return EvalResult::error("Static member array in array subscript must be constexpr");
-				}
-				if (auto qualified_result = evaluate_array_initializer(qualified_var.initializer())) {
-					return *qualified_result;
-				}
-			}
-
-			return EvalResult::error("Static member array has no usable initializer in array subscript: " + std::string(var_name));
+	if (auto static_member_result = resolve_current_struct_static_member(
+		&identifier,
+		context,
+		CurrentStructStaticLookupMode::PreferCurrentStruct);
+		static_member_result.static_member) {
+		if (auto static_result = evaluate_array_initializer(static_member_result.static_member->initializer)) {
+			return *static_result;
 		}
+
+		StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+			StringBuilder().append(static_member_result.owner_struct->getName()).append("::"sv).append(identifier.nameHandle()).commit());
+		auto qualified_symbol = context.symbols->lookup(qualified_handle);
+		if (qualified_symbol.has_value() && qualified_symbol->is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& qualified_var = qualified_symbol->as<VariableDeclarationNode>();
+			if (!qualified_var.is_constexpr()) {
+				return EvalResult::error("Static member array in array subscript must be constexpr");
+			}
+			if (auto qualified_result = evaluate_array_initializer(qualified_var.initializer())) {
+				return *qualified_result;
+			}
+		}
+
+		return EvalResult::error("Static member array has no usable initializer in array subscript: " + std::string(var_name));
 	}
 	
-	std::optional<ASTNode> symbol_opt;
-	if (identifier.resolved_name().isValid()) {
-		symbol_opt = context.symbols->lookup(identifier.resolved_name());
-	}
-	if (!symbol_opt.has_value()) {
-		symbol_opt = context.symbols->lookup(var_name);
-	}
+	std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.symbols);
 	if (!symbol_opt.has_value()) {
 		return EvalResult::error("Undefined variable in array subscript: " + std::string(var_name));
 	}
