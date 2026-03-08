@@ -1051,28 +1051,6 @@ EvalResult Evaluator::evaluate_callable_object(
 	const auto& initializer = var_decl.initializer();
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
 	if (ctor_call_ptr) {
-		auto bindArgumentValues = [&](const auto& params,
-		                              const auto& args,
-		                              std::unordered_map<std::string_view, EvalResult>& bindings,
-		                              std::string_view errorMessage,
-		                              bool skipInvalidParams) -> EvalResult {
-			for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
-				if (!params[i].template is<DeclarationNode>()) {
-					if (skipInvalidParams) {
-						continue;
-					}
-					return EvalResult::error(std::string(errorMessage));
-				}
-				const DeclarationNode& param_decl = params[i].template as<DeclarationNode>();
-				auto arg_result = evaluate(args[i], context);
-				if (!arg_result.success()) {
-					return arg_result;
-				}
-				bindings[param_decl.identifier_token().value()] = arg_result;
-			}
-			return EvalResult::from_bool(true);
-		};
-
 		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 		const ASTNode& type_node = ctor_call.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -1141,11 +1119,13 @@ EvalResult Evaluator::evaluate_callable_object(
 
 		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 		const auto& ctor_params = matching_ctor->parameter_nodes();
-		auto ctor_bind_result = bindArgumentValues(
+		auto ctor_bind_result = bind_evaluated_arguments(
 			ctor_params,
 			ctor_args,
 			ctor_param_bindings,
+			context,
 			"Invalid parameter node in callable object constructor",
+			nullptr,
 			true);
 		if (!ctor_bind_result.success()) {
 			return ctor_bind_result;
@@ -1210,11 +1190,13 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 
 		const auto& parameters = call_operator->parameter_nodes();
-		auto call_bind_result = bindArgumentValues(
+		auto call_bind_result = bind_evaluated_arguments(
 			parameters,
 			arguments,
 			evaluation_bindings,
+			context,
 			"Invalid parameter node in callable object operator()",
+			nullptr,
 			false);
 		if (!call_bind_result.success()) {
 			return call_bind_result;
@@ -1286,13 +1268,15 @@ EvalResult Evaluator::evaluate_callable_object(
 
 		// Bind call arguments to operator() parameters.
 		const auto& parameters = call_operator->parameter_nodes();
-		for (size_t i = 0; i < arguments.size(); ++i) {
-			if (!parameters[i].is<DeclarationNode>()) continue;
-			const DeclarationNode& param_decl = parameters[i].as<DeclarationNode>();
-			auto arg_result = evaluate(arguments[i], context);
-			if (!arg_result.success()) return arg_result;
-			evaluation_bindings[param_decl.identifier_token().value()] = arg_result;
-		}
+			auto bind_result = bind_evaluated_arguments(
+				parameters,
+				arguments,
+				evaluation_bindings,
+				context,
+				"Invalid parameter node in brace-initialized callable object operator()",
+				nullptr,
+				true);
+			if (!bind_result.success()) return bind_result;
 
 		if (context.current_depth >= context.max_recursion_depth)
 			return EvalResult::error("Constexpr recursion depth limit exceeded");
@@ -1336,21 +1320,14 @@ EvalResult Evaluator::evaluate_lambda_call(
 	
 	// Build parameter bindings
 	std::unordered_map<std::string_view, EvalResult> bindings;
-	
-	for (size_t i = 0; i < arguments.size(); ++i) {
-		const ASTNode& param_node = parameters[i];
-		if (!param_node.is<DeclarationNode>()) {
-			return EvalResult::error("Invalid parameter node in constexpr lambda");
-		}
-		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-		std::string_view param_name = param_decl.identifier_token().value();
-		
-		// Evaluate argument
-		auto arg_result = evaluate(arguments[i], context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-		bindings[param_name] = arg_result;
+	auto bind_result = bind_evaluated_arguments(
+		parameters,
+		arguments,
+		bindings,
+		context,
+		"Invalid parameter node in constexpr lambda");
+	if (!bind_result.success()) {
+		return bind_result;
 	}
 	
 	// Handle captures - evaluate each captured variable and add to bindings
@@ -2199,25 +2176,15 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// Create a new symbol table scope for the function
 	// We'll use a simple map to bind parameters to their evaluated values
 	std::unordered_map<std::string_view, EvalResult> param_bindings;
-	
-	for (size_t i = 0; i < arguments.size(); ++i) {
-		// Evaluate the argument with outer bindings (for nested calls)
-		auto arg_result = evaluate_expression_with_bindings_const(arguments[i], outer_bindings, context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-		
-		// Get parameter name
-		const ASTNode& param_node = parameters[i];
-		if (!param_node.is<DeclarationNode>()) {
-			return EvalResult::error("Invalid parameter node");
-		}
-		
-		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-		std::string_view param_name = param_decl.identifier_token().value();
-		
-		// Bind parameter to its value
-		param_bindings[param_name] = arg_result;
+	auto bind_result = bind_evaluated_arguments(
+		parameters,
+		arguments,
+		param_bindings,
+		context,
+		"Invalid parameter node",
+		&outer_bindings);
+	if (!bind_result.success()) {
+		return bind_result;
 	}
 
 	auto saved_template_param_names = context.template_param_names;
@@ -2283,6 +2250,37 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	context.current_depth--;
 	restore_template_bindings();
 	return EvalResult::error("Constexpr function did not return a value");
+}
+
+EvalResult Evaluator::bind_evaluated_arguments(
+	const std::vector<ASTNode>& parameters,
+	const ChunkedVector<ASTNode>& arguments,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	std::string_view invalid_parameter_error,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	bool skip_invalid_params) {
+	for (size_t i = 0; i < parameters.size() && i < arguments.size(); ++i) {
+		const ASTNode& param_node = parameters[i];
+		if (!param_node.is<DeclarationNode>()) {
+			if (skip_invalid_params) {
+				continue;
+			}
+			return EvalResult::error(std::string(invalid_parameter_error));
+		}
+
+		EvalResult arg_result = outer_bindings
+			? evaluate_expression_with_bindings_const(arguments[i], *outer_bindings, context)
+			: evaluate(arguments[i], context);
+		if (!arg_result.success()) {
+			return arg_result;
+		}
+
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		bindings[param_decl.identifier_token().value()] = arg_result;
+	}
+
+	return EvalResult::from_bool(true);
 }
 
 EvalResult Evaluator::evaluate_statement_with_bindings(

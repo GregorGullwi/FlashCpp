@@ -2263,22 +2263,14 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	
 	// Evaluate function arguments and add to bindings
 	const auto& parameters = actual_func->parameter_nodes();
-	
-	for (size_t i = 0; i < arguments.size(); ++i) {
-		// Get parameter name
-		const ASTNode& param_node = parameters[i];
-		if (!param_node.is<DeclarationNode>()) {
-			return EvalResult::error("Invalid parameter node in constexpr member function");
-		}
-		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-		std::string_view param_name = param_decl.identifier_token().value();
-		
-		// Evaluate argument
-		auto arg_result = evaluate(arguments[i], context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-		member_bindings[param_name] = arg_result;
+	auto bind_result = bind_evaluated_arguments(
+		parameters,
+		arguments,
+		member_bindings,
+		context,
+		"Invalid parameter node in constexpr member function");
+	if (!bind_result.success()) {
+		return bind_result;
 	}
 	
 	// Increase recursion depth

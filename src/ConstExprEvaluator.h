@@ -344,6 +344,14 @@ private:
 		const ChunkedVector<ASTNode>& arguments,
 		const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
 		EvaluationContext& context);
+	static EvalResult bind_evaluated_arguments(
+		const std::vector<ASTNode>& parameters,
+		const ChunkedVector<ASTNode>& arguments,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context,
+		std::string_view invalid_parameter_error,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
+		bool skip_invalid_params = false);
 	static EvalResult evaluate_statement_with_bindings(
 		const ASTNode& stmt_node,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
