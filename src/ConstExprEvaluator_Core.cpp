@@ -1767,30 +1767,18 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			}
 		}
 
-		const FunctionDeclarationNode* matched_function = nullptr;
-
-		for (const auto& member_func : context.struct_info->member_functions) {
-			if (member_func.getName() != func_name_handle ||
-					!member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-
-			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (func_decl.parameter_nodes().size() != arguments.size()) {
-				continue;
-			}
-
-			bool can_evaluate = func_decl.is_constexpr() ||
-				(context.storage_duration == ConstExpr::StorageDuration::Static);
-			if (!can_evaluate || !func_decl.get_definition().has_value()) {
-				continue;
-			}
-
-			if (matched_function) {
-				return EvalResult::error("Ambiguous static member function overload in constant expression");
-			}
-			matched_function = &func_decl;
+		auto current_match = find_member_function_candidate(
+			context.struct_info,
+			func_name_handle,
+			arguments.size(),
+			context,
+			false,
+			true);
+		if (current_match.ambiguous) {
+			return EvalResult::error("Ambiguous static member function overload in constant expression");
 		}
+
+		const FunctionDeclarationNode* matched_function = current_match.function;
 
 		// If not found in the instantiated struct, check the base template struct
 		if (!matched_function) {
@@ -1798,27 +1786,16 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
 				const TypeInfo* struct_type = struct_type_it->second;
 				auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
-				if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
-					const StructTypeInfo* template_struct_info = template_type_it->second->getStructInfo();
-					if (template_struct_info) {
-						for (const auto& member_func : template_struct_info->member_functions) {
-							if (member_func.getName() != func_name_handle ||
-									!member_func.function_decl.is<FunctionDeclarationNode>()) {
-								continue;
-							}
-							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-							if (func_decl.parameter_nodes().size() != arguments.size()) {
-								continue;
-							}
-							bool can_evaluate = func_decl.is_constexpr() ||
-								(context.storage_duration == ConstExpr::StorageDuration::Static);
-							if (!can_evaluate || !func_decl.get_definition().has_value()) {
-								continue;
-							}
-							matched_function = &func_decl;
-							break;
-						}
-					}
+					if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
+						const StructTypeInfo* template_struct_info = template_type_it->second->getStructInfo();
+						auto template_match = find_member_function_candidate(
+							template_struct_info,
+							func_name_handle,
+							arguments.size(),
+							context,
+							false,
+							false);
+						matched_function = template_match.function;
 				}
 			}
 		}

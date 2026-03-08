@@ -75,6 +75,52 @@ std::optional<ASTNode> Evaluator::lookup_function_symbol(
 	return symbols.lookup(fallback_name);
 }
 
+Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candidate(
+	const StructTypeInfo* struct_info,
+	StringHandle function_name_handle,
+	size_t argument_count,
+	EvaluationContext& context,
+	bool require_static,
+	bool detect_ambiguity) {
+	ResolvedMemberFunctionCandidate result;
+	if (!struct_info) {
+		return result;
+	}
+
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.getName() != function_name_handle ||
+			!member_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (require_static && !func_decl.is_static()) {
+			continue;
+		}
+		if (func_decl.parameter_nodes().size() != argument_count) {
+			continue;
+		}
+
+		bool can_evaluate = func_decl.is_constexpr() ||
+			(context.storage_duration == ConstExpr::StorageDuration::Static);
+		if (!can_evaluate || !func_decl.get_definition().has_value()) {
+			continue;
+		}
+
+		if (result.function && detect_ambiguity) {
+			result.ambiguous = true;
+			return result;
+		}
+
+		result.function = &func_decl;
+		if (!detect_ambiguity) {
+			break;
+		}
+	}
+
+	return result;
+}
+
 Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_static_member(
 	const IdentifierNode* identifier,
 	const EvaluationContext& context,
@@ -2055,75 +2101,42 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			}
 		}
 
-		auto saved_pn = context.template_param_names;
-		auto saved_ta = context.template_args;
-		bool tmpl_loaded = false;
-		if (const LazyClassInstantiationInfo* lci =
-				LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
-			context.template_param_names.clear();
-			context.template_args = lci->template_args;
-			for (const auto& tp : lci->template_params) {
-				if (tp.is<TemplateParameterNode>()) {
-					context.template_param_names.push_back(tp.as<TemplateParameterNode>().name());
-				}
-			}
-			tmpl_loaded = true;
-		}
-		if (!tmpl_loaded) {
-			auto tmpl_sit = gTypesByName.find(context.struct_info->name);
-			if (tmpl_sit != gTypesByName.end() && tmpl_sit->second->isTemplateInstantiation()) {
-				const TypeInfo* tmpl_st = tmpl_sit->second;
-				auto ph_list = gTemplateRegistry.getTemplateParameters(tmpl_st->baseTemplateName());
-				context.template_param_names.clear();
-				context.template_args.clear();
-				if (ph_list.empty()) {
-					auto template_node_opt = gTemplateRegistry.lookupTemplate(tmpl_st->baseTemplateName());
-					if (template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
-						for (std::string_view pname : template_node_opt->as<TemplateClassDeclarationNode>().template_param_names()) {
-							context.template_param_names.push_back(pname);
-						}
-					}
-				} else {
-					for (StringHandle ph : ph_list) {
-						context.template_param_names.push_back(StringTable::getStringView(ph));
-					}
-				}
-				for (const auto& ai : tmpl_st->templateArgs()) {
-					context.template_args.push_back(toTemplateTypeArg(ai));
-				}
-			}
-		}
+		auto current_match = find_member_function_candidate(
+			context.struct_info,
+			fn_handle,
+			member_func_call.arguments().size(),
+			context,
+			true,
+			false);
+		const FunctionDeclarationNode* matched_function = current_match.function;
 
-		auto try_struct_member = [&](const StructTypeInfo* si) -> std::optional<EvalResult> {
-			for (const auto& mf : si->member_functions) {
-				if (mf.getName() != fn_handle || !mf.function_decl.is<FunctionDeclarationNode>()) continue;
-				const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
-				if (!fd.is_static() || fd.parameter_nodes().size() != member_func_call.arguments().size()) continue;
-				bool can_eval = fd.is_constexpr() ||
-					(context.storage_duration == ConstExpr::StorageDuration::Static);
-				if (!can_eval || !fd.get_definition().has_value()) continue;
-				std::unordered_map<std::string_view, EvalResult> empty_b;
-				return evaluate_function_call_with_bindings(fd, member_func_call.arguments(), empty_b, context);
-			}
-			return std::nullopt;
-		};
-
-		auto sm_res = try_struct_member(context.struct_info);
-		if (!sm_res) {
+		if (!matched_function) {
 			auto base_sit = gTypesByName.find(context.struct_info->name);
 			if (base_sit != gTypesByName.end() && base_sit->second->isTemplateInstantiation()) {
 				auto base_tit = gTypesByName.find(base_sit->second->baseTemplateName());
 				if (base_tit != gTypesByName.end() && base_tit->second->isStruct()) {
-					if (const StructTypeInfo* tsi = base_tit->second->getStructInfo()) {
-						sm_res = try_struct_member(tsi);
-					}
+					auto base_match = find_member_function_candidate(
+						base_tit->second->getStructInfo(),
+						fn_handle,
+						member_func_call.arguments().size(),
+						context,
+						true,
+						false);
+					matched_function = base_match.function;
 				}
 			}
 		}
 
-		context.template_param_names = std::move(saved_pn);
-		context.template_args = std::move(saved_ta);
-		return sm_res;
+		if (!matched_function) {
+			return std::nullopt;
+		}
+
+		std::unordered_map<std::string_view, EvalResult> empty_b;
+		return evaluate_function_call_with_template_context(
+			*matched_function,
+			member_func_call.arguments(),
+			empty_b,
+			context);
 	};
 	
 	// First, we need to get the struct type from the object to look up the actual function

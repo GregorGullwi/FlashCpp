@@ -290,6 +290,11 @@ private:
 		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
 	};
 
+	struct ResolvedMemberFunctionCandidate {
+		const FunctionDeclarationNode* function = nullptr;
+		bool ambiguous = false;
+	};
+
 	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
 	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
@@ -361,6 +366,13 @@ private:
 		const FunctionCallNode& func_call,
 		std::string_view fallback_name,
 		const SymbolTable& symbols);
+	static ResolvedMemberFunctionCandidate find_member_function_candidate(
+		const StructTypeInfo* struct_info,
+		StringHandle function_name_handle,
+		size_t argument_count,
+		EvaluationContext& context,
+		bool require_static,
+		bool detect_ambiguity);
 	static ResolvedCurrentStructStaticMember resolve_current_struct_static_member(
 		const IdentifierNode* identifier,
 		const EvaluationContext& context,
