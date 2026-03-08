@@ -1310,8 +1310,7 @@
 						constexpr size_t max_float_regs = 8;
 						for (const auto& arg : call_op->args) {
 							bool arg_is_float = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference() && arg.pointer_depth == 0;
-							bool arg_is_two_reg = !call_op->is_variadic &&
-							                     arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 &&
+							bool arg_is_two_reg = arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 &&
 							                     !arg.is_reference() && arg.pointer_depth == 0;
 							size_t slots = arg_is_two_reg ? 2 : 1;
 							if (arg_is_float) {
