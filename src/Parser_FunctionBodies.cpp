@@ -179,8 +179,10 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	// Enter function scope
 	gSymbolTable.enter_scope(ScopeType::Function);
 	
-	// Set up member function context
-	setup_member_function_context(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
+	// Set up member function context (skip for free friend functions - no 'this', no member context)
+	if (!delayed.is_free_function) {
+		setup_member_function_context(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
+	}
 	
 	// Get the appropriate function node and parameters
 	FunctionDeclarationNode* func_node = nullptr;
@@ -349,7 +351,9 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	if (block_result.is_error()) {
 		// Clean up
 		current_function_ = nullptr;
-		member_function_context_stack_.pop_back();
+		if (!delayed.is_free_function) {
+			member_function_context_stack_.pop_back();
+		}
 		gSymbolTable.exit_scope();
 		return block_result;
 	}
@@ -373,7 +377,9 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	
 	// Clean up context
 	current_function_ = nullptr;
-	member_function_context_stack_.pop_back();
+	if (!delayed.is_free_function) {
+		member_function_context_stack_.pop_back();
+	}
 	gSymbolTable.exit_scope();
 	
 	return ParseResult::success();

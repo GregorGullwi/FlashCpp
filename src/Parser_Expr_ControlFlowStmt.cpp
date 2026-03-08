@@ -917,7 +917,20 @@ ParseResult Parser::parse_lambda_expression() {
         }
     }
 
+    // Push explicit captures onto the stack so createBoundIdentifier() can classify them.
+    {
+        std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_map;
+        for (const auto& capture : captures) {
+            if (capture.kind() == LambdaCaptureNode::CaptureKind::ByValue ||
+                capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+                capture_map[capture.identifier_token().handle()] = capture.kind();
+            }
+            // AllByValue, AllByReference, This, CopyThis are not identifier-based; skip here.
+        }
+        lambda_capture_stack_.push_back(std::move(capture_map));
+    }
     ParseResult body_result = parse_block();
+    lambda_capture_stack_.pop_back();
 
     // Remove parameters from symbol table after parsing body
     gSymbolTable.exit_scope();
@@ -1050,8 +1063,9 @@ ParseResult Parser::parse_lambda_expression() {
 
     if (has_capture_all) {
         // Find all identifiers referenced in the lambda body
-        std::unordered_set<StringHandle> referenced_vars;
-        findReferencedIdentifiers(*body_result.node(), referenced_vars);
+		std::unordered_set<StringHandle> referenced_vars;
+		bool uses_implicit_this_capture = false;
+		collectLambdaCaptureCandidates(*body_result.node(), referenced_vars, uses_implicit_this_capture);
 
         // Build a set of parameter names to exclude from captures
         std::unordered_set<StringHandle> param_names;
@@ -1070,6 +1084,18 @@ ParseResult Parser::parse_lambda_expression() {
             (capture_all_kind == LambdaCaptureNode::CaptureKind::AllByValue)
             ? LambdaCaptureNode::CaptureKind::ByValue
             : LambdaCaptureNode::CaptureKind::ByReference;
+
+		auto has_this_style_capture = [&expanded_captures]() {
+			return std::any_of(expanded_captures.begin(), expanded_captures.end(), [](const LambdaCaptureNode& capture) {
+				return capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+					capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis;
+			});
+		};
+		if (uses_implicit_this_capture && !has_this_style_capture()) {
+			Token implicit_this_token(Token::Type::Keyword, "this"sv,
+				lambda_token.line(), lambda_token.column(), lambda_token.file_index());
+			expanded_captures.emplace_back(LambdaCaptureNode::CaptureKind::This, implicit_this_token);
+		}
 
         // For each referenced variable, check if it's a non-local variable
         for (const auto& var_name : referenced_vars) {

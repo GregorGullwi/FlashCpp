@@ -509,7 +509,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			// Also check the AST nodes for template arguments - they may contain
 			// TemplateParameterReferenceNode which indicates dependent types
-			if (!has_dependent_args && parsing_template_body_) {
+			if (!has_dependent_args && (parsing_template_depth_ > 0)) {
 				for (const auto& arg_node : template_arg_nodes) {
 					if (arg_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
@@ -1331,9 +1331,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 			
 			// Check if this is a static member function (has '(')
+			// Pass false for add_to_struct_info: the finalization loop below will register it
 			if (parse_static_member_function(type_and_name_result, is_static_constexpr,
 			                                   qualified_struct_name, struct_ref, struct_info.get(),
-			                                   current_access, current_template_param_names_)) {
+			                                   current_access, current_template_param_names_, false)) {
 				// Function was handled (or error occurred)
 				if (type_and_name_result.is_error()) {
 					return type_and_name_result;
@@ -1872,7 +1873,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			member_result = parse_type_and_name();
 			if (member_result.is_error()) {
 				// In template body, recover from member parse errors by skipping to next ';' or '}'
-				if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+				if ((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty()) {
 					FLASH_LOG(Parser, Warning, "Template struct body (", StringTable::getStringView(struct_name), "): skipping unparseable member declaration at ", peek_info().value(), " line=", peek_info().line());
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						if (peek() == ";"_tok) {
@@ -1895,7 +1896,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Get the member node - we need to check this exists before proceeding
 		if (!member_result.node().has_value()) {
 			// In template body, recover from missing member declaration
-			if (parsing_template_body_ || !struct_parsing_context_stack_.empty()) {
+			if ((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty()) {
 				FLASH_LOG(Parser, Warning, "Template struct body: skipping unparseable member declaration at ", peek_info().value());
 				while (!peek().is_eof() && peek() != "}"_tok) {
 					if (peek() == ";"_tok) {
@@ -2703,7 +2704,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Add member function to struct type info
-			// Phase 7B: Intern function name and use StringHandle overload
 			struct_info->addMemberFunction(
 				func_name_handle,
 				func_decl.function_declaration,
@@ -2713,9 +2713,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				func_decl.is_override,
 				func_decl.is_final
 			);
-			// Propagate const/volatile qualifiers from the AST node to StructTypeInfo
+			// Propagate const/volatile qualifiers and noexcept from the AST node to StructTypeInfo
 			auto& registered_func = struct_info->member_functions.back();
 			registered_func.cv_qualifier = func_decl.cv_qualifier;
+			if (func_decl.function_declaration.is<FunctionDeclarationNode>()) {
+				registered_func.is_noexcept = func_decl.function_declaration.as<FunctionDeclarationNode>().is_noexcept();
+			}
 	}
 }
 
@@ -3980,6 +3983,7 @@ ParseResult Parser::parse_friend_declaration()
 	// We only need to track the last qualifier (the class name) for friend member functions
 	std::string_view last_qualifier;
 	std::string_view function_name;
+	Token function_name_token;
 
 	// Check for operator keyword (friend operator function)
 	if (peek() == "operator"_tok) {
@@ -4018,6 +4022,7 @@ ParseResult Parser::parse_friend_declaration()
 				}
 			} else {
 				function_name = name_token.value();
+				function_name_token = name_token;
 				break;
 			}
 		}
@@ -4028,19 +4033,31 @@ ParseResult Parser::parse_friend_declaration()
 		skip_template_arguments();
 	}
 
-	// Parse function parameters
-	if (!consume("("_tok)) {
-		return ParseResult::error("Expected '(' after friend function name", current_token_);
-	}
-
-	// Parse parameter list (simplified - just skip to closing paren)
-	int paren_depth = 1;
-	while (paren_depth > 0 && !peek().is_eof()) {
-		auto token = advance();
-		if (token.value() == "(") {
-			paren_depth++;
-		} else if (token.value() == ")") {
-			paren_depth--;
+	// Parse function parameters - try parse_parameter_list() for proper AST nodes,
+	// fall back to the manual skip loop if it fails (e.g. complex template parameters).
+	FlashCpp::ParsedParameterList param_list;
+	bool params_parsed_ok = false;
+	{
+		SaveHandle param_save = save_token_position();
+		auto params_result = parse_parameter_list(param_list, CallingConvention::Default);
+		if (!params_result.is_error()) {
+			discard_saved_token(param_save);
+			params_parsed_ok = true;
+		} else {
+			restore_token_position(param_save);
+			// Fall back to simple paren-depth skip
+			if (!consume("("_tok)) {
+				return ParseResult::error("Expected '(' after friend function name", current_token_);
+			}
+			int paren_depth = 1;
+			while (paren_depth > 0 && !peek().is_eof()) {
+				auto token = advance();
+				if (token.value() == "(") {
+					paren_depth++;
+				} else if (token.value() == ")") {
+					paren_depth--;
+				}
+			}
 		}
 	}
 
@@ -4053,8 +4070,70 @@ ParseResult Parser::parse_friend_declaration()
 
 	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
 	if (peek() == "{"_tok) {
-		// Friend function with inline body - skip the body using existing helper
-		skip_balanced_braces();
+		// For non-member, non-operator friend functions with parsed parameters:
+		// register a FunctionDeclarationNode in the enclosing namespace so ADL can find it,
+		// and queue the body for delayed parsing (same mechanism as inline member functions).
+		if (last_qualifier.empty() && function_name != "operator" && params_parsed_ok) {
+			NamespaceHandle enclosing_ns = gSymbolTable.get_current_namespace_handle();
+
+			// Build the return type node (copy from the parsed type_result)
+			ASTNode return_type_node;
+			if (type_result.node().has_value() && type_result.node()->is<TypeSpecifierNode>()) {
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(type_result.node()->as<TypeSpecifierNode>());
+			} else {
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, 0, 0, Token());
+			}
+
+			// Build the declaration and function declaration nodes
+			auto [decl_node, decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+			auto [func_decl_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_ref);
+			func_ref.set_namespace_handle(enclosing_ns);
+			for (const auto& param : param_list.parameters) {
+				func_ref.add_parameter_node(param);
+			}
+			func_ref.set_is_variadic(param_list.is_variadic);
+
+			// Compute and set the mangled name so the call site uses the right symbol
+			compute_and_set_mangled_name(func_ref);
+
+			// Save body position and skip the body; it will be parsed in the second pass
+			SaveHandle body_start = save_token_position();
+			skip_balanced_braces();
+
+			// Queue for delayed parsing (is_free_function = true: no 'this', no member context)
+			delayed_function_bodies_.push_back({
+				&func_ref,
+				body_start,
+				{},       // initializer_list_start (not used)
+				{},       // struct_name (not needed for free function)
+				0,        // struct_type_index (not needed for free function)
+				nullptr,  // struct_node (not needed for free function)
+				false,    // has_initializer_list
+				false,    // is_constructor
+				false,    // is_destructor
+				nullptr,  // ctor_node
+				nullptr,  // dtor_node
+				{},       // template_param_names
+				false,    // is_member_function_template
+				true,     // is_free_function
+			});
+
+			// Register directly into namespace_symbols_ so lookup_adl() can find it
+			StringHandle func_name_handle = StringTable::getOrInternStringHandle(function_name);
+			gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node);
+
+			// Queue for codegen: the function node must appear in the enclosing namespace's
+			// declaration list (or top-level AST) so the IR converter generates code for it.
+			pending_hidden_friend_defs_.push_back(func_decl_node);
+
+			// Create and return the friend declaration node (with the function decl attached)
+			auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
+			friend_node.as<FriendDeclarationNode>().set_function_declaration(func_decl_node);
+			return saved_position.success(friend_node);
+		} else {
+			// For qualified friends, operators, or fallback: just skip the body
+			skip_balanced_braces();
+		}
 	} else if (peek() == "="_tok) {
 		// Handle = default or = delete
 		advance(); // consume '='
@@ -4211,4 +4290,5 @@ void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl
 		struct_info->addFriendMemberFunction(friend_decl.class_name(), friend_decl.name());
 	}
 }
+
 

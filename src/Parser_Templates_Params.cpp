@@ -676,10 +676,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// 1. During SFINAE context (template instantiation with concrete arguments)
 			// 2. When NOT parsing a template body (e.g., global scope type alias like `using X = holder<1 ? 2 : 3>`)
 			// Only skip evaluation during template DECLARATION when template parameters are not yet instantiated
-			bool should_try_constant_eval = in_sfinae_context_ || !parsing_template_body_;
+			bool should_try_constant_eval = in_sfinae_context_ || parsing_template_depth_ == 0;
 			if (should_try_constant_eval) {
 				FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant (in_sfinae=", 
-				          in_sfinae_context_, ", parsing_template_body=", parsing_template_body_, ")");
+				          in_sfinae_context_, ", parsing_template_body=", parsing_template_depth_ > 0, ")");
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
@@ -1546,7 +1546,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// In a template body, if the struct is a registered template and we're using template params, it's dependent
 		// BUT: If this is a template template argument (passing a template class as an argument), it's NOT dependent
 		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
-		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_body_ && !in_sfinae_context_) {
+		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
 			if (idx < gTypeInfo.size()) {
 				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());

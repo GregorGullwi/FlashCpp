@@ -515,18 +515,21 @@ ParseResult Parser::parse_variable_declaration()
 	DeclarationNode& first_decl = type_and_name_result.node()->as<DeclarationNode>();
 	TypeSpecifierNode& type_specifier = first_decl.type_node().as<TypeSpecifierNode>();
 
-	// Helper lambda to create a single variable declaration
-	auto create_var_decl = [&](DeclarationNode& decl, std::optional<ASTNode> init_expr) -> ParseResult {
+	// C++20 [basic.scope.pdecl]: the variable name is visible from the point immediately
+	// after its declarator, before the initializer.  We create and register the
+	// VariableDeclarationNode before parsing the initializer so that unevaluated
+	// operands such as sizeof(x) in the initializer can find the variable's type.
+	// Helper lambda to create and register a variable declaration before parsing its initializer.
+	auto create_var_decl = [&](ASTNode decl_node) -> ParseResult {
+		DeclarationNode& decl = decl_node.as<DeclarationNode>();
 
-		// Create and return a VariableDeclarationNode with storage class
-		ASTNode var_decl_node = emplace_node<VariableDeclarationNode>(
-			emplace_node<DeclarationNode>(decl),
-			init_expr,
+		auto [var_decl_node, var_decl] = emplace_node_ref<VariableDeclarationNode>(
+			decl_node,
+			std::nullopt,
 			storage_class
 		);
 
 		// Set constexpr/constinit flags
-		VariableDeclarationNode& var_decl = var_decl_node.as<VariableDeclarationNode>();
 		var_decl.set_is_constexpr(is_constexpr);
 		var_decl.set_is_constinit(is_constinit);
 
@@ -648,6 +651,14 @@ ParseResult Parser::parse_variable_declaration()
 		}
 	}
 
+	// Register the variable before parsing its initializer (C++20 point-of-declaration).
+	ParseResult first_result = create_var_decl(type_and_name_result.node().value());
+	if (first_result.is_error()) {
+		return first_result;
+	}
+	ASTNode first_var_node = first_result.node().value();
+	VariableDeclarationNode& first_var_decl = first_var_node.as<VariableDeclarationNode>();
+
 	// Phase 3 Consolidation: Use shared initialization helpers
 	// Check for direct initialization with parentheses: Type var(args)
 	if (peek() == "("_tok) {
@@ -684,6 +695,7 @@ ParseResult Parser::parse_variable_declaration()
 	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
 	}
+	first_var_decl.set_initializer(first_init_expr);
 
 	// Check for use of deleted default constructor: Struct s{} where default ctor is deleted
 	if (type_specifier.type() == Type::Struct && !type_specifier.is_pointer() &&
@@ -706,11 +718,7 @@ ParseResult Parser::parse_variable_declaration()
 		auto [block_node, block_ref] = create_node_ref(BlockNode());
 
 		// Add the first declaration to the block
-		ParseResult first_result = create_var_decl(first_decl, first_init_expr);
-		if (first_result.is_error()) {
-			return first_result;
-		}
-		block_ref.add_statement_node(*first_result.node());
+		block_ref.add_statement_node(first_var_node);
 
 		// Parse additional declarations
 		while (consume(","_tok)) {
@@ -721,10 +729,16 @@ ParseResult Parser::parse_variable_declaration()
 			}
 
 			// Create a new DeclarationNode with the same type
-			DeclarationNode& new_decl = emplace_node<DeclarationNode>(
+			ASTNode new_decl_node = emplace_node<DeclarationNode>(
 				emplace_node<TypeSpecifierNode>(type_specifier),
 				identifier_tok
-			).as<DeclarationNode>();
+			);
+			// Register before parsing initializer (point-of-declaration)
+			ParseResult decl_result = create_var_decl(new_decl_node);
+			if (decl_result.is_error()) {
+				return decl_result;
+			}
+			ASTNode var_decl_node = decl_result.node().value();
 
 			// Check for initialization
 			std::optional<ASTNode> init_expr;
@@ -765,12 +779,10 @@ ParseResult Parser::parse_variable_declaration()
 				init_expr = init_list_result.node();
 			}
 
+			var_decl_node.as<VariableDeclarationNode>().set_initializer(init_expr);
+
 			// Add this declaration to the block
-			ParseResult decl_result = create_var_decl(new_decl, init_expr);
-			if (decl_result.is_error()) {
-				return decl_result;
-			}
-			block_ref.add_statement_node(*decl_result.node());
+			block_ref.add_statement_node(var_decl_node);
 		}
 
 		// Return the block containing all declarations
@@ -778,7 +790,7 @@ ParseResult Parser::parse_variable_declaration()
 	}
 	else {
 		// Single declaration - return it directly
-		return create_var_decl(first_decl, first_init_expr);
+		return first_result;
 	}
 }
 
@@ -1151,7 +1163,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// struct_info_ yet but could resolve to structs at instantiation time. Treat them as struct-like
 	// to allow multi-element brace-init lists like: return { expr1, expr2 };
 	if (!is_struct_like_type && type_specifier.type() == Type::UserDefined &&
-		(parsing_template_body_ || !struct_parsing_context_stack_.empty())) {
+		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_struct_like_type = true;
 	}
 	if (!is_struct_like_type) {
@@ -1205,7 +1217,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	if (type_index >= gTypeInfo.size() ||
 		(type_index < gTypeInfo.size() && !gTypeInfo[type_index].struct_info_)) {
 		const bool invalid_struct_type_index = type_index >= gTypeInfo.size();
-		if (!parsing_template_body_ && struct_parsing_context_stack_.empty()) {
+		if (!(parsing_template_depth_ > 0) && struct_parsing_context_stack_.empty()) {
 			return ParseResult::error(
 				invalid_struct_type_index ? "Invalid struct type index" : "Type is not a struct",
 				current_token_

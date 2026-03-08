@@ -1536,8 +1536,16 @@
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 
-				// Look up the identifier in the symbol table
+				// Look up the identifier in the codegen's local symbol table first.
+				// If not found (e.g., x in "int x = sizeof(x)" — C++20 point-of-declaration),
+				// fall back to the parser's global symbol table where the stub was pre-inserted.
 				const DeclarationNode* decl = lookupDeclaration(id_node.name());
+				if (!decl) {
+					auto sym_opt = gSymbolTable.lookup(id_node.name());
+					if (sym_opt.has_value()) {
+						decl = get_decl_from_symbol(*sym_opt);
+					}
+				}
 				if (decl) {
 					// Check if it's an array
 					auto array_size = calculateArraySize(*decl);

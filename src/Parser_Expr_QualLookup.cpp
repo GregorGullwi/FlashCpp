@@ -744,7 +744,7 @@ ParseResult Parser::validate_and_add_base_class(
 		// In template bodies, unresolved base class names might be member type aliases
 		// that depend on template parameters (e.g., using __hash_code_base = typename __hashtable_base::__hash_code_base;)
 		// Defer resolution until template instantiation.
-		if (parsing_template_body_) {
+		if ((parsing_template_depth_ > 0)) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Deferring unresolved base class '{}' in template body", base_class_name);
 			bool is_deferred = true;
 			struct_ref.add_base_class(base_class_name, 0, base_access, is_virtual_base, is_deferred);
@@ -784,7 +784,7 @@ ParseResult Parser::validate_and_add_base_class(
 	// at instantiation time. Treat it as a deferred base class.
 	bool is_dependent_type_alias = false;
 	if (!is_template_param && !is_dependent_placeholder && base_type_info->type_ == Type::UserDefined &&
-		(parsing_template_body_ || !struct_parsing_context_stack_.empty())) {
+		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_dependent_type_alias = true;
 	}
 	
@@ -1124,7 +1124,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
 	// First check if it's a template parameter using the new method
-	if (parsing_template_body_ && !current_template_param_names_.empty()) {
+	if ((parsing_template_depth_ > 0) && !current_template_param_names_.empty()) {
 		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
 	}
 

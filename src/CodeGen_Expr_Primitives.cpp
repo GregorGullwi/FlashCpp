@@ -238,10 +238,16 @@
 
 	std::vector<IrOperand> AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context) {
-		// Check if this is a captured variable in a lambda
+		// Check if this is a captured variable in a lambda.
+		// Explicit captures ([x], [&x]) have binding set at parse time.
+		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
+		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
-		if (current_lambda_context_.isActive() &&
-		current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
+		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
+		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
+		bool is_implicit_capture = !is_explicit_capture && current_lambda_context_.isActive() &&
+		    current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end();
+		if (is_explicit_capture || is_implicit_capture) {
 			// This is a captured variable - generate member access (this->x)
 			// Look up the closure struct type
 			auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
@@ -251,10 +257,13 @@
 				auto result = FlashCpp::gLazyMemberResolver.resolve(closure_type_index, var_name_str);
 				if (result) {
 					const StructMember* member = result.member;
-					// Check if this is a by-reference capture
-					auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
-					bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
-					kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+					// Explicit captures: use binding. Implicit (capture-all): check the runtime map.
+					bool is_reference = (identifierNode.binding() == IdentifierBinding::CapturedByRef);
+					if (!is_reference && is_implicit_capture) {
+						auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
+						is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
+						    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+					}
 
 					if (is_reference) {
 						// By-reference capture: member is a pointer, need to dereference
@@ -389,6 +398,163 @@
 
 			// Return the temp variable that will hold the loaded value
 			return { info.type, info.size_in_bits, result_temp, 0ULL };
+		}
+
+		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the
+		// multi-table cascade. Handles the common case (simple global variables).
+		// Falls through when using-declarations override the name (e.g., using ::globalValue
+		// inside a namespace with its own globalValue), or when the direct lookup fails.
+		if (identifierNode.binding() == IdentifierBinding::Global && global_symbol_table_) {
+			// If any local using-declaration overrides this identifier's resolution,
+			// the cascade (not this fast-path) is needed to get the correct qualified name.
+			bool has_using_override = false;
+			for (const auto& [local_name, target_info] : symbol_table.get_current_using_declaration_handles()) {
+				if (local_name == identifierNode.name()) {
+					has_using_override = true;
+					break;
+				}
+			}
+
+			if (!has_using_override) {
+				const std::optional<ASTNode> fast_sym = global_symbol_table_->lookup(identifierNode.name());
+				if (fast_sym.has_value()) {
+					StringHandle effective_name;
+					auto mangle_it = global_variable_names_.find(identifier_handle);
+					effective_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : identifier_handle;
+
+					if (fast_sym->is<VariableDeclarationNode>()) {
+						const auto& vd = fast_sym->as<VariableDeclarationNode>();
+						const auto& decl_n = vd.declaration();
+						const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
+						bool is_array_type = decl_n.is_array() || type_n.is_array();
+						bool is_ptr_or_ref = type_n.is_pointer() || type_n.is_reference() || type_n.is_function_pointer();
+						int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
+						TempVar result_temp = var_counter.next();
+						GlobalLoadOp op;
+						op.result.type = type_n.type();
+						op.result.size_in_bits = size_bits;
+						op.result.value = result_temp;
+						op.global_name = effective_name;
+						op.is_array = is_array_type;
+						StringHandle saved_name = op.global_name;
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+						if (!is_array_type) {
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+								LValueInfo(LValueInfo::Kind::Global, saved_name),
+								type_n.type(), size_bits));
+						}
+						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
+						return { type_n.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+					}
+
+					if (fast_sym->is<DeclarationNode>()) {
+						const auto& decl_n = fast_sym->as<DeclarationNode>();
+						const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
+						// Check for enum constant
+						if (type_n.type() == Type::Enum && !type_n.is_reference() && type_n.pointer_depth() == 0) {
+							size_t enum_idx = type_n.type_index();
+							if (enum_idx < gTypeInfo.size()) {
+								const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
+								if (enum_info) {
+									const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
+									if (enumerator) {
+										return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+											static_cast<unsigned long long>(enumerator->value) };
+									}
+								}
+							}
+						}
+						bool is_array_type = decl_n.is_array() || type_n.is_array();
+						int size_bits = (type_n.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
+						TempVar result_temp = var_counter.next();
+						GlobalLoadOp op;
+						op.result.type = type_n.type();
+						op.result.size_in_bits = size_bits;
+						op.result.value = result_temp;
+						op.global_name = effective_name;
+						op.is_array = is_array_type;
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
+						return { type_n.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+					}
+					// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
+				}
+				// Not found by direct lookup: fall through to cascade (handles namespace-scoped globals)
+			}
+			// Has using override: fall through to cascade for correct qualified name resolution
+		}
+
+		// If binding is NonStaticMember, handle member access directly
+		if (identifierNode.binding() == IdentifierBinding::NonStaticMember) {
+			if (current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer &&
+				current_lambda_context_.enclosing_struct_type_index > 0) {
+				if (auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str)) {
+					const StructMember* member = result.member;
+					if (auto this_ptr = emitLoadThisPointer(Token())) {
+						TempVar result_temp = var_counter.next();
+						MemberLoadOp member_load;
+						member_load.result.value = result_temp;
+						member_load.result.type = member->type;
+						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.object = *this_ptr;
+						member_load.member_name = member->getName();
+						member_load.offset = static_cast<int>(result.adjusted_offset);
+						member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+						member_load.struct_type_info = nullptr;
+						member_load.is_pointer_to_member = true;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Member,
+							*this_ptr,
+							static_cast<int>(result.adjusted_offset)
+						);
+						lvalue_info.member_name = member->getName();
+						lvalue_info.is_pointer_to_member = true;
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
+							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
+						}
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+					}
+				}
+			}
+
+			if (current_struct_name_.isValid()) {
+				auto type_it = gTypesByName.find(current_struct_name_);
+				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+					TypeIndex struct_type_index = type_it->second->type_index_;
+					if (auto result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, var_name_str)) {
+						const StructMember* member = result.member;
+						TempVar result_temp = var_counter.next();
+						MemberLoadOp member_load;
+						member_load.result.value = result_temp;
+						member_load.result.type = member->type;
+						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.object = StringTable::getOrInternStringHandle("this");
+						member_load.member_name = member->getName();
+						member_load.offset = static_cast<int>(result.adjusted_offset);
+						member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+						member_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Member,
+							StringTable::getOrInternStringHandle("this"),
+							static_cast<int>(result.adjusted_offset)
+						);
+						lvalue_info.member_name = member->getName();
+						lvalue_info.is_pointer_to_member = true;
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
+							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
+						}
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+					}
+				}
+			}
 		}
 
 		// Check using declarations from local scope FIRST, before local symbol table lookup

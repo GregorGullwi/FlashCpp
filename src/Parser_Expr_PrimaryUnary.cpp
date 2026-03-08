@@ -197,7 +197,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				if (type_spec.type() == Type::UserDefined && type_spec.type_index() == 0) {
 					// Check if the token looks like a known type or is in a template context
 					// In template bodies, UserDefined with index 0 can be a valid template parameter placeholder
-					if (!parsing_template_body_) {
+					if (!(parsing_template_depth_ > 0)) {
 						// Not in a template body, so this is likely a variable, not a type
 						is_valid_type = false;
 					}
@@ -586,6 +586,14 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						auto struct_it = gTypesByName.find(tok_handle);
 						if (struct_it != gTypesByName.end() && struct_it->second->isStruct()) {
 							is_complete_type = false;
+						} else {
+							// If the identifier is a known variable in the symbol table (not a type),
+							// fall through to expression parsing so sizeof yields the variable's type
+							// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
+							auto sym_opt = gSymbolTable.lookup(tok_handle);
+							if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
+								is_complete_type = false;
+							}
 						}
 					}
 				}

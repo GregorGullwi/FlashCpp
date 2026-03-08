@@ -168,7 +168,7 @@ ASTNode Parser::substituteTemplateParameters(
 							if (result->is<VariableDeclarationNode>()) {
 								const auto& var_decl = result->as<VariableDeclarationNode>();
 								Token ref_token = var_decl.declaration().identifier_token();
-								return emplace_node<ExpressionNode>(IdentifierNode(ref_token));
+								return emplace_node<ExpressionNode>(createBoundIdentifier(ref_token));
 							}
 							return *result;
 						}
@@ -176,6 +176,19 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 			} // end of '$' check
+		}
+		// Promote Unresolved identifiers to concrete bindings when possible.
+		// Phase 1 violations ([temp.res]/9) are checked earlier in
+		// reparse_template_function_body via createBoundIdentifier / checkPhase1.
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+			if (id_node.binding() == IdentifierBinding::Unresolved) {
+				IdentifierNode rebound = createBoundIdentifier(id_node.identifier_token());
+				IdentifierBinding new_binding = rebound.binding();
+				if (new_binding != IdentifierBinding::Unresolved) {
+					return emplace_node<ExpressionNode>(rebound);
+				}
+			}
 		}
 		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 			const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr);
@@ -490,7 +503,7 @@ ASTNode Parser::substituteTemplateParameters(
 					Token param_token(Token::Type::Identifier, param_name,
 									 fold.get_token().line(), fold.get_token().column(),
 									 fold.get_token().file_index());
-					pack_values.push_back(emplace_node<ExpressionNode>(IdentifierNode(param_token)));
+					pack_values.push_back(emplace_node<ExpressionNode>(createBoundIdentifier(param_token)));
 				}
 			}
 		
@@ -611,7 +624,7 @@ ASTNode Parser::substituteTemplateParameters(
 			if (!found_variadic) {
 				// Check if we're inside a template body and the pack name is a known template parameter
 				bool is_known_template_param = false;
-				if (parsing_template_body_) {
+				if ((parsing_template_depth_ > 0)) {
 					for (const auto& param_name : current_template_param_names_) {
 						if (StringTable::getStringView(param_name) == pack_name) {
 							is_known_template_param = true;
@@ -765,8 +778,8 @@ ASTNode Parser::substituteTemplateParameters(
 				if (type_or_expr.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 					
-					// Check if this is a user-defined type that matches a template parameter
-					if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+					// Check if this is a user-defined or struct type that matches a template parameter
+					if ((type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) && type_spec.type_index() < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 						std::string_view type_name = StringTable::getStringView(type_info.name());
 						
@@ -1223,7 +1236,7 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 				expanded_name.append(element_index);
 				std::string_view expanded_sv = expanded_name.commit();
 				Token new_token(Token::Type::Identifier, expanded_sv, 0, 0, 0);
-				return emplace_node<ExpressionNode>(IdentifierNode(new_token));
+				return emplace_node<ExpressionNode>(createBoundIdentifier(new_token));
 			}
 			return expr;
 		}

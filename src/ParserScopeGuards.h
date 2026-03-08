@@ -307,4 +307,27 @@ private:
 	std::optional<T> saved_state_;
 };
 
+// =============================================================================
+// TemplateDepthGuard
+// =============================================================================
+// RAII guard that increments a parsing_template_depth_ counter on construction
+// and decrements it on destruction.  Use this in place of the old
+//   parsing_template_depth_++  (via TemplateDepthGuard)
+// pattern so that nested template contexts correctly stack.
+//
+// Usage:
+//   FlashCpp::TemplateDepthGuard guard(parsing_template_depth_);
+//   // parsing_template_depth_ is incremented; identifier lookup now treats
+//   // names as potentially dependent.
+//   // On scope exit, the counter is decremented automatically.
+class TemplateDepthGuard {
+public:
+	explicit TemplateDepthGuard(size_t& depth) : depth_(depth) { depth_++; }
+	~TemplateDepthGuard() { if (depth_ > 0) depth_--; }
+	TemplateDepthGuard(const TemplateDepthGuard&) = delete;
+	TemplateDepthGuard& operator=(const TemplateDepthGuard&) = delete;
+private:
+	size_t& depth_;
+};
+
 } // namespace FlashCpp

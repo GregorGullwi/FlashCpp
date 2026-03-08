@@ -15,7 +15,7 @@ Minimal session map (follow the full plan for details)
 - Phase 1 — AST + Core Binding: add IdentifierBinding + IdentifierNode fields; add createBoundIdentifier(); bind locals/globals/static/enum.
 - Phase 1B — Codegen migration: remove detectGlobalOrStaticVar, update generateIdentifierIr() to switch on binding().
 - Phase 2 — Lambda captures: set captured bindings in parser; simplify codegen.
-- Phase 3 — Templates: leave dependent names Unresolved; bind during instantiation.
+- Phase 3 — Templates: replace parsing_template_body_ bool with depth counter; add TemplateParameter binding; guard dependent-base lookup; re-bind after instantiation via AST walk. (See docs for full gap list.)
 - Phase 4 — Function lookup & ADL: collect ordinary + ADL candidates and combine before resolution.
 - Phase 5 — Constexpr fast paths / cleanup: use binding for evaluator speedups and final verification.
 
@@ -31,11 +31,22 @@ Reviewer checklist (short)
 - Test-first added and demonstrably failing on baseline.
 - No "Phase X" markers in source code.
 - createBoundIdentifier() consumes SymbolTable ordinary lookup (no ad-hoc bypass).
-- Dependent names remain Unresolved until instantiation.
+- Dependent names remain Unresolved/TemplateParameter until instantiation.
 - Overload sets preserved; `using` semantics intact; ADL behavior covered.
 - resolved_name_ only used for global/static/member IR generation (not to fake overload selection).
-- detectGlobalOrStaticVar removed by the codegen migration PRs (grep → zero).
+- detectGlobalOrStaticVar removed by the codegen migration PRs (grep → zero). ✅ Done.
+- parsing_template_body_ assignments removed (replaced with depth counter) after Phase 3.
 - `make` / MSVC build succeeds and tests pass.
 
-Next action (recommended)
-- Start Phase 0A: add the two `using`/overload tests referenced in the docs under `tests/` on a branch named `feat/identifier-resolution/phase-0a`, push, and open a PR that contains only the tests (so CI shows they fail). Use the full docs file for the detailed step list and file-by-file tasks.
+Progress (branch: `copilot/identifier-refactor`, rebased on origin/main `1cfb06a8`)
+- Phase 0A — **DONE** (no code change needed; using/overload-set semantics already correct in SymbolTable)
+- Phase 0B — **DONE** (`c264c2f3`): Fixed point-of-declaration for local variables. Test: `test_initializer_point_of_declaration_ret4.cpp`.
+- Phase 1A — **DONE** (`b8ca5961`): `IdentifierBinding` enum (12 variants), extended `IdentifierNode`, `createBoundIdentifier()` in `Parser.h`, 16 creation sites updated, `StaticLocal`/`StaticMember` detected, typo `idenfifier_token` fixed.
+- Phase 1B — **DONE** (`ecb1ddf6`, `77ab43db`): `GlobalStaticVarInfo` and `detectGlobalOrStaticVar()` fully deleted; all codegen paths switch on `binding()`; grep = 0. All 1327 tests pass.
+- Phase 2 — **DONE** (`5c7437db`): Lambda capture bindings at parse time; `createBoundIdentifier()` sets `CapturedByValue`/`CapturedByRef`. All 1328 tests pass.
+- Phase 3 — **DONE** (`83d2c2af`): `parsing_template_depth_` counter + `TemplateDepthGuard`; `TemplateParameter` binding; template base constructor and default-arg fixes; 6 new tests. All 1334 tests pass.
+- Phase 4A — **DONE** (`982814b1`): `lookup_adl()` in `SymbolTable.h`; ADL integrated at two call sites; 2 new ADL tests. All 1336 tests pass.
+- Phase 4B — **DONE** (`4e65238d`): `insert_into_namespace()` in `SymbolTable.h`; inline friend functions parsed and registered in enclosing namespace for ADL; `pending_hidden_friend_defs_` delayed body queue. Test: `test_adl_hidden_friend_ret0.cpp`. All 1337 tests pass.
+- Phase 5 — **DONE** (`61d1bd1b`): `Local`-binding fast paths in `ConstExprEvaluator_Members.cpp`. All 1337 tests pass.
+
+**All phases complete. ✅**

@@ -432,7 +432,16 @@ int main_impl(int argc, char *argv[]) {
         // Note: Lexing happens lazily during parsing in this implementation
         // Template instantiation also happens during parsing
         
-        auto parse_result = parser->parse();
+        ParseResult parse_result;
+        try {
+            parse_result = parser->parse();
+        } catch (const CompileError& e) {
+            // Phase 1 violations (e.g. non-dependent name not visible at template definition)
+            // are thrown as CompileError from within template instantiation during parsing.
+            FLASH_LOG(Parser, Error, "error: ", e.what());
+            std::cerr << "error: " << e.what() << std::endl;
+            return 1;
+        }
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack

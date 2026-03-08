@@ -184,6 +184,11 @@ struct EvaluationContext {
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
+
+	// Template parameter names and arguments for evaluating template-dependent expressions
+	// (e.g., sizeof(T) inside a template member function)
+	std::vector<std::string_view> template_param_names;
+	std::vector<TemplateTypeArg> template_args;
 	
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;
@@ -250,7 +255,7 @@ public:
 		size_t index,
 		EvaluationContext& context);
 	static EvalResult evaluate_variable_array_subscript(
-		std::string_view var_name,
+		const IdentifierNode& identifier,
 		size_t index,
 		EvaluationContext& context);
 	static bool isArithmeticType(Type type);
@@ -261,6 +266,12 @@ public:
 		const ConstructorCallNode* ctor_call;
 		const StructTypeInfo* struct_info;
 		const ConstructorDeclarationNode* matching_ctor;
+	};
+
+	struct ResolvedConstexprObject {
+		const VariableDeclarationNode* var_decl = nullptr;
+		const std::optional<ASTNode>* initializer = nullptr;
+		TypeIndex declared_type_index{0};
 	};
 
 private:
@@ -319,6 +330,12 @@ private:
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	static std::optional<EvalResult> resolve_constexpr_object_source(
+		const IdentifierNode* object_identifier,
+		std::string_view object_name,
+		EvaluationContext& context,
+		std::string_view usage_name,
+		ResolvedConstexprObject& resolved_object);
 	static const ConstructorDeclarationNode* find_matching_constructor_by_parameter_count(
 		const StructTypeInfo* struct_info,
 		size_t parameter_count);

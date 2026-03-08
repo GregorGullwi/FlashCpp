@@ -256,6 +256,7 @@ public:
 	const ASTNode& declaration_node() const { return declaration_node_; }
 	const std::optional<ASTNode>& initializer() const { return initializer_; }
 	StorageClass storage_class() const { return storage_class_; }
+	void set_initializer(std::optional<ASTNode> initializer) { initializer_ = std::move(initializer); }
 
 	void set_is_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
 	bool is_constexpr() const { return is_constexpr_; }

@@ -124,6 +124,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				converted_template_args
 			);
 			new_ctor_ref.set_definition(substituted_body);
+		} catch (const CompileError&) {
+			throw;  // Phase 1 violations (non-dependent name not declared before template) must propagate
 		} catch (const std::exception& e) {
 			FLASH_LOG(Templates, Error, "Exception during lazy constructor substitution: ", e.what());
 			return std::nullopt;
@@ -178,6 +180,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				converted_template_args
 			);
 			new_dtor_ref.set_definition(substituted_body);
+		} catch (const CompileError&) {
+			throw;  // Phase 1 violations must propagate
 		} catch (const std::exception& e) {
 			FLASH_LOG(Templates, Error, "Exception during lazy destructor substitution: ", e.what());
 			return std::nullopt;
@@ -250,6 +254,14 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 		new_func_decl_ref, lazy_info.instantiated_class_name
 	);
+	InlineVector<StringHandle, 4> outer_template_param_names;
+	outer_template_param_names.reserve(lazy_info.template_params.size());
+	for (const auto& template_param : lazy_info.template_params) {
+		if (template_param.is<TemplateParameterNode>()) {
+			outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+		}
+	}
+	new_func_ref.set_outer_template_bindings(outer_template_param_names, lazy_info.template_args);
 
 	// Substitute and copy parameters
 	for (const auto& param : func_decl.parameter_nodes()) {
@@ -332,10 +344,10 @@ if (param_decl.has_default_value()) {
 		const FunctionDeclarationNode* saved_current_function = current_function_;
 		
 		// When re-parsing a lazy member function body with concrete types,
-		// we're no longer in a dependent template context. Set parsing_template_body_
+		// we're no longer in a dependent template context. Set parsing_template_depth_
 		// to false so that constant expressions like sizeof(int) are evaluated.
-		FlashCpp::ScopedState guard_ptb(parsing_template_body_);
-		parsing_template_body_ = false;
+		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);  // saves depth, restores on exit
+		parsing_template_depth_ = 0;  // suppress template body context during lazy instantiation
 
 		// Restore to the function body start
 		restore_lexer_position_only(func_decl.template_body_position());
@@ -439,6 +451,22 @@ if (param_decl.has_default_value()) {
 	// This is essential so that FunctionCallNode can carry the correct mangled name
 	// and codegen can resolve the correct function for each template instantiation
 	compute_and_set_mangled_name(new_func_ref);
+
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(StringTable::getStringView(lazy_info.instantiated_class_name))
+		.append("::")
+		.append(decl.identifier_token().value());
+	StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+	OuterTemplateBinding outer_binding;
+	for (const auto& tp : lazy_info.template_params) {
+		if (tp.is<TemplateParameterNode>()) {
+			outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
+		}
+	}
+	for (const auto& arg : lazy_info.template_args) {
+		outer_binding.param_args.push_back(arg);
+	}
+	gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 
 	// Add the instantiated function to the AST so it gets visited during codegen
 	// This is safe now that the StringBuilder bug is fixed
@@ -645,34 +673,49 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				ExpressionSubstitutor substitutor(param_map, *this);
 				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
-				
-				// Try to evaluate the substituted expression to a constant value.
-				// This turns expressions like "1 * __static_sign$hash::value / __static_gcd$hash::value"
-				// into a single NumericLiteralNode, enabling downstream constexpr evaluation.
-				if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
-					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-					eval_ctx.parser = this;
-					auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
-					if (eval_result.success()) {
-						int64_t val = eval_result.as_int();
-						if (val < 0) {
-							// For negative values, create UnaryOperator('-', NumericLiteral(abs(val)))
-							// to avoid uint64_t cast producing wrong string/value
-							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(-static_cast<uint64_t>(val))).commit();
-							Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-							auto& literal_node = emplace_node_ref<ExpressionNode>(
-								NumericLiteralNode(num_token, static_cast<unsigned long long>(-static_cast<uint64_t>(val)), Type::Int, TypeQualifier::None, 64)).second;
-							Token minus_token(Token::Type::Operator, "-"sv, 0, 0, 0);
-							substituted_initializer = emplace_node<ExpressionNode>(
-								UnaryOperatorNode(minus_token, ASTNode(&literal_node), true, false));
-						} else {
-							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
-							Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-							substituted_initializer = emplace_node<ExpressionNode>(
-								NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 64));
-						}
-						FLASH_LOG(Templates, Debug, "Evaluated lazy static member initializer to constant: ", val);
+			}
+
+			if (substituted_initializer.has_value()) {
+				substituted_initializer = rebindStaticMemberInitializerFunctionCalls(
+					substituted_initializer.value(),
+					struct_info);
+			}
+
+			// Try to evaluate the substituted expression to a constant value.
+			// This turns expressions like "1 * __static_sign$hash::value / __static_gcd$hash::value"
+			// into a single NumericLiteralNode, enabling downstream constexpr evaluation.
+			if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				eval_ctx.parser = this;
+				// Provide struct context so the evaluator prefers same-struct member functions over globals.
+				eval_ctx.struct_info = struct_info;
+				// Provide template args so sizeof(T) etc. resolve correctly.
+				for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
+					if (lazy_info.template_params[i].is<TemplateParameterNode>()) {
+						eval_ctx.template_param_names.push_back(lazy_info.template_params[i].as<TemplateParameterNode>().name());
+						eval_ctx.template_args.push_back(lazy_info.template_args[i]);
 					}
+				}
+				auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
+				if (eval_result.success()) {
+					int64_t val = eval_result.as_int();
+					if (val < 0) {
+						// For negative values, create UnaryOperator('-', NumericLiteral(abs(val)))
+						// to avoid uint64_t cast producing wrong string/value
+						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(-static_cast<uint64_t>(val))).commit();
+						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+						auto& literal_node = emplace_node_ref<ExpressionNode>(
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(-static_cast<uint64_t>(val)), Type::Int, TypeQualifier::None, 64)).second;
+						Token minus_token(Token::Type::Operator, "-"sv, 0, 0, 0);
+						substituted_initializer = emplace_node<ExpressionNode>(
+							UnaryOperatorNode(minus_token, ASTNode(&literal_node), true, false));
+					} else {
+						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
+						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+						substituted_initializer = emplace_node<ExpressionNode>(
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 64));
+					}
+					FLASH_LOG(Templates, Debug, "Evaluated lazy static member initializer to constant: ", val);
 				}
 			}
 		}
