@@ -267,7 +267,11 @@
 				// Skip arguments that go on stack (already handled)
 				if (!use_register) {
 					if (is_float_arg) float_reg_index++;
-					else int_reg_index++;
+					else {
+						// Two-register structs count as 2 slots, matching the first-pass increment.
+						size_t regs_needed = is_potential_two_reg_struct ? 2 : 1;
+						int_reg_index += regs_needed;
+					}
 					continue;
 				}
 				
