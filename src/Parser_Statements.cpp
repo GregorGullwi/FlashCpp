@@ -1118,22 +1118,10 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			}
 
 			ParseResult init_expr_result;
-			// If the next token is '{' and the element type is a struct/aggregate,
-			// parse it as a nested brace initializer for the element.
+			// If the next token is '{', parse it as a nested brace initializer for the element
+			// (handles both struct elements and scalar elements with redundant braces like {{1}}).
 			if (peek() == "{"_tok) {
-				bool elem_is_struct = (element_type_spec.type() == Type::Struct);
-				if (!elem_is_struct && element_type_spec.type() == Type::UserDefined) {
-					TypeIndex ti = element_type_spec.type_index();
-					if (ti < gTypeInfo.size() && gTypeInfo[ti].struct_info_) {
-						elem_is_struct = true;
-					}
-				}
-				if (elem_is_struct) {
-					init_expr_result = parse_brace_initializer(element_type_spec);
-				} else {
-					// Scalar element with braces, e.g. int arr[] = {{1}}; — still valid
-					init_expr_result = parse_brace_initializer(element_type_spec);
-				}
+				init_expr_result = parse_brace_initializer(element_type_spec);
 			} else {
 				// Parse the initializer expression with precedence > comma operator (precedence 1)
 				// This prevents comma from being treated as an operator in initializer lists

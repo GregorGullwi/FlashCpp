@@ -1450,7 +1450,7 @@
 							*struct_info_ptr,
 							elem.as<InitializerListNode>(),
 							decl.identifier_token().handle(),
-							static_cast<int>(i) * element_size_bytes,
+							static_cast<int>(i * static_cast<size_t>(element_size_bytes)),
 							node.declaration().identifier_token());
 						continue;
 					}
