@@ -401,6 +401,9 @@
 						addr_member_op.member_type = current_function_return_type_;
 						addr_member_op.member_size_in_bits = current_function_return_size_;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
+						TempVarMetadata address_meta = TempVarMetadata::makeReference(current_function_return_type_, current_function_return_size_);
+						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
+						setTempVarMetadata(address_temp, std::move(address_meta));
 						operands[kValueOperandIndex] = address_temp;
 					}
 				}
