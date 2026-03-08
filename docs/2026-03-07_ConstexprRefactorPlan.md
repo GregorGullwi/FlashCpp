@@ -1,6 +1,37 @@
 # Constexpr Evaluator Refactor Plan (Forward-Looking)
 
-This note is intentionally **forward-looking only**. It does not restate already-landed fixes. The goal is to define the next cleanup/refactor steps around identifier/function/member resolution, while separating what should remain local to constexpr evaluation from what could become broadly reusable across the compiler.
+This note is primarily **forward-looking**. It defines the next cleanup/refactor steps around identifier/function/member resolution, while separating what should remain local to constexpr evaluation from what could become broadly reusable across the compiler. A short progress addendum is included so the remaining work stays grounded in what has already landed.
+
+## Progress Update (2026-03-08)
+
+### Landed checkpoint commits
+
+- `0fb14c95` — refactored shared constexpr lookup resolution helpers
+- `e444335a` — extracted constexpr member source resolution
+- `ccab61ff` — deduplicated constexpr identifier lookup helpers
+- `a7432001` — refactored constexpr function symbol lookup
+- `2b4c4544` — extracted constexpr function-call template context handling
+- `fd0ebc3e` — shared constexpr member-function candidate lookup
+
+### What is now complete
+
+- shared lookup helpers cover `resolved_name`/raw-name fallback and parser-stored function targets
+- current-struct static-member lookup/preference is centralized
+- current-struct/member-function candidate filtering is centralized for the migrated call paths
+- constexpr member-source extraction from object initializers is centralized for aggregate/designated/default-member/constructor-member cases
+- repeated template-binding save/restore logic around constexpr function-call evaluation is centralized
+- duplicated bound-expression function-call recursion branches are centralized through one helper
+
+### Landed with this checkpoint
+
+- deduplicated the duplicated function-call recursion branch in:
+  - `evaluate_expression_with_bindings`
+  - `evaluate_expression_with_bindings_const`
+
+### Remaining likely steps after that
+
+- re-audit `evaluate_member_function_call` and nearby member-call paths for any remaining local duplication that still mixes lookup and evaluation
+- decide whether any lookup-only helper has earned promotion into a broader semantic utility, or should remain constexpr-local for now
 
 ## Goals
 

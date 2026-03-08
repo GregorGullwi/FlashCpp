@@ -75,6 +75,47 @@ std::optional<ASTNode> Evaluator::lookup_function_symbol(
 	return symbols.lookup(fallback_name);
 }
 
+EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
+	const FunctionCallNode& func_call,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	const DeclarationNode& func_decl_node = func_call.function_declaration();
+	std::string_view func_name = func_decl_node.identifier_token().value();
+
+	if (!context.symbols) {
+		return EvalResult::error("Cannot evaluate function call: no symbol table provided");
+	}
+
+	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
+	if (!symbol_opt.has_value()) {
+		if (func_call.has_template_arguments() && context.parser) {
+			auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+			if (var_result.success()) {
+				return var_result;
+			}
+		}
+		return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
+	}
+
+	const ASTNode& symbol_node = symbol_opt.value();
+	if (!symbol_node.is<FunctionDeclarationNode>()) {
+		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
+			auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+			if (var_result.success()) {
+				return var_result;
+			}
+		}
+		return EvalResult::error("Identifier is not a function: " + std::string(func_name));
+	}
+
+	const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
+	if (!func_decl.is_constexpr()) {
+		return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+	}
+
+	return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
+}
+
 Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candidate(
 	const StructTypeInfo* struct_info,
 	StringHandle function_name_handle,
@@ -381,44 +422,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	// For function calls (for recursion)
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& func_call = std::get<FunctionCallNode>(expr);
-		
-		// Look up the function
-		const DeclarationNode& func_decl_node = func_call.function_declaration();
-		std::string_view func_name = func_decl_node.identifier_token().value();
-		
-		if (!context.symbols) {
-			return EvalResult::error("Cannot evaluate function call: no symbol table provided");
-		}
-		
-		auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
-		if (!symbol_opt.has_value()) {
-			// Try variable template instantiation before giving up
-			if (func_call.has_template_arguments() && context.parser) {
-				auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
-				if (var_result.success()) return var_result;
-			}
-			return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
-		}
-		
-		const ASTNode& symbol_node = symbol_opt.value();
-		if (!symbol_node.is<FunctionDeclarationNode>()) {
-			// Check if it's a variable template (like __is_ratio_v<T>)
-			if (symbol_node.is<TemplateVariableDeclarationNode>()) {
-				auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
-				if (var_result.success()) return var_result;
-			}
-			return EvalResult::error("Identifier is not a function: " + std::string(func_name));
-		}
-		
-		const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
-		
-		// Check if it's a constexpr function
-		if (!func_decl.is_constexpr()) {
-			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
-		}
-		
-		// Evaluate the function with bindings passed through
-		return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
+		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
 	}
 	
 	// For member access on 'this' (e.g., this->x in a member function)
@@ -494,44 +498,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	// For function calls (for recursion)
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& func_call = std::get<FunctionCallNode>(expr);
-		
-		// Look up the function
-		const DeclarationNode& func_decl_node = func_call.function_declaration();
-		std::string_view func_name = func_decl_node.identifier_token().value();
-		
-		if (!context.symbols) {
-			return EvalResult::error("Cannot evaluate function call: no symbol table provided");
-		}
-		
-		auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
-		if (!symbol_opt.has_value()) {
-			// Try variable template instantiation before giving up
-			if (func_call.has_template_arguments() && context.parser) {
-				auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
-				if (var_result.success()) return var_result;
-			}
-			return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
-		}
-		
-		const ASTNode& symbol_node = symbol_opt.value();
-		if (!symbol_node.is<FunctionDeclarationNode>()) {
-			// Check if it's a variable template (like __is_ratio_v<T>)
-			if (symbol_node.is<TemplateVariableDeclarationNode>()) {
-				auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
-				if (var_result.success()) return var_result;
-			}
-			return EvalResult::error("Identifier is not a function: " + std::string(func_name));
-		}
-		
-		const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
-		
-		// Check if it's a constexpr function
-		if (!func_decl.is_constexpr()) {
-			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
-		}
-		
-		// Evaluate the function with bindings passed through
-		return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
+		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
 	}
 	
 	// For member access on 'this' (e.g., this->x in a member function)
