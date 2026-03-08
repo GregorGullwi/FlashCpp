@@ -1459,8 +1459,7 @@ EvalResult Evaluator::evaluate_member_from_initializer(
 
 	auto member_result = evaluate_constructor_bound_member(struct_info, *matching_ctor, param_bindings, member_name, context);
 	if (!member_result.success()) {
-		return EvalResult::error(
-			"Member '" + std::string(member_name) + "' not found in constructor initializer list and has no default value");
+		return member_result;
 	}
 
 	return member_result;
@@ -1693,7 +1692,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		final_member_name,
 		context);
 	if (!final_member_result.success()) {
-		return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
+		return final_member_result;
 	}
 
 	return final_member_result;
@@ -1876,7 +1875,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			member_name,
 			context);
 		if (!member_result.success()) {
-			return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
+			return member_result;
 		}
 
 		return member_result;
@@ -2375,8 +2374,12 @@ EvalResult Evaluator::bind_members_from_constructor(
 		std::string_view name_view = StringTable::getStringView(member.getName());
 		if (bindings.find(name_view) == bindings.end() && member.default_initializer.has_value()) {
 			auto default_result = evaluate(member.default_initializer.value(), context);
-			if (!default_result.success()) return default_result;
-			bindings[name_view] = default_result;
+			// Preserve pre-refactor extract_object_members compatibility for constexpr member function
+			// calls: a member function may only read a subset of `this`, so an unrelated default member
+			// that fails to evaluate here must not prevent binding the members the call actually uses.
+			if (default_result.success()) {
+				bindings[name_view] = default_result;
+			}
 		}
 	}
 
