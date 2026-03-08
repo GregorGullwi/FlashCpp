@@ -771,30 +771,13 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 	std::optional<ASTNode> symbol_opt;
 	if (identifier.binding() == IdentifierBinding::StaticMember) {
-		bool found_bound_static_member = false;
-
-		if (context.struct_info != nullptr) {
-			auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(name_handle);
-			if (static_member && owner_struct) {
-				found_bound_static_member = true;
-				if (static_member->initializer.has_value()) {
-					return evaluate(static_member->initializer.value(), context);
-				}
-			}
-		}
-
-		if (!found_bound_static_member && context.struct_node != nullptr) {
-			for (const auto& static_member : context.struct_node->static_members()) {
-				if (static_member.name != name_handle) {
-					continue;
-				}
-
-				found_bound_static_member = true;
-				if (static_member.initializer.has_value()) {
-					return evaluate(static_member.initializer.value(), context);
-				}
-				break;
-			}
+		auto bound_static_initializer = resolve_current_struct_static_initializer(
+			&identifier,
+			context,
+			CurrentStructStaticLookupMode::BoundOnly);
+		bool found_bound_static_member = bound_static_initializer.found;
+		if (found_bound_static_member && bound_static_initializer.initializer && bound_static_initializer.initializer->has_value()) {
+			return evaluate(bound_static_initializer.initializer->value(), context);
 		}
 
 		if (identifier.resolved_name().isValid()) {
@@ -808,39 +791,20 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			return EvalResult::error("Bound static member not found in constant expression: " + std::string(var_name));
 		}
 	} else {
-		symbol_opt = context.symbols->lookup(var_name);
+		symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.symbols);
 	}
 	
 	// If not found in symbol table, check for static members in the current struct
 	if (!symbol_opt.has_value()) {
-		// Check StructDeclarationNode first (for AST-based static members)
-		if (context.struct_node != nullptr) {
-			for (const auto& static_member : context.struct_node->static_members()) {
-				if (static_member.name == name_handle) {
-					// Found static member in struct AST node
-					if (static_member.initializer.has_value()) {
-						// Recursively evaluate the initializer
-						return evaluate(static_member.initializer.value(), context);
-					} else {
-						return EvalResult::error("Static member has no initializer: " + std::string(var_name));
-					}
-				}
+		auto preferred_static_initializer = resolve_current_struct_static_initializer(
+			&identifier,
+			context,
+			CurrentStructStaticLookupMode::PreferCurrentStruct);
+		if (preferred_static_initializer.found) {
+			if (preferred_static_initializer.initializer && preferred_static_initializer.initializer->has_value()) {
+				return evaluate(preferred_static_initializer.initializer->value(), context);
 			}
-		}
-		
-		// Check StructTypeInfo (for runtime-built struct info)
-		if (context.struct_info != nullptr) {
-			for (const auto& static_member : context.struct_info->static_members) {
-				if (static_member.getName() == name_handle) {
-					// Found static member in StructTypeInfo
-					if (static_member.initializer.has_value()) {
-						// Recursively evaluate the initializer
-						return evaluate(static_member.initializer.value(), context);
-					} else {
-						return EvalResult::error("Static member has no initializer: " + std::string(var_name));
-					}
-				}
-			}
+			return EvalResult::error("Static member has no initializer: " + std::string(var_name));
 		}
 		
 		// Variable not found - might be a template parameter that hasn't been substituted yet

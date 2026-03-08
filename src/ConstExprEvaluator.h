@@ -279,11 +279,16 @@ private:
 		const StructTypeInfo* owner_struct = nullptr;
 	};
 
-		struct ResolvedConstexprMemberSource {
-			std::optional<ASTNode> initializer;
-			const StructMember* member_info = nullptr;
-			std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
-		};
+	struct ResolvedCurrentStructStaticInitializer {
+		const std::optional<ASTNode>* initializer = nullptr;
+		bool found = false;
+	};
+
+	struct ResolvedConstexprMemberSource {
+		std::optional<ASTNode> initializer;
+		const StructMember* member_info = nullptr;
+		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
+	};
 
 	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
@@ -348,8 +353,12 @@ private:
 		const IdentifierNode* identifier,
 		const EvaluationContext& context,
 		CurrentStructStaticLookupMode lookup_mode);
-		static std::optional<EvalResult> resolve_constexpr_member_source_from_initializer(
-			const std::optional<ASTNode>& object_initializer,
+	static ResolvedCurrentStructStaticInitializer resolve_current_struct_static_initializer(
+		const IdentifierNode* identifier,
+		const EvaluationContext& context,
+		CurrentStructStaticLookupMode lookup_mode);
+	static std::optional<EvalResult> resolve_constexpr_member_source_from_initializer(
+		const std::optional<ASTNode>& object_initializer,
 			TypeIndex declared_type_index,
 			std::string_view member_name,
 			std::string_view usage_name,

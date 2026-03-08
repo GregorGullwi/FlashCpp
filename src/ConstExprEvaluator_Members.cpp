@@ -85,6 +85,50 @@ Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_s
 	return { static_member, owner_struct };
 }
 
+Evaluator::ResolvedCurrentStructStaticInitializer Evaluator::resolve_current_struct_static_initializer(
+	const IdentifierNode* identifier,
+	const EvaluationContext& context,
+	CurrentStructStaticLookupMode lookup_mode) {
+	if (!identifier) {
+		return {};
+	}
+
+	if (auto static_member_result = resolve_current_struct_static_member(identifier, context, lookup_mode);
+		static_member_result.static_member) {
+		return { &static_member_result.static_member->initializer, true };
+	}
+
+	bool should_try_current_struct = false;
+	switch (lookup_mode) {
+	case CurrentStructStaticLookupMode::BoundOnly:
+		should_try_current_struct = identifier->binding() == IdentifierBinding::StaticMember;
+		break;
+	case CurrentStructStaticLookupMode::PreferCurrentStruct:
+		should_try_current_struct =
+			identifier->binding() == IdentifierBinding::StaticMember ||
+			identifier->binding() == IdentifierBinding::Global ||
+			identifier->binding() == IdentifierBinding::Unresolved;
+		break;
+	}
+
+	if (!should_try_current_struct || context.struct_node == nullptr) {
+		return {};
+	}
+
+	StringHandle member_name_handle = identifier->nameHandle();
+	if (!member_name_handle.isValid()) {
+		member_name_handle = StringTable::getOrInternStringHandle(identifier->name());
+	}
+
+	for (const auto& static_member : context.struct_node->static_members()) {
+		if (static_member.name == member_name_handle) {
+			return { &static_member.initializer, true };
+		}
+	}
+
+	return {};
+}
+
 EvalResult Evaluator::evaluate_expression_with_bindings(
 	const ASTNode& expr_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
