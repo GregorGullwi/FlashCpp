@@ -381,6 +381,34 @@
 				}
 			}
 			
+			// For reference returns, prefer materializing the referred-to address in IR when we
+			// have direct member lvalue metadata. This avoids relying on backend reconstruction
+			// from a loaded member temp.
+			constexpr size_t kValueOperandIndex = 2;
+			if (current_function_returns_reference_ && operands.size() > kValueOperandIndex &&
+				std::holds_alternative<TempVar>(operands[kValueOperandIndex])) {
+				TempVar return_temp = std::get<TempVar>(operands[kValueOperandIndex]);
+				auto lv_info_opt = getTempVarLValueInfo(return_temp);
+				if (lv_info_opt.has_value()) {
+					const LValueInfo& lv_info = *lv_info_opt;
+					if (lv_info.kind == LValueInfo::Kind::Member &&
+						std::holds_alternative<StringHandle>(lv_info.base)) {
+						TempVar address_temp = var_counter.next();
+						AddressOfMemberOp addr_member_op;
+						addr_member_op.result = address_temp;
+						addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
+						addr_member_op.member_offset = lv_info.offset;
+						addr_member_op.member_type = current_function_return_type_;
+						addr_member_op.member_size_in_bits = current_function_return_size_;
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
+						TempVarMetadata address_meta = TempVarMetadata::makeReference(current_function_return_type_, current_function_return_size_);
+						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
+						setTempVarMetadata(address_temp, std::move(address_meta));
+						operands[kValueOperandIndex] = address_temp;
+					}
+				}
+			}
+
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
 
