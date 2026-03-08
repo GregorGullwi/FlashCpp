@@ -37,6 +37,40 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_parame
 	return constexpr_match ? constexpr_match : non_constexpr_match;
 }
 
+void Evaluator::populate_constructor_parameter_bindings(
+	const ConstructorDeclarationNode& ctor_decl,
+	const std::vector<EvalResult>& evaluated_arguments,
+	std::unordered_map<std::string_view, EvalResult>& bindings) {
+	const auto& params = ctor_decl.parameter_nodes();
+	for (size_t i = 0; i < params.size() && i < evaluated_arguments.size(); ++i) {
+		if (!params[i].is<DeclarationNode>()) {
+			continue;
+		}
+
+		const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+		bindings[param_decl.identifier_token().value()] = evaluated_arguments[i];
+	}
+}
+
+EvalResult Evaluator::build_constructor_parameter_bindings(
+	const ConstructorDeclarationNode& ctor_decl,
+	const ChunkedVector<ASTNode>& ctor_args,
+	EvaluationContext& context,
+	std::unordered_map<std::string_view, EvalResult>& bindings) {
+	std::vector<EvalResult> evaluated_arguments;
+	evaluated_arguments.reserve(ctor_args.size());
+	for (const auto& ctor_arg : ctor_args) {
+		auto arg_result = evaluate(ctor_arg, context);
+		if (!arg_result.success()) {
+			return arg_result;
+		}
+		evaluated_arguments.push_back(arg_result);
+	}
+
+	populate_constructor_parameter_bindings(ctor_decl, evaluated_arguments, bindings);
+	return EvalResult::from_bool(true);
+}
+
 EvalResult Evaluator::evaluate_expression_with_bindings(
 	const ASTNode& expr_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -1398,19 +1432,13 @@ EvalResult Evaluator::evaluate_member_from_initializer(
 	}
 
 	std::unordered_map<std::string_view, EvalResult> param_bindings;
-	const auto& params = matching_ctor->parameter_nodes();
-	for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
-		if (!params[i].is<DeclarationNode>()) {
-			continue;
-		}
-
-		const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-		std::string_view param_name = param_decl.identifier_token().value();
-		auto arg_result = evaluate(ctor_args[i], context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-		param_bindings[param_name] = arg_result;
+	if (auto bindings_result = build_constructor_parameter_bindings(
+		*matching_ctor,
+		ctor_args,
+		context,
+		param_bindings);
+	    !bindings_result.success()) {
+		return bindings_result;
 	}
 
 	return evaluate_expression_with_bindings(member_initializer.value(), param_bindings, context);
@@ -1560,31 +1588,16 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	// Build parameter bindings for the outer constructor
 	const auto& base_ctor_args = base_ctor.arguments();
 	std::unordered_map<std::string_view, EvalResult> param_bindings;
-	
-	// Find the matching constructor for the base struct
-	const ConstructorDeclarationNode* base_matching_ctor = nullptr;
-	for (const auto& member_func : base_struct_info->member_functions) {
-		if (!member_func.is_constructor) continue;
-		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == base_ctor_args.size()) {
-			base_matching_ctor = &ctor;
-			break;
-		}
-	}
-	
-	if (base_matching_ctor) {
-		const auto& params = base_matching_ctor->parameter_nodes();
-		for (size_t i = 0; i < params.size() && i < base_ctor_args.size(); ++i) {
-			if (params[i].is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-				std::string_view param_name = param_decl.identifier_token().value();
-				auto arg_result = evaluate(base_ctor_args[i], context);
-				if (!arg_result.success()) {
-					return arg_result;
-				}
-				param_bindings[param_name] = arg_result;
-			}
+
+	if (const ConstructorDeclarationNode* base_matching_ctor =
+		    find_matching_constructor_by_parameter_count(base_struct_info, base_ctor_args.size())) {
+		if (auto bindings_result = build_constructor_parameter_bindings(
+			*base_matching_ctor,
+			base_ctor_args,
+			context,
+			param_bindings);
+		    !bindings_result.success()) {
+			return bindings_result;
 		}
 	}
 	
@@ -1649,12 +1662,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	
 	// Build inner parameter bindings
 	std::unordered_map<std::string_view, EvalResult> inner_param_bindings;
-	const auto& inner_params = inner_matching_ctor->parameter_nodes();
-	if (!inner_params.empty() && inner_params[0].is<DeclarationNode>()) {
-		const DeclarationNode& param_decl = inner_params[0].as<DeclarationNode>();
-		std::string_view param_name = param_decl.identifier_token().value();
-		inner_param_bindings[param_name] = init_arg_result;
-	}
+	populate_constructor_parameter_bindings(*inner_matching_ctor, {init_arg_result}, inner_param_bindings);
 	
 	// Look for the final member in the inner constructor's initializer list
 	for (const auto& mem_init : inner_matching_ctor->member_initializers()) {
@@ -1842,14 +1850,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		}
 
 		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-		const auto& params = matching_ctor->parameter_nodes();
-		for (size_t i = 0; i < params.size() && i < evaluated_ctor_args.size(); ++i) {
-			if (params[i].is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-				std::string_view param_name = param_decl.identifier_token().value();
-				ctor_param_bindings[param_name] = evaluated_ctor_args[i];
-			}
-		}
+		populate_constructor_parameter_bindings(*matching_ctor, evaluated_ctor_args, ctor_param_bindings);
 
 		for (const auto& mem_init : matching_ctor->member_initializers()) {
 			if (mem_init.member_name == member_name) {
@@ -2441,17 +2442,13 @@ EvalResult Evaluator::extract_object_members(
 	
 	// Build parameter bindings for the constructor
 	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-	const auto& params = matching_ctor->parameter_nodes();
-	for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
-		if (params[i].is<DeclarationNode>()) {
-			const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-			std::string_view param_name = param_decl.identifier_token().value();
-			auto arg_result = evaluate(ctor_args[i], context);
-			if (!arg_result.success()) {
-				return arg_result;
-			}
-			ctor_param_bindings[param_name] = arg_result;
-		}
+	if (auto bindings_result = build_constructor_parameter_bindings(
+		*matching_ctor,
+		ctor_args,
+		context,
+		ctor_param_bindings);
+	    !bindings_result.success()) {
+		return bindings_result;
 	}
 	
 	// Extract member values from the initializer list
@@ -2607,17 +2604,13 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 			const ConstructorDeclarationNode* matching_ctor =
 				find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
 			if (matching_ctor) {
-				const auto& params = matching_ctor->parameter_nodes();
-				for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
-					if (params[i].is<DeclarationNode>()) {
-						const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-						std::string_view param_name = param_decl.identifier_token().value();
-						auto arg_result = evaluate(ctor_args[i], context);
-						if (!arg_result.success()) {
-							return arg_result;
-						}
-						param_bindings[param_name] = arg_result;
-					}
+				if (auto bindings_result = build_constructor_parameter_bindings(
+					*matching_ctor,
+					ctor_args,
+					context,
+					param_bindings);
+				    !bindings_result.success()) {
+					return bindings_result;
 				}
 			}
 

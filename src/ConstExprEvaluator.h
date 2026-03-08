@@ -340,6 +340,15 @@ private:
 		const InitializerListNode& init_list,
 		const StructTypeInfo* struct_info,
 		StringHandle member_name_handle);
+	static void populate_constructor_parameter_bindings(
+		const ConstructorDeclarationNode& ctor_decl,
+		const std::vector<EvalResult>& evaluated_arguments,
+		std::unordered_map<std::string_view, EvalResult>& bindings);
+	static EvalResult build_constructor_parameter_bindings(
+		const ConstructorDeclarationNode& ctor_decl,
+		const ChunkedVector<ASTNode>& ctor_args,
+		EvaluationContext& context,
+		std::unordered_map<std::string_view, EvalResult>& bindings);
 	static EvalResult evaluate_member_from_initializer(
 		const std::optional<ASTNode>& initializer_opt,
 		TypeIndex declared_type_index,
