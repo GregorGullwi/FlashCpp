@@ -270,9 +270,43 @@
 					} else {
 						// Array initialization: each element is a separate value
 						op.element_count = initializers.size();
-						for (const auto& elem_init : initializers) {
-							unsigned long long value = evalToValue(elem_init, type_node.type());
-							appendValueAsBytes(op.init_data, value, element_size);
+						// Check if this is an array of structs (elements may be InitializerListNodes)
+						bool handled_as_struct_array = false;
+						if (type_node.type() == Type::Struct && type_node.type_index() != 0 &&
+							type_node.type_index() < gTypeInfo.size()) {
+							const StructTypeInfo* elem_struct = gTypeInfo[type_node.type_index()].getStructInfo();
+							if (elem_struct) {
+								op.init_data.resize(op.element_count * element_size, 0);
+								for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
+									const ASTNode& elem_init = initializers[elem_i];
+									if (elem_init.is<InitializerListNode>()) {
+										const InitializerListNode& sub = elem_init.as<InitializerListNode>();
+										size_t pos = 0;
+										for (size_t mi = 0; mi < elem_struct->members.size(); ++mi) {
+											const StructMember& member = elem_struct->members[mi];
+											if (pos < sub.size()) {
+												unsigned long long value = evalToValue(sub.initializers()[pos], member.type);
+												size_t byte_off = elem_i * element_size + member.offset;
+												for (size_t b = 0; b < member.size && (byte_off + b) < op.init_data.size(); ++b)
+													op.init_data[byte_off + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
+												++pos;
+											}
+										}
+									} else {
+										unsigned long long value = evalToValue(elem_init, type_node.type());
+										size_t byte_off = elem_i * element_size;
+										for (size_t b = 0; b < element_size && (byte_off + b) < op.init_data.size(); ++b)
+											op.init_data[byte_off + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
+									}
+								}
+								handled_as_struct_array = true;
+							}
+						}
+						if (!handled_as_struct_array) {
+							for (const auto& elem_init : initializers) {
+								unsigned long long value = evalToValue(elem_init, type_node.type());
+								appendValueAsBytes(op.init_data, value, element_size);
+							}
 						}
 					}
 				} else if (init_node.is<ExpressionNode>() && std::holds_alternative<ConstructorCallNode>(init_node.as<ExpressionNode>()) && type_node.type_index() != 0) {
@@ -1399,10 +1433,30 @@
 				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 				const auto& initializers = init_list.initializers();
 				
+				// For struct element types, look up the struct info once
+				const StructTypeInfo* struct_info_ptr = nullptr;
+				if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
+					struct_info_ptr = gTypeInfo[type_node.type_index()].struct_info_.get();
+				}
+				int element_size_bytes = size_in_bits / 8;
+
 				// Generate store for each element
 				for (size_t i = 0; i < initializers.size(); i++) {
+					const ASTNode& elem = initializers[i];
+
+					// Struct element with nested brace initializer: use member stores
+					if (elem.is<InitializerListNode>() && struct_info_ptr) {
+						generateNestedMemberStores(
+							*struct_info_ptr,
+							elem.as<InitializerListNode>(),
+							decl.identifier_token().handle(),
+							static_cast<int>(i) * element_size_bytes,
+							node.declaration().identifier_token());
+						continue;
+					}
+
 					// Evaluate the initializer expression
-					auto init_operands = visitExpressionNode(initializers[i].as<ExpressionNode>());
+					auto init_operands = visitExpressionNode(elem.as<ExpressionNode>());
 					
 					// Generate array element store: arr[i] = value
 					ArrayStoreOp store_op;

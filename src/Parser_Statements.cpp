@@ -1099,6 +1099,12 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		std::optional<size_t> array_size = type_specifier.array_size();
 		size_t element_count = 0;
 
+		// Build a non-array element type specifier for nested brace-init of struct elements.
+		// This is a copy of type_specifier with the array flag cleared so that a nested {…}
+		// is parsed as a struct (aggregate) initializer rather than another array initializer.
+		TypeSpecifierNode element_type_spec = type_specifier;
+		element_type_spec.set_array(false);
+
 		// Parse comma-separated initializer expressions
 		while (true) {
 			// Check if we've reached the end of the initializer list
@@ -1111,9 +1117,28 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				return ParseResult::error("Too many initializers for array", current_token_);
 			}
 
-			// Parse the initializer expression with precedence > comma operator (precedence 1)
-			// This prevents comma from being treated as an operator in initializer lists
-			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			ParseResult init_expr_result;
+			// If the next token is '{' and the element type is a struct/aggregate,
+			// parse it as a nested brace initializer for the element.
+			if (peek() == "{"_tok) {
+				bool elem_is_struct = (element_type_spec.type() == Type::Struct);
+				if (!elem_is_struct && element_type_spec.type() == Type::UserDefined) {
+					TypeIndex ti = element_type_spec.type_index();
+					if (ti < gTypeInfo.size() && gTypeInfo[ti].struct_info_) {
+						elem_is_struct = true;
+					}
+				}
+				if (elem_is_struct) {
+					init_expr_result = parse_brace_initializer(element_type_spec);
+				} else {
+					// Scalar element with braces, e.g. int arr[] = {{1}}; — still valid
+					init_expr_result = parse_brace_initializer(element_type_spec);
+				}
+			} else {
+				// Parse the initializer expression with precedence > comma operator (precedence 1)
+				// This prevents comma from being treated as an operator in initializer lists
+				init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			}
 			if (init_expr_result.is_error()) {
 				return init_expr_result;
 			}

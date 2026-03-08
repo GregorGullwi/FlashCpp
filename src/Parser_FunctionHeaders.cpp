@@ -854,7 +854,19 @@ ParseResult Parser::parse_function_header(
 	// Parse trailing return type if present (for auto return type)
 	if (peek() == "->"_tok) {
 		advance();  // consume '->'
+
+		// Make parameters visible inside the trailing return type (needed for
+		// decltype expressions that reference parameter names, e.g.
+		//   auto max_val(auto a, auto b) -> decltype(a > b ? a : b)
+		// The parameters have already been parsed but are not yet in scope, so
+		// push a temporary scope and register them before parsing the return type.
+		gSymbolTable.enter_scope(ScopeType::Function);
+		register_parameters_in_scope(out_header.params.parameters);
+
 		auto trailing_result = parse_type_specifier();
+
+		gSymbolTable.exit_scope();
+
 		if (trailing_result.is_error()) {
 			return trailing_result;
 		}

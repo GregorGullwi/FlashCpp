@@ -711,7 +711,18 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			if (is_trailing_return_type) {
 				advance();
 
+				// Make the function parameters visible inside the trailing return type
+				// so that decltype(param_name) and other expressions referencing
+				// parameter names resolve correctly (C++11/C++20 trailing-return-type rule).
+				gSymbolTable.enter_scope(ScopeType::Function);
+				if (auto func_node_ptr2 = function_definition_result.node()) {
+					register_parameters_in_scope(func_node_ptr2->as<FunctionDeclarationNode>().parameter_nodes());
+				}
+
 				ParseResult trailing_type_specifier = parse_type_specifier();
+
+				gSymbolTable.exit_scope();
+
 				if (trailing_type_specifier.is_error())
 					return trailing_type_specifier;
 
