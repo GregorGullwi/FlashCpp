@@ -256,6 +256,12 @@ public:
 		const InitializerListNode& init_list,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	static EvalResult bind_members_from_constructor(
+		const StructTypeInfo* struct_info,
+		const ConstructorDeclarationNode& ctor_decl,
+		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
 	static EvalResult evaluate_member_array_subscript(
 		const MemberAccessNode& member_access,
 		size_t index,

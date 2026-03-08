@@ -2357,6 +2357,32 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	return EvalResult::from_bool(true);
 }
 
+EvalResult Evaluator::bind_members_from_constructor(
+	const StructTypeInfo* struct_info,
+	const ConstructorDeclarationNode& ctor_decl,
+	std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	for (const auto& mem_init : ctor_decl.member_initializers()) {
+		auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
+		if (!member_result.success()) {
+			return member_result;
+		}
+		bindings[mem_init.member_name] = member_result;
+	}
+
+	for (const auto& member : struct_info->members) {
+		std::string_view name_view = StringTable::getStringView(member.getName());
+		if (bindings.find(name_view) == bindings.end() && member.default_initializer.has_value()) {
+			auto default_result = evaluate(member.default_initializer.value(), context);
+			if (!default_result.success()) return default_result;
+			bindings[name_view] = default_result;
+		}
+	}
+
+	return EvalResult::from_bool(true);
+}
+
 // Helper to extract member values from a constexpr object
 EvalResult Evaluator::extract_object_members(
 	const ASTNode& object_expr,
@@ -2464,28 +2490,13 @@ EvalResult Evaluator::extract_object_members(
 	    !bindings_result.success()) {
 		return bindings_result;
 	}
-	
-	// Extract member values from the initializer list
-	for (const auto& mem_init : matching_ctor->member_initializers()) {
-		auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-		if (!member_result.success()) {
-			return member_result;
-		}
-		member_bindings[mem_init.member_name] = member_result;
-	}
-	
-	// Also check for default member initializers for members not in the initializer list
-	for (const auto& member : struct_info->members) {
-		std::string_view name_view = StringTable::getStringView(member.getName());
-		if (member_bindings.find(name_view) == member_bindings.end() && member.default_initializer.has_value()) {
-			auto default_result = evaluate(member.default_initializer.value(), context);
-			if (default_result.success()) {
-				member_bindings[name_view] = default_result;
-			}
-		}
-	}
-	
-	return EvalResult::from_bool(true);  // Success
+
+	return bind_members_from_constructor(
+		struct_info,
+		*matching_ctor,
+		ctor_param_bindings,
+		member_bindings,
+		context);
 }
 
 // Evaluate array subscript (e.g., arr[0] or obj.data[1])
