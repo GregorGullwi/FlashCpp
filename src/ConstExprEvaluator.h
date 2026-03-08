@@ -220,6 +220,12 @@ public:
 		const StructTypeInfo* struct_info,
 		std::string_view member_name_param,
 		[[maybe_unused]] EvaluationContext& context);
+	static EvalResult evaluate_constructor_bound_member(
+		const StructTypeInfo* struct_info,
+		const ConstructorDeclarationNode& ctor_decl,
+		std::unordered_map<std::string_view, EvalResult>& param_bindings,
+		std::string_view member_name,
+		EvaluationContext& context);
 	static const StructTypeInfo* get_struct_info_from_type(const TypeSpecifierNode& type_spec);
 	static EvalResult evaluate_nested_member_access(
 		const MemberAccessNode& inner_access,
@@ -248,6 +254,12 @@ public:
 	static EvalResult bind_members_from_initializer_list(
 		const StructTypeInfo* struct_info,
 		const InitializerListNode& init_list,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
+	static EvalResult bind_members_from_constructor(
+		const StructTypeInfo* struct_info,
+		const ConstructorDeclarationNode& ctor_decl,
+		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
 	static EvalResult evaluate_member_array_subscript(
@@ -336,6 +348,25 @@ private:
 		EvaluationContext& context,
 		std::string_view usage_name,
 		ResolvedConstexprObject& resolved_object);
+	static std::optional<ASTNode> find_aggregate_member_initializer(
+		const InitializerListNode& init_list,
+		const StructTypeInfo* struct_info,
+		StringHandle member_name_handle);
+	static void populate_constructor_parameter_bindings(
+		const ConstructorDeclarationNode& ctor_decl,
+		const std::vector<EvalResult>& evaluated_arguments,
+		std::unordered_map<std::string_view, EvalResult>& bindings);
+	static EvalResult build_constructor_parameter_bindings(
+		const ConstructorDeclarationNode& ctor_decl,
+		const ChunkedVector<ASTNode>& ctor_args,
+		EvaluationContext& context,
+		std::unordered_map<std::string_view, EvalResult>& bindings);
+	static EvalResult evaluate_member_from_initializer(
+		const std::optional<ASTNode>& initializer_opt,
+		TypeIndex declared_type_index,
+		std::string_view member_name,
+		std::string_view object_name_for_error,
+		EvaluationContext& context);
 	static const ConstructorDeclarationNode* find_matching_constructor_by_parameter_count(
 		const StructTypeInfo* struct_info,
 		size_t parameter_count);
