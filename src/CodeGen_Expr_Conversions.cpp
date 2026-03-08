@@ -1,4 +1,4 @@
-﻿#include "CodeGen.h"
+#include "CodeGen.h"
 #include "LambdaHelpers.h"
 
 	std::vector<IrOperand> AstToIr::generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
