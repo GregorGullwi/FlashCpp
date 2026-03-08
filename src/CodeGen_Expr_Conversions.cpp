@@ -190,57 +190,15 @@
 			// Static locals, static members, and globals live in static storage, so
 			// preserve the actual storage symbol for downstream ComputeAddress handling.
 			{
-				StringHandle store_name;
-				Type final_type = Type::Void;
-				int final_size_bits = 0;
-				bool is_global_or_static = false;
-				const auto binding = identifier.binding();
-				if (binding == IdentifierBinding::Global && global_symbol_table_) {
-					StringHandle simple = identifier.nameHandle();
-					auto mangle_it = global_variable_names_.find(simple);
-					store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : simple;
-					const auto sym = global_symbol_table_->lookup(identifier.name());
-					if (sym.has_value()) {
-						const DeclarationNode* decl_ptr = nullptr;
-						if (sym->is<VariableDeclarationNode>())
-							decl_ptr = &sym->as<VariableDeclarationNode>().declaration();
-						else if (sym->is<DeclarationNode>())
-							decl_ptr = &sym->as<DeclarationNode>();
-						if (decl_ptr) {
-							const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
-							final_type = ts.type();
-							final_size_bits = static_cast<int>(ts.size_in_bits());
-						}
-					}
-					is_global_or_static = (final_type != Type::Void);
-				} else if (binding == IdentifierBinding::StaticLocal) {
-					auto it = static_local_names_.find(identifier.nameHandle());
-					if (it != static_local_names_.end()) {
-						store_name = it->second.mangled_name;
-						final_type = it->second.type;
-						final_size_bits = it->second.size_in_bits;
-						is_global_or_static = true;
-					}
-				} else if (binding == IdentifierBinding::StaticMember) {
-					store_name = identifier.resolved_name();
-					if (store_name.isValid() && current_struct_name_.isValid()) {
-						auto struct_it = gTypesByName.find(current_struct_name_);
-						if (struct_it != gTypesByName.end() && struct_it->second->getStructInfo()) {
-							const auto* sm = struct_it->second->getStructInfo()->findStaticMember(identifier.nameHandle());
-							if (sm) {
-								final_type = sm->type;
-								final_size_bits = static_cast<int>(sm->size * 8);
-								is_global_or_static = true;
-							}
-						}
-					}
-				}
-				if (is_global_or_static) {
+				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
+				if (binding_info.is_global_or_static &&
+					binding_info.type != Type::Void &&
+					binding_info.size_in_bits > 0) {
 					AddressComponents result;
-					result.base = store_name;
+					result.base = binding_info.store_name;
 					result.total_member_offset = accumulated_offset;
-					result.final_type = final_type;
-					result.final_size_bits = final_size_bits;
+					result.final_type = binding_info.type;
+					result.final_size_bits = binding_info.size_in_bits;
 					return result;
 				}
 			}
@@ -1806,27 +1764,11 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 		IrOpcode post_opcode = is_increment ? IrOpcode::PostIncrement : IrOpcode::PostDecrement;
 
 		// Check if the operand is a global/static variable that needs GlobalStore.
-		struct { bool is_global_or_static = false; StringHandle store_name; } gsi;
+		GlobalStaticBindingInfo gsi;
 		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
-				const IdentifierNode& operand_ident = std::get<IdentifierNode>(operandExpr);
-				if (operand_ident.binding() == IdentifierBinding::Global) {
-					gsi.is_global_or_static = true;
-					StringHandle simple = operand_ident.nameHandle();
-					auto mangle_it = global_variable_names_.find(simple);
-					gsi.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : simple;
-				} else if (operand_ident.binding() == IdentifierBinding::StaticLocal) {
-					auto it = static_local_names_.find(operand_ident.nameHandle());
-					if (it != static_local_names_.end()) {
-						gsi.is_global_or_static = true;
-						gsi.store_name = it->second.mangled_name;
-					}
-				} else if (operand_ident.binding() == IdentifierBinding::StaticMember) {
-					gsi.store_name = operand_ident.resolved_name();
-					gsi.is_global_or_static = gsi.store_name.isValid();
-				}
-				// Local/Function/etc: gsi.is_global_or_static stays false
+				gsi = resolveGlobalOrStaticBinding(std::get<IdentifierNode>(operandExpr));
 			}
 		}
 
