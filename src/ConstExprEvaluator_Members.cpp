@@ -116,6 +116,45 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
 }
 
+Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_call_operator_candidate(
+	const StructTypeInfo* struct_info,
+	size_t argument_count,
+	bool detect_ambiguity) {
+	ResolvedMemberFunctionCandidate result;
+	if (!struct_info) {
+		return result;
+	}
+
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.is_constructor || member_func.is_destructor) {
+			continue;
+		}
+		if (member_func.operator_kind != OverloadableOperator::Call) {
+			continue;
+		}
+		if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (func_decl.parameter_nodes().size() != argument_count) {
+			continue;
+		}
+
+		if (result.function && detect_ambiguity) {
+			result.ambiguous = true;
+			return result;
+		}
+
+		result.function = &func_decl;
+		if (!detect_ambiguity) {
+			break;
+		}
+	}
+
+	return result;
+}
+
 Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candidate(
 	const StructTypeInfo* struct_info,
 	StringHandle function_name_handle,

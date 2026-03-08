@@ -1063,35 +1063,13 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Callable object is not a struct/class type");
 		}
 
-		const FunctionDeclarationNode* call_operator = nullptr;
-		// Known limitation: overload selection currently matches by arity only.
-		// If multiple same-arity operator() overloads exist, we reject as ambiguous.
-		bool ambiguous = false;
-		for (const auto& member_func : struct_info->member_functions) {
-			if (member_func.is_constructor || member_func.is_destructor) {
-				continue;
+			// Known limitation: overload selection currently matches by arity only.
+			// If multiple same-arity operator() overloads exist, we reject as ambiguous.
+			auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
+			if (call_operator_match.ambiguous) {
+				return EvalResult::error("Ambiguous operator() overload: multiple candidates with same arity");
 			}
-			if (member_func.operator_kind != OverloadableOperator::Call) {
-				continue;
-			}
-			if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-
-			const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (candidate.parameter_nodes().size() != arguments.size()) {
-				continue;
-			}
-			if (call_operator) {
-				ambiguous = true;
-				break;
-			}
-			call_operator = &candidate;
-		}
-
-		if (ambiguous) {
-			return EvalResult::error("Ambiguous operator() overload: multiple candidates with same arity");
-		}
+			const FunctionDeclarationNode* call_operator = call_operator_match.function;
 
 		if (!call_operator) {
 			return EvalResult::error("Callable object has no matching operator()");
@@ -1238,20 +1216,11 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Brace-initialized callable object is not a struct/class type");
 		}
 
-		// Find operator()
-		const FunctionDeclarationNode* call_operator = nullptr;
-		bool ambiguous = false;
-		for (const auto& member_func : struct_info->member_functions) {
-			if (member_func.is_constructor || member_func.is_destructor) continue;
-			if (member_func.operator_kind != OverloadableOperator::Call) continue;
-			if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
-			const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (candidate.parameter_nodes().size() != arguments.size()) continue;
-			if (call_operator) { ambiguous = true; break; }
-			call_operator = &candidate;
-		}
-		if (ambiguous)
-			return EvalResult::error("Ambiguous operator() overload in brace-initialized callable object");
+			// Find operator()
+			auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
+			if (call_operator_match.ambiguous)
+				return EvalResult::error("Ambiguous operator() overload in brace-initialized callable object");
+			const FunctionDeclarationNode* call_operator = call_operator_match.function;
 		if (!call_operator)
 			return EvalResult::error("Brace-initialized callable object has no matching operator()");
 		if (!call_operator->is_constexpr())

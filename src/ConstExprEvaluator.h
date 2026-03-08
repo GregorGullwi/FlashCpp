@@ -378,6 +378,10 @@ private:
 		const FunctionCallNode& func_call,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	static ResolvedMemberFunctionCandidate find_call_operator_candidate(
+		const StructTypeInfo* struct_info,
+		size_t argument_count,
+		bool detect_ambiguity);
 	static ResolvedMemberFunctionCandidate find_member_function_candidate(
 		const StructTypeInfo* struct_info,
 		StringHandle function_name_handle,
