@@ -198,8 +198,9 @@
 					// Handles nested structs and bitfields by recursing with the member's byte offset as base.
 					// Shared by both single-struct and array-of-structs initialization.
 					constexpr size_t kFillStructMaxDepth = 64;
-					std::function<void(const StructTypeInfo*, const InitializerListNode&, size_t, size_t)> fillStructData;
-					fillStructData = [&](const StructTypeInfo* sinfo, const InitializerListNode& ilist, size_t base_offset, size_t depth) {
+					// Use the "generic self" pattern for a recursive lambda without std::function overhead.
+					// Call sites pass the lambda itself as the first argument: fillStructData(fillStructData, ...).
+					auto fillStructData = [&](auto& self, const StructTypeInfo* sinfo, const InitializerListNode& ilist, size_t base_offset, size_t depth) -> void {
 						if (depth >= kFillStructMaxDepth) {
 							FLASH_LOG(Codegen, Warning, "fillStructData: maximum nesting depth (", kFillStructMaxDepth, ") exceeded, skipping remaining members");
 							return;
@@ -225,7 +226,7 @@
 									// Nested struct: recurse
 									const StructTypeInfo* nested = gTypeInfo[member.type_index].getStructInfo();
 									if (nested) {
-										fillStructData(nested, elem_init.as<InitializerListNode>(), abs_offset, depth + 1);
+										self(self, nested, elem_init.as<InitializerListNode>(), abs_offset, depth + 1);
 									}
 								} else if (member.bitfield_width.has_value()) {
 									unsigned long long value = evalToValue(elem_init, member.type);
@@ -259,7 +260,7 @@
 						if (struct_info_ptr) {
 							// Struct aggregate initialization: pack values into init_data using member bit offsets
 							op.init_data.resize(struct_info_ptr->total_size, 0);
-							fillStructData(struct_info_ptr, init_list, 0, 0);
+							fillStructData(fillStructData, struct_info_ptr, init_list, 0, 0);
 						} else {
 							// Fallback: array-like behavior
 							op.element_count = initializers.size();
@@ -282,7 +283,7 @@
 									const ASTNode& elem_init = initializers[elem_i];
 									if (elem_init.is<InitializerListNode>()) {
 										// Reuse fillStructData for correct bitfield + nested-struct handling
-										fillStructData(elem_struct, elem_init.as<InitializerListNode>(),
+										fillStructData(fillStructData, elem_struct, elem_init.as<InitializerListNode>(),
 											elem_i * elem_struct->total_size, 0);
 									} else {
 										unsigned long long value = evalToValue(elem_init, type_node.type());
