@@ -178,11 +178,12 @@ Completed slices:
 - `evaluate_member_from_initializer(...)` now centralizes the constexpr-local member extraction path for aggregate/constructor/default-member cases in direct member access.
 - aggregate-member scanning in nested aggregate member access and member-array subscript now reuses `find_aggregate_member_initializer(...)` instead of open-coded designated/positional loops.
 - constructor-parameter binding for constructor-initialized constexpr objects now reuses shared constexpr-local helpers instead of repeating the same evaluate-and-bind loop at each member-oriented callsite.
+- constructor-initialized single-member evaluation now reuses a shared constexpr-local helper for constructor member-initializer lookup plus default-member fallback in the remaining nested/array-member paths.
 
 What remains before this plan is "done enough":
 
 - re-audit the remaining lookup-only call/function-target helpers to see whether any are now clean enough for a broader semantic utility
-- decide whether constructor/member extraction itself (not just parameter binding) should be folded further, or kept split because some consumers need one member value while others materialize a full member-binding map
+- decide whether full constructor-member materialization in `extract_object_members(...)` should be folded into a shared helper too, or kept separate because those consumers need a complete member-binding map instead of a single member value
 - document the explicit keep-local vs promote decision once a second non-constexpr consumer exists (or does not)
 
 ## Validation Strategy

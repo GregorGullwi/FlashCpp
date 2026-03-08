@@ -220,6 +220,12 @@ public:
 		const StructTypeInfo* struct_info,
 		std::string_view member_name_param,
 		[[maybe_unused]] EvaluationContext& context);
+	static EvalResult evaluate_constructor_bound_member(
+		const StructTypeInfo* struct_info,
+		const ConstructorDeclarationNode& ctor_decl,
+		std::unordered_map<std::string_view, EvalResult>& param_bindings,
+		std::string_view member_name,
+		EvaluationContext& context);
 	static const StructTypeInfo* get_struct_info_from_type(const TypeSpecifierNode& type_spec);
 	static EvalResult evaluate_nested_member_access(
 		const MemberAccessNode& inner_access,

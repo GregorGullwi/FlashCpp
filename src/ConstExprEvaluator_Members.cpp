@@ -1261,6 +1261,28 @@ std::optional<ASTNode> Evaluator::get_member_initializer(
 	return std::nullopt;
 }
 
+EvalResult Evaluator::evaluate_constructor_bound_member(
+	const StructTypeInfo* struct_info,
+	const ConstructorDeclarationNode& ctor_decl,
+	std::unordered_map<std::string_view, EvalResult>& param_bindings,
+	std::string_view member_name,
+	EvaluationContext& context) {
+	for (const auto& mem_init : ctor_decl.member_initializers()) {
+		if (mem_init.member_name == member_name) {
+			return evaluate_expression_with_bindings(mem_init.initializer_expr, param_bindings, context);
+		}
+	}
+
+	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+	for (const auto& member : struct_info->members) {
+		if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
+			return evaluate(member.default_initializer.value(), context);
+		}
+	}
+
+	return EvalResult::error("Member '" + std::string(member_name) + "' not found");
+}
+
 // Helper to get StructTypeInfo from a TypeSpecifierNode
 const StructTypeInfo* Evaluator::get_struct_info_from_type(const TypeSpecifierNode& type_spec) {
 	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
@@ -1425,12 +1447,6 @@ EvalResult Evaluator::evaluate_member_from_initializer(
 		return EvalResult::error("No matching constructor found for constexpr evaluation");
 	}
 
-	auto member_initializer = get_member_initializer(ctor_call, struct_info, member_name, context);
-	if (!member_initializer.has_value()) {
-		return EvalResult::error(
-			"Member '" + std::string(member_name) + "' not found in constructor initializer list and has no default value");
-	}
-
 	std::unordered_map<std::string_view, EvalResult> param_bindings;
 	if (auto bindings_result = build_constructor_parameter_bindings(
 		*matching_ctor,
@@ -1441,7 +1457,13 @@ EvalResult Evaluator::evaluate_member_from_initializer(
 		return bindings_result;
 	}
 
-	return evaluate_expression_with_bindings(member_initializer.value(), param_bindings, context);
+	auto member_result = evaluate_constructor_bound_member(struct_info, *matching_ctor, param_bindings, member_name, context);
+	if (!member_result.success()) {
+		return EvalResult::error(
+			"Member '" + std::string(member_name) + "' not found in constructor initializer list and has no default value");
+	}
+
+	return member_result;
 }
 
 // Evaluate nested member access (e.g., obj.inner.value)
@@ -1663,23 +1685,18 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	// Build inner parameter bindings
 	std::unordered_map<std::string_view, EvalResult> inner_param_bindings;
 	populate_constructor_parameter_bindings(*inner_matching_ctor, {init_arg_result}, inner_param_bindings);
-	
-	// Look for the final member in the inner constructor's initializer list
-	for (const auto& mem_init : inner_matching_ctor->member_initializers()) {
-		if (mem_init.member_name == final_member_name) {
-			return evaluate_expression_with_bindings(mem_init.initializer_expr, inner_param_bindings, context);
-		}
+
+	auto final_member_result = evaluate_constructor_bound_member(
+		inner_struct_info,
+		*inner_matching_ctor,
+		inner_param_bindings,
+		final_member_name,
+		context);
+	if (!final_member_result.success()) {
+		return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
 	}
-	
-	// Check for default member initializer
-	StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
-	for (const auto& member : inner_struct_info->members) {
-		if (member.getName() == final_member_name_handle && member.default_initializer.has_value()) {
-			return evaluate(member.default_initializer.value(), context);
-		}
-	}
-	
-	return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
+
+	return final_member_result;
 }
 
 // Evaluate array subscript followed by member access (e.g., arr[0].member)
@@ -1852,20 +1869,17 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 		populate_constructor_parameter_bindings(*matching_ctor, evaluated_ctor_args, ctor_param_bindings);
 
-		for (const auto& mem_init : matching_ctor->member_initializers()) {
-			if (mem_init.member_name == member_name) {
-				return evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-			}
+		auto member_result = evaluate_constructor_bound_member(
+			struct_info,
+			*matching_ctor,
+			ctor_param_bindings,
+			member_name,
+			context);
+		if (!member_result.success()) {
+			return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
 		}
 
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-		for (const auto& member : struct_info->members) {
-			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
-				return evaluate(member.default_initializer.value(), context);
-			}
-		}
-
-		return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
+		return member_result;
 	};
 
 	auto index_result = evaluate(subscript.index_expr(), context);
