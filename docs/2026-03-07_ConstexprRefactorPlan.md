@@ -12,6 +12,11 @@ This note is primarily **forward-looking**. It defines the next cleanup/refactor
 - `a7432001` — refactored constexpr function symbol lookup
 - `2b4c4544` — extracted constexpr function-call template context handling
 - `fd0ebc3e` — shared constexpr member-function candidate lookup
+- `e0430f14` — deduplicated bound constexpr function calls
+- `e3b700ba` — shared constexpr parameter binding
+- `5e3a7fb7` — shared callable operator lookup
+- `431e1962` — reused constexpr constructor member bindings
+- `a311908e` — shared constexpr single-return body evaluation
 
 ### What is now complete
 
@@ -21,15 +26,19 @@ This note is primarily **forward-looking**. It defines the next cleanup/refactor
 - constexpr member-source extraction from object initializers is centralized for aggregate/designated/default-member/constructor-member cases
 - repeated template-binding save/restore logic around constexpr function-call evaluation is centralized
 - duplicated bound-expression function-call recursion branches are centralized through one helper
+- evaluated-argument parameter binding is centralized across regular function calls, lambda calls, callable objects, and member-function calls
+- callable `operator()` candidate scanning is centralized for the migrated callable-object paths
+- constructor/member extraction now reuses shared evaluated-argument binding where the callsites match exactly
+- repeated single-return block-body evaluation is centralized for callable objects, lambda block bodies, and member functions
 
-### Landed with this checkpoint
+### Early remaining follow-up seams
 
-- deduplicated the duplicated function-call recursion branch in:
-  - `evaluate_expression_with_bindings`
-  - `evaluate_expression_with_bindings_const`
+- tiny pre-evaluated constructor-argument binding loops still exist in some member-resolution paths
+- after those are settled, the main open question is whether any lookup-only helper now deserves promotion out of `ConstExprEvaluator`
 
 ### Remaining likely steps after that
 
+- finish any remaining constructor/member binding micro-duplication that is still constexpr-local but not yet worthier of a broader helper
 - re-audit `evaluate_member_function_call` and nearby member-call paths for any remaining local duplication that still mixes lookup and evaluation
 - decide whether any lookup-only helper has earned promotion into a broader semantic utility, or should remain constexpr-local for now
 
