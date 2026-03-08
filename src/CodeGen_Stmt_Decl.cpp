@@ -288,7 +288,8 @@
 									} else {
 										unsigned long long value = evalToValue(elem_init, type_node.type());
 										size_t byte_off = elem_i * elem_struct->total_size;
-										for (size_t b = 0; b < elem_struct->total_size && (byte_off + b) < op.init_data.size(); ++b)
+										size_t write_bytes = (elem_struct->total_size < sizeof(unsigned long long)) ? elem_struct->total_size : sizeof(unsigned long long);
+										for (size_t b = 0; b < write_bytes && (byte_off + b) < op.init_data.size(); ++b)
 											op.init_data[byte_off + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
 									}
 								}
