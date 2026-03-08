@@ -31,3 +31,14 @@ double external_mixed_stack(int i1, double d1, int i2, double d2, int i3, double
            i1, d1, i2, d2, i3, d3, i4, d4, i5, d5);
     return i1 + d1 + i2 + d2 + i3 + d3 + i4 + d4 + i5 + d5;
 }
+
+typedef struct Big3 {
+    int a;
+    int b;
+    int c;
+} Big3;
+
+int external_sum_big3(Big3 value) {
+    printf("external_sum_big3: %d %d %d\n", value.a, value.b, value.c);
+    return value.a + value.b + value.c;
+}

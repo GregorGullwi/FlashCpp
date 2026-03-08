@@ -8,6 +8,8 @@ extern "C" int external_many_params(int p1, int p2, int p3, int p4, int p5, int 
                                     int p7, int p8, int p9, int p10);
 extern "C" double external_mixed_stack(int i1, double d1, int i2, double d2, int i3, double d3,
                                        int i4, double d4, int i5, double d5);
+struct Big3 { int a; int b; int c; };
+extern "C" int external_sum_big3(Big3 value);
 
 extern "C" int main() {
     int result = 0;
@@ -38,6 +40,12 @@ extern "C" int main() {
     double test4 = external_mixed_stack(1, 2.5, 3, 4.5, 5, 6.5, 7, 8.5, 9, 10.5);
     if (test4 < 57.4 || test4 > 57.6) {
         return 4; // Expected: 1+2.5+3+4.5+5+6.5+7+8.5+9+10.5 = 57.5
+    }
+
+    // Test 5: 12-byte struct parameter (must use two-register SysV ABI, not pointer convention)
+    Big3 test5 = {10, 12, 20};
+    if (external_sum_big3(test5) != 42) {
+        return 5;
     }
     
     return 0; // All tests passed!
