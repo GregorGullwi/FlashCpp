@@ -709,31 +709,18 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (type_specifier.type() == Type::Auto) {
 			const bool is_trailing_return_type = (peek() == "->"_tok);
 			if (is_trailing_return_type) {
-				advance();
-
-				// Make the function parameters visible inside the trailing return type
-				// so that decltype(param_name) and other expressions referencing
-				// parameter names resolve correctly (C++11/C++20 trailing-return-type rule).
-				gSymbolTable.enter_scope(ScopeType::Function);
+				// Build param list for the helper
+				const std::vector<ASTNode>* param_nodes = nullptr;
 				if (auto func_node_ptr2 = function_definition_result.node()) {
-					register_parameters_in_scope(func_node_ptr2->as<FunctionDeclarationNode>().parameter_nodes());
+					param_nodes = &func_node_ptr2->as<FunctionDeclarationNode>().parameter_nodes();
 				}
+				const std::vector<ASTNode> empty_params;
+				auto trailing_result = parse_trailing_return_type_with_params(
+					param_nodes ? *param_nodes : empty_params);
+				if (trailing_result.is_error())
+					return trailing_result;
 
-				ParseResult trailing_type_specifier = parse_type_specifier();
-
-				gSymbolTable.exit_scope();
-
-				if (trailing_type_specifier.is_error())
-					return trailing_type_specifier;
-
-				// Apply pointer and reference qualifiers (ptr-operator in C++20 grammar)
-				if (trailing_type_specifier.node().has_value() && 
-				    trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
-					TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
-					consume_pointer_ref_modifiers(trailing_ts);
-				}
-
-				type_specifier = as<TypeSpecifierNode>(trailing_type_specifier);
+				type_specifier = as<TypeSpecifierNode>(trailing_result);
 			}
 		}
 
