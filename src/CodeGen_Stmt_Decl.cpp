@@ -276,8 +276,8 @@
 						if (type_node.type() == Type::Struct && type_node.type_index() != 0 &&
 							type_node.type_index() < gTypeInfo.size()) {
 							const StructTypeInfo* elem_struct = gTypeInfo[type_node.type_index()].getStructInfo();
-							if (elem_struct) {
-								op.init_data.resize(op.element_count * element_size, 0);
+						if (elem_struct) {
+							op.init_data.resize(op.element_count * elem_struct->total_size, 0);
 								for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
 									const ASTNode& elem_init = initializers[elem_i];
 									if (elem_init.is<InitializerListNode>()) {
