@@ -2311,22 +2311,13 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	context.current_depth++;
 	
 	// Evaluate the function body
-	const ASTNode& body_node = definition.value();
-	if (!body_node.is<BlockNode>()) {
-		context.current_depth--;
-		return EvalResult::error("Member function body is not a block");
-	}
-	
-	const BlockNode& body = body_node.as<BlockNode>();
-	const auto& statements = body.get_statements();
-	
 	// For simple constexpr functions, we expect a single return statement
-	if (statements.size() != 1) {
-		context.current_depth--;
-		return EvalResult::error("Constexpr member function must have a single return statement (complex statements not yet supported)");
-	}
-	
-	auto result = evaluate_statement_with_bindings(statements[0], member_bindings, context);
+	auto result = evaluate_single_return_block_with_bindings(
+		definition.value(),
+		member_bindings,
+		context,
+		"Member function body is not a block",
+		"Constexpr member function must have a single return statement (complex statements not yet supported)");
 	context.current_depth--;
 	return result;
 }

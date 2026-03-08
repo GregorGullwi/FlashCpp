@@ -1184,21 +1184,13 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
 		}
 		context.current_depth++;
-		const ASTNode& body_node = definition.value();
-		if (!body_node.is<BlockNode>()) {
-			context.current_depth--;
-			return EvalResult::error("Callable object operator() body is not a block");
-		}
-
-		const BlockNode& body = body_node.as<BlockNode>();
-		const auto& statements = body.get_statements();
 		// Known limitation: only simple single-return constexpr operator() bodies are handled here.
-		if (statements.size() != 1) {
-			context.current_depth--;
-			return EvalResult::error("Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
-		}
-
-		auto result = evaluate_statement_with_bindings(statements[0], evaluation_bindings, context);
+			auto result = evaluate_single_return_block_with_bindings(
+				definition.value(),
+				evaluation_bindings,
+				context,
+				"Callable object operator() body is not a block",
+				"Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
 		context.current_depth--;
 		return result;
 	}
@@ -1247,21 +1239,15 @@ EvalResult Evaluator::evaluate_callable_object(
 				true);
 			if (!bind_result.success()) return bind_result;
 
-		if (context.current_depth >= context.max_recursion_depth)
-			return EvalResult::error("Constexpr recursion depth limit exceeded");
-		context.current_depth++;
-		const ASTNode& body_node = definition.value();
-		if (!body_node.is<BlockNode>()) {
-			context.current_depth--;
-			return EvalResult::error("operator() body in brace-initialized callable is not a block");
-		}
-		const BlockNode& body = body_node.as<BlockNode>();
-		const auto& stmts = body.get_statements();
-		if (stmts.size() != 1) {
-			context.current_depth--;
-			return EvalResult::error("Constexpr operator() in brace-initialized callable must have a single statement (complex bodies not yet supported)");
-		}
-		auto result = evaluate_statement_with_bindings(stmts[0], evaluation_bindings, context);
+			if (context.current_depth >= context.max_recursion_depth)
+				return EvalResult::error("Constexpr recursion depth limit exceeded");
+			context.current_depth++;
+			auto result = evaluate_single_return_block_with_bindings(
+				definition.value(),
+				evaluation_bindings,
+				context,
+				"operator() body in brace-initialized callable is not a block",
+				"Constexpr operator() in brace-initialized callable must have a single statement (complex bodies not yet supported)");
 		context.current_depth--;
 		return result;
 	}
@@ -1314,16 +1300,12 @@ EvalResult Evaluator::evaluate_lambda_call(
 	
 	EvalResult result;
 	if (body_node.is<BlockNode>()) {
-		// Block body - look for return statement
-		const BlockNode& body = body_node.as<BlockNode>();
-		const auto& statements = body.get_statements();
-		
-		if (statements.size() != 1) {
-			context.current_depth--;
-			return EvalResult::error("Constexpr lambda must have a single return statement (complex statements not yet supported)");
-		}
-		
-		result = evaluate_statement_with_bindings(statements[0], bindings, context);
+			result = evaluate_single_return_block_with_bindings(
+				body_node,
+				bindings,
+				context,
+				"Constexpr lambda body is not a block",
+				"Constexpr lambda must have a single return statement (complex statements not yet supported)");
 	} else if (body_node.is<ExpressionNode>()) {
 		// Expression body (implicit return)
 		result = evaluate_expression_with_bindings(body_node, bindings, context);
@@ -2250,6 +2232,25 @@ EvalResult Evaluator::bind_evaluated_arguments(
 	}
 
 	return EvalResult::from_bool(true);
+}
+
+EvalResult Evaluator::evaluate_single_return_block_with_bindings(
+	const ASTNode& body_node,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	std::string_view non_block_error,
+	std::string_view multi_statement_error) {
+	if (!body_node.is<BlockNode>()) {
+		return EvalResult::error(std::string(non_block_error));
+	}
+
+	const BlockNode& body = body_node.as<BlockNode>();
+	const auto& statements = body.get_statements();
+	if (statements.size() != 1) {
+		return EvalResult::error(std::string(multi_statement_error));
+	}
+
+	return evaluate_statement_with_bindings(statements[0], bindings, context);
 }
 
 EvalResult Evaluator::evaluate_statement_with_bindings(
