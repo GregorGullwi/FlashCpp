@@ -1487,53 +1487,41 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		// Find the intermediate member by name
 		const InitializerListNode& outer_list = (*initializer)->as<InitializerListNode>();
 		StringHandle inter_handle = StringTable::getOrInternStringHandle(intermediate_member);
-		const ASTNode* inter_init = nullptr;
-		size_t pos_idx = 0;
-		for (size_t ii = 0; ii < outer_list.size(); ++ii) {
-			StringHandle mname;
-			if (outer_list.is_designated(ii)) {
-				mname = outer_list.member_name(ii);
-			} else if (pos_idx < base_aggr_struct->members.size()) {
-				mname = base_aggr_struct->members[pos_idx].getName();
-				pos_idx++;
-			} else {
-				break;
-			}
-			if (mname == inter_handle) { inter_init = &outer_list.initializers()[ii]; break; }
-		}
-		if (!inter_init)
+		std::optional<ASTNode> intermediate_init = find_aggregate_member_initializer(outer_list, base_aggr_struct, inter_handle);
+		if (!intermediate_init.has_value())
 			return EvalResult::error("Intermediate member '" + std::string(intermediate_member) + "' not found in aggregate init");
 		// Find the inner struct type for the intermediate member
-		const StructMember* inter_member_info = nullptr;
+		const StructMember* intermediate_member_info = nullptr;
 		for (const auto& m : base_aggr_struct->members) {
-			if (m.getName() == inter_handle) { inter_member_info = &m; break; }
+			if (m.getName() == inter_handle) { intermediate_member_info = &m; break; }
 		}
-		if (!inter_member_info || (inter_member_info->type != Type::Struct && inter_member_info->type != Type::UserDefined))
+		if (!intermediate_member_info ||
+		    (intermediate_member_info->type != Type::Struct && intermediate_member_info->type != Type::UserDefined))
 			return EvalResult::error("Intermediate member is not a struct in aggregate nested access");
-		if (inter_member_info->type_index >= gTypeInfo.size())
+		if (intermediate_member_info->type_index >= gTypeInfo.size())
 			return EvalResult::error("Invalid inner type index in aggregate nested access");
-		const StructTypeInfo* inner_aggr_struct = gTypeInfo[inter_member_info->type_index].getStructInfo();
+		const StructTypeInfo* inner_aggr_struct = gTypeInfo[intermediate_member_info->type_index].getStructInfo();
 		if (!inner_aggr_struct)
 			return EvalResult::error("Inner member type is not a struct in aggregate nested access");
-		// inter_init is the initializer for the intermediate member
+		// intermediate_init is the initializer for the intermediate member
 		// It may be an InitializerListNode (nested aggregate) or a scalar expression
-		if (inter_init->is<InitializerListNode>()) {
+		if (intermediate_init->is<InitializerListNode>()) {
 			// Nested aggregate: bind inner members and look up final_member_name
 			std::unordered_map<std::string_view, EvalResult> inner_bindings;
 			auto bind_r = bind_members_from_initializer_list(
-				inner_aggr_struct, inter_init->as<InitializerListNode>(), inner_bindings, context);
+				inner_aggr_struct, intermediate_init->as<InitializerListNode>(), inner_bindings, context);
 			if (!bind_r.success()) return bind_r;
 			auto it = inner_bindings.find(final_member_name);
 			if (it == inner_bindings.end())
 				return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in nested aggregate init");
 			return it->second;
 		} else {
-			// Scalar inter_init (brace elision): initializes the first member of the inner struct.
+			// Scalar intermediate_init (brace elision): initializes the first member of the inner struct.
 			// Return the value only if final_member_name matches the first inner struct member.
 			StringHandle final_handle = StringTable::getOrInternStringHandle(final_member_name);
 			if (!inner_aggr_struct->members.empty() &&
 				inner_aggr_struct->members[0].getName() == final_handle) {
-				return evaluate(*inter_init, context);
+				return evaluate(*intermediate_init, context);
 			}
 			return EvalResult::error("Final member '" + std::string(final_member_name) +
 				"' not reachable via scalar initializer (brace elision) in nested aggregate");
@@ -2563,42 +2551,16 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 
 				const InitializerListNode& aggr_list = initializer_opt->as<InitializerListNode>();
 				StringHandle req_handle = StringTable::getOrInternStringHandle(member_name);
-				const ASTNode* member_init = nullptr;
-				size_t pos_idx = 0;
-				for (size_t mi = 0; mi < aggr_list.size(); ++mi) {
-					StringHandle mname;
-					if (aggr_list.is_designated(mi)) {
-						mname = aggr_list.member_name(mi);
-					} else if (pos_idx < aggr_struct->members.size()) {
-						mname = aggr_struct->members[pos_idx].getName();
-						pos_idx++;
-					} else {
-						break;
-					}
-					if (mname == req_handle) {
-						member_init = &aggr_list.initializers()[mi];
-						break;
-					}
-				}
-
-				if (!member_init) {
-					for (const auto& member : aggr_struct->members) {
-						if (member.getName() == req_handle && member.default_initializer.has_value()) {
-							member_init = &member.default_initializer.value();
-							break;
-						}
-					}
-				}
-
-				if (!member_init) {
+				std::optional<ASTNode> member_init_opt = find_aggregate_member_initializer(aggr_list, aggr_struct, req_handle);
+				if (!member_init_opt.has_value()) {
 					return EvalResult::error("Array member '" + std::string(member_name) + "' not found");
 				}
 
-				if (!member_init->is<InitializerListNode>()) {
+				if (!member_init_opt->is<InitializerListNode>()) {
 					return EvalResult::error("Array member is not initialized with an array initializer");
 				}
 
-				const InitializerListNode& init_list = member_init->as<InitializerListNode>();
+				const InitializerListNode& init_list = member_init_opt->as<InitializerListNode>();
 				const auto& elements = init_list.initializers();
 				if (index >= elements.size()) {
 					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
