@@ -1827,49 +1827,12 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			return std::nullopt;
 		}
 
-		// Load template bindings for proper evaluation of sizeof(T) etc.
-		std::unordered_map<std::string_view, EvalResult> empty_bindings;
-		auto saved_template_param_names = context.template_param_names;
-		auto saved_template_args = context.template_args;
-
-		bool loaded_template_bindings = false;
-		if (const LazyClassInstantiationInfo* lazy_class_info =
-				LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
-			context.template_param_names.clear();
-			context.template_args = lazy_class_info->template_args;
-			context.template_param_names.reserve(lazy_class_info->template_params.size());
-			for (const auto& template_param : lazy_class_info->template_params) {
-				if (template_param.is<TemplateParameterNode>()) {
-					context.template_param_names.push_back(
-						template_param.as<TemplateParameterNode>().name());
-				}
-			}
-			loaded_template_bindings = true;
-		}
-
-		if (!loaded_template_bindings) {
-			auto struct_type_it = gTypesByName.find(context.struct_info->name);
-			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
-				const TypeInfo* struct_type = struct_type_it->second;
-				auto param_handles = gTemplateRegistry.getTemplateParameters(struct_type->baseTemplateName());
-				context.template_param_names.clear();
-				context.template_args.clear();
-				context.template_param_names.reserve(param_handles.size());
-				context.template_args.reserve(struct_type->templateArgs().size());
-				for (StringHandle param_handle : param_handles) {
-					context.template_param_names.push_back(StringTable::getStringView(param_handle));
-				}
-				for (const auto& arg_info : struct_type->templateArgs()) {
-					context.template_args.push_back(toTemplateTypeArg(arg_info));
-				}
-			}
-		}
-
-		EvalResult result = evaluate_function_call_with_bindings(
-			*matched_function, arguments, empty_bindings, context);
-		context.template_param_names = std::move(saved_template_param_names);
-		context.template_args = std::move(saved_template_args);
-		return result;
+			std::unordered_map<std::string_view, EvalResult> empty_bindings;
+			return evaluate_function_call_with_template_context(
+				*matched_function,
+				arguments,
+				empty_bindings,
+				context);
 	};
 
 	if (auto current_struct_result = tryEvaluateCurrentStructStaticMemberFunction()) {
@@ -1945,24 +1908,6 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
-
-	auto load_template_bindings_from_type = [&](const TypeInfo* source_type) {
-		if (!source_type || !source_type->isTemplateInstantiation()) {
-			return;
-		}
-
-		auto param_handles = gTemplateRegistry.getTemplateParameters(source_type->baseTemplateName());
-		context.template_param_names.clear();
-		context.template_args.clear();
-		context.template_param_names.reserve(param_handles.size());
-		context.template_args.reserve(source_type->templateArgs().size());
-		for (StringHandle param_handle : param_handles) {
-			context.template_param_names.push_back(StringTable::getStringView(param_handle));
-		}
-		for (const auto& arg_info : source_type->templateArgs()) {
-			context.template_args.push_back(toTemplateTypeArg(arg_info));
-		}
-	};
 	
 	// If not found in symbol table, try the global template registry
 	// This handles cases where a template function is defined but not yet instantiated
@@ -2032,37 +1977,13 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 								// This parameter count check implicitly ensures we're calling static members:
 								// Non-static members would have a conceptual 'this' parameter that we're not providing
 								if (arguments.size() == parameters.size()) {
-									// Pass empty bindings for static member function calls
 									std::unordered_map<std::string_view, EvalResult> empty_bindings;
-									auto saved_template_param_names = context.template_param_names;
-									auto saved_template_args = context.template_args;
-
-									if (context.template_param_names.empty() && context.template_args.empty() && context.struct_info) {
-										if (const LazyClassInstantiationInfo* lazy_class_info =
-												LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
-											context.template_param_names.clear();
-											context.template_args = lazy_class_info->template_args;
-											context.template_param_names.reserve(lazy_class_info->template_params.size());
-											for (const auto& template_param : lazy_class_info->template_params) {
-												if (template_param.is<TemplateParameterNode>()) {
-													context.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
-												}
-											}
-										} else {
-											auto current_struct_it = gTypesByName.find(context.struct_info->name);
-											if (current_struct_it != gTypesByName.end()) {
-												load_template_bindings_from_type(current_struct_it->second);
-											}
-										}
-									}
-									if (context.template_param_names.empty() && context.template_args.empty()) {
-										load_template_bindings_from_type(&type_info);
-									}
-
-									EvalResult result = evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
-									context.template_param_names = std::move(saved_template_param_names);
-									context.template_args = std::move(saved_template_args);
-									return result;
+									return evaluate_function_call_with_template_context(
+										func_decl,
+										arguments,
+										empty_bindings,
+										context,
+										&type_info);
 								}
 							}
 						}
@@ -2127,34 +2048,13 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			return EvalResult::error("Function argument count mismatch in constant expression");
 		}
 
-		// Pass empty bindings for top-level function calls
-		std::unordered_map<std::string_view, EvalResult> empty_bindings;
-		auto saved_template_param_names = context.template_param_names;
-		auto saved_template_args = context.template_args;
-
-		if (context.template_param_names.empty() && context.template_args.empty() && context.struct_info) {
-			if (const LazyClassInstantiationInfo* lazy_class_info =
-					LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
-				context.template_param_names.clear();
-				context.template_args = lazy_class_info->template_args;
-				context.template_param_names.reserve(lazy_class_info->template_params.size());
-				for (const auto& template_param : lazy_class_info->template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						context.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
-					}
-				}
-			} else {
-				auto current_struct_it = gTypesByName.find(context.struct_info->name);
-				if (current_struct_it != gTypesByName.end()) {
-					load_template_bindings_from_type(current_struct_it->second);
-				}
-			}
-		}
-
-		EvalResult result = evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
-		context.template_param_names = std::move(saved_template_param_names);
-		context.template_args = std::move(saved_template_args);
-		return result;
+			// Pass empty bindings for top-level function calls
+			std::unordered_map<std::string_view, EvalResult> empty_bindings;
+			return evaluate_function_call_with_template_context(
+				func_decl,
+				arguments,
+				empty_bindings,
+				context);
 	}
 	
 	// Check if it's a TemplateFunctionDeclarationNode (template function)
@@ -2223,6 +2123,76 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	
 	
 	return EvalResult::error("Identifier is not a function or callable object: " + std::string(func_name));
+}
+
+void Evaluator::load_template_bindings_from_type(const TypeInfo* source_type, EvaluationContext& context) {
+	if (!source_type || !source_type->isTemplateInstantiation()) {
+		return;
+	}
+
+	auto param_handles = gTemplateRegistry.getTemplateParameters(source_type->baseTemplateName());
+	context.template_param_names.clear();
+	context.template_args.clear();
+	context.template_param_names.reserve(param_handles.size());
+	context.template_args.reserve(source_type->templateArgs().size());
+	for (StringHandle param_handle : param_handles) {
+		context.template_param_names.push_back(StringTable::getStringView(param_handle));
+	}
+	for (const auto& arg_info : source_type->templateArgs()) {
+		context.template_args.push_back(toTemplateTypeArg(arg_info));
+	}
+}
+
+bool Evaluator::try_load_current_struct_template_bindings(EvaluationContext& context) {
+	if (context.struct_info == nullptr) {
+		return false;
+	}
+
+	if (const LazyClassInstantiationInfo* lazy_class_info =
+			LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
+		context.template_param_names.clear();
+		context.template_args = lazy_class_info->template_args;
+		context.template_param_names.reserve(lazy_class_info->template_params.size());
+		for (const auto& template_param : lazy_class_info->template_params) {
+			if (template_param.is<TemplateParameterNode>()) {
+				context.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
+			}
+		}
+		return true;
+	}
+
+	auto current_struct_it = gTypesByName.find(context.struct_info->name);
+	if (current_struct_it == gTypesByName.end()) {
+		return false;
+	}
+
+	load_template_bindings_from_type(current_struct_it->second, context);
+	return !context.template_param_names.empty() || !context.template_args.empty();
+}
+
+EvalResult Evaluator::evaluate_function_call_with_template_context(
+	const FunctionDeclarationNode& func_decl,
+	const ChunkedVector<ASTNode>& arguments,
+	const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
+	EvaluationContext& context,
+	const TypeInfo* fallback_template_type) {
+	auto saved_template_param_names = context.template_param_names;
+	auto saved_template_args = context.template_args;
+	auto restore_template_bindings = [&]() {
+		context.template_param_names = std::move(saved_template_param_names);
+		context.template_args = std::move(saved_template_args);
+	};
+
+	if (context.template_param_names.empty() && context.template_args.empty()) {
+		try_load_current_struct_template_bindings(context);
+	}
+	if (context.template_param_names.empty() && context.template_args.empty() && fallback_template_type) {
+		load_template_bindings_from_type(fallback_template_type, context);
+	}
+
+	EvalResult result = evaluate_function_call_with_bindings(func_decl, arguments, outer_bindings, context);
+	restore_template_bindings();
+	return result;
 }
 
 EvalResult Evaluator::evaluate_function_call_with_bindings(

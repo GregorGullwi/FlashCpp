@@ -326,6 +326,14 @@ private:
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
+	static void load_template_bindings_from_type(const TypeInfo* source_type, EvaluationContext& context);
+	static bool try_load_current_struct_template_bindings(EvaluationContext& context);
+	static EvalResult evaluate_function_call_with_template_context(
+		const FunctionDeclarationNode& func_decl,
+		const ChunkedVector<ASTNode>& arguments,
+		const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
+		EvaluationContext& context,
+		const TypeInfo* fallback_template_type = nullptr);
 	static EvalResult evaluate_function_call_with_bindings(
 		const FunctionDeclarationNode& func_decl,
 		const ChunkedVector<ASTNode>& arguments,
