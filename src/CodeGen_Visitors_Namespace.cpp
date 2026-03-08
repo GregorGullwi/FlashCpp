@@ -384,9 +384,10 @@
 			// For reference returns, prefer materializing the referred-to address in IR when we
 			// have direct member lvalue metadata. This avoids relying on backend reconstruction
 			// from a loaded member temp.
-			if (current_function_returns_reference_ && operands.size() >= 3 &&
-				std::holds_alternative<TempVar>(operands[2])) {
-				TempVar return_temp = std::get<TempVar>(operands[2]);
+			constexpr size_t kValueOperandIndex = 2;
+			if (current_function_returns_reference_ && operands.size() > kValueOperandIndex &&
+				std::holds_alternative<TempVar>(operands[kValueOperandIndex])) {
+				TempVar return_temp = std::get<TempVar>(operands[kValueOperandIndex]);
 				auto lv_info_opt = getTempVarLValueInfo(return_temp);
 				if (lv_info_opt.has_value()) {
 					const LValueInfo& lv_info = *lv_info_opt;
@@ -400,7 +401,7 @@
 						addr_member_op.member_type = current_function_return_type_;
 						addr_member_op.member_size_in_bits = current_function_return_size_;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
-						operands[2] = address_temp;
+						operands[kValueOperandIndex] = address_temp;
 					}
 				}
 			}

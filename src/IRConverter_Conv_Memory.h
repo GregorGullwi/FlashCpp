@@ -868,6 +868,7 @@
 		// Calculate address of struct member directly: LEA result, [RBP + obj_offset + member_offset]
 		
 		const AddressOfMemberOp& op = std::any_cast<const AddressOfMemberOp&>(instruction.getTypedPayload());
+		static const StringHandle this_handle = StringTable::getOrInternStringHandle("this");
 		
 		// Look up the base object's stack offset
 		const StackVariableScope& current_scope = variable_scopes.back();
@@ -886,7 +887,7 @@
 		// Use register allocator to avoid clobbering dirty registers
 		X64Register target_reg = allocateRegisterWithSpilling();
 		auto ref_it = reference_stack_info_.find(obj_offset);
-		if (op.base_object == StringTable::getOrInternStringHandle("this") ||
+		if (op.base_object == this_handle ||
 			ref_it != reference_stack_info_.end()) {
 			emitMovFromFrame(target_reg, obj_offset);
 			if (op.member_offset != 0) {
