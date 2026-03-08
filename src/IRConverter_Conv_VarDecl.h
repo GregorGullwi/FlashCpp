@@ -895,8 +895,18 @@
 
 		// Windows x64 calling convention: Functions must provide home space for parameters
 		// Calculate param_count BEFORE calling calculateFunctionStackSpace so it can allocate
-		// local variables/temp vars AFTER the parameter home space
-		size_t param_count = parameter_types.size();
+		// local variables/temp vars AFTER the parameter home space.
+		// SysV AMD64: non-variadic 9-16 byte by-value struct params need TWO register slots each,
+		// so count them as 2 to ensure enough param_home_space is reserved.
+		size_t param_count = 0;
+		{
+			constexpr bool is_elf_target = std::is_same_v<TWriterClass, ElfFileWriter>;
+			for (const auto& p : parameter_types) {
+				bool is_two_reg = is_elf_target && !is_variadic &&
+				                  p.type() == Type::Struct && p.size_in_bits() > 64 && p.size_in_bits() <= 128 && !p.is_reference() && !p.is_pointer();
+				param_count += is_two_reg ? 2 : 1;
+			}
+		}
 		if (!struct_name.empty() && !func_decl.is_static_member) {
 			param_count++;  // Count 'this' pointer for non-static member functions
 		}
@@ -1228,6 +1238,9 @@
 			X64Register src_reg;
 			int pointer_depth;
 			bool is_reference;
+			// SysV AMD64: for 9-16 byte by-value struct params, the upper half is in a second register.
+			// X64Register::Count means this is a regular single-register parameter.
+			X64Register second_reg = X64Register::Count;
 		};
 		std::vector<ParameterInfo> parameters;
 
@@ -1281,6 +1294,11 @@
 		// These counters are used to compute gp_offset/fp_offset for variadic functions
 		size_t int_param_reg_index = param_offset_adjustment;
 		size_t float_param_reg_index = 0;
+
+		// param_slot_index tracks the "effective slot number" used for offset calculation.
+		// For non-variadic SysV 9-16 byte by-value struct params, it advances by 2 (two register slots);
+		// for all other params it advances by 1.  This ensures their frame offsets don't collide.
+		int param_slot_index = static_cast<int>(param_offset_adjustment);
 		
 		// First pass: collect all parameter information
 		if (!instruction.hasTypedPayload()) {
@@ -1309,6 +1327,12 @@
 				// Calculate parameter number using FunctionDeclLayout helper
 				size_t param_index_in_list = (paramIndex - FunctionDeclLayout::FIRST_PARAM_INDEX) / FunctionDeclLayout::OPERANDS_PER_PARAM;
 				int paramNumber = static_cast<int>(param_index_in_list) + param_offset_adjustment;
+
+				// SysV AMD64: non-variadic 9-16 byte by-value structs are passed in two consecutive
+				// integer registers and materialized directly in the callee's frame (no pointer indirection).
+				constexpr bool is_elf_callee = std::is_same_v<TWriterClass, ElfFileWriter>;
+				bool is_two_reg_struct = is_elf_callee && !is_variadic &&
+				                        param_type == Type::Struct && param_size > 64 && param_size <= 128 && !is_reference && param_pointer_depth == 0;
 			
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
@@ -1321,24 +1345,35 @@
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
 				size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
 			
-				// Calculate offset based on whether this parameter comes from a register or stack
+				// Calculate offset based on whether this parameter comes from a register or stack.
 				// For Windows variadic functions: ALL parameters are on caller's stack starting at [RBP+16]
+				// For SysV two-register structs: struct base = more-negative slot so field_offset-based
+				// access (base + field_offset) works correctly:
+				//   bytes 0-7 (first reg)  stored at offset       = (param_slot_index+2)*-8
+				//   bytes 8-15 (second reg) stored at offset+8    = (param_slot_index+1)*-8
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 				int offset;
 				if (is_variadic && is_coff_format) {
 					// Windows x64 variadic: ALL params at positive offsets from RBP
 					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
 					offset = 16 + (paramNumber - param_offset_adjustment) * 8;
+					param_slot_index++;
 				} else if (type_specific_index < reg_threshold) {
-					// Parameter comes from register - allocate home/shadow space
-					// Use paramNumber for sequential stack allocation (not type_specific_index)
-					// This ensures int and float parameters don't overlap on the stack
-					offset = (paramNumber + 1) * -8;
+					// Parameter comes from register - allocate home/shadow space.
+					// Use param_slot_index so two-register struct params don't collide with neighbours.
+					if (is_two_reg_struct) {
+						offset = (param_slot_index + 2) * -8;  // struct base at more-negative slot
+						param_slot_index += 2;
+					} else {
+						offset = (param_slot_index + 1) * -8;
+						param_slot_index++;
+					}
 				} else {
 					// Parameter comes from stack - calculate positive offset
 					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
 					// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
 					offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(type_specific_index - reg_threshold) * 8;
+					param_slot_index += is_two_reg_struct ? 2 : 1;
 				}
 
 				StringHandle param_name_handle = instruction.getOperandAs<StringHandle>(paramIndex + FunctionDeclLayout::PARAM_NAME);
@@ -1347,13 +1382,14 @@
 				variable_scopes.back().variables[param_name_handle].size_in_bits = param_size;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
-				// Also track large struct parameters (> 64 bits) which are passed by pointer
+				// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
+				// SysV two-register structs, which are materialized directly and need no dereferencing.
 				// NOTE: Pointer parameters (T*) are NOT tracked here. They hold pointer VALUES directly
 				// on the stack, not references. Accessing a pointer param should yield the pointer value;
 				// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
 				bool is_passed_by_reference = is_reference ||
-				                              (param_type == Type::Struct && param_size > 64);
+				                              (!is_two_reg_struct && param_type == Type::Struct && param_size > 64);
 				if (is_passed_by_reference) {
 					setReferenceInfo(offset, param_type, param_size,
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
@@ -1379,12 +1415,22 @@
 				// Check if parameter fits in a register using separate int/float counters
 				bool use_register = false;
 				X64Register src_reg = X64Register::Count;
+				X64Register second_reg = X64Register::Count;
 				if (is_float_param) {
 					if (float_param_reg_index < max_float_regs) {
 						src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
 						use_register = true;
 					} else {
 						float_param_reg_index++;  // Still increment counter for stack params
+					}
+				} else if (is_two_reg_struct) {
+					// Two-register struct: consume two consecutive integer registers
+					if (int_param_reg_index + 1 < max_int_regs) {
+						src_reg    = getIntParamReg<TWriterClass>(int_param_reg_index++);
+						second_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
+						use_register = true;
+					} else {
+						int_param_reg_index += 2;  // Both slots past register file = on stack
 					}
 				} else {
 					if (int_param_reg_index < max_int_regs) {
@@ -1400,10 +1446,13 @@
 					// Don't allocate XMM registers in the general register allocator
 					if (!is_float_param) {
 						regAlloc.allocateSpecific(src_reg, offset);
+						// second_reg holds the upper half of the struct's bytes; it is stored to the
+						// frame immediately in the second pass, not tracked as a live register, so
+						// it does not need to be registered in regAlloc.
 					}
 
 					// Store parameter info for later processing
-					parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth, is_reference});
+					parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth, is_reference, second_reg});
 				}
 
 				paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
@@ -1427,10 +1476,17 @@
 			// The counters were already declared before the if/else block
 			int_param_reg_index = param_offset_adjustment;
 			float_param_reg_index = 0;
+			param_slot_index = static_cast<int>(param_offset_adjustment);
 		
 			for (size_t i = 0; i < func_decl.parameters.size(); ++i) {
 				const auto& param = func_decl.parameters[i];
 				int paramNumber = static_cast<int>(i) + param_offset_adjustment;
+
+				// SysV AMD64: non-variadic 9-16 byte by-value structs are passed in two consecutive
+				// integer registers and materialized directly in the callee's frame (no pointer indirection).
+				constexpr bool is_elf_callee = std::is_same_v<TWriterClass, ElfFileWriter>;
+				bool is_two_reg_struct = is_elf_callee && !is_variadic &&
+				                        param.type == Type::Struct && param.size_in_bits > 64 && param.size_in_bits <= 128 && !param.is_reference() && param.pointer_depth == 0;
 			
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
@@ -1443,23 +1499,33 @@
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
 				size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
 			
-				// Calculate offset based on whether this parameter comes from a register or stack
-				// For Windows variadic functions: ALL parameters are on caller's stack starting at [RBP+16]
+				// Calculate offset based on whether this parameter comes from a register or stack.
+				// For SysV two-register structs: struct base = more-negative slot so field_offset-based
+				// access (base + field_offset) works correctly:
+				//   bytes 0-7 (first reg)   stored at offset       = (param_slot_index+2)*-8
+				//   bytes 8-15 (second reg) stored at offset+8     = (param_slot_index+1)*-8
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 				int offset;
 				if (is_variadic && is_coff_format) {
 					// Windows x64 variadic: ALL params at positive offsets from RBP
 					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
 					offset = 16 + (paramNumber - param_offset_adjustment) * 8;
+					param_slot_index++;
 				} else if (type_specific_index < reg_threshold) {
-					// Parameter comes from register - allocate home/shadow space
-					// Use paramNumber for sequential stack allocation (not type_specific_index)
-					// This ensures int and float parameters don't overlap on the stack
-					offset = (paramNumber + 1) * -8;
+					// Parameter comes from register - allocate home/shadow space.
+					// Use param_slot_index so two-register struct params don't collide with neighbours.
+					if (is_two_reg_struct) {
+						offset = (param_slot_index + 2) * -8;  // struct base at more-negative slot
+						param_slot_index += 2;
+					} else {
+						offset = (param_slot_index + 1) * -8;
+						param_slot_index++;
+					}
 				} else {
 					// Parameter comes from stack - calculate positive offset
 					// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
 					offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(type_specific_index - reg_threshold) * 8;
+					param_slot_index += is_two_reg_struct ? 2 : 1;
 				}
 
 				// Phase 4: Use helper to get param name for map key
@@ -1467,11 +1533,12 @@
 				variable_scopes.back().variables[param.getName()].size_in_bits = param.size_in_bits;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing)
-				// Also track large struct parameters (> 64 bits) which are passed by pointer
+				// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
+				// SysV two-register structs, which are materialized directly and need no dereferencing.
 				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
 				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				bool is_passed_by_reference = param.is_reference() ||
-				                              (param.type == Type::Struct && param.size_in_bits > 64);
+				                              (!is_two_reg_struct && param.type == Type::Struct && param.size_in_bits > 64);
 				if (is_passed_by_reference) {
 					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference());
 				}
@@ -1498,12 +1565,22 @@
 				// Check if parameter fits in a register using separate int/float counters
 				bool use_register = false;
 				X64Register src_reg = X64Register::Count;
+				X64Register second_reg = X64Register::Count;
 				if (is_float_param) {
 					if (float_param_reg_index < max_float_regs) {
 						src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
 						use_register = true;
 					} else {
 						float_param_reg_index++;  // Still increment counter for stack params
+					}
+				} else if (is_two_reg_struct) {
+					// Two-register struct: consume two consecutive integer registers
+					if (int_param_reg_index + 1 < max_int_regs) {
+						src_reg    = getIntParamReg<TWriterClass>(int_param_reg_index++);
+						second_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
+						use_register = true;
+					} else {
+						int_param_reg_index += 2;  // Both slots past register file = on stack
 					}
 				} else {
 					if (int_param_reg_index < max_int_regs) {
@@ -1518,9 +1595,12 @@
 
 					if (!is_float_param && !regAlloc.is_allocated(src_reg)) {
 						regAlloc.allocateSpecific(src_reg, offset);
+						// second_reg holds the upper half of the struct's bytes; it is stored to the
+						// frame immediately in the second pass, not tracked as a live register, so
+						// it does not need to be registered in regAlloc.
 					}
 
-					parameters.push_back({param.type, param.size_in_bits, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth, param.is_reference()});
+					parameters.push_back({param.type, param.size_in_bits, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth, param.is_reference(), second_reg});
 				}
 			}
 		}
@@ -1549,10 +1629,17 @@
 					// For floating-point parameters, use movss/movsd to store from XMM register
 					bool is_float = (param.param_type == Type::Float);
 					emitFloatMovToFrame(param.src_reg, param.offset, is_float);
+				} else if (param.second_reg != X64Register::Count) {
+					// SysV AMD64 two-register struct: bytes 0-7 in src_reg → offset (struct base),
+					// bytes 8-15 in second_reg → offset+8 (the less-negative / higher-address slot).
+					emitMovToFrame(param.src_reg,    param.offset,     64);
+					emitMovToFrame(param.second_reg, param.offset + 8, 64);
+					regAlloc.release(param.src_reg);
+					// second_reg was never added to regAlloc, so no release needed
 				} else {
 					// For integer parameters, use size-appropriate MOV
 					// References are always passed as 64-bit pointers regardless of the type they refer to
-					// Large struct parameters (> 64 bits) are passed by pointer according to System V AMD64 ABI
+					// Large struct parameters (> 64 bits) that are NOT two-register structs are passed by pointer
 					bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
 					                            (param.param_type == Type::Struct && param.param_size > 64);
 					int store_size = is_passed_by_pointer ? 64 : param.param_size;

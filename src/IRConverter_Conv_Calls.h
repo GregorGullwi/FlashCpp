@@ -961,6 +961,7 @@
 			for (size_t i = 0; i < num_params; ++i) {
 				const TypedValue& arg = ctor_op.arguments[i];
 				bool is_float_arg = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference();
+				bool is_two_reg_sysv = isTwoRegisterStruct(arg, false /* non-variadic */);
 
 				bool goes_on_stack = false;
 				if (is_float_arg) {
@@ -969,10 +970,11 @@
 					}
 					temp_float_idx++;
 				} else {
-					if (temp_int_idx >= max_int_regs) {
+					size_t regs_needed = is_two_reg_sysv ? 2 : 1;
+					if (temp_int_idx + regs_needed > max_int_regs) {
 						goes_on_stack = true;
 					}
-					temp_int_idx++;
+					temp_int_idx += regs_needed;
 				}
 
 				if (goes_on_stack) {
@@ -1082,8 +1084,14 @@
 						emitFloatMovFromFrame(target_xmm, param_offset, is_float);
 					}
 				}
-			} else if (!is_float_arg && int_reg_index < max_int_regs) {
-				// Use integer register for non-floating-point parameters
+				} else {
+				// Integer (non-float) parameter.
+				// SysV AMD64: 9-16 byte by-value structs consume two consecutive registers; verify space up front.
+				bool is_two_reg_sysv = isTwoRegisterStruct(arg, false /* non-variadic */);
+				size_t regs_needed = is_two_reg_sysv ? 2 : 1;
+
+				if (int_reg_index + regs_needed <= max_int_regs) {
+				// Use integer register(s) for non-floating-point parameters
 				X64Register target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
 
 				if (std::holds_alternative<unsigned long long>(paramValue)) {
@@ -1128,13 +1136,20 @@
 					auto it = variable_scopes.back().variables.find(var_name_handle);
 					if (it != variable_scopes.back().variables.end()) {
 						int param_offset = it->second.offset;
-						// For large struct parameters (> 64 bits), pass by pointer according to System V AMD64 ABI
-						// This includes std::initializer_list which is 128 bits (16 bytes)
-						bool pass_by_pointer = is_reference_param || (paramType == Type::Struct && paramSize > 64);
+						// SysV AMD64: 9-16 byte by-value structs go in two consecutive registers
+						// (verified above that space is available); all other large structs are
+						// passed by pointer.
+						bool pass_by_pointer = is_reference_param || (!is_two_reg_sysv && paramType == Type::Struct && paramSize > 64);
 						if (pass_by_pointer) {
 							// For reference parameters or large structs, load address (LEA)
 							// LEA target_reg, [RBP + param_offset]
 							emitLeaFromFrame(target_reg, param_offset);
+						} else if (is_two_reg_sysv) {
+							// Two-register struct: bytes 0-7 in target_reg, bytes 8-15 in next register.
+							// Availability of the second slot was already checked above.
+							emitMovFromFrame(target_reg, param_offset);
+							X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+							emitMovFromFrame(second_reg, param_offset + 8);
 						} else {
 							// For value parameters: source (sized stack slot) -> dest (64-bit register)
 							emitMovFromFrameSized(
@@ -1144,6 +1159,7 @@
 						}
 					}
 				}
+			}
 			}
 			// Args that don't fit in registers were already placed on the stack in the first pass above
 		}
