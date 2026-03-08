@@ -1430,7 +1430,7 @@
 				if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
 					struct_info_ptr = gTypeInfo[type_node.type_index()].struct_info_.get();
 				}
-				int element_size_bytes = size_in_bits / 8;
+				int element_size_bytes = struct_info_ptr ? static_cast<int>(struct_info_ptr->total_size) : (size_in_bits / 8);
 
 				// Generate store for each element
 				for (size_t i = 0; i < initializers.size(); i++) {
