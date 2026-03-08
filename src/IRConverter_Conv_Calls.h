@@ -297,10 +297,9 @@
 				
 				// Special handling for passing addresses (this pointer or large struct references)
 				// For member functions: first arg is always "this" pointer (pass address)
-				// System V AMD64 ABI (Linux): 
+				// System V AMD64 ABI (Linux):
 				//   - Structs ≤8 bytes: pass by value in one register
-				//   - Structs 9-16 bytes in VARIADIC calls: pass by value in TWO consecutive registers
-				//   - Structs 9-16 bytes in non-variadic calls: pass by pointer (FlashCpp internal)
+				//   - Structs 9-16 bytes (all calls): pass by value in TWO consecutive integer registers
 				//   - Structs >16 bytes: pass by pointer
 				// x64 Windows ABI:
 				//   - Structs of 1, 2, 4, or 8 bytes: pass by value in one register
@@ -314,7 +313,7 @@
 					// Parameter is explicitly a reference - always pass by address
 					should_pass_address = true;
 				} else if (is_potential_two_reg_struct) {
-					// SysV AMD64 variadic: 9-16 byte structs go in two consecutive GP registers.
+					// SysV AMD64: 9-16 byte structs go in two consecutive GP registers (all calls).
 					// Must check before shouldPassStructByAddress (which would wrongly return true).
 					is_two_register_struct = true;
 				} else if (shouldPassStructByAddress(arg)) {
