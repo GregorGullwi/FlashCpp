@@ -214,12 +214,6 @@ public:
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
 	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);
 
-	// Helper for member initializer extraction (used by nested member access)
-	static std::optional<ASTNode> get_member_initializer(
-		const ConstructorCallNode& ctor_call,
-		const StructTypeInfo* struct_info,
-		std::string_view member_name_param,
-		[[maybe_unused]] EvaluationContext& context);
 	static const StructTypeInfo* get_struct_info_from_type(const TypeSpecifierNode& type_spec);
 	static EvalResult evaluate_nested_member_access(
 		const MemberAccessNode& inner_access,
@@ -285,6 +279,12 @@ private:
 		const StructTypeInfo* owner_struct = nullptr;
 	};
 
+		struct ResolvedConstexprMemberSource {
+			std::optional<ASTNode> initializer;
+			const StructMember* member_info = nullptr;
+			std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
+		};
+
 	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
 	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
@@ -348,6 +348,14 @@ private:
 		const IdentifierNode* identifier,
 		const EvaluationContext& context,
 		CurrentStructStaticLookupMode lookup_mode);
+		static std::optional<EvalResult> resolve_constexpr_member_source_from_initializer(
+			const std::optional<ASTNode>& object_initializer,
+			TypeIndex declared_type_index,
+			std::string_view member_name,
+			std::string_view usage_name,
+			EvaluationContext& context,
+			ResolvedConstexprMemberSource& resolved_member,
+			const std::unordered_map<std::string_view, EvalResult>* enclosing_bindings = nullptr);
 	static std::optional<EvalResult> resolve_constexpr_object_source(
 		const IdentifierNode* object_identifier,
 		std::string_view object_name,
