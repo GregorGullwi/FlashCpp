@@ -900,10 +900,9 @@
 		// so count them as 2 to ensure enough param_home_space is reserved.
 		size_t param_count = 0;
 		{
-			constexpr bool is_elf_target = std::is_same_v<TWriterClass, ElfFileWriter>;
 			for (const auto& p : parameter_types) {
-				bool is_two_reg = is_elf_target && !is_variadic &&
-				                  p.type() == Type::Struct && p.size_in_bits() > 64 && p.size_in_bits() <= 128 && !p.is_reference() && !p.is_pointer();
+				bool is_two_reg = !is_variadic &&
+				                  isTwoRegisterStructRaw(p.type(), p.size_in_bits(), p.is_reference(), static_cast<int>(p.pointer_depth()));
 				param_count += is_two_reg ? 2 : 1;
 			}
 		}
@@ -1330,9 +1329,10 @@
 
 				// SysV AMD64: non-variadic 9-16 byte by-value structs are passed in two consecutive
 				// integer registers and materialized directly in the callee's frame (no pointer indirection).
-				constexpr bool is_elf_callee = std::is_same_v<TWriterClass, ElfFileWriter>;
-				bool is_two_reg_struct = is_elf_callee && !is_variadic &&
-				                        param_type == Type::Struct && param_size > 64 && param_size <= 128 && !is_reference && param_pointer_depth == 0;
+				// For variadic callees, the register-save-area prologue handles all register args,
+				// so this path is gated on !is_variadic.
+				bool is_two_reg_struct = !is_variadic &&
+				                        isTwoRegisterStructRaw(param_type, param_size, is_reference, param_pointer_depth);
 			
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
@@ -1484,9 +1484,10 @@
 
 				// SysV AMD64: non-variadic 9-16 byte by-value structs are passed in two consecutive
 				// integer registers and materialized directly in the callee's frame (no pointer indirection).
-				constexpr bool is_elf_callee = std::is_same_v<TWriterClass, ElfFileWriter>;
-				bool is_two_reg_struct = is_elf_callee && !is_variadic &&
-				                        param.type == Type::Struct && param.size_in_bits > 64 && param.size_in_bits <= 128 && !param.is_reference() && param.pointer_depth == 0;
+				// For variadic callees, the register-save-area prologue handles all register args,
+				// so this path is gated on !is_variadic.
+				bool is_two_reg_struct = !is_variadic &&
+				                        isTwoRegisterStructRaw(param.type, param.size_in_bits, param.is_reference(), param.pointer_depth);
 			
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();

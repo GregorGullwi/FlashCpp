@@ -1221,16 +1221,22 @@
 		return spill_reg;
 	}
 
+	/// SysV AMD64 ABI: true for 9-16 byte by-value structs that must be passed in two
+	/// consecutive general-purpose registers (INTEGER+INTEGER classification).
+	/// This applies to both variadic and non-variadic calls.
+	/// NOTE: For variadic *callees*, the register-save-area prologue handles these
+	/// implicitly, so callee-side code guards this with !is_variadic separately.
+	static bool isTwoRegisterStructRaw(Type type, int size_in_bits, bool is_reference, int pointer_depth) {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			return type == Type::Struct && size_in_bits > 64 && size_in_bits <= 128 && !is_reference && pointer_depth == 0;
+		}
+		(void)type; (void)size_in_bits; (void)is_reference; (void)pointer_depth;
+		return false;
+	}
+
 	/// Check if an argument is a two-register struct under System V AMD64 ABI (9-16 bytes, by value).
 	bool isTwoRegisterStruct(const TypedValue& arg, [[maybe_unused]] bool is_variadic_call = false) const {
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			// SysV AMD64 ABI: structs 9-16 bytes (INTEGER+INTEGER class) are passed in two
-			// consecutive general-purpose registers for BOTH variadic and non-variadic calls.
-			// Both caller and callee now agree on this convention, so external ABI interop works.
-			return arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference();
-		}
-		(void)arg;
-		return false;
+		return isTwoRegisterStructRaw(arg.type, arg.size_in_bits, arg.is_reference(), arg.pointer_depth);
 	}
 
 	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
