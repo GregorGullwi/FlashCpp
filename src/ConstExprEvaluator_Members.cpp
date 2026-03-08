@@ -1487,21 +1487,16 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const auto& params = matching_ctor->parameter_nodes();
-	for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
-		if (!params[i].is<DeclarationNode>()) {
-			continue;
-		}
-
-		const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-		std::string_view param_name = param_decl.identifier_token().value();
-		EvalResult arg_result = enclosing_bindings
-			? evaluate_expression_with_bindings_const(ctor_args[i], *enclosing_bindings, context)
-			: evaluate(ctor_args[i], context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-
-		resolved_member.evaluation_bindings[param_name] = arg_result;
+	auto bind_result = bind_evaluated_arguments(
+		params,
+		ctor_args,
+		resolved_member.evaluation_bindings,
+		context,
+		"Invalid parameter node in constexpr member source constructor",
+		enclosing_bindings,
+		true);
+	if (!bind_result.success()) {
+		return bind_result;
 	}
 
 	return std::nullopt;
@@ -2470,17 +2465,17 @@ EvalResult Evaluator::extract_object_members(
 	// Build parameter bindings for the constructor
 	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 	const auto& params = matching_ctor->parameter_nodes();
-	for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
-		if (params[i].is<DeclarationNode>()) {
-			const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-			std::string_view param_name = param_decl.identifier_token().value();
-			auto arg_result = evaluate(ctor_args[i], context);
-			if (!arg_result.success()) {
-				return arg_result;
-			}
-			ctor_param_bindings[param_name] = arg_result;
+		auto bind_result = bind_evaluated_arguments(
+			params,
+			ctor_args,
+			ctor_param_bindings,
+			context,
+			"Invalid parameter node in constexpr constructor member extraction",
+			nullptr,
+			true);
+		if (!bind_result.success()) {
+			return bind_result;
 		}
-	}
 	
 	// Extract member values from the initializer list
 	for (const auto& mem_init : matching_ctor->member_initializers()) {
