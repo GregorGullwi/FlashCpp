@@ -146,6 +146,7 @@
 						}
 						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 						regAlloc.release(temp_reg);
+						stack_arg_count++;
 					} else if (is_float_arg) {
 						// For floating-point arguments, load into XMM register and store with float instruction
 						X64Register temp_xmm = allocateXMMRegisterWithSpilling();
@@ -189,13 +190,37 @@
 						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, is_float);
 
 						regAlloc.release(temp_xmm);
+						stack_arg_count++;
+					} else if (is_two_reg_struct) {
+						// SysV AMD64: two-register struct that overflows the register file is
+						// passed as two consecutive 8-byte slots on the stack (memory class).
+						// Load each 8-byte half from the struct's frame slot and store to RSP.
+						auto get_struct_frame_offset = [&]() -> int {
+							if (std::holds_alternative<StringHandle>(arg.value)) {
+								StringHandle var_handle = std::get<StringHandle>(arg.value);
+								return variable_scopes.back().variables[var_handle].offset;
+							} else if (std::holds_alternative<TempVar>(arg.value)) {
+								return getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
+							}
+							return 0;
+						};
+						int src_offset = get_struct_frame_offset();
+						X64Register lo_reg = allocateRegisterWithSpilling();
+						X64Register hi_reg = allocateRegisterWithSpilling();
+						emitMovFromFrame(lo_reg, src_offset);
+						emitMovFromFrame(hi_reg, src_offset + 8);
+						emitStoreToRSP(textSectionData, lo_reg, stack_offset);
+						emitStoreToRSP(textSectionData, hi_reg, stack_offset + 8);
+						regAlloc.release(lo_reg);
+						regAlloc.release(hi_reg);
+						stack_arg_count += 2;
 					} else {
 						// For integer arguments, use the existing code path
 						X64Register temp_reg = loadTypedValueIntoRegister(arg);
 						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 						regAlloc.release(temp_reg);
+						stack_arg_count++;
 					}
-					stack_arg_count++;
 				}
 			}
 			

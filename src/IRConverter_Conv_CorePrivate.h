@@ -1300,10 +1300,36 @@
 							}
 						}
 					} else {
-						// Linux: First 6 in registers, rest on stack starting at RSP+0
-						if (arg_count > 6) {
-							outgoing_bytes = (arg_count - 6) * 8;
+						// Linux SysV AMD64: First 6 INT regs and 8 FP regs; two-register structs consume 2 INT slots.
+						// Count actual register slots to correctly detect overflow.
+						size_t int_slots_used = 0;
+						size_t float_slots_used = 0;
+						size_t int_stack_slots = 0;
+						size_t float_stack_slots = 0;
+						constexpr size_t max_int_regs = 6;
+						constexpr size_t max_float_regs = 8;
+						for (const auto& arg : call_op->args) {
+							bool arg_is_float = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference() && arg.pointer_depth == 0;
+							bool arg_is_two_reg = !call_op->is_variadic &&
+							                     arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 &&
+							                     !arg.is_reference() && arg.pointer_depth == 0;
+							size_t slots = arg_is_two_reg ? 2 : 1;
+							if (arg_is_float) {
+								if (float_slots_used < max_float_regs) float_slots_used++;
+								else float_stack_slots++;
+							} else {
+								if (int_slots_used + slots <= max_int_regs) {
+									int_slots_used += slots;
+								} else if (int_slots_used < max_int_regs) {
+									// Partial overflow: struct needs 2 but only 1 slot left — all goes to stack
+									int_stack_slots += slots;
+									int_slots_used = max_int_regs;
+								} else {
+									int_stack_slots += slots;
+								}
+							}
 						}
+						outgoing_bytes = (int_stack_slots + float_stack_slots) * 8;
 						// No shadow space on Linux
 					}
 					

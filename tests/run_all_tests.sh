@@ -47,9 +47,14 @@ EXPECTED_FAIL=(
 # Note: test_virtual_inheritance.cpp, test_covariant_return.cpp, test_varargs.cpp link successfully but may have runtime issues
 # Note: test_placement_new_parsing_ret42.cpp now compiles and links successfully with array initializer support
 EXPECTED_LINK_FAIL=(
-    "test_external_abi.cpp"               # Needs external C helper functions from test_external_abi_helper.c
-    "test_external_abi_simple.cpp"        # Needs external C helper functions from test_external_abi_helper.c
 )
+
+# Tests that require additional C helper objects for linking.
+# Format: "test_file.cpp:helper_file.c" pairs, space-separated.
+# The helper .c file is expected to live in the tests/ directory.
+# This is exported so the parallel worker function can access it.
+EXTRA_C_HELPERS="test_external_abi.cpp:test_external_abi_helper.c test_external_abi_simple.cpp:test_external_abi_helper.c"
+export EXTRA_C_HELPERS
 
 # Expected runtime crashes - files that compile and link but crash at runtime
 EXPECTED_RUNTIME_CRASH=(
@@ -129,9 +134,21 @@ test_one_file() {
     fi
 
     if [ -f "$obj" ]; then
+        # Compile any C helper files required for this test (from EXTRA_C_HELPERS env var)
+        local extra_objs=()
+        for mapping in $EXTRA_C_HELPERS; do
+            local map_base="${mapping%%:*}"
+            local map_helper="${mapping##*:}"
+            if [ "$map_base" = "$base" ]; then
+                local helper_obj="/tmp/${map_helper%.c}_$$.o"
+                clang -c "$repo_root/tests/$map_helper" -o "$helper_obj" 2>/dev/null
+                extra_objs+=("$helper_obj")
+            fi
+        done
+
         # Link
         local link_output
-        link_output=$(clang++ -no-pie -o "$exe" "$obj" -lstdc++ -lc 2>&1)
+        link_output=$(clang++ -no-pie -o "$exe" "$obj" "${extra_objs[@]}" -lstdc++ -lc 2>&1)
         local link_exit_code=$?
 
         if [ $link_exit_code -eq 0 ]; then
@@ -179,6 +196,7 @@ test_one_file() {
         echo "COMPILE_FAIL|$base|$first_error" > "$result_file"
     fi
     rm -f "$obj"
+    rm -f "${extra_objs[@]}"
 }
 export -f test_one_file
 
