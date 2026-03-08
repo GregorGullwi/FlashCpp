@@ -58,19 +58,29 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 			return info;
 		}
 
+		const auto findStaticMemberInStruct = [&](StringHandle struct_name) -> const StructStaticMember* {
+			if (!struct_name.isValid()) {
+				return nullptr;
+			}
+
+			auto struct_it = gTypesByName.find(struct_name);
+			if (struct_it == gTypesByName.end() || !struct_it->second || !struct_it->second->getStructInfo()) {
+				return nullptr;
+			}
+
+			return struct_it->second->getStructInfo()->findStaticMember(identifier_handle);
+		};
+
 		const std::string_view resolved_name = info.store_name.view();
 		const size_t last_scope_pos = resolved_name.rfind("::");
-		if (last_scope_pos == std::string_view::npos) {
-			return info;
-		}
+		const StringHandle owner_name = (last_scope_pos == std::string_view::npos)
+			? StringHandle{}
+			: StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
 
-		const StringHandle owner_name = StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
-		auto struct_it = gTypesByName.find(owner_name);
-		if (struct_it == gTypesByName.end() || !struct_it->second || !struct_it->second->getStructInfo()) {
-			return info;
+		const StructStaticMember* static_member = findStaticMemberInStruct(owner_name);
+		if (!static_member && current_struct_name_.isValid() && current_struct_name_ != owner_name) {
+			static_member = findStaticMemberInStruct(current_struct_name_);
 		}
-
-		const auto* static_member = struct_it->second->getStructInfo()->findStaticMember(identifier_handle);
 		if (static_member) {
 			info.type = static_member->type;
 			info.size_in_bits = static_cast<int>(static_member->size * 8);

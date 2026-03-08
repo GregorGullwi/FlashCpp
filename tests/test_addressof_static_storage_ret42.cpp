@@ -1,4 +1,4 @@
-int global_value = 10;
+int global_value = 9;
 
 int* staticLocalPtr() {
 	static int local_value = 5;
@@ -20,6 +20,7 @@ int main() {
 	int* local_ptr = staticLocalPtr();
 	int* member_ptr = Counter::memberPtr();
 
+	*global_ptr += 1;
 	*local_ptr += 4;
 	*member_ptr += 3;
 
