@@ -1084,72 +1084,45 @@
 						emitFloatMovFromFrame(target_xmm, param_offset, is_float);
 					}
 				}
-				} else {
+			} else if (!is_float_arg) {
 				// Integer (non-float) parameter.
 				// SysV AMD64: 9-16 byte by-value structs consume two consecutive registers; verify space up front.
 				bool is_two_reg_sysv = isTwoRegisterStruct(arg, false /* non-variadic */);
 				size_t regs_needed = is_two_reg_sysv ? 2 : 1;
 
 				if (int_reg_index + regs_needed <= max_int_regs) {
-				// Use integer register(s) for non-floating-point parameters
-				X64Register target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+					// Use integer register(s) for non-floating-point parameters
+					X64Register target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
 
-				if (std::holds_alternative<unsigned long long>(paramValue)) {
-					// Immediate value
-					unsigned long long value = std::get<unsigned long long>(paramValue);
-					
-					// For 32-bit parameters, use 32-bit MOV to properly handle signed values
-					// For negative values stored as 64-bit unsigned, truncate to 32-bit
-					if (paramSize == 32) {
-						uint32_t value32 = static_cast<uint32_t>(value);
-						emitMovImm32(target_reg, value32);
-					} else {
-						// For 64-bit parameters or other sizes, use 64-bit MOV
-						emitMovImm64(target_reg, value);
-					}
-				} else if (std::holds_alternative<TempVar>(paramValue)) {
-					// Load from temp variable
-					const TempVar temp_var = std::get<TempVar>(paramValue);
-					int param_offset = getStackOffsetFromTempVar(temp_var);
-					if (is_reference_param) {
-						// For reference parameters, check if the temp var already holds a pointer
-						// (e.g., from addressof operation). If so, load the pointer value (MOV),
-						// otherwise take the address of the variable (LEA).
-						auto ref_it = reference_stack_info_.find(param_offset);
-						if (ref_it != reference_stack_info_.end()) {
-							// Temp var holds a pointer - load it
-							emitMovFromFrame(target_reg, param_offset);
+					if (std::holds_alternative<unsigned long long>(paramValue)) {
+						// Immediate value
+						unsigned long long value = std::get<unsigned long long>(paramValue);
+						
+						// For 32-bit parameters, use 32-bit MOV to properly handle signed values
+						// For negative values stored as 64-bit unsigned, truncate to 32-bit
+						if (paramSize == 32) {
+							uint32_t value32 = static_cast<uint32_t>(value);
+							emitMovImm32(target_reg, value32);
 						} else {
-							// Temp var holds a value - take its address
-							emitLeaFromFrame(target_reg, param_offset);
+							// For 64-bit parameters or other sizes, use 64-bit MOV
+							emitMovImm64(target_reg, value);
 						}
-					} else {
-						// For value parameters: source (sized stack slot) -> dest (64-bit register)
-						emitMovFromFrameSized(
-							SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-							SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}  // source: sized stack slot
-						);
-					}
-				} else if (std::holds_alternative<StringHandle>(paramValue)) {
-					// Load from variable
-					StringHandle var_name_handle = std::get<StringHandle>(paramValue);
-					auto it = variable_scopes.back().variables.find(var_name_handle);
-					if (it != variable_scopes.back().variables.end()) {
-						int param_offset = it->second.offset;
-						// SysV AMD64: 9-16 byte by-value structs go in two consecutive registers
-						// (verified above that space is available); all other large structs are
-						// passed by pointer.
-						bool pass_by_pointer = is_reference_param || (!is_two_reg_sysv && paramType == Type::Struct && paramSize > 64);
-						if (pass_by_pointer) {
-							// For reference parameters or large structs, load address (LEA)
-							// LEA target_reg, [RBP + param_offset]
-							emitLeaFromFrame(target_reg, param_offset);
-						} else if (is_two_reg_sysv) {
-							// Two-register struct: bytes 0-7 in target_reg, bytes 8-15 in next register.
-							// Availability of the second slot was already checked above.
-							emitMovFromFrame(target_reg, param_offset);
-							X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
-							emitMovFromFrame(second_reg, param_offset + 8);
+					} else if (std::holds_alternative<TempVar>(paramValue)) {
+						// Load from temp variable
+						const TempVar temp_var = std::get<TempVar>(paramValue);
+						int param_offset = getStackOffsetFromTempVar(temp_var);
+						if (is_reference_param) {
+							// For reference parameters, check if the temp var already holds a pointer
+							// (e.g., from addressof operation). If so, load the pointer value (MOV),
+							// otherwise take the address of the variable (LEA).
+							auto ref_it = reference_stack_info_.find(param_offset);
+							if (ref_it != reference_stack_info_.end()) {
+								// Temp var holds a pointer - load it
+								emitMovFromFrame(target_reg, param_offset);
+							} else {
+								// Temp var holds a value - take its address
+								emitLeaFromFrame(target_reg, param_offset);
+							}
 						} else {
 							// For value parameters: source (sized stack slot) -> dest (64-bit register)
 							emitMovFromFrameSized(
@@ -1157,9 +1130,36 @@
 								SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}  // source: sized stack slot
 							);
 						}
+					} else if (std::holds_alternative<StringHandle>(paramValue)) {
+						// Load from variable
+						StringHandle var_name_handle = std::get<StringHandle>(paramValue);
+						auto it = variable_scopes.back().variables.find(var_name_handle);
+						if (it != variable_scopes.back().variables.end()) {
+							int param_offset = it->second.offset;
+							// SysV AMD64: 9-16 byte by-value structs go in two consecutive registers
+							// (verified above that space is available); all other large structs are
+							// passed by pointer.
+							bool pass_by_pointer = is_reference_param || (!is_two_reg_sysv && paramType == Type::Struct && paramSize > 64);
+							if (pass_by_pointer) {
+								// For reference parameters or large structs, load address (LEA)
+								// LEA target_reg, [RBP + param_offset]
+								emitLeaFromFrame(target_reg, param_offset);
+							} else if (is_two_reg_sysv) {
+								// Two-register struct: bytes 0-7 in target_reg, bytes 8-15 in next register.
+								// Availability of the second slot was already checked above.
+								emitMovFromFrame(target_reg, param_offset);
+								X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+								emitMovFromFrame(second_reg, param_offset + 8);
+							} else {
+								// For value parameters: source (sized stack slot) -> dest (64-bit register)
+								emitMovFromFrameSized(
+									SizedRegister{target_reg, 64, false},  // dest: 64-bit register
+									SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}  // source: sized stack slot
+								);
+							}
+						}
 					}
 				}
-			}
 			}
 			// Args that don't fit in registers were already placed on the stack in the first pass above
 		}
