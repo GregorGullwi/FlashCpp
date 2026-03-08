@@ -878,12 +878,24 @@
 		}
 		
 		int32_t obj_offset = it->second.offset;
-		int32_t combined_offset = obj_offset + op.member_offset;
 		
-		// Calculate the address: LEA target_reg, [RBP + combined_offset]
+		// Calculate the address:
+		// - For regular stack objects, use LEA [RBP + obj_offset + member_offset]
+		// - For references and the implicit 'this' parameter, first load the base pointer value
+		//   from the stack slot, then add the member offset
 		// Use register allocator to avoid clobbering dirty registers
 		X64Register target_reg = allocateRegisterWithSpilling();
-		emitLeaFromFrame(target_reg, combined_offset);
+		auto ref_it = reference_stack_info_.find(obj_offset);
+		if (op.base_object == StringTable::getOrInternStringHandle("this") ||
+			ref_it != reference_stack_info_.end()) {
+			emitMovFromFrame(target_reg, obj_offset);
+			if (op.member_offset != 0) {
+				emitAddImmToReg(textSectionData, target_reg, op.member_offset);
+			}
+		} else {
+			int32_t combined_offset = obj_offset + op.member_offset;
+			emitLeaFromFrame(target_reg, combined_offset);
+		}
 		
 		// Store the address to result_var (pointer is always 64-bit)
 		int32_t result_offset = getStackOffsetFromTempVar(op.result);

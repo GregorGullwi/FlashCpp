@@ -381,6 +381,30 @@
 				}
 			}
 			
+			// For reference returns, prefer materializing the referred-to address in IR when we
+			// have direct member lvalue metadata. This avoids relying on backend reconstruction
+			// from a loaded member temp.
+			if (current_function_returns_reference_ && operands.size() >= 3 &&
+				std::holds_alternative<TempVar>(operands[2])) {
+				TempVar return_temp = std::get<TempVar>(operands[2]);
+				auto lv_info_opt = getTempVarLValueInfo(return_temp);
+				if (lv_info_opt.has_value()) {
+					const LValueInfo& lv_info = *lv_info_opt;
+					if (lv_info.kind == LValueInfo::Kind::Member &&
+						std::holds_alternative<StringHandle>(lv_info.base)) {
+						TempVar address_temp = var_counter.next();
+						AddressOfMemberOp addr_member_op;
+						addr_member_op.result = address_temp;
+						addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
+						addr_member_op.member_offset = lv_info.offset;
+						addr_member_op.member_type = current_function_return_type_;
+						addr_member_op.member_size_in_bits = current_function_return_size_;
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
+						operands[2] = address_temp;
+					}
+				}
+			}
+
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
 
