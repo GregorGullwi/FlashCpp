@@ -275,41 +275,40 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	}
 
 	const ASTNode& array_expr = subscript.array_expr();
-	EvalResult array_result;
-	bool have_array = false;
+	const EvalResult* array_result = nullptr;
+	std::optional<EvalResult> evaluated_array_result;
 
 	if (array_expr.is<IdentifierNode>()) {
 		auto array_it = bindings.find(array_expr.as<IdentifierNode>().name());
 		if (array_it == bindings.end()) {
 			return std::nullopt;
 		}
-		array_result = array_it->second;
-		have_array = true;
+		array_result = &array_it->second;
 	} else if (array_expr.is<ExpressionNode>()) {
-		array_result = evaluate_expression_with_bindings_const(array_expr, bindings, context);
-		if (!array_result.success()) {
-			return array_result;
+		evaluated_array_result = evaluate_expression_with_bindings_const(array_expr, bindings, context);
+		if (!evaluated_array_result->success()) {
+			return *evaluated_array_result;
 		}
-		have_array = true;
+		array_result = &evaluated_array_result.value();
 	}
 
-	if (!have_array) {
+	if (!array_result) {
 		return std::nullopt;
 	}
-	if (!array_result.is_array) {
+	if (!array_result->is_array) {
 		return EvalResult::error("Subscript on non-array variable in constant expression");
 	}
-	if (!array_result.array_elements.empty()) {
-		if (static_cast<size_t>(index) >= array_result.array_elements.size()) {
+	if (!array_result->array_elements.empty()) {
+		if (static_cast<size_t>(index) >= array_result->array_elements.size()) {
 			return EvalResult::error("Array index out of bounds in constant expression");
 		}
-		return array_result.array_elements[static_cast<size_t>(index)];
+		return array_result->array_elements[static_cast<size_t>(index)];
 	}
-	if (static_cast<size_t>(index) >= array_result.array_values.size()) {
+	if (static_cast<size_t>(index) >= array_result->array_values.size()) {
 		return EvalResult::error("Array index out of bounds in constant expression");
 	}
 
-	return EvalResult::from_int(array_result.array_values[static_cast<size_t>(index)]);
+	return EvalResult::from_int(array_result->array_values[static_cast<size_t>(index)]);
 }
 
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
