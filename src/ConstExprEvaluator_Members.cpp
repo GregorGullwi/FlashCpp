@@ -2353,13 +2353,12 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	context.current_depth++;
 	
 	// Evaluate the function body
-	// For simple constexpr functions, we expect a single return statement
-	auto result = evaluate_single_return_block_with_bindings(
+	auto result = evaluate_block_with_bindings(
 		definition.value(),
 		member_bindings,
 		context,
 		"Member function body is not a block",
-		"Constexpr member function must have a single return statement (complex statements not yet supported)");
+		"Constexpr member function did not return a value");
 	context.current_depth--;
 	restore_template_bindings();
 	return result;

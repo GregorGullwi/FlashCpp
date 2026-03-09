@@ -395,6 +395,12 @@ private:
 		EvaluationContext& context,
 		std::string_view non_block_error,
 		std::string_view multi_statement_error);
+	static EvalResult evaluate_block_with_bindings(
+		const ASTNode& body_node,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context,
+		std::string_view non_block_error,
+		std::string_view no_return_error);
 	static EvalResult evaluate_statement_with_bindings(
 		const ASTNode& stmt_node,
 		std::unordered_map<std::string_view, EvalResult>& bindings,

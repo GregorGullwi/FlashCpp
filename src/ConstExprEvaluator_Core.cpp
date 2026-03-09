@@ -2,6 +2,14 @@
 
 namespace ConstExpr {
 
+namespace {
+	constexpr std::string_view kStatementExecutedWithoutReturn = "Statement executed (not a return)";
+
+	bool isStatementExecutedWithoutReturn(const EvalResult& result) {
+		return !result.success() && result.error_message == kStatementExecutedWithoutReturn;
+	}
+}
+
 // Main evaluation entry point
 // Evaluates a constant expression and returns the result
 EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& context) {
@@ -1392,13 +1400,12 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
 		}
 		context.current_depth++;
-		// Known limitation: only simple single-return constexpr operator() bodies are handled here.
-		auto result = evaluate_single_return_block_with_bindings(
+		auto result = evaluate_block_with_bindings(
 			definition.value(),
 			evaluation_bindings,
 			context,
 			"Callable object operator() body is not a block",
-			"Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
+			"Constexpr callable object operator() did not return a value");
 		context.current_depth--;
 		return result;
 	}
@@ -1450,12 +1457,12 @@ EvalResult Evaluator::evaluate_callable_object(
 		if (context.current_depth >= context.max_recursion_depth)
 			return EvalResult::error("Constexpr recursion depth limit exceeded");
 		context.current_depth++;
-		auto result = evaluate_single_return_block_with_bindings(
+		auto result = evaluate_block_with_bindings(
 			definition.value(),
 			evaluation_bindings,
 			context,
 			"operator() body in brace-initialized callable is not a block",
-			"Constexpr operator() in brace-initialized callable must have a single statement (complex bodies not yet supported)");
+			"Constexpr operator() in brace-initialized callable did not return a value");
 		context.current_depth--;
 		return result;
 	}
@@ -1508,12 +1515,12 @@ EvalResult Evaluator::evaluate_lambda_call(
 	
 	EvalResult result;
 	if (body_node.is<BlockNode>()) {
-		result = evaluate_single_return_block_with_bindings(
+		result = evaluate_block_with_bindings(
 			body_node,
 			bindings,
 			context,
 			"Constexpr lambda body is not a block",
-			"Constexpr lambda must have a single return statement (complex statements not yet supported)");
+			"Constexpr lambda did not return a value");
 	} else if (body_node.is<ExpressionNode>()) {
 		// Expression body (implicit return)
 		result = evaluate_expression_with_bindings(body_node, bindings, context);
@@ -2349,46 +2356,17 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// Increase recursion depth
 	context.current_depth++;
 	
-	// Evaluate the function body with parameter bindings
-	const ASTNode& body_node = definition.value();
-	if (!body_node.is<BlockNode>()) {
-		context.current_depth--;
-		restore_template_bindings();
-		return EvalResult::error("Function body is not a block");
-	}
-	
-	const BlockNode& body = body_node.as<BlockNode>();
-	const auto& statements = body.get_statements();
-	
-	// Evaluate all statements in the function body
-	// Local variable bindings are mutable - they can be added to as we process statements
 	std::unordered_map<std::string_view, EvalResult> local_bindings = param_bindings;
-	
-	for (size_t i = 0; i < statements.size(); i++) {
-		auto result = evaluate_statement_with_bindings(statements[i], local_bindings, context);
-		
-		// If the result is successful, it means a return value was computed
-		// This can happen either directly from a return statement, or indirectly
-		// from an if/while/for statement that contains a return
-		if (result.success()) {
-			context.current_depth--;
-			restore_template_bindings();
-			return result;
-		}
-		
-		// For other statements (like variable declarations), result contains the binding info
-		// The binding has already been added to local_bindings by evaluate_statement_with_bindings
-		if (!result.success() && result.error_message != "Statement executed (not a return)") {
-			// An actual error occurred
-			context.current_depth--;
-			restore_template_bindings();
-			return result;
-		}
-	}
+	auto result = evaluate_block_with_bindings(
+		definition.value(),
+		local_bindings,
+		context,
+		"Function body is not a block",
+		"Constexpr function did not return a value");
 
 	context.current_depth--;
 	restore_template_bindings();
-	return EvalResult::error("Constexpr function did not return a value");
+	return result;
 }
 
 EvalResult Evaluator::bind_evaluated_arguments(
@@ -2461,6 +2439,31 @@ EvalResult Evaluator::evaluate_single_return_block_with_bindings(
 	}
 
 	return evaluate_statement_with_bindings(statements[0], bindings, context);
+}
+
+EvalResult Evaluator::evaluate_block_with_bindings(
+	const ASTNode& body_node,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	std::string_view non_block_error,
+	std::string_view no_return_error) {
+	if (!body_node.is<BlockNode>()) {
+		return EvalResult::error(std::string(non_block_error));
+	}
+
+	const BlockNode& body = body_node.as<BlockNode>();
+	const auto& statements = body.get_statements();
+	for (size_t i = 0; i < statements.size(); i++) {
+		auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+		if (result.success()) {
+			return result;
+		}
+		if (!isStatementExecutedWithoutReturn(result)) {
+			return result;
+		}
+	}
+
+	return EvalResult::error(std::string(no_return_error));
 }
 
 EvalResult Evaluator::evaluate_statement_with_bindings(
@@ -2560,24 +2563,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				}
 			}
 			
-			// Execute loop body
-			const ASTNode& body = for_stmt.get_body_statement();
-			if (body.is<BlockNode>()) {
-				const BlockNode& block = body.as<BlockNode>();
-				const auto& statements = block.get_statements();
-				for (size_t i = 0; i < statements.size(); i++) {
-					auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-					// If this was a return statement, propagate it up
-					if (statements[i].is<ReturnStatementNode>()) {
-						return result;
-					}
-				}
-			} else {
-				auto result = evaluate_statement_with_bindings(body, bindings, context);
-				// If this was a return statement, propagate it up
-				if (body.is<ReturnStatementNode>()) {
-					return result;
-				}
+			auto body_result = evaluate_statement_with_bindings(for_stmt.get_body_statement(), bindings, context);
+			if (body_result.success()) {
+				return body_result;
+			}
+			if (!isStatementExecutedWithoutReturn(body_result)) {
+				return body_result;
 			}
 			
 			// Execute update expression if present
@@ -2609,24 +2600,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				break;  // Exit loop when condition is false
 			}
 			
-			// Execute loop body
-			const ASTNode& body = while_stmt.get_body_statement();
-			if (body.is<BlockNode>()) {
-				const BlockNode& block = body.as<BlockNode>();
-				const auto& statements = block.get_statements();
-				for (size_t i = 0; i < statements.size(); i++) {
-					auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-					// If this was a return statement, propagate it up
-					if (statements[i].is<ReturnStatementNode>()) {
-						return result;
-					}
-				}
-			} else {
-				auto result = evaluate_statement_with_bindings(body, bindings, context);
-				// If this was a return statement, propagate it up
-				if (body.is<ReturnStatementNode>()) {
-					return result;
-				}
+			auto body_result = evaluate_statement_with_bindings(while_stmt.get_body_statement(), bindings, context);
+			if (body_result.success()) {
+				return body_result;
+			}
+			if (!isStatementExecutedWithoutReturn(body_result)) {
+				return body_result;
 			}
 		}
 		
@@ -2651,46 +2630,25 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		
 		// Execute then or else branch
 		if (cond_result.as_bool()) {
-			// Execute then branch
-			const ASTNode& then_stmt = if_stmt.get_then_statement();
-			if (then_stmt.is<BlockNode>()) {
-				const BlockNode& block = then_stmt.as<BlockNode>();
-				const auto& statements = block.get_statements();
-				for (size_t i = 0; i < statements.size(); i++) {
-					auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-					// If this was a return statement, propagate it up
-					if (statements[i].is<ReturnStatementNode>()) {
-						return result;
-					}
+				auto then_result = evaluate_statement_with_bindings(if_stmt.get_then_statement(), bindings, context);
+				if (then_result.success()) {
+					return then_result;
 				}
-			} else {
-				auto result = evaluate_statement_with_bindings(then_stmt, bindings, context);
-				if (then_stmt.is<ReturnStatementNode>()) {
-					return result;
+				if (!isStatementExecutedWithoutReturn(then_result)) {
+					return then_result;
 				}
-			}
 		} else if (if_stmt.has_else()) {
 			// Execute else branch
 			// Fix dangling reference warning by storing the value first
 			std::optional<ASTNode> else_stmt_opt = if_stmt.get_else_statement();
 			if (else_stmt_opt.has_value()) {
-				const ASTNode& else_stmt = *else_stmt_opt;
-				if (else_stmt.is<BlockNode>()) {
-					const BlockNode& block = else_stmt.as<BlockNode>();
-					const auto& statements = block.get_statements();
-					for (size_t i = 0; i < statements.size(); i++) {
-						auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-						// If this was a return statement, propagate it up
-						if (statements[i].is<ReturnStatementNode>()) {
-							return result;
-						}
+					auto else_result = evaluate_statement_with_bindings(*else_stmt_opt, bindings, context);
+					if (else_result.success()) {
+						return else_result;
 					}
-				} else {
-					auto result = evaluate_statement_with_bindings(else_stmt, bindings, context);
-					if (else_stmt.is<ReturnStatementNode>()) {
-						return result;
+					if (!isStatementExecutedWithoutReturn(else_result)) {
+						return else_result;
 					}
-				}
 			}
 		}
 		
@@ -2712,16 +2670,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	
 	// Handle block statements (nested blocks)
 	if (stmt_node.is<BlockNode>()) {
-		const BlockNode& block = stmt_node.as<BlockNode>();
-		const auto& statements = block.get_statements();
-		for (size_t i = 0; i < statements.size(); i++) {
-			auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-			// If this was a return statement, propagate it up
-			if (statements[i].is<ReturnStatementNode>()) {
-				return result;
-			}
-		}
-		return EvalResult::error("Statement executed (not a return)");
+			return evaluate_block_with_bindings(
+				stmt_node,
+				bindings,
+				context,
+				"Constexpr block is not a block",
+				kStatementExecutedWithoutReturn);
 	}
 	
 	return EvalResult::error("Unsupported statement type in constexpr function");
