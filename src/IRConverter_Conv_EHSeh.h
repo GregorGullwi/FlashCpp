@@ -368,12 +368,6 @@
 						filter = table_size - static_cast<int>(std::distance(type_table.begin(), it));
 					}
 				}
-				FLASH_LOG_FORMAT(Codegen, Debug, "patchElfCatch: try_block={} handler={} type_name='{}' filter={}",
-					patch.try_block_index, patch.handler_index, handler.type_name, filter);
-			} else {
-				FLASH_LOG_FORMAT(Codegen, Debug, "patchElfCatch: try_block={} handler={} OUT OF RANGE (try_blocks.size()={}, handlers={})",
-					patch.try_block_index, patch.handler_index, try_blocks.size(),
-					patch.try_block_index < try_blocks.size() ? try_blocks[patch.try_block_index].catch_handlers.size() : 0);
 			}
 			// Patch the IMM32 in textSectionData
 			auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<int32_t>(filter));

@@ -828,12 +828,24 @@
 
 				emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 			
-				uint32_t eh_effective_frame_size = current_function_has_cpp_eh_
-					? static_cast<uint32_t>(std::min<uint32_t>(static_cast<uint32_t>(total_stack / 16), 15u) * 16)
-					: static_cast<uint32_t>(total_stack);
-				uint32_t eh_extra_stack_size = current_function_has_cpp_eh_
-					? static_cast<uint32_t>(total_stack) - eh_effective_frame_size
-					: 0;
+				// Windows EH (MSVC ABI): the establisher-frame size is capped at 15*16=240 bytes
+				// (maximum SET_FPREG offset encodable in unwind codes).  Anything above that goes
+				// into a second SUB RSP patched via eh_prologue_extra_sub_rsp_offset_.
+				// ELF (SysV ABI): no such cap — the traditional push/mov-rbp/sub-rsp prologue
+				// accommodates any frame size in the single SUB RSP, so always use total_stack.
+				uint32_t eh_effective_frame_size;
+				uint32_t eh_extra_stack_size;
+				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+					eh_effective_frame_size = static_cast<uint32_t>(total_stack);
+					eh_extra_stack_size = 0;
+				} else {
+					eh_effective_frame_size = current_function_has_cpp_eh_
+						? static_cast<uint32_t>(std::min<uint32_t>(static_cast<uint32_t>(total_stack / 16), 15u) * 16)
+						: static_cast<uint32_t>(total_stack);
+					eh_extra_stack_size = current_function_has_cpp_eh_
+						? static_cast<uint32_t>(total_stack) - eh_effective_frame_size
+						: 0;
+				}
 
 				// Patch the main prologue SUB RSP immediate.
 				if (current_function_prologue_offset_ > 0) {

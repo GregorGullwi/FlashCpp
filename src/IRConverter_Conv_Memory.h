@@ -1698,12 +1698,24 @@
 
 				emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 			
-				uint32_t eh_effective_frame_size = current_function_has_cpp_eh_
-					? static_cast<uint32_t>(std::min<uint32_t>(static_cast<uint32_t>(total_stack / 16), 15u) * 16)
-					: static_cast<uint32_t>(total_stack);
-				uint32_t eh_extra_stack_size = current_function_has_cpp_eh_
-					? static_cast<uint32_t>(total_stack) - eh_effective_frame_size
-					: 0;
+				// Windows EH (MSVC ABI): the establisher-frame size is capped at 15*16=240 bytes
+				// (maximum SET_FPREG offset encodable in unwind codes).  Anything above that goes
+				// into a second SUB RSP patched via eh_prologue_extra_sub_rsp_offset_.
+				// ELF (SysV ABI): no such cap — the traditional push/mov-rbp/sub-rsp prologue
+				// accommodates any frame size in the single SUB RSP, so always use total_stack.
+				uint32_t eh_effective_frame_size;
+				uint32_t eh_extra_stack_size;
+				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+					eh_effective_frame_size = static_cast<uint32_t>(total_stack);
+					eh_extra_stack_size = 0;
+				} else {
+					eh_effective_frame_size = current_function_has_cpp_eh_
+						? static_cast<uint32_t>(std::min<uint32_t>(static_cast<uint32_t>(total_stack / 16), 15u) * 16)
+						: static_cast<uint32_t>(total_stack);
+					eh_extra_stack_size = current_function_has_cpp_eh_
+						? static_cast<uint32_t>(total_stack) - eh_effective_frame_size
+						: 0;
+				}
 
 				// Patch the main prologue SUB RSP immediate.
 				if (current_function_prologue_offset_ > 0) {
@@ -1732,10 +1744,17 @@
 				}
 
 				for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
-					uint32_t insn_offset = fixup_patch_offset - 3;
-					static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
-					for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
-						textSectionData[insn_offset + i] = kSevenByteNop[i];
+					if (eh_extra_stack_size > 0) {
+						const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(eh_extra_stack_size);
+						for (int i = 0; i < 4; i++) {
+							textSectionData[fixup_patch_offset + i] = bytes[i];
+						}
+					} else {
+						uint32_t insn_offset = fixup_patch_offset - 3;
+						static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
+						for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
+							textSectionData[insn_offset + i] = kSevenByteNop[i];
+						}
 					}
 				}
 				catch_continuation_sub_rsp_patches_.clear();
