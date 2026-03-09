@@ -1746,7 +1746,17 @@
 
 				auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 				auto seh_try_blocks = convertSehInfoToWriterFormat();
-			
+
+			// noexcept terminate LP (ELF only): same logic as in handleFunctionDecl
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				if (g_enable_exceptions && current_function_is_noexcept_ && current_function_cleanup_lp_offset_ == 0) {
+					current_function_cleanup_lp_offset_ =
+						static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+					emitMovRegReg(X64Register::RDI, X64Register::RAX);
+					emitCall("__cxa_call_terminate");
+				}
+			}
+
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length

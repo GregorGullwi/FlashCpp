@@ -1,6 +1,6 @@
 # Exception Handling in FlashCpp
 
-**Updated**: 2026-02-24  
+**Updated**: 2026-03-09  
 **Platform Targets**: Linux (Itanium C++ ABI) and Windows (MSVC SEH / `__CxxFrameHandler3`)
 
 ## Current Status
@@ -19,11 +19,15 @@ Basic and intermediate exception handling works end-to-end:
 | `.gcc_except_table` (LSDA) | ✅ | Call sites, actions, type table |
 | Personality routine (`__gxx_personality_v0`) | ✅ | Linked from libstdc++ |
 | External typeinfo symbols (`_ZTIi`, `_ZTId`, …) | ✅ | Linked from libstdc++ |
-| `noexcept` specifier | ✅ | Basic support |
+| `noexcept` specifier | ✅ | Full: terminate LP emitted via `__cxa_call_terminate` |
+| `noexcept(false)` specifier | ✅ | Expression evaluated at IR gen; no terminate LP added |
+| `noexcept` enforcement at runtime | ✅ | Cleanup LP calls `__cxa_call_terminate` on escape |
 | Nested try blocks | ✅ | Fixed: LSDA multi-handler dispatch, proper selector type entries |
 | Rethrowing (`throw;`) | ✅ | Fixed: correct RSP alignment + full LSDA coverage |
 | Class-type exceptions with destructors | ✅ | Fixed (Linux): proper _ZTI/_ZTS typeinfo with vtable relocs; dtor arg to __cxa_throw |
 | Stack unwinding with local destructors | ✅ | Fixed (Linux): cleanup landing pads emitted for try-block-local vars (Phase 1) and function-scope vars (Phase 2) |
+| **Exception hierarchy matching** | ✅ | `catch(Base&)` catches `throw Derived{}` via `__si_class_type_info` / `__vmi_class_type_info` |
+| `std::rethrow_exception` / `throw;` propagation | ✅ | `__cxa_rethrow` tested end-to-end |
 
 ### Windows (COFF / MSVC ABI): ✅ Partial
 
@@ -128,6 +132,9 @@ The Language-Specific Data Area (`.gcc_except_table`) contains:
 | 2026-02-24 | catch-all: positive type_filter → NULL type table entry (not filter=0) | **Fixed catch(...)** |
 | 2026-02-24 | Filter = `size - index` (not `index + 1`) for multi-entry type tables | **Fixed multi-handler dispatch** |
 | 2026-02-24 | Unified landing pad with selector dispatch + filter patching | **Enabled multiple catch handlers** |
+| 2026-03-09 | `get_or_create_class_typeinfo(StructTypeInfo*)` emits `__si_class_type_info` / `__vmi_class_type_info` | **Fixed `catch(Base&)` for derived exceptions** |
+| 2026-03-09 | `noexcept` enforcement: terminate LP (`__cxa_call_terminate`) injected for noexcept functions | **Enforces noexcept contract at runtime** |
+| 2026-03-09 | `noexcept(false)` evaluated correctly: no terminate LP for explicitly non-noexcept functions | **Fixed regression for `noexcept(false)` functions** |
 
 ---
 
@@ -187,6 +194,10 @@ Key test files:
 - `test_eh_twofunc_propagate_ret0.cpp` — exception propagation
 - `test_exceptions_catch_funclets_ret0.cpp` — multiple typed catches + catch-all
 - `test_exceptions_basic_ret0.cpp` — comprehensive exception test
+- `test_eh_catch_base_ref_ret0.cpp` — `catch(Base&)` catches `throw Derived{}` via SI typeinfo
+- `test_eh_catch_multi_base_ret0.cpp` — deep hierarchy: `catch(Base&)` → `catch(Middle&)` → `catch(Derived&)`
+- `test_eh_rethrow_propagate_ret0.cpp` — `throw;` (rethrow) propagates with correct type info
+- `test_eh_noexcept_normal_ret0.cpp` — noexcept functions work normally + inner try/catch
 
 ## References
 

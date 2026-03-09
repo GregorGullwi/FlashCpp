@@ -221,6 +221,217 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 }
 
 /**
+ * @brief Get or create type_info symbol for a class type with inheritance hierarchy support.
+ *
+ * Emits the correct Itanium C++ ABI type_info based on the class's bases:
+ *   - No bases          → __class_type_info    (16 bytes)
+ *   - Single non-virt.  → __si_class_type_info (24 bytes)
+ *   - Multiple / virtual → __vmi_class_type_info (variable)
+ *
+ * Falls back to the flat __class_type_info overload when struct_info is null.
+ */
+std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* struct_info) {
+	if (!struct_info) {
+		return {};
+	}
+
+	std::string_view class_name = StringTable::getStringView(struct_info->getName());
+
+	// Build _ZTI symbol name
+	StringBuilder builder;
+	builder.append("_ZTI").append(class_name.length()).append(class_name);
+	std::string typeinfo_symbol(builder.commit());
+
+	// Check if already created
+	static std::set<std::string> created_si_typeinfos;
+	if (created_si_typeinfos.find(typeinfo_symbol) != created_si_typeinfos.end()) {
+		return typeinfo_symbol;
+	}
+
+	const auto& base_classes = struct_info->base_classes;
+
+	// Choose hierarchy variant
+	if (base_classes.empty()) {
+		// Delegate to the flat overload (no inheritance)
+		return get_or_create_class_typeinfo(class_name);
+	}
+
+	// Recursively ensure base class type_infos exist first
+	for (const auto& base : base_classes) {
+		if (base.type_index < gTypeInfo.size()) {
+			const TypeInfo& base_ti = gTypeInfo[base.type_index];
+			const StructTypeInfo* base_si = base_ti.getStructInfo();
+			if (base_si) {
+				get_or_create_class_typeinfo(base_si);
+			}
+		}
+	}
+
+	// Build _ZTS (type name string) in .rodata
+	std::string typename_symbol = "_ZTS" + std::to_string(class_name.length()) + std::string(class_name);
+	std::string type_name_str   = std::to_string(class_name.length()) + std::string(class_name);
+
+	auto* rodata = getSectionByName(".rodata");
+	if (!rodata) throw std::runtime_error(".rodata section not found");
+
+	uint32_t name_offset = rodata->get_size();
+	rodata->append_data(type_name_str.c_str(), type_name_str.size() + 1);
+
+	getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+	                  rodata->get_index(), name_offset, type_name_str.size() + 1);
+
+	// Ensure .data.rel.ro and its relocation section exist
+	auto* data_rel_ro = getSectionByName(".data.rel.ro");
+	if (!data_rel_ro) {
+		data_rel_ro = elf_writer_.sections.add(".data.rel.ro");
+		data_rel_ro->set_type(ELFIO::SHT_PROGBITS);
+		data_rel_ro->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
+		data_rel_ro->set_addr_align(8);
+		section_name_cache_[".data.rel.ro"] = data_rel_ro;
+	}
+
+	ELFIO::relocation_section_accessor* rela_acc = getRelocationAccessor(".rela.data.rel.ro");
+	if (!rela_acc) {
+		auto* rela_sec = elf_writer_.sections.add(".rela.data.rel.ro");
+		rela_sec->set_type(ELFIO::SHT_RELA);
+		rela_sec->set_flags(ELFIO::SHF_INFO_LINK);
+		rela_sec->set_info(data_rel_ro->get_index());
+		rela_sec->set_link(symtab_section_->get_index());
+		rela_sec->set_addr_align(8);
+		rela_sec->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+		rela_accessors_[".rela.data.rel.ro"] =
+			std::make_unique<ELFIO::relocation_section_accessor>(elf_writer_, rela_sec);
+		rela_acc = rela_accessors_[".rela.data.rel.ro"].get();
+	}
+
+	bool single_non_virtual = (base_classes.size() == 1 && !base_classes[0].is_virtual);
+
+	if (single_non_virtual) {
+		// ------------------------------------------------------------------
+		// __si_class_type_info: 24 bytes
+		//   [0]  vtable ptr  → _ZTVN10__cxxabiv120__si_class_type_infoE + 16
+		//   [8]  name ptr    → _ZTS<classname>
+		//   [16] base ptr    → _ZTI<base_classname>
+		// ------------------------------------------------------------------
+		const char zeros[24] = {};
+		uint32_t ti_offset = data_rel_ro->get_size();
+		data_rel_ro->append_data(zeros, 24);
+
+		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+		                  data_rel_ro->get_index(), ti_offset, 24);
+
+		// Reloc 1: vtable
+		auto vtbl_sym = getOrCreateSymbol(
+			"_ZTVN10__cxxabiv120__si_class_type_infoE", ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+		rela_acc->add_entry(ti_offset,      vtbl_sym, ELFIO::R_X86_64_64, 16);
+
+		// Reloc 2: name
+		auto name_sym = getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+		rela_acc->add_entry(ti_offset + 8,  name_sym, ELFIO::R_X86_64_64, 0);
+
+		// Reloc 3: base type_info
+		const auto& base = base_classes[0];
+		std::string base_zti;
+		if (base.type_index < gTypeInfo.size()) {
+			const TypeInfo& base_ti = gTypeInfo[base.type_index];
+			const StructTypeInfo* base_si = base_ti.getStructInfo();
+			if (base_si) {
+				std::string_view base_name = StringTable::getStringView(base_si->getName());
+				StringBuilder b2;
+				b2.append("_ZTI").append(base_name.length()).append(base_name);
+				base_zti = std::string(b2.commit());
+			}
+		}
+		if (!base_zti.empty()) {
+			auto base_sym = getOrCreateSymbol(base_zti, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+			rela_acc->add_entry(ti_offset + 16, base_sym, ELFIO::R_X86_64_64, 0);
+		}
+
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"Created SI class typeinfo '{}' for '{}' (single base)",
+			typeinfo_symbol, class_name);
+	} else {
+		// ------------------------------------------------------------------
+		// __vmi_class_type_info: 24 + N*16 bytes
+		//   [0]   vtable ptr → _ZTVN10__cxxabiv121__vmi_class_type_infoE + 16
+		//   [8]   name ptr   → _ZTS<classname>
+		//   [16]  flags      (uint32) — filled inline
+		//   [20]  base_count (uint32) — filled inline
+		//   [24 + i*16] base_type ptr  → _ZTI<base_i>
+		//   [32 + i*16] offset_flags   (int64) — filled inline
+		// ------------------------------------------------------------------
+		uint32_t n_bases  = static_cast<uint32_t>(base_classes.size());
+		uint32_t ti_size  = 24 + n_bases * 16;
+		std::vector<char> zeros(ti_size, 0);
+
+		// Fill in inline (non-pointer) fields
+		uint32_t flags = 0;
+		for (const auto& base : base_classes) {
+			if (base.is_virtual) {
+				flags |= 0x1; // __non_diamond_repeat_mask if re-used virtual base
+			}
+		}
+		if (n_bases > 1) flags |= 0x2; // __diamond_shaped_mask (conservative)
+
+		std::memcpy(zeros.data() + 16, &flags,   sizeof(uint32_t));
+		std::memcpy(zeros.data() + 20, &n_bases, sizeof(uint32_t));
+
+		// offset_flags for each base (inline: no relocation needed)
+		for (uint32_t i = 0; i < n_bases; ++i) {
+			const auto& base = base_classes[i];
+			// offset_flags = (offset_bytes << 8) | public_mask | virtual_mask
+			// public_mask = 0x2, virtual_mask = 0x1
+			uint64_t public_bit  = (base.access == AccessSpecifier::Public) ? 0x2ULL : 0ULL;
+			uint64_t virtual_bit = base.is_virtual ? 0x1ULL : 0ULL;
+			uint64_t offset_flags = (static_cast<uint64_t>(base.offset) << 8) | public_bit | virtual_bit;
+			std::memcpy(zeros.data() + 32 + i * 16, &offset_flags, sizeof(uint64_t));
+		}
+
+		uint32_t ti_offset = data_rel_ro->get_size();
+		data_rel_ro->append_data(zeros.data(), ti_size);
+
+		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+		                  data_rel_ro->get_index(), ti_offset, ti_size);
+
+		// Reloc 1: vtable
+		auto vtbl_sym = getOrCreateSymbol(
+			"_ZTVN10__cxxabiv121__vmi_class_type_infoE", ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+		rela_acc->add_entry(ti_offset, vtbl_sym, ELFIO::R_X86_64_64, 16);
+
+		// Reloc 2: name
+		auto name_sym = getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+		rela_acc->add_entry(ti_offset + 8, name_sym, ELFIO::R_X86_64_64, 0);
+
+		// Reloc per base: base_type pointer
+		for (uint32_t i = 0; i < n_bases; ++i) {
+			const auto& base = base_classes[i];
+			std::string base_zti;
+			if (base.type_index < gTypeInfo.size()) {
+				const TypeInfo& base_ti = gTypeInfo[base.type_index];
+				const StructTypeInfo* base_si = base_ti.getStructInfo();
+				if (base_si) {
+					std::string_view base_name = StringTable::getStringView(base_si->getName());
+					StringBuilder b2;
+					b2.append("_ZTI").append(base_name.length()).append(base_name);
+					base_zti = std::string(b2.commit());
+				}
+			}
+			if (!base_zti.empty()) {
+				auto base_sym = getOrCreateSymbol(base_zti, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+				rela_acc->add_entry(ti_offset + 24 + i * 16, base_sym, ELFIO::R_X86_64_64, 0);
+			}
+		}
+
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"Created VMI class typeinfo '{}' for '{}' ({} bases)",
+			typeinfo_symbol, class_name, n_bases);
+	}
+
+	created_si_typeinfos.insert(typeinfo_symbol);
+	return typeinfo_symbol;
+}
+
+/**
  * @brief Add vtable for C++ class
  * Itanium C++ ABI vtable format: array of function pointers
  */

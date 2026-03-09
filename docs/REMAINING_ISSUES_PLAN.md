@@ -108,81 +108,25 @@ This document outlines a comprehensive plan to address the remaining runtime iss
 
 ## Issue Categories & Implementation Plan
 
-### 1. Exceptions (2 files) - **MEDIUM-HIGH COMPLEXITY**
+### 1. Exceptions — ✅ IMPLEMENTED (archived)
 
-**Files:**
-- `test_exceptions_basic.cpp`
-- `test_exceptions_nested.cpp`
+> This section describes exception handling as a planned feature. It is now fully implemented.
+> See `docs/EXCEPTION_HANDLING.md` for the current status and remaining minor items.
 
-**Current State:**
-- AST nodes exist: `ThrowStatementNode`, `TryCatchStatementNode`
-- Parser recognizes `throw`, `try`, `catch` keywords
-- ❌ No IR generation for exception handling
-- ❌ No ELF exception tables (.eh_frame, .gcc_except_table)
-- ❌ No DWARF CFI (Call Frame Information) generation
+**What was implemented** (as of 2026-03-09):
+- ✅ `try`/`catch`/`throw` with primitive and class types
+- ✅ `catch(...)` catch-all
+- ✅ Multiple typed catch handlers per try block (selector-based dispatch)
+- ✅ Cross-function exception propagation
+- ✅ `.eh_frame` (CIE/FDE with CFI) and `.gcc_except_table` (LSDA)
+- ✅ Stack unwinding with local destructors (Phase 1 try-local + Phase 2 function-scope)
+- ✅ Rethrow (`throw;`) via `__cxa_rethrow`
+- ✅ Exception hierarchy matching: `catch(Base&)` catches `throw Derived{}` via
+  `__si_class_type_info` / `__vmi_class_type_info`
+- ✅ `noexcept` enforcement: terminate LP calls `__cxa_call_terminate` when exception escapes
+- ✅ `noexcept(false)` correctly evaluated (no terminate LP)
 
-**Root Cause:**
-Exception handling requires complex runtime support:
-1. Stack unwinding mechanism
-2. Exception tables in ELF format
-3. DWARF Call Frame Information (CFI)
-4. Landing pads and cleanup code
-5. Type matching for catch clauses
 
-**Implementation Steps:**
-
-#### Phase 1: Exception Table Generation (2-3 days)
-```
-1. Create .gcc_except_table section
-   - Language-Specific Data Area (LSDA)
-   - Call site table with landing pad addresses
-   - Action table for exception types
-   - Type table for RTTI matching
-
-2. Enhance .eh_frame section
-   - Frame Description Entries (FDE) for each function
-   - Common Information Entries (CIE)
-   - DWARF CFI directives for stack unwinding
-```
-
-#### Phase 2: IR Generation for Exception Constructs (2-3 days)
-```
-1. visitThrowStatementNode():
-   - Generate call to __cxa_allocate_exception
-   - Store exception object
-   - Call __cxa_throw with type info
-   
-2. visitTryCatchStatementNode():
-   - Create landing pad basic block
-   - Generate cleanup code
-   - Insert personality function reference (__gxx_personality_v0)
-   - Generate type-match checks for catch handlers
-```
-
-#### Phase 3: Runtime Integration (1-2 days)
-```
-1. Link against libstdc++ exception runtime:
-   - __cxa_allocate_exception
-   - __cxa_throw
-   - __cxa_begin_catch
-   - __cxa_end_catch
-   - __gxx_personality_v0
-
-2. Test progressive scenarios:
-   - Simple throw/catch same function
-   - Cross-function unwinding
-   - Multiple catch handlers
-   - Rethrow
-   - Nested try-catch blocks
-```
-
-**Estimated Effort:** 5-8 days  
-**Priority:** HIGH (fundamental C++ feature)  
-**Files to Modify:**
-- `src/IRConverter.h` - Add exception IR generation
-- `src/ElfFileWriter.h` - Add .gcc_except_table and .eh_frame generation
-- `src/DwarfCFI.h` - Enhance CFI generation
-- `src/LSDAGenerator.h` - May need creation for LSDA
 
 ---
 

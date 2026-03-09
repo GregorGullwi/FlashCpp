@@ -191,6 +191,31 @@
 		func_decl_op.linkage = node.linkage();
 		func_decl_op.is_variadic = node.is_variadic();
 		func_decl_op.is_static_member = node.is_static();
+		// Evaluate the noexcept specifier properly:
+		// bare `noexcept` → true; `noexcept(false)` → false; `noexcept(true)` → true.
+		// node.is_noexcept() is true for any noexcept token; the expression (if present)
+		// carries the boolean value and must be checked to handle noexcept(false).
+		{
+			bool is_truly_noexcept = node.is_noexcept();
+			if (is_truly_noexcept && node.has_noexcept_expression()) {
+				const ASTNode& nx_expr_node = *node.noexcept_expression();
+				if (nx_expr_node.is<ExpressionNode>()) {
+					const ExpressionNode& nx_expr = nx_expr_node.as<ExpressionNode>();
+					if (std::holds_alternative<BoolLiteralNode>(nx_expr)) {
+						is_truly_noexcept = std::get<BoolLiteralNode>(nx_expr).value();
+					} else if (std::holds_alternative<NumericLiteralNode>(nx_expr)) {
+						const auto& nl = std::get<NumericLiteralNode>(nx_expr);
+						const auto& nlv = nl.value();
+						if (std::holds_alternative<unsigned long long>(nlv))
+							is_truly_noexcept = (std::get<unsigned long long>(nlv) != 0);
+						else
+							is_truly_noexcept = (std::get<double>(nlv) != 0.0);
+					}
+					// For complex noexcept(expr), conservatively keep true
+				}
+			}
+			func_decl_op.is_noexcept = is_truly_noexcept;
+		}
 		
 		// Member functions defined inside the class body are implicitly inline (C++ standard)
 		// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions

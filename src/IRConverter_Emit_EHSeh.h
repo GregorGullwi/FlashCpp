@@ -548,7 +548,8 @@
 				const TypeInfo& type_info = gTypeInfo[throw_op.type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
-					typeinfo_symbol = writer.get_or_create_class_typeinfo(StringTable::getStringView(struct_info->getName()));
+					// Use hierarchy-aware overload so derived exceptions get __si/__vmi typeinfo
+					typeinfo_symbol = writer.get_or_create_class_typeinfo(struct_info);
 				}
 			} else if (exception_type != Type::Void) {
 				// Built-in type (int, float, etc.) - use the Type enum directly

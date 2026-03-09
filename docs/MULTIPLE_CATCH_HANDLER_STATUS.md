@@ -1,4 +1,11 @@
-# Multiple Catch Handler Support - Implementation Status
+# Multiple Catch Handler Support — ARCHIVED
+
+> **Status: IMPLEMENTED — This document is archived.** The features described here are fully
+> implemented. See `docs/EXCEPTION_HANDLING.md` for the current status.
+
+---
+
+# Original Pre-Implementation Status Document
 
 ## Overview
 This document describes the implementation work done to support multiple catch handlers per try block, addressing the TODO comment in `src/LSDAGenerator.h:190`:
