@@ -126,22 +126,21 @@ static_assert(p1.sum() == 30);  // ✅ Works - member function call
 
 **Requirements for member function evaluation:**
 1. The struct must be initialized with a constructor call
-2. The constructor must use member initializer lists
+2. The constructor should use either member initializer lists or other straightforward supported initialization shapes
 3. The member function must be declared `constexpr`
 4. The member function must have a single return statement
 
 ## What Doesn't Work
 
-### ❌ Constructor Body Assignments
+### ⚠️ Constructor Body Statements Are Partially Supported
 
-Member access does **NOT** work when the constructor assigns values in the body instead of using a member initializer list:
+Straightforward constructor-body member assignments now work in simple constexpr shapes:
 
 ```cpp
 struct Point {
     int x;
     int y;
-    
-    // ❌ This pattern is NOT supported in constexpr evaluation
+
     constexpr Point(int x_val, int y_val) {
         x = x_val;
         y = y_val;
@@ -149,12 +148,13 @@ struct Point {
 };
 
 constexpr Point p1(10, 20);
-static_assert(p1.x == 10);  // ❌ Error: Not supported
+static_assert(p1.x == 10);  // ✅ Works
+static_assert(p1.y == 20);  // ✅ Works
 ```
 
-**Reason:** The constexpr evaluator does not execute constructor body statements. It only looks at member initializer lists.
+More complex constructor-body execution is still a remaining limitation.
 
-**Workaround:** Use member initializer lists:
+**Preferred style when practical:** Use member initializer lists:
 ```cpp
 constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}  // ✅ Works
 ```
@@ -394,6 +394,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Straightforward inferred-size local arrays in constexpr functions, including simple scalar reads and simple aggregate-array element member reads
 - ✅ Straightforward local aggregate-array element reads in constexpr functions, including nested/member-array compositions like `items[i].inner.value` and `items[i].data[0]`
 - ✅ Straightforward loop-driven local array reads in constexpr functions, including `sum += arr[i]` and `sum += items[i].value`
+- ✅ Straightforward constructor-body member assignments in constexpr objects
 - ✅ `noexcept(expr)` in constexpr evaluation
 - ✅ `offsetof(T, member)` for direct data-member access in constexpr evaluation
 
@@ -403,7 +404,7 @@ Potential areas for enhancement (in order of complexity):
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 
 ### Hard
-- ❌ Constructor body statement execution
+- ⚠️ Complex constructor body statement execution beyond straightforward direct member assignments
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
 - ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
   - straightforward by-reference locals
@@ -420,7 +421,7 @@ Potential areas for enhancement (in order of complexity):
 
 ### For Users
 
-1. **Use member initializer lists** instead of constructor body assignments when you need constexpr evaluation
+1. **Prefer member initializer lists when practical** - straightforward constructor body member assignments work too, but richer constructor bodies are still more fragile
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
@@ -508,12 +509,13 @@ static_assert(data.arr[1] == 2);
 ### ❌ Patterns to Avoid
 
 ```cpp
-// Bad: Constructor body assignments
+// Avoid assuming all constructor body logic is supported
 struct Point {
     int x, y;
     constexpr Point(int x_val, int y_val) {
-        x = x_val;  // Won't work in constexpr evaluation
+        x = x_val;
         y = y_val;
+        // more complex constructor-body logic may still fail in constexpr evaluation
     }
 };
 
