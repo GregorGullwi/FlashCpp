@@ -916,7 +916,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					call_op.is_member_function = false;
 					call_op.return_type = return_type.type();
 					call_op.return_type_index = return_type.type_index();
-					call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+					int actual_return_size = static_cast<int>(return_type.size_in_bits());
+					if (actual_return_size == 0 && return_type.type() == Type::Struct && return_type.type_index() > 0) {
+						if (return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
+							actual_return_size = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
+						}
+					}
+					call_op.return_size_in_bits = actual_return_size;
 					
 					bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64());
 					if (needs_hidden_return) {
