@@ -435,6 +435,10 @@ private:
 		const FunctionCallNode& func_call,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	static std::optional<EvalResult> try_evaluate_bound_member_operator_call(
+		const ExpressionNode& expr,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
 	static ResolvedMemberFunctionCandidate find_call_operator_candidate(
 		const StructTypeInfo* struct_info,
 		size_t argument_count,
