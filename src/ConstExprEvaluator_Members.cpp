@@ -1736,17 +1736,13 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			return bind_result;
 	}
 
-	for (const auto& mem_init : inner_matching_ctor->member_initializers()) {
-		if (mem_init.member_name == final_member_name) {
-			return evaluate_expression_with_bindings(mem_init.initializer_expr, inner_param_bindings, context);
-		}
-	}
-
-	StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
-	for (const auto& member : inner_struct_info->members) {
-		if (member.getName() == final_member_name_handle && member.default_initializer.has_value()) {
-			return evaluate(member.default_initializer.value(), context);
-		}
+		if (auto member_result = try_evaluate_member_from_constructor_initializers(
+			inner_struct_info,
+			*inner_matching_ctor,
+			inner_param_bindings,
+			final_member_name,
+			context)) {
+			return *member_result;
 	}
 
 	return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
@@ -1923,17 +1919,13 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 				return bind_result;
 			}
 
-		for (const auto& mem_init : matching_ctor->member_initializers()) {
-			if (mem_init.member_name == member_name) {
-				return evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-			}
-		}
-
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-		for (const auto& member : struct_info->members) {
-			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
-				return evaluate(member.default_initializer.value(), context);
-			}
+			if (auto member_result = try_evaluate_member_from_constructor_initializers(
+				struct_info,
+				*matching_ctor,
+				ctor_param_bindings,
+				member_name,
+				context)) {
+				return *member_result;
 		}
 
 		return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
@@ -2397,6 +2389,28 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 	}
 
 	return EvalResult::from_bool(true);
+}
+
+std::optional<EvalResult> Evaluator::try_evaluate_member_from_constructor_initializers(
+	const StructTypeInfo* struct_info,
+	const ConstructorDeclarationNode& ctor_decl,
+	std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+	std::string_view member_name,
+	EvaluationContext& context) {
+	for (const auto& mem_init : ctor_decl.member_initializers()) {
+		if (mem_init.member_name == member_name) {
+			return evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
+		}
+	}
+
+	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+	for (const auto& member : struct_info->members) {
+		if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
+			return evaluate(member.default_initializer.value(), context);
+		}
+	}
+
+	return std::nullopt;
 }
 
 // Helper to extract member values from a constexpr object

@@ -251,6 +251,12 @@ public:
 			std::unordered_map<std::string_view, EvalResult>& member_bindings,
 			EvaluationContext& context,
 			bool ignore_default_initializer_errors);
+		static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
+			const StructTypeInfo* struct_info,
+			const ConstructorDeclarationNode& ctor_decl,
+			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+			std::string_view member_name,
+			EvaluationContext& context);
 	static EvalResult evaluate_member_array_subscript(
 		const MemberAccessNode& member_access,
 		size_t index,
