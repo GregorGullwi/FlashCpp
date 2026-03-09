@@ -971,7 +971,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					}
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-					return {return_type.type(), static_cast<int>(return_type.size_in_bits()), result_var, return_type.type_index()};
+					return {return_type.type(), actual_return_size, result_var, return_type.type_index()};
 				}
 				
 				else if (overload_result.has_overload) {

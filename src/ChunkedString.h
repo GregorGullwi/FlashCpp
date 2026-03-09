@@ -6,6 +6,7 @@
 #include <memory>
 #include <cassert>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <charconv>
 #include <type_traits>
@@ -187,8 +188,15 @@ public:
     ~StringBuilder() {
         SB_DEBUG_LOG("DTOR id=" << builder_id_ << " committed=" << is_committed_ 
                      << " gCurrent=" << (gCurrentStringBuilder ? gCurrentStringBuilder->builder_id_ : -1));
-        // Verify that commit() or reset() was called
-        assert(is_committed_ && "did you forget to call commit() or reset() on the StringBuilder?");
+        if (!is_committed_) {
+            if (std::uncaught_exceptions() > 0) {
+                // During stack unwinding from an exception, skip the assert and clean up properly
+                reset();
+                return;
+            }
+            // Verify that commit() or reset() was called
+            assert(false && "did you forget to call commit() or reset() on the StringBuilder?");
+        }
         // Restore previous builder if this was the active one
         if (gCurrentStringBuilder == this) {
             gCurrentStringBuilder = previous_builder_;
