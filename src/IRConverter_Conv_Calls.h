@@ -1055,7 +1055,7 @@
 			bool arg_is_reference = arg.is_reference();  // Check if marked as reference
 
 			// Check if this is a floating-point parameter
-			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double);
+			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double) && !arg_is_reference;
 
 			// Check if this is a reference parameter (copy/move constructor - same struct type, OR marked as reference)
 			bool is_same_struct_type = false;
