@@ -208,6 +208,48 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	return std::nullopt;
 }
 
+Evaluator::ResolvedBoundEvalResult Evaluator::resolve_bound_eval_result(
+	const ASTNode& bound_expr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	bool treat_this_as_unbound) {
+	ResolvedBoundEvalResult resolved;
+
+	if (bound_expr.is<IdentifierNode>()) {
+		std::string_view bound_name = bound_expr.as<IdentifierNode>().name();
+		if (treat_this_as_unbound && bound_name == "this") {
+			return resolved;
+		}
+
+		auto binding_it = bindings.find(bound_name);
+		if (binding_it == bindings.end()) {
+			return resolved;
+		}
+
+		resolved.value = &binding_it->second;
+		return resolved;
+	}
+
+	if (bound_expr.is<ExpressionNode>()) {
+		const ExpressionNode& bound_expr_node = bound_expr.as<ExpressionNode>();
+		if (treat_this_as_unbound &&
+			std::holds_alternative<IdentifierNode>(bound_expr_node) &&
+			std::get<IdentifierNode>(bound_expr_node).name() == "this") {
+			return resolved;
+		}
+
+		resolved.owned_value = evaluate_expression_with_bindings_const(bound_expr, bindings, context);
+		if (!resolved.owned_value->success()) {
+			resolved.error = resolved.owned_value;
+			return resolved;
+		}
+
+		resolved.value = &resolved.owned_value.value();
+	}
+
+	return resolved;
+}
+
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 	const ExpressionNode& expr,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -218,31 +260,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 
 	const auto& member_access = std::get<MemberAccessNode>(expr);
 	const ASTNode& object_expr = member_access.object();
-	const EvalResult* object_result = nullptr;
-	std::optional<EvalResult> evaluated_object_result;
-
-	if (object_expr.is<IdentifierNode>()) {
-		if (object_expr.as<IdentifierNode>().name() == "this") {
-			return std::nullopt;
-		}
-		auto object_it = bindings.find(object_expr.as<IdentifierNode>().name());
-		if (object_it == bindings.end()) {
-			return std::nullopt;
-		}
-		object_result = &object_it->second;
-	} else if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
-		if (std::holds_alternative<IdentifierNode>(object_expr_node) &&
-			std::get<IdentifierNode>(object_expr_node).name() == "this") {
-			return std::nullopt;
-		}
-		evaluated_object_result = evaluate_expression_with_bindings_const(object_expr, bindings, context);
-		if (!evaluated_object_result->success()) {
-			return *evaluated_object_result;
-		}
-		object_result = &evaluated_object_result.value();
+	ResolvedBoundEvalResult resolved_object = resolve_bound_eval_result(object_expr, bindings, context, true);
+	if (resolved_object.error.has_value()) {
+		return resolved_object.error.value();
 	}
 
+	const EvalResult* object_result = resolved_object.value;
 	if (!object_result || object_result->object_type_index == 0) {
 		return std::nullopt;
 	}
@@ -275,23 +298,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	}
 
 	const ASTNode& array_expr = subscript.array_expr();
-	const EvalResult* array_result = nullptr;
-	std::optional<EvalResult> evaluated_array_result;
-
-	if (array_expr.is<IdentifierNode>()) {
-		auto array_it = bindings.find(array_expr.as<IdentifierNode>().name());
-		if (array_it == bindings.end()) {
-			return std::nullopt;
-		}
-		array_result = &array_it->second;
-	} else if (array_expr.is<ExpressionNode>()) {
-		evaluated_array_result = evaluate_expression_with_bindings_const(array_expr, bindings, context);
-		if (!evaluated_array_result->success()) {
-			return *evaluated_array_result;
-		}
-		array_result = &evaluated_array_result.value();
+	ResolvedBoundEvalResult resolved_array = resolve_bound_eval_result(array_expr, bindings, context);
+	if (resolved_array.error.has_value()) {
+		return resolved_array.error.value();
 	}
 
+	const EvalResult* array_result = resolved_array.value;
 	if (!array_result) {
 		return std::nullopt;
 	}

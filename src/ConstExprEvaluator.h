@@ -479,6 +479,16 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 			EvaluationContext& context,
 			std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
+		struct ResolvedBoundEvalResult {
+			const EvalResult* value = nullptr;
+			std::optional<EvalResult> owned_value;
+			std::optional<EvalResult> error;
+		};
+		static ResolvedBoundEvalResult resolve_bound_eval_result(
+			const ASTNode& bound_expr,
+			const std::unordered_map<std::string_view, EvalResult>& bindings,
+			EvaluationContext& context,
+			bool treat_this_as_unbound = false);
 		static std::optional<EvalResult> try_evaluate_bound_member_access(
 			const ExpressionNode& expr,
 			const std::unordered_map<std::string_view, EvalResult>& bindings,
