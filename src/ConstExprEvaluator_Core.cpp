@@ -1692,6 +1692,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			func_name_handle,
 			arguments.size(),
 			context,
+				MemberFunctionLookupMode::ConstexprEvaluable,
 			false,
 			true);
 		if (current_match.ambiguous) {
@@ -1713,6 +1714,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 							func_name_handle,
 							arguments.size(),
 							context,
+							MemberFunctionLookupMode::ConstexprEvaluable,
 							false,
 							false);
 						matched_function = template_match.function;

@@ -160,6 +160,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 	StringHandle function_name_handle,
 	size_t argument_count,
 	EvaluationContext& context,
+	MemberFunctionLookupMode lookup_mode,
 	bool require_static,
 	bool detect_ambiguity) {
 	ResolvedMemberFunctionCandidate result;
@@ -168,7 +169,8 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 	}
 
 	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.getName() != function_name_handle ||
+		if (member_func.is_constructor || member_func.is_destructor ||
+			member_func.getName() != function_name_handle ||
 			!member_func.function_decl.is<FunctionDeclarationNode>()) {
 			continue;
 		}
@@ -181,10 +183,12 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 			continue;
 		}
 
-		bool can_evaluate = func_decl.is_constexpr() ||
-			(context.storage_duration == ConstExpr::StorageDuration::Static);
-		if (!can_evaluate || !func_decl.get_definition().has_value()) {
-			continue;
+		if (lookup_mode == MemberFunctionLookupMode::ConstexprEvaluable) {
+			bool can_evaluate = func_decl.is_constexpr() ||
+				(context.storage_duration == ConstExpr::StorageDuration::Static);
+			if (!can_evaluate || !func_decl.get_definition().has_value()) {
+				continue;
+			}
 		}
 
 		if (result.function && detect_ambiguity) {
@@ -2107,6 +2111,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			fn_handle,
 			member_func_call.arguments().size(),
 			context,
+				MemberFunctionLookupMode::ConstexprEvaluable,
 			true,
 			false);
 		const FunctionDeclarationNode* matched_function = current_match.function;
@@ -2121,6 +2126,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 						fn_handle,
 						member_func_call.arguments().size(),
 						context,
+							MemberFunctionLookupMode::ConstexprEvaluable,
 						true,
 						false);
 					matched_function = base_match.function;
@@ -2247,30 +2253,20 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	}
 	
 	// Look up the actual member function in the struct's type info
-	const FunctionDeclarationNode* actual_func = nullptr;
 	const auto& arguments = member_func_call.arguments();
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-	bool ambiguous = false;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.is_constructor || member_func.is_destructor) continue;
-		if (member_func.getName() != func_name_handle) continue;
-		
-		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-			const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (candidate.parameter_nodes().size() != arguments.size()) {
-				continue;
-			}
-			if (actual_func != nullptr) {
-				ambiguous = true;
-				break;
-			}
-			actual_func = &candidate;
-		}
-	}
-
-	if (ambiguous) {
+		auto member_function_match = find_member_function_candidate(
+			struct_info,
+			func_name_handle,
+			arguments.size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false,
+			true);
+		if (member_function_match.ambiguous) {
 		return EvalResult::error("Ambiguous member function overload in constant expression");
 	}
+		const FunctionDeclarationNode* actual_func = member_function_match.function;
 	
 	if (!actual_func) {
 		return EvalResult::error("Member function not found: " + std::string(func_name));

@@ -308,6 +308,11 @@ private:
 		bool ambiguous = false;
 	};
 
+	enum class MemberFunctionLookupMode {
+		LookupOnly,
+		ConstexprEvaluable,
+	};
+
 	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
 	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
@@ -412,6 +417,7 @@ private:
 		StringHandle function_name_handle,
 		size_t argument_count,
 		EvaluationContext& context,
+		MemberFunctionLookupMode lookup_mode,
 		bool require_static,
 		bool detect_ambiguity);
 	static ResolvedCurrentStructStaticMember resolve_current_struct_static_member(
