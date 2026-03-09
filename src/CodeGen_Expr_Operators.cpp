@@ -863,11 +863,128 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			};
 			
 			if (overloadable_binary_ops.count(op) > 0 && lhs_type_index > 0) {
-				// Check for operator overload
-				auto overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, stringToOverloadableOperator(op));
+				// Check for operator overload (member function or free function)
+				SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
+				auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
+					lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table);
+				
+				if (overload_result.has_overload && overload_result.is_free_function) {
+					// Found a free-function operator overload: operator+(LHSType, RHSType)
+					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving free-function operator{} overload", op);
+					
+					const FunctionDeclarationNode& func_decl = *overload_result.free_function_overload;
+					TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+					
+					// Get parameter types for mangling
+					std::vector<TypeSpecifierNode> param_types;
+					for (const auto& param_node : func_decl.parameter_nodes()) {
+						if (param_node.is<DeclarationNode>()) {
+							param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+						}
+					}
+					
+					// Get namespace path for mangling
+					std::vector<std::string_view> namespace_path;
+					if (global_symbol_table_) {
+						auto ns_handle_opt = global_symbol_table_->find_namespace_of_function(func_decl);
+						if (ns_handle_opt.has_value()) {
+							NamespaceHandle nh = *ns_handle_opt;
+							while (nh.isValid() && !nh.isGlobal()) {
+								const NamespaceEntry& entry = gNamespaceRegistry.getEntry(nh);
+								namespace_path.insert(namespace_path.begin(), StringTable::getStringView(entry.name));
+								nh = gNamespaceRegistry.getParent(nh);
+							}
+						}
+					}
+					
+					std::string operator_func_name = "operator";
+					operator_func_name += op;
+					auto mangled_name = NameMangling::generateMangledName(
+						operator_func_name,
+						return_type,
+						param_types,
+						false, // not variadic
+						"",    // no struct (free function)
+						namespace_path,
+						Linkage::CPlusPlus
+					);
+					
+					TempVar result_var = var_counter.next();
+					CallOp call_op;
+					call_op.result = result_var;
+					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+					call_op.is_member_function = false;
+					call_op.return_type = return_type.type();
+					call_op.return_type_index = return_type.type_index();
+					call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+					
+					bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64());
+					if (needs_hidden_return) {
+						call_op.return_slot = result_var;
+					}
+					
+					// Pass LHS as first argument
+					if (!param_types.empty() && param_types[0].is_reference()) {
+						std::variant<StringHandle, TempVar> lhs_value;
+						if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
+							lhs_value = std::get<StringHandle>(lhsIrOperands[2]);
+						} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+							lhs_value = std::get<TempVar>(lhsIrOperands[2]);
+						} else {
+							FLASH_LOG(Codegen, Error, "Cannot take address of free-function operator LHS");
+							return {};
+						}
+						TempVar lhs_addr = var_counter.next();
+						AddressOfOp addr_op;
+						addr_op.result = lhs_addr;
+						addr_op.operand.type = lhsType;
+						addr_op.operand.size_in_bits = lhsSize;
+						addr_op.operand.pointer_depth = 0;
+						std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
+						TypedValue lhs_arg;
+						lhs_arg.type = lhsType;
+						lhs_arg.size_in_bits = 64;
+						lhs_arg.value = lhs_addr;
+						call_op.args.push_back(lhs_arg);
+					} else {
+						call_op.args.push_back(toTypedValue(lhsIrOperands));
+					}
+					
+					// Pass RHS as second argument
+					if (param_types.size() >= 2 && param_types[1].is_reference()) {
+						std::variant<StringHandle, TempVar> rhs_value;
+						if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
+							rhs_value = std::get<StringHandle>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+							rhs_value = std::get<TempVar>(rhsIrOperands[2]);
+						} else {
+							FLASH_LOG(Codegen, Error, "Cannot take address of free-function operator RHS");
+							return {};
+						}
+						TempVar rhs_addr = var_counter.next();
+						AddressOfOp rhs_addr_op;
+						rhs_addr_op.result = rhs_addr;
+						rhs_addr_op.operand.type = rhsType;
+						rhs_addr_op.operand.size_in_bits = rhsSize;
+						rhs_addr_op.operand.pointer_depth = 0;
+						std::visit([&rhs_addr_op](auto&& val) { rhs_addr_op.operand.value = val; }, rhs_value);
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(rhs_addr_op), binaryOperatorNode.get_token()));
+						TypedValue rhs_arg;
+						rhs_arg.type = rhsType;
+						rhs_arg.size_in_bits = 64;
+						rhs_arg.value = rhs_addr;
+						call_op.args.push_back(rhs_arg);
+					} else {
+						call_op.args.push_back(toTypedValue(rhsIrOperands));
+					}
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
+					return {return_type.type(), call_op.return_size_in_bits, result_var, return_type.type_index()};
+				}
 				
 				if (overload_result.has_overload) {
-					// Found an overload! Generate a member function call instead of built-in operation
+					// Found a member operator overload! Generate a member function call
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving binary operator{} overload for type index {}", 
 					op, lhs_type_index);
 					

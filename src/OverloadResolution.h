@@ -793,11 +793,15 @@ inline OverloadResolutionResult resolve_overload(
 // Result of operator overload resolution
 struct OperatorOverloadResult {
 	const StructMemberFunction* member_overload = nullptr;
+	const FunctionDeclarationNode* free_function_overload = nullptr;  // For free-function operators
 	bool has_overload = false;
+	bool is_free_function = false;  // True when free_function_overload is the active match
 	
 	OperatorOverloadResult() = default;
 	OperatorOverloadResult(const StructMemberFunction* overload) 
 		: member_overload(overload), has_overload(true) {}
+	OperatorOverloadResult(const FunctionDeclarationNode* free_func)
+		: free_function_overload(free_func), has_overload(true), is_free_function(true) {}
 	
 	static OperatorOverloadResult no_overload() {
 		return OperatorOverloadResult();
@@ -908,10 +912,71 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 		}
 	}
 	
-	// TODO: In the future, also search for free function operator overloads
-	// e.g., operator+(const Number& a, const Number& b)
-	// This would require searching the global scope for matching functions
-	
+	return OperatorOverloadResult::no_overload();
+}
+
+// Find binary operator overload, including free-function operators in the given symbol table.
+// Per C++20 [over.match.oper], both member and non-member overloads must be considered.
+// Searches member functions first (via findBinaryOperatorOverload), then falls back to
+// free-function operators found in the symbol table.
+inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
+	TypeIndex left_type_index,
+	TypeIndex right_type_index,
+	OverloadableOperator operator_kind,
+	std::string_view operator_symbol,
+	const SymbolTable& symbol_table,
+	Type right_type = Type::Void)
+{
+	// First try member function overload (existing logic)
+	auto member_result = findBinaryOperatorOverload(left_type_index, right_type_index, operator_kind, right_type);
+	if (member_result.has_overload) {
+		return member_result;
+	}
+
+	// Search for free-function operator overload: operator+(LHSType, RHSType)
+	// Build the operator function name (e.g., "operator+")
+	std::string op_func_name = "operator";
+	op_func_name += operator_symbol;
+
+	auto overloads = symbol_table.lookup_all(op_func_name);
+	for (const auto& overload : overloads) {
+		if (!overload.is<FunctionDeclarationNode>()) continue;
+		const auto& func_decl = overload.as<FunctionDeclarationNode>();
+		const auto& params = func_decl.parameter_nodes();
+		if (params.size() < 2) continue;
+
+		// Check first parameter matches left operand type
+		if (!params[0].is<DeclarationNode>()) continue;
+		const auto& p0_type = params[0].as<DeclarationNode>().type_node();
+		if (!p0_type.is<TypeSpecifierNode>()) continue;
+		const auto& p0_spec = p0_type.as<TypeSpecifierNode>();
+
+		bool lhs_matches = false;
+		if (p0_spec.type() == Type::Struct || p0_spec.type() == Type::Enum || p0_spec.type() == Type::UserDefined) {
+			lhs_matches = (p0_spec.type_index() == left_type_index);
+		}
+		if (!lhs_matches) continue;
+
+		// Check second parameter matches right operand type
+		if (!params[1].is<DeclarationNode>()) continue;
+		const auto& p1_type = params[1].as<DeclarationNode>().type_node();
+		if (!p1_type.is<TypeSpecifierNode>()) continue;
+		const auto& p1_spec = p1_type.as<TypeSpecifierNode>();
+
+		bool rhs_matches = false;
+		if (right_type_index > 0 && (p1_spec.type() == Type::Struct || p1_spec.type() == Type::Enum || p1_spec.type() == Type::UserDefined)) {
+			rhs_matches = (p1_spec.type_index() == right_type_index);
+		} else if (right_type != Type::Void) {
+			rhs_matches = (p1_spec.type() == right_type);
+		} else {
+			// Accept any match when we don't have enough type info
+			rhs_matches = true;
+		}
+		if (!rhs_matches) continue;
+
+		return OperatorOverloadResult(&func_decl);
+	}
+
 	return OperatorOverloadResult::no_overload();
 }
 
