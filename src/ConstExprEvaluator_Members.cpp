@@ -2443,6 +2443,8 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	} else {
 		load_template_bindings_from_type(&gTypeInfo[type_index], context);
 	}
+		auto saved_struct_info = context.struct_info;
+		context.struct_info = struct_info;
 	
 	// Increase recursion depth
 	context.current_depth++;
@@ -2455,6 +2457,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
 	context.current_depth--;
+		context.struct_info = saved_struct_info;
 	restore_template_bindings();
 	return result;
 }

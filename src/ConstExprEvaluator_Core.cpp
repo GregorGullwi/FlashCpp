@@ -1273,9 +1273,22 @@ EvalResult Evaluator::evaluate_lambda_captures(
 			
 			case CaptureKind::This:
 			case CaptureKind::CopyThis:
-				// [this] or [*this] - capturing this pointer
-				// This would require being in a member function context
-				return EvalResult::error("Capture of 'this' not supported in constexpr lambdas");
+					// [this] or [*this] - materialize the enclosing object's constexpr members.
+					if (!outer_bindings) {
+						return EvalResult::error("Capture of 'this' requires outer constexpr bindings");
+					}
+					if (!context.struct_info) {
+						return EvalResult::error("Capture of 'this' requires constexpr member function context");
+					}
+
+					for (const auto& member : context.struct_info->members) {
+						std::string_view member_name = StringTable::getStringView(member.getName());
+						auto outer_it = outer_bindings->find(member_name);
+						if (outer_it != outer_bindings->end()) {
+							bindings[member_name] = outer_it->second;
+						}
+					}
+					break;
 		}
 	}
 	
@@ -1428,6 +1441,8 @@ EvalResult Evaluator::evaluate_callable_object(
 		if (context.current_depth >= context.max_recursion_depth) {
 			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
 		}
+			auto saved_struct_info = context.struct_info;
+			context.struct_info = struct_info;
 		context.current_depth++;
 		auto result = evaluate_block_with_bindings(
 			definition.value(),
@@ -1436,6 +1451,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			"Callable object operator() body is not a block",
 			"Constexpr callable object operator() did not return a value");
 		context.current_depth--;
+			context.struct_info = saved_struct_info;
 		return result;
 	}
 
@@ -1483,8 +1499,11 @@ EvalResult Evaluator::evaluate_callable_object(
 			true);
 		if (!bind_result.success()) return bind_result;
 
-		if (context.current_depth >= context.max_recursion_depth)
-			return EvalResult::error("Constexpr recursion depth limit exceeded");
+			if (context.current_depth >= context.max_recursion_depth) {
+				return EvalResult::error("Constexpr recursion depth limit exceeded");
+			}
+			auto saved_struct_info = context.struct_info;
+			context.struct_info = struct_info;
 		context.current_depth++;
 		auto result = evaluate_block_with_bindings(
 			definition.value(),
@@ -1493,6 +1512,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			"operator() body in brace-initialized callable is not a block",
 			"Constexpr operator() in brace-initialized callable did not return a value");
 		context.current_depth--;
+			context.struct_info = saved_struct_info;
 		return result;
 	}
 	
