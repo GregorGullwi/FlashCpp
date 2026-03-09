@@ -1292,11 +1292,13 @@
 			// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
 			// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
 			// destructible locals that require unwind actions even without a local catch.
+			// Plain DestructorCall only describes normal in-function scope cleanup and must
+			// not force the EH-style prologue on its own, otherwise the emitted prologue can
+			// diverge from the writer-side unwind-code selection.
 		current_function_has_cpp_eh_ = false;
 		for (const auto& instruction : it->second) {
 				if (instruction.getOpcode() == IrOpcode::TryBegin ||
-				    instruction.getOpcode() == IrOpcode::FunctionCleanupLP ||
-				    instruction.getOpcode() == IrOpcode::DestructorCall) {
+				    instruction.getOpcode() == IrOpcode::FunctionCleanupLP) {
 				current_function_has_cpp_eh_ = true;
 				break;
 			}
