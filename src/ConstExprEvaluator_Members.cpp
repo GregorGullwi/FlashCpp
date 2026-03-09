@@ -2263,9 +2263,6 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			type_index = declared_type_index;
 			struct_info = gTypeInfo[type_index].getStructInfo();
 		}
-		if (!struct_info && type_index >= gTypeInfo.size()) {
-			return EvalResult::error("Invalid type index in member function call");
-		}
 	} else {
 		// Brace-initialized object: resolve type from the declared object type.
 		if (declared_type_index == TypeIndex{0} || declared_type_index >= gTypeInfo.size()) {
@@ -2547,9 +2544,6 @@ EvalResult Evaluator::extract_object_members(
 		type_index = declared_type_index;
 		struct_type_info = &gTypeInfo[type_index];
 		struct_info = struct_type_info->getStructInfo();
-	}
-	if (!struct_info && type_index >= gTypeInfo.size()) {
-		return EvalResult::error("Invalid type index in member function call");
 	}
 	if (!struct_info) {
 		return EvalResult::error("Type is not a struct in member function call");
