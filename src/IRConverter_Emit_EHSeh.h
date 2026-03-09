@@ -95,6 +95,12 @@
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			inside_catch_handler_ = true;
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// For ELF, handler_offset is the LSDA landing pad address.
+			// funclet_entry_offset was assigned the current code position above;
+			// set handler_offset to the same value so the LSDA points here.
+			if (current_catch_handler_) {
+				current_catch_handler_->handler_offset = current_catch_handler_->funclet_entry_offset;
+			}
 			// Landing pad: call __cxa_begin_catch to get the exception object
 			//
 			// For try blocks with MULTIPLE catch handlers, the personality routine
