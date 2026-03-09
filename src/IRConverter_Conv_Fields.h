@@ -105,6 +105,7 @@
 	uint32_t current_function_named_vars_size_ = 0;  // Size of named vars + shadow space for current function
 	uint32_t current_function_reserved_catch_ref_temp_size_ = 0;  // Windows FH3 reference-catch slots kept near named vars
 	std::vector<StringHandle> current_function_reserved_catch_ref_temps_;
+	uint32_t current_function_reserved_catch_obj_padding_size_ = 0;  // Padding to avoid FH3 dispCatchObj == 0 for by-value catch temps
 
 	// Exception handling tracking
 	struct CatchHandler {

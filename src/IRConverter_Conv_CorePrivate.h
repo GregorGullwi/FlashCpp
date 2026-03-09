@@ -1274,6 +1274,7 @@
 		StackSpaceSize func_stack_space{};
 		current_function_reserved_catch_ref_temp_size_ = 0;
 		current_function_reserved_catch_ref_temps_.clear();
+		current_function_reserved_catch_obj_padding_size_ = 0;
 
 		auto it = function_spans.find(func_name);
 		if (it == function_spans.end()) {
@@ -1444,22 +1445,38 @@
 					try {
 						if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 							if (const CatchBeginOp* catch_op = std::any_cast<CatchBeginOp>(&instruction.getTypedPayload())) {
-								if (catch_op->exception_temp.var_number != 0 &&
-								    (catch_op->is_reference() || catch_op->is_rvalue_reference())) {
+								if (catch_op->exception_temp.var_number != 0) {
 									StringHandle catch_temp_handle = StringTable::getOrInternStringHandle(catch_op->exception_temp.name());
-									bool already_reserved = false;
-									for (StringHandle existing : current_function_reserved_catch_ref_temps_) {
-										if (existing == catch_temp_handle) {
-											already_reserved = true;
-											break;
+
+									if (catch_op->is_reference() || catch_op->is_rvalue_reference()) {
+										bool already_reserved = false;
+										for (StringHandle existing : current_function_reserved_catch_ref_temps_) {
+											if (existing == catch_temp_handle) {
+												already_reserved = true;
+												break;
+											}
+										}
+										if (!already_reserved) {
+											current_function_reserved_catch_ref_temps_.push_back(catch_temp_handle);
+											current_function_reserved_catch_ref_temp_size_ += 8;
+										}
+										temp_var_sizes_[catch_temp_handle] = 64;
+										handled_by_typed_payload = true;
+									} else {
+										int catch_size_bits = 0;
+										if (catch_op->type_index != 0 && catch_op->type_index < gTypeInfo.size()) {
+											catch_size_bits = gTypeInfo[catch_op->type_index].type_size_;
+										} else {
+											catch_size_bits = get_type_size_bits(catch_op->exception_type);
+										}
+										if (catch_size_bits > 0) {
+											if (current_function_reserved_catch_obj_padding_size_ == 0) {
+												current_function_reserved_catch_obj_padding_size_ = 8;
+											}
+											temp_var_sizes_[catch_temp_handle] = catch_size_bits;
+											handled_by_typed_payload = true;
 										}
 									}
-									if (!already_reserved) {
-										current_function_reserved_catch_ref_temps_.push_back(catch_temp_handle);
-										current_function_reserved_catch_ref_temp_size_ += 8;
-									}
-									temp_var_sizes_[catch_temp_handle] = 64;
-									handled_by_typed_payload = true;
 								}
 							}
 						}
@@ -1603,6 +1620,9 @@
 			if (current_function_reserved_catch_ref_temp_size_ != 0) {
 				stack_offset -= static_cast<int_fast32_t>(current_function_reserved_catch_ref_temp_size_);
 			}
+			if (current_function_reserved_catch_obj_padding_size_ != 0) {
+				stack_offset -= static_cast<int_fast32_t>(current_function_reserved_catch_obj_padding_size_);
+			}
 		}
 
 		// Calculate space needed for TempVars
@@ -1654,9 +1674,15 @@
 	// - Extends scope_stack_space if the offset exceeds current tracked allocation
 	// - Registers the TempVar in variables for consistent subsequent lookups
 	int32_t getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits = 64) {
+			StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
+			auto size_it = temp_var_sizes_.find(lookup_handle);
+			int actual_size_in_bits = size_in_bits;
+			if (size_it != temp_var_sizes_.end() && size_it->second > size_in_bits) {
+				actual_size_in_bits = size_it->second;  // Use pre-calculated size if larger
+			}
+
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
-			StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
 			auto* current_scope = &variable_scopes.back();
 			for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
 				auto existing_it = scope_it->variables.find(lookup_handle);
@@ -1670,7 +1696,7 @@
 				// Check if we need to extend the allocation for a larger size
 				// This can happen when a TempVar is first allocated with default size,
 				// then later used for a large struct (e.g., constructor call result)
-				int size_in_bytes = (size_in_bits + 7) / 8;
+					int size_in_bytes = (actual_size_in_bits + 7) / 8;
 				size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
 				
 				int32_t end_offset = existing_offset - size_in_bytes;
@@ -1706,12 +1732,7 @@
 		// Each TempVar gets size_in_bits bytes (rounded up to 8-byte alignment)
 		// Check temp_var_sizes_ for pre-calculated size (from calculateFunctionStackSpace)
 		// This ensures large struct returns are allocated with correct size from the start
-		StringHandle temp_var_handle = StringTable::getOrInternStringHandle(tempVar.name());
-		auto size_it = temp_var_sizes_.find(temp_var_handle);
-		int actual_size_in_bits = size_in_bits;
-		if (size_it != temp_var_sizes_.end() && size_it->second > size_in_bits) {
-			actual_size_in_bits = size_it->second;  // Use pre-calculated size if larger
-		}
+			StringHandle temp_var_handle = lookup_handle;
 		
 		int size_in_bytes = (actual_size_in_bits + 7) / 8;  // Round up to nearest byte
 		size_in_bytes = (size_in_bytes + 7) & ~7;    // Round up to 8-byte alignment

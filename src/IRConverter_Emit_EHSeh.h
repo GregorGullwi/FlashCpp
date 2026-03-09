@@ -168,7 +168,18 @@
 			// var_number == 0 indicates catch(...) which has no exception variable,
 			// or an unnamed catch parameter like catch(int) without a variable name.
 			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
-				handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+					int catch_storage_bits = 64;
+					if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
+						if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
+							catch_storage_bits = gTypeInfo[catch_op.type_index].type_size_;
+						} else {
+							int builtin_size = get_type_size_bits(catch_op.exception_type);
+							if (builtin_size > 0) {
+								catch_storage_bits = builtin_size;
+							}
+						}
+					}
+					handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, catch_storage_bits);
 			} else {
 				handler.catch_obj_stack_offset = 0;
 			}

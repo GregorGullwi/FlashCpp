@@ -213,7 +213,7 @@
 				const TypedValue& init = op.initializer.value();
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-					int src_offset = getStackOffsetFromTempVar(temp_var);
+						int src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
 					FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset, 
 					          " init.type=", static_cast<int>(init.type), 
 					          " init.size_in_bits=", init.size_in_bits);
@@ -411,7 +411,7 @@
 				bool src_is_pointer = false;  // Track if source is a pointer to the actual data
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-					src_offset = getStackOffsetFromTempVar(temp_var);
+						src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
 					// Check if this temp_var is a reference/pointer to the actual struct
 					// For RVO struct returns, temp_var holds the address of the constructed struct
 					auto ref_it = reference_stack_info_.find(src_offset);
@@ -688,6 +688,7 @@
 		next_temp_var_offset_ = 8;
 		current_function_reserved_catch_ref_temp_size_ = 0;
 		current_function_reserved_catch_ref_temps_.clear();
+		current_function_reserved_catch_obj_padding_size_ = 0;
 		current_function_try_blocks_.clear();
 		current_try_block_ = nullptr;
 		try_block_nesting_stack_.clear();
