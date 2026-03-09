@@ -146,29 +146,92 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 		}
 
 		// Phase 2: Add cleanup block entries for function-level cleanup landing pads.
-		// When there are no try blocks, the cleanup LP covers the entire function body.
-		// Replace any regions that overlap with cleanup regions.
-		if (!cleanup_blocks.empty() && try_blocks.empty()) {
-			// Simple case: no try blocks, only cleanup.
-			// Generate two entries: the cleanup region and the LP itself.
-			lsda_info.try_regions.clear();
-			for (const auto& cb : cleanup_blocks) {
-				// Region before the cleanup LP: point to the cleanup LP
-				if (cb.region_end > cb.region_start) {
-					LSDAGenerator::TryRegionInfo cleanup_region;
-					cleanup_region.try_start_offset = cb.region_start;
-					cleanup_region.try_length = cb.region_end - cb.region_start;
-					cleanup_region.landing_pad_offset = cb.cleanup_lp;
-					// catch_handlers is empty → action = 0 (cleanup-only in LSDA)
-					lsda_info.try_regions.push_back(cleanup_region);
+		// For regions outside try blocks (landing_pad_offset==0), redirect to the
+		// cleanup LP so function-scope destructors run during stack unwinding.
+		// The cleanup LP code region itself must keep landing_pad_offset=0 to
+		// prevent re-entry.
+		if (!cleanup_blocks.empty()) {
+			if (try_blocks.empty()) {
+				// Simple case: no try blocks, only cleanup.
+				// Generate two entries: the cleanup region and the LP itself.
+				lsda_info.try_regions.clear();
+				for (const auto& cb : cleanup_blocks) {
+					// Region before the cleanup LP: point to the cleanup LP
+					if (cb.region_end > cb.region_start) {
+						LSDAGenerator::TryRegionInfo cleanup_region;
+						cleanup_region.try_start_offset = cb.region_start;
+						cleanup_region.try_length = cb.region_end - cb.region_start;
+						cleanup_region.landing_pad_offset = cb.cleanup_lp;
+						// catch_handlers is empty → action = 0 (cleanup-only in LSDA)
+						lsda_info.try_regions.push_back(cleanup_region);
+					}
+					// The cleanup LP code itself must have lp=0 to prevent re-entry
+					if (function_end_offset > cb.cleanup_lp) {
+						LSDAGenerator::TryRegionInfo lp_region;
+						lp_region.try_start_offset = cb.cleanup_lp;
+						lp_region.try_length = function_end_offset - cb.cleanup_lp;
+						lp_region.landing_pad_offset = 0;
+						lsda_info.try_regions.push_back(lp_region);
+					}
 				}
-				// The cleanup LP code itself must have lp=0 to prevent re-entry
-				if (function_end_offset > cb.cleanup_lp) {
-					LSDAGenerator::TryRegionInfo lp_region;
-					lp_region.try_start_offset = cb.cleanup_lp;
-					lp_region.try_length = function_end_offset - cb.cleanup_lp;
-					lp_region.landing_pad_offset = 0;
-					lsda_info.try_regions.push_back(lp_region);
+			} else {
+				// Mixed case: both try blocks and cleanup blocks.
+				// Patch existing regions with landing_pad_offset==0 that fall
+				// within a cleanup block's range to point to the cleanup LP.
+				// Then split any region that spans the cleanup LP boundary so
+				// the LP code itself keeps landing_pad_offset=0.
+				for (const auto& cb : cleanup_blocks) {
+					std::vector<LSDAGenerator::TryRegionInfo> patched_regions;
+					for (const auto& region : lsda_info.try_regions) {
+						uint32_t r_start = region.try_start_offset;
+						uint32_t r_end = r_start + region.try_length;
+
+						if (region.landing_pad_offset != 0 || region.try_length == 0) {
+							// Region already has a handler (try block) — keep as-is
+							patched_regions.push_back(region);
+							continue;
+						}
+
+						// Region has no handler. Check overlap with cleanup range.
+						// Cleanup range: [cb.region_start, cb.region_end) → redirect to cb.cleanup_lp
+						// LP code range: [cb.cleanup_lp, function_end) → keep lp=0
+
+						// Portion before cleanup range: keep lp=0
+						if (r_start < cb.region_start && r_end > cb.region_start) {
+							LSDAGenerator::TryRegionInfo before;
+							before.try_start_offset = r_start;
+							before.try_length = cb.region_start - r_start;
+							before.landing_pad_offset = 0;
+							patched_regions.push_back(before);
+							r_start = cb.region_start;
+						}
+
+						// Portion inside cleanup range but before LP code: redirect
+						uint32_t cleanup_code_start = cb.cleanup_lp;
+						if (r_start < cleanup_code_start && r_end > r_start &&
+						    r_start < cb.region_end) {
+							uint32_t redirect_end = std::min({r_end, cleanup_code_start, cb.region_end});
+							if (redirect_end > r_start) {
+								LSDAGenerator::TryRegionInfo redirected;
+								redirected.try_start_offset = r_start;
+								redirected.try_length = redirect_end - r_start;
+								redirected.landing_pad_offset = cb.cleanup_lp;
+								// No catch_handlers → action = 0 (cleanup-only)
+								patched_regions.push_back(redirected);
+								r_start = redirect_end;
+							}
+						}
+
+						// Remaining portion (LP code or beyond): keep lp=0
+						if (r_start < r_end) {
+							LSDAGenerator::TryRegionInfo remainder;
+							remainder.try_start_offset = r_start;
+							remainder.try_length = r_end - r_start;
+							remainder.landing_pad_offset = 0;
+							patched_regions.push_back(remainder);
+						}
+					}
+					lsda_info.try_regions = std::move(patched_regions);
 				}
 			}
 		}

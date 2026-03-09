@@ -1760,7 +1760,12 @@
 			// Add exception handling information (required for x64) - uses mangled name
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				patchElfCatchFilterValues(try_blocks);
-				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+				// Build cleanup block info for Phase 2 function-level cleanup LPs
+				std::vector<ElfFileWriter::CleanupBlockInfo> cleanup_blocks;
+				if (current_function_cleanup_lp_offset_ > 0) {
+					cleanup_blocks.push_back({0, current_function_cleanup_lp_offset_, current_function_cleanup_lp_offset_});
+				}
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_, cleanup_blocks);
 				elf_catch_filter_patches_.clear();
 			} else {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
