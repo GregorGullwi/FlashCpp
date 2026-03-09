@@ -384,7 +384,14 @@ Potential areas for enhancement (in order of complexity):
 ### Hard
 - ❌ Constructor body statement execution
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
-- ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond straightforward by-reference locals, straightforward identifier-based by-reference init-capture aliases, straightforward `[this]` / `[*this]` mutation behavior, straightforward repeated-call mutable closure-local state, straightforward returned closure-object state transfer, straightforward returned `[*this]` member closures from local aggregate objects, and straightforward nested lambdas over enclosing state
+- ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
+  - straightforward by-reference locals
+  - straightforward identifier-based by-reference init-capture aliases
+  - straightforward `[this]` / `[*this]` mutation behavior
+  - straightforward repeated-call mutable closure-local state
+  - straightforward returned closure-object state transfer
+  - straightforward returned `[*this]` member closures from local aggregate objects
+  - straightforward nested lambdas over enclosing state
 - ❌ `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
