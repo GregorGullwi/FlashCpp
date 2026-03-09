@@ -37,40 +37,6 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_parame
 	return constexpr_match ? constexpr_match : non_constexpr_match;
 }
 
-void Evaluator::populate_constructor_parameter_bindings(
-	const ConstructorDeclarationNode& ctor_decl,
-	const std::vector<EvalResult>& evaluated_arguments,
-	std::unordered_map<std::string_view, EvalResult>& bindings) {
-	const auto& params = ctor_decl.parameter_nodes();
-	for (size_t i = 0; i < params.size() && i < evaluated_arguments.size(); ++i) {
-		if (!params[i].is<DeclarationNode>()) {
-			continue;
-		}
-
-		const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-		bindings[param_decl.identifier_token().value()] = evaluated_arguments[i];
-	}
-}
-
-EvalResult Evaluator::build_constructor_parameter_bindings(
-	const ConstructorDeclarationNode& ctor_decl,
-	const ChunkedVector<ASTNode>& ctor_args,
-	EvaluationContext& context,
-	std::unordered_map<std::string_view, EvalResult>& bindings) {
-	std::vector<EvalResult> evaluated_arguments;
-	evaluated_arguments.reserve(ctor_args.size());
-	for (const auto& ctor_arg : ctor_args) {
-		auto arg_result = evaluate(ctor_arg, context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-		evaluated_arguments.push_back(arg_result);
-	}
-
-	populate_constructor_parameter_bindings(ctor_decl, evaluated_arguments, bindings);
-	return EvalResult::from_bool(true);
-}
-
 EvalResult Evaluator::evaluate_expression_with_bindings(
 	const ASTNode& expr_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -494,7 +460,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 			const ExpressionNode& array_expr_node = array_expr.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(array_expr_node)) {
 				std::string_view var_name = std::get<IdentifierNode>(array_expr_node).name();
-
+				
 				// Check if it's in bindings (parameter array)
 				auto it = bindings.find(var_name);
 				if (it != bindings.end()) {
@@ -1174,55 +1140,192 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		return EvalResult::error("Complex member access expressions not yet supported in constant expressions");
 	}
 	
-	ResolvedConstexprObject resolved_object;
-	if (auto resolve_error = resolve_constexpr_object_source(
-		object_identifier,
-		var_name,
-		context,
-		"member access",
-		resolved_object)) {
-		return *resolve_error;
-	}
+	auto evaluateMemberFromInitializer = [&](const std::optional<ASTNode>& initializer_opt,
+	                                        TypeIndex declared_type_index,
+	                                        std::string_view object_name_for_error) -> EvalResult {
+		if (!initializer_opt.has_value()) {
+			return EvalResult::error("Constexpr variable has no initializer: " + std::string(object_name_for_error));
+		}
 
-	const VariableDeclarationNode* var_decl = resolved_object.var_decl;
+		const ASTNode& initializer = initializer_opt.value();
+
+		// Handle aggregate initialization (InitializerListNode): constexpr Point p = {1, 2};
+		if (initializer.is<InitializerListNode>()) {
+			if (declared_type_index >= gTypeInfo.size()) {
+				return EvalResult::error("Invalid type index in aggregate member access");
+			}
+
+			const StructTypeInfo* aggr_struct = gTypeInfo[declared_type_index].getStructInfo();
+			if (!aggr_struct) {
+				return EvalResult::error("Aggregate-initialized constexpr variable is not a struct");
+			}
+
+			const InitializerListNode& aggr_list = initializer.as<InitializerListNode>();
+			StringHandle req_handle = StringTable::getOrInternStringHandle(member_name);
+			size_t pos_idx = 0;
+			for (size_t mi = 0; mi < aggr_list.size(); ++mi) {
+				StringHandle mname;
+				if (aggr_list.is_designated(mi)) {
+					mname = aggr_list.member_name(mi);
+				} else if (pos_idx < aggr_struct->members.size()) {
+					mname = aggr_struct->members[pos_idx].getName();
+					pos_idx++;
+				} else {
+					break;
+				}
+				if (mname != req_handle) continue;
+				return evaluate(aggr_list.initializers()[mi], context);
+			}
+
+			for (const auto& m : aggr_struct->members) {
+				if (m.getName() == req_handle && m.default_initializer.has_value()) {
+					return evaluate(m.default_initializer.value(), context);
+				}
+			}
+
+			return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate initializer");
+		}
+
+		const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer_opt);
+		if (!ctor_call_ptr) {
+			return EvalResult::error("Member access on non-struct constexpr variable not supported");
+		}
+
+		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
+		const ASTNode& type_node = ctor_call.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Constructor call without valid type specifier");
+		}
+
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+			return EvalResult::error("Member access requires a struct type");
+		}
+
+		TypeIndex type_index = type_spec.type_index();
+		if (type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid type index in member access");
+		}
+
+		const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+		if (!struct_info) {
+			return EvalResult::error("Type is not a struct in member access");
+		}
+
+		const auto& ctor_args = ctor_call.arguments();
+		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+		if (!matching_ctor) {
+			return EvalResult::error("No matching constructor found for constexpr evaluation");
+		}
+
+		std::unordered_map<std::string_view, EvalResult> param_bindings;
+		const auto& params = matching_ctor->parameter_nodes();
+		for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
+			if (params[i].is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+				std::string_view param_name = param_decl.identifier_token().value();
+				auto arg_result = evaluate(ctor_args[i], context);
+				if (!arg_result.success()) {
+					return arg_result;
+				}
+				param_bindings[param_name] = arg_result;
+			}
+		}
+
+		const auto& member_inits = matching_ctor->member_initializers();
+		for (const auto& mem_init : member_inits) {
+			if (mem_init.member_name == member_name) {
+				return evaluate_expression_with_bindings(mem_init.initializer_expr, param_bindings, context);
+			}
+		}
+
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		for (const auto& member : struct_info->members) {
+			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
+				return evaluate(member.default_initializer.value(), context);
+			}
+		}
+
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in constructor initializer list and has no default value");
+	};
+
+	if (object_identifier && object_identifier->binding() == IdentifierBinding::StaticMember && context.struct_info != nullptr) {
+		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(object_identifier->nameHandle());
+		if (static_member && owner_struct) {
+			return evaluateMemberFromInitializer(static_member->initializer, static_member->type_index, var_name);
+		}
+	}
+	
+	// Look up the variable in the symbol table
+	if (!context.symbols) {
+		return EvalResult::error("Cannot evaluate member access: no symbol table provided");
+	}
+	
+	std::optional<ASTNode> symbol_opt;
+	if (object_identifier && object_identifier->resolved_name().isValid()) {
+		symbol_opt = context.symbols->lookup(object_identifier->resolved_name());
+	}
+	if (!symbol_opt.has_value()) {
+		symbol_opt = context.symbols->lookup(var_name);
+	}
+	if (!symbol_opt.has_value()) {
+		return EvalResult::error("Undefined variable in member access: " + std::string(var_name));
+	}
+	
+	const ASTNode& symbol_node = symbol_opt.value();
+	
+	// Check if it's a VariableDeclarationNode
+	if (!symbol_node.is<VariableDeclarationNode>()) {
+		return EvalResult::error("Identifier in member access is not a variable: " + std::string(var_name));
+	}
+	
+	const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
 	
 	// Before checking if the variable is constexpr, check if we're accessing a static member
 	// Static members can be accessed through any instance (even non-constexpr)
 	// because they don't depend on the instance
 	
-	TypeIndex var_type_index = resolved_object.declared_type_index;
-	if (var_decl && var_type_index != TypeIndex{0} && var_type_index < gTypeInfo.size()) {
-		const TypeInfo& var_type_info = gTypeInfo[var_type_index];
-		const StructTypeInfo* struct_info = var_type_info.getStructInfo();
+	// Get the type of the variable to look up the struct info
+	const DeclarationNode& var_declaration = var_decl.declaration();
+	const ASTNode& var_type_node = var_declaration.type_node();
+	TypeIndex var_type_index = TypeIndex{0};
+	if (var_type_node.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
+		var_type_index = var_type_spec.type_index();
 		
-		if (struct_info) {
-			// Look for static member
-			StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
-			auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+		if (var_type_index != TypeIndex{0} && var_type_index < gTypeInfo.size()) {
+			const TypeInfo& var_type_info = gTypeInfo[var_type_index];
+			const StructTypeInfo* struct_info = var_type_info.getStructInfo();
 			
-			if (static_member && owner_struct) {
-				FLASH_LOG(ConstExpr, Debug, "Accessing static member through instance: ", member_name);
-
-				// Found a static member - evaluate its initializer if available
-				if (static_member->initializer.has_value()) {
-					return evaluate(static_member->initializer.value(), context);
+			if (struct_info) {
+				// Look for static member
+				StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+				
+				if (static_member && owner_struct) {
+					FLASH_LOG(ConstExpr, Debug, "Accessing static member through instance: ", member_name);
+					
+					// Found a static member - evaluate its initializer if available
+					if (static_member->initializer.has_value()) {
+						return evaluate(static_member->initializer.value(), context);
+					}
+					
+					// If no initializer, return default value based on type
+					if (static_member->type == Type::Bool) {
+						return EvalResult::from_bool(false);
+					}
+					return EvalResult::from_int(0);
 				}
-
-				// If no initializer, return default value based on type
-				if (static_member->type == Type::Bool) {
-					return EvalResult::from_bool(false);
-				}
-				return EvalResult::from_int(0);
 			}
 		}
 	}
 	
 	// If not a static member access, check if it's a constexpr variable
-	if (var_decl && !var_decl->is_constexpr()) {
+	if (!var_decl.is_constexpr()) {
 		return EvalResult::error("Variable in member access must be constexpr: " + std::string(var_name));
 	}
 	
-	return evaluate_member_from_initializer(*resolved_object.initializer, var_type_index, member_name, var_name, context);
+	return evaluateMemberFromInitializer(var_decl.initializer(), var_type_index, var_name);
 }
 
 
@@ -1259,28 +1362,6 @@ std::optional<ASTNode> Evaluator::get_member_initializer(
 	}
 	
 	return std::nullopt;
-}
-
-EvalResult Evaluator::evaluate_constructor_bound_member(
-	const StructTypeInfo* struct_info,
-	const ConstructorDeclarationNode& ctor_decl,
-	std::unordered_map<std::string_view, EvalResult>& param_bindings,
-	std::string_view member_name,
-	EvaluationContext& context) {
-	for (const auto& mem_init : ctor_decl.member_initializers()) {
-		if (mem_init.member_name == member_name) {
-			return evaluate_expression_with_bindings(mem_init.initializer_expr, param_bindings, context);
-		}
-	}
-
-	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-	for (const auto& member : struct_info->members) {
-		if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
-			return evaluate(member.default_initializer.value(), context);
-		}
-	}
-
-	return EvalResult::error("Member '" + std::string(member_name) + "' not found");
 }
 
 // Helper to get StructTypeInfo from a TypeSpecifierNode
@@ -1346,125 +1427,6 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 	return std::nullopt;
 }
 
-std::optional<ASTNode> Evaluator::find_aggregate_member_initializer(
-	const InitializerListNode& init_list,
-	const StructTypeInfo* struct_info,
-	StringHandle member_name_handle) {
-	if (!struct_info) {
-		return std::nullopt;
-	}
-
-	size_t positional_member_index = 0;
-	for (size_t init_index = 0; init_index < init_list.size(); ++init_index) {
-		StringHandle current_member_name;
-		if (init_list.is_designated(init_index)) {
-			current_member_name = init_list.member_name(init_index);
-		} else if (positional_member_index < struct_info->members.size()) {
-			current_member_name = struct_info->members[positional_member_index].getName();
-			positional_member_index++;
-		} else {
-			break;
-		}
-
-		if (current_member_name == member_name_handle) {
-			return init_list.initializers()[init_index];
-		}
-	}
-
-	for (const auto& member : struct_info->members) {
-		if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
-			return member.default_initializer.value();
-		}
-	}
-
-	return std::nullopt;
-}
-
-EvalResult Evaluator::evaluate_member_from_initializer(
-	const std::optional<ASTNode>& initializer_opt,
-	TypeIndex declared_type_index,
-	std::string_view member_name,
-	std::string_view object_name_for_error,
-	EvaluationContext& context) {
-	if (!initializer_opt.has_value()) {
-		return EvalResult::error("Constexpr variable has no initializer: " + std::string(object_name_for_error));
-	}
-
-	const ASTNode& initializer = initializer_opt.value();
-	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-
-	if (initializer.is<InitializerListNode>()) {
-		if (declared_type_index >= gTypeInfo.size()) {
-			return EvalResult::error("Invalid type index in aggregate member access");
-		}
-
-		const StructTypeInfo* aggregate_struct = gTypeInfo[declared_type_index].getStructInfo();
-		if (!aggregate_struct) {
-			return EvalResult::error("Aggregate-initialized constexpr variable is not a struct");
-		}
-
-		auto member_initializer = find_aggregate_member_initializer(
-			initializer.as<InitializerListNode>(),
-			aggregate_struct,
-			member_name_handle);
-		if (!member_initializer.has_value()) {
-			return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate initializer");
-		}
-
-		return evaluate(member_initializer.value(), context);
-	}
-
-	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer_opt);
-	if (!ctor_call_ptr) {
-		return EvalResult::error("Member access on non-struct constexpr variable not supported");
-	}
-
-	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
-		return EvalResult::error("Member access requires a struct type");
-	}
-
-	TypeIndex type_index = type_spec.type_index();
-	if (type_index >= gTypeInfo.size()) {
-		return EvalResult::error("Invalid type index in member access");
-	}
-
-	const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
-	if (!struct_info) {
-		return EvalResult::error("Type is not a struct in member access");
-	}
-
-	const auto& ctor_args = ctor_call.arguments();
-	const ConstructorDeclarationNode* matching_ctor =
-		find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
-	if (!matching_ctor) {
-		return EvalResult::error("No matching constructor found for constexpr evaluation");
-	}
-
-	std::unordered_map<std::string_view, EvalResult> param_bindings;
-	if (auto bindings_result = build_constructor_parameter_bindings(
-		*matching_ctor,
-		ctor_args,
-		context,
-		param_bindings);
-	    !bindings_result.success()) {
-		return bindings_result;
-	}
-
-	auto member_result = evaluate_constructor_bound_member(struct_info, *matching_ctor, param_bindings, member_name, context);
-	if (!member_result.success()) {
-		return member_result;
-	}
-
-	return member_result;
-}
-
 // Evaluate nested member access (e.g., obj.inner.value)
 EvalResult Evaluator::evaluate_nested_member_access(
 	const MemberAccessNode& inner_access,
@@ -1504,22 +1466,50 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		return EvalResult::error("Invalid base expression in nested member access");
 	}
 
-	ResolvedConstexprObject resolved_object;
-	if (auto resolve_error = resolve_constexpr_object_source(
-		base_identifier,
-		base_var_name,
-		context,
-		"nested member access",
-		resolved_object)) {
-		return *resolve_error;
+	const std::optional<ASTNode>* initializer = nullptr;
+	TypeIndex base_declared_type_index{0};
+	std::optional<ASTNode> symbol_opt;
+
+	if (base_identifier && base_identifier->binding() == IdentifierBinding::StaticMember && context.struct_info != nullptr) {
+		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(base_identifier->nameHandle());
+		if (static_member && owner_struct) {
+			initializer = &static_member->initializer;
+			base_declared_type_index = static_member->type_index;
+		}
+	}
+	
+	// Look up the base variable
+	if (!context.symbols) {
+		return EvalResult::error("Cannot evaluate nested member access: no symbol table provided");
 	}
 
-	if (resolved_object.var_decl && !resolved_object.var_decl->is_constexpr()) {
-		return EvalResult::error("Variable in nested member access must be constexpr");
-	}
+	if (initializer == nullptr) {
+		if (base_identifier && base_identifier->resolved_name().isValid()) {
+			symbol_opt = context.symbols->lookup(base_identifier->resolved_name());
+		}
+		if (!symbol_opt.has_value()) {
+			symbol_opt = context.symbols->lookup(base_var_name);
+		}
+		if (!symbol_opt.has_value()) {
+			return EvalResult::error("Undefined variable in nested member access: " + std::string(base_var_name));
+		}
 
-	const std::optional<ASTNode>* initializer = resolved_object.initializer;
-	TypeIndex base_declared_type_index = resolved_object.declared_type_index;
+		const ASTNode& symbol_node = symbol_opt.value();
+		if (!symbol_node.is<VariableDeclarationNode>()) {
+			return EvalResult::error("Identifier in nested member access is not a variable");
+		}
+
+		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+		if (!var_decl.is_constexpr()) {
+			return EvalResult::error("Variable in nested member access must be constexpr");
+		}
+
+		initializer = &var_decl.initializer();
+		const DeclarationNode& base_decl = var_decl.declaration();
+		if (base_decl.type_node().is<TypeSpecifierNode>()) {
+			base_declared_type_index = base_decl.type_node().as<TypeSpecifierNode>().type_index();
+		}
+	}
 
 	if (!initializer->has_value()) {
 		return EvalResult::error("Constexpr variable has no initializer in nested member access");
@@ -1536,41 +1526,53 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		// Find the intermediate member by name
 		const InitializerListNode& outer_list = (*initializer)->as<InitializerListNode>();
 		StringHandle inter_handle = StringTable::getOrInternStringHandle(intermediate_member);
-		std::optional<ASTNode> intermediate_init = find_aggregate_member_initializer(outer_list, base_aggr_struct, inter_handle);
-		if (!intermediate_init.has_value())
+		const ASTNode* inter_init = nullptr;
+		size_t pos_idx = 0;
+		for (size_t ii = 0; ii < outer_list.size(); ++ii) {
+			StringHandle mname;
+			if (outer_list.is_designated(ii)) {
+				mname = outer_list.member_name(ii);
+			} else if (pos_idx < base_aggr_struct->members.size()) {
+				mname = base_aggr_struct->members[pos_idx].getName();
+				pos_idx++;
+			} else {
+				break;
+			}
+			if (mname == inter_handle) { inter_init = &outer_list.initializers()[ii]; break; }
+		}
+		if (!inter_init)
 			return EvalResult::error("Intermediate member '" + std::string(intermediate_member) + "' not found in aggregate init");
 		// Find the inner struct type for the intermediate member
-		const StructMember* intermediate_member_info = nullptr;
+		const StructMember* inter_member_info = nullptr;
 		for (const auto& m : base_aggr_struct->members) {
-			if (m.getName() == inter_handle) { intermediate_member_info = &m; break; }
+			if (m.getName() == inter_handle) { inter_member_info = &m; break; }
 		}
-		if (!intermediate_member_info ||
-		    (intermediate_member_info->type != Type::Struct && intermediate_member_info->type != Type::UserDefined))
+		if (!inter_member_info || (inter_member_info->type != Type::Struct && inter_member_info->type != Type::UserDefined))
 			return EvalResult::error("Intermediate member is not a struct in aggregate nested access");
-		if (intermediate_member_info->type_index >= gTypeInfo.size())
+		if (inter_member_info->type_index >= gTypeInfo.size())
 			return EvalResult::error("Invalid inner type index in aggregate nested access");
-		const StructTypeInfo* inner_aggr_struct = gTypeInfo[intermediate_member_info->type_index].getStructInfo();
+		const StructTypeInfo* inner_aggr_struct = gTypeInfo[inter_member_info->type_index].getStructInfo();
 		if (!inner_aggr_struct)
 			return EvalResult::error("Inner member type is not a struct in aggregate nested access");
-		// intermediate_init is the initializer for the intermediate member
+		// inter_init is the initializer for the intermediate member
 		// It may be an InitializerListNode (nested aggregate) or a scalar expression
-		if (intermediate_init->is<InitializerListNode>()) {
+		if (inter_init->is<InitializerListNode>()) {
 			// Nested aggregate: bind inner members and look up final_member_name
 			std::unordered_map<std::string_view, EvalResult> inner_bindings;
 			auto bind_r = bind_members_from_initializer_list(
-				inner_aggr_struct, intermediate_init->as<InitializerListNode>(), inner_bindings, context);
+				inner_aggr_struct, inter_init->as<InitializerListNode>(), inner_bindings, context);
 			if (!bind_r.success()) return bind_r;
 			auto it = inner_bindings.find(final_member_name);
 			if (it == inner_bindings.end())
 				return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in nested aggregate init");
 			return it->second;
 		} else {
-			// Scalar intermediate_init (brace elision): initializes the first member of the inner struct.
+			// Scalar inter_init (brace elision): initializes the first member of the inner struct.
 			// Return the value only if final_member_name matches the first inner struct member.
 			StringHandle final_handle = StringTable::getOrInternStringHandle(final_member_name);
 			if (!inner_aggr_struct->members.empty() &&
 				inner_aggr_struct->members[0].getName() == final_handle) {
-				return evaluate(*intermediate_init, context);
+				return evaluate(*inter_init, context);
 			}
 			return EvalResult::error("Final member '" + std::string(final_member_name) +
 				"' not reachable via scalar initializer (brace elision) in nested aggregate");
@@ -1609,16 +1611,31 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	// Build parameter bindings for the outer constructor
 	const auto& base_ctor_args = base_ctor.arguments();
 	std::unordered_map<std::string_view, EvalResult> param_bindings;
-
-	if (const ConstructorDeclarationNode* base_matching_ctor =
-		    find_matching_constructor_by_parameter_count(base_struct_info, base_ctor_args.size())) {
-		if (auto bindings_result = build_constructor_parameter_bindings(
-			*base_matching_ctor,
-			base_ctor_args,
-			context,
-			param_bindings);
-		    !bindings_result.success()) {
-			return bindings_result;
+	
+	// Find the matching constructor for the base struct
+	const ConstructorDeclarationNode* base_matching_ctor = nullptr;
+	for (const auto& member_func : base_struct_info->member_functions) {
+		if (!member_func.is_constructor) continue;
+		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
+		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+		if (ctor.parameter_nodes().size() == base_ctor_args.size()) {
+			base_matching_ctor = &ctor;
+			break;
+		}
+	}
+	
+	if (base_matching_ctor) {
+		const auto& params = base_matching_ctor->parameter_nodes();
+		for (size_t i = 0; i < params.size() && i < base_ctor_args.size(); ++i) {
+			if (params[i].is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+				std::string_view param_name = param_decl.identifier_token().value();
+				auto arg_result = evaluate(base_ctor_args[i], context);
+				if (!arg_result.success()) {
+					return arg_result;
+				}
+				param_bindings[param_name] = arg_result;
+			}
 		}
 	}
 	
@@ -1683,19 +1700,29 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	
 	// Build inner parameter bindings
 	std::unordered_map<std::string_view, EvalResult> inner_param_bindings;
-	populate_constructor_parameter_bindings(*inner_matching_ctor, {init_arg_result}, inner_param_bindings);
-
-	auto final_member_result = evaluate_constructor_bound_member(
-		inner_struct_info,
-		*inner_matching_ctor,
-		inner_param_bindings,
-		final_member_name,
-		context);
-	if (!final_member_result.success()) {
-		return final_member_result;
+	const auto& inner_params = inner_matching_ctor->parameter_nodes();
+	if (!inner_params.empty() && inner_params[0].is<DeclarationNode>()) {
+		const DeclarationNode& param_decl = inner_params[0].as<DeclarationNode>();
+		std::string_view param_name = param_decl.identifier_token().value();
+		inner_param_bindings[param_name] = init_arg_result;
 	}
-
-	return final_member_result;
+	
+	// Look for the final member in the inner constructor's initializer list
+	for (const auto& mem_init : inner_matching_ctor->member_initializers()) {
+		if (mem_init.member_name == final_member_name) {
+			return evaluate_expression_with_bindings(mem_init.initializer_expr, inner_param_bindings, context);
+		}
+	}
+	
+	// Check for default member initializer
+	StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
+	for (const auto& member : inner_struct_info->members) {
+		if (member.getName() == final_member_name_handle && member.default_initializer.has_value()) {
+			return evaluate(member.default_initializer.value(), context);
+		}
+	}
+	
+	return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
 }
 
 // Evaluate array subscript followed by member access (e.g., arr[0].member)
@@ -1866,19 +1893,29 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		}
 
 		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-		populate_constructor_parameter_bindings(*matching_ctor, evaluated_ctor_args, ctor_param_bindings);
-
-		auto member_result = evaluate_constructor_bound_member(
-			struct_info,
-			*matching_ctor,
-			ctor_param_bindings,
-			member_name,
-			context);
-		if (!member_result.success()) {
-			return member_result;
+		const auto& params = matching_ctor->parameter_nodes();
+		for (size_t i = 0; i < params.size() && i < evaluated_ctor_args.size(); ++i) {
+			if (params[i].is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+				std::string_view param_name = param_decl.identifier_token().value();
+				ctor_param_bindings[param_name] = evaluated_ctor_args[i];
+			}
 		}
 
-		return member_result;
+		for (const auto& mem_init : matching_ctor->member_initializers()) {
+			if (mem_init.member_name == member_name) {
+				return evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
+			}
+		}
+
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		for (const auto& member : struct_info->members) {
+			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
+				return evaluate(member.default_initializer.value(), context);
+			}
+		}
+
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
 	};
 
 	auto index_result = evaluate(subscript.index_expr(), context);
@@ -2356,36 +2393,6 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	return EvalResult::from_bool(true);
 }
 
-EvalResult Evaluator::bind_members_from_constructor(
-	const StructTypeInfo* struct_info,
-	const ConstructorDeclarationNode& ctor_decl,
-	std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
-	std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context) {
-	for (const auto& mem_init : ctor_decl.member_initializers()) {
-		auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-		if (!member_result.success()) {
-			return member_result;
-		}
-		bindings[mem_init.member_name] = member_result;
-	}
-
-	for (const auto& member : struct_info->members) {
-		std::string_view name_view = StringTable::getStringView(member.getName());
-		if (bindings.find(name_view) == bindings.end() && member.default_initializer.has_value()) {
-			auto default_result = evaluate(member.default_initializer.value(), context);
-			// Preserve pre-refactor extract_object_members compatibility for constexpr member function
-			// calls: a member function may only read a subset of `this`, so an unrelated default member
-			// that fails to evaluate here must not prevent binding the members the call actually uses.
-			if (default_result.success()) {
-				bindings[name_view] = default_result;
-			}
-		}
-	}
-
-	return EvalResult::from_bool(true);
-}
-
 // Helper to extract member values from a constexpr object
 EvalResult Evaluator::extract_object_members(
 	const ASTNode& object_expr,
@@ -2485,21 +2492,40 @@ EvalResult Evaluator::extract_object_members(
 	
 	// Build parameter bindings for the constructor
 	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-	if (auto bindings_result = build_constructor_parameter_bindings(
-		*matching_ctor,
-		ctor_args,
-		context,
-		ctor_param_bindings);
-	    !bindings_result.success()) {
-		return bindings_result;
+	const auto& params = matching_ctor->parameter_nodes();
+	for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
+		if (params[i].is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+			std::string_view param_name = param_decl.identifier_token().value();
+			auto arg_result = evaluate(ctor_args[i], context);
+			if (!arg_result.success()) {
+				return arg_result;
+			}
+			ctor_param_bindings[param_name] = arg_result;
+		}
 	}
-
-	return bind_members_from_constructor(
-		struct_info,
-		*matching_ctor,
-		ctor_param_bindings,
-		member_bindings,
-		context);
+	
+	// Extract member values from the initializer list
+	for (const auto& mem_init : matching_ctor->member_initializers()) {
+		auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
+		if (!member_result.success()) {
+			return member_result;
+		}
+		member_bindings[mem_init.member_name] = member_result;
+	}
+	
+	// Also check for default member initializers for members not in the initializer list
+	for (const auto& member : struct_info->members) {
+		std::string_view name_view = StringTable::getStringView(member.getName());
+		if (member_bindings.find(name_view) == member_bindings.end() && member.default_initializer.has_value()) {
+			auto default_result = evaluate(member.default_initializer.value(), context);
+			if (default_result.success()) {
+				member_bindings[name_view] = default_result;
+			}
+		}
+	}
+	
+	return EvalResult::from_bool(true);  // Success
 }
 
 // Evaluate array subscript (e.g., arr[0] or obj.data[1])
@@ -2576,16 +2602,42 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 
 				const InitializerListNode& aggr_list = initializer_opt->as<InitializerListNode>();
 				StringHandle req_handle = StringTable::getOrInternStringHandle(member_name);
-				std::optional<ASTNode> member_init_opt = find_aggregate_member_initializer(aggr_list, aggr_struct, req_handle);
-				if (!member_init_opt.has_value()) {
+				const ASTNode* member_init = nullptr;
+				size_t pos_idx = 0;
+				for (size_t mi = 0; mi < aggr_list.size(); ++mi) {
+					StringHandle mname;
+					if (aggr_list.is_designated(mi)) {
+						mname = aggr_list.member_name(mi);
+					} else if (pos_idx < aggr_struct->members.size()) {
+						mname = aggr_struct->members[pos_idx].getName();
+						pos_idx++;
+					} else {
+						break;
+					}
+					if (mname == req_handle) {
+						member_init = &aggr_list.initializers()[mi];
+						break;
+					}
+				}
+
+				if (!member_init) {
+					for (const auto& member : aggr_struct->members) {
+						if (member.getName() == req_handle && member.default_initializer.has_value()) {
+							member_init = &member.default_initializer.value();
+							break;
+						}
+					}
+				}
+
+				if (!member_init) {
 					return EvalResult::error("Array member '" + std::string(member_name) + "' not found");
 				}
 
-				if (!member_init_opt->is<InitializerListNode>()) {
+				if (!member_init->is<InitializerListNode>()) {
 					return EvalResult::error("Array member is not initialized with an array initializer");
 				}
 
-				const InitializerListNode& init_list = member_init_opt->as<InitializerListNode>();
+				const InitializerListNode& init_list = member_init->as<InitializerListNode>();
 				const auto& elements = init_list.initializers();
 				if (index >= elements.size()) {
 					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
@@ -2632,13 +2684,17 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 			const ConstructorDeclarationNode* matching_ctor =
 				find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
 			if (matching_ctor) {
-				if (auto bindings_result = build_constructor_parameter_bindings(
-					*matching_ctor,
-					ctor_args,
-					context,
-					param_bindings);
-				    !bindings_result.success()) {
-					return bindings_result;
+				const auto& params = matching_ctor->parameter_nodes();
+				for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
+					if (params[i].is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+						std::string_view param_name = param_decl.identifier_token().value();
+						auto arg_result = evaluate(ctor_args[i], context);
+						if (!arg_result.success()) {
+							return arg_result;
+						}
+						param_bindings[param_name] = arg_result;
+					}
 				}
 			}
 
