@@ -8,6 +8,7 @@
 #include <vector>
 #include <optional>
 #include <unordered_map>
+#include <functional>
 
 // Conversion rank for overload resolution
 // Lower rank = better match
@@ -895,8 +896,6 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 		}
 		// Check if the single parameter type matches the right operand
 		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-		// Check if the single parameter type matches the right operand
-		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
 			if (params.size() == 1 && params[0].is<DeclarationNode>()) {
 				const auto& param_type = params[0].as<DeclarationNode>().type_node();
@@ -946,9 +945,10 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 }
 
 // Find binary operator overload, including free-function operators in the given symbol table.
-// Per C++20 [over.match.oper], both member and non-member overloads must be considered.
-// Searches member functions first (via findBinaryOperatorOverload), then falls back to
-// free-function operators found in the symbol table.
+// Per C++20 [over.match.oper]/2, both member and non-member candidates are collected into
+// a single candidate set and ranked together per [over.best.ics] and [over.match.best].
+// When a member and non-member have identical conversion ranks on all positions,
+// the member is preferred per [over.match.oper]/3.3.
 inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	TypeIndex left_type_index,
 	TypeIndex right_type_index,
@@ -957,17 +957,115 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	const SymbolTable& symbol_table,
 	Type right_type = Type::Void)
 {
-	// First try member function overload (existing logic)
-	auto member_result = findBinaryOperatorOverload(left_type_index, right_type_index, operator_kind, right_type);
-	if (member_result.has_overload) {
-		return member_result;
+	// --- Unified candidate set per C++20 [over.match.oper]/2 ---
+	struct OperatorCandidate {
+		ConversionRank lhs_rank;
+		ConversionRank rhs_rank;
+		const StructMemberFunction* member_func = nullptr;
+		const FunctionDeclarationNode* free_func = nullptr;
+		bool is_free_function = false;
+	};
+	std::vector<OperatorCandidate> candidates;
+
+	const size_t type_info_size = gTypeInfo.size();
+
+	// Helper: resolve self-referential template parameter types.
+	// Mirrors AstToIr::resolveSelfReferentialType — when a template struct Foo<T>
+	// is instantiated as Foo<int>, member operator parameters still reference the
+	// uninstantiated Foo (total_size==0). Resolve to the concrete left_type_index.
+	auto resolveSelfRefParamIndex = [&](TypeIndex param_idx) -> TypeIndex {
+		if (param_idx == 0 || param_idx >= type_info_size || left_type_index >= type_info_size) return param_idx;
+		const auto& param_ti = gTypeInfo[param_idx];
+		if (!param_ti.struct_info_ || param_ti.struct_info_->total_size != 0) return param_idx;
+		auto template_base_name = StringTable::getStringView(param_ti.name());
+		auto instantiated_name = StringTable::getStringView(gTypeInfo[left_type_index].name());
+		auto base_name = instantiated_name;
+		auto dollar_pos = base_name.find('$');
+		if (dollar_pos != std::string_view::npos) {
+			base_name = base_name.substr(0, dollar_pos);
+		}
+		return (template_base_name == base_name) ? left_type_index : param_idx;
+	};
+
+	// Helper: rank a single operand against a parameter type.
+	// For struct/enum types, identity is determined by type_index.
+	// For primitive types, uses can_convert_type(Type, Type) for standard rankings.
+	auto rankOperandMatch = [&](Type arg_type, TypeIndex arg_type_index,
+	                            const TypeSpecifierNode& param_spec) -> ConversionRank {
+		Type param_type = param_spec.type();
+		TypeIndex param_idx = param_spec.type_index();
+
+		// Resolve self-referential template parameter types
+		if (param_type == Type::Struct || param_type == Type::Enum) {
+			param_idx = resolveSelfRefParamIndex(param_idx);
+		}
+
+		// Struct/Enum parameter: identity by type_index
+		if (param_type == Type::Struct || param_type == Type::Enum) {
+			if (arg_type == param_type && arg_type_index == param_idx) {
+				return ConversionRank::ExactMatch;
+			}
+			if (arg_type == Type::Struct || arg_type == Type::Enum) {
+				return ConversionRank::NoMatch;  // Different struct/enum types
+			}
+			return ConversionRank::UserDefined;  // Primitive → struct (converting ctor)
+		}
+
+		// Primitive parameter
+		if (arg_type == Type::Struct || arg_type == Type::Enum) {
+			return ConversionRank::UserDefined;  // Struct → primitive (conversion operator)
+		}
+
+		// Both primitive: use standard type conversion ranking
+		return can_convert_type(arg_type, param_type).rank;
+	};
+
+	// Determine LHS actual type
+	Type left_type = Type::Void;
+	if (left_type_index > 0 && left_type_index < type_info_size) {
+		left_type = gTypeInfo[left_type_index].type_;
+		if (left_type == Type::Invalid || left_type == Type::Void) left_type = Type::Struct;
 	}
 
-	// Search for free-function operator overload: operator+(LHSType, RHSType)
-	// Build the operator function name (e.g., "operator+")
+	// --- 1. Gather member-function candidates (recursive through base classes) ---
+	std::function<void(TypeIndex)> gatherMemberCandidates = [&](TypeIndex struct_idx) {
+		if (struct_idx == 0 || struct_idx >= type_info_size) return;
+		const StructTypeInfo* si = gTypeInfo[struct_idx].getStructInfo();
+		if (!si) return;
+
+		for (const auto& member_func : si->member_functions) {
+			if (operator_kind == OverloadableOperator::Assign) {
+				if (!isAssignOperator(member_func.operator_kind)) continue;
+			} else {
+				if (member_func.operator_kind != operator_kind) continue;
+			}
+
+			if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
+			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+			if (params.size() != 1 || !params[0].is<DeclarationNode>()) continue;
+			const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+			if (!param_type_node.is<TypeSpecifierNode>()) continue;
+			const auto& param_spec = param_type_node.as<TypeSpecifierNode>();
+
+			// LHS is always ExactMatch for member operators (implicit this)
+			ConversionRank rhs_rank = rankOperandMatch(right_type, right_type_index, param_spec);
+			if (rhs_rank != ConversionRank::NoMatch) {
+				candidates.push_back({ConversionRank::ExactMatch, rhs_rank, &member_func, nullptr, false});
+			}
+		}
+
+		// Recurse into base classes
+		for (const auto& base_spec : si->base_classes) {
+			if (base_spec.type_index > 0 && base_spec.type_index < type_info_size) {
+				gatherMemberCandidates(base_spec.type_index);
+			}
+		}
+	};
+	gatherMemberCandidates(left_type_index);
+
+	// --- 2. Gather free-function candidates from symbol table ---
 	std::string op_func_name = "operator";
 	op_func_name += operator_symbol;
-
 	auto overloads = symbol_table.lookup_all(op_func_name);
 	for (const auto& overload : overloads) {
 		if (!overload.is<FunctionDeclarationNode>()) continue;
@@ -975,40 +1073,60 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		const auto& params = func_decl.parameter_nodes();
 		if (params.size() < 2) continue;
 
-		// Check first parameter matches left operand type
 		if (!params[0].is<DeclarationNode>()) continue;
 		const auto& p0_type = params[0].as<DeclarationNode>().type_node();
 		if (!p0_type.is<TypeSpecifierNode>()) continue;
 		const auto& p0_spec = p0_type.as<TypeSpecifierNode>();
 
-		bool lhs_matches = false;
-		if (p0_spec.type() == Type::Struct || p0_spec.type() == Type::Enum || p0_spec.type() == Type::UserDefined) {
-			lhs_matches = (p0_spec.type_index() == left_type_index);
-		}
-		if (!lhs_matches) continue;
-
-		// Check second parameter matches right operand type
 		if (!params[1].is<DeclarationNode>()) continue;
 		const auto& p1_type = params[1].as<DeclarationNode>().type_node();
 		if (!p1_type.is<TypeSpecifierNode>()) continue;
 		const auto& p1_spec = p1_type.as<TypeSpecifierNode>();
 
-		bool rhs_matches = false;
-		if (right_type_index > 0 && (p1_spec.type() == Type::Struct || p1_spec.type() == Type::Enum || p1_spec.type() == Type::UserDefined)) {
-			rhs_matches = (p1_spec.type_index() == right_type_index);
-		} else if (right_type != Type::Void) {
-			rhs_matches = (p1_spec.type() == right_type);
-		} else {
-			// No right-operand type information at all: skip this overload to avoid
-			// silently selecting the wrong candidate. Only accept exact type matches.
-			rhs_matches = false;
-		}
-		if (!rhs_matches) continue;
+		ConversionRank lhs_rank = rankOperandMatch(left_type, left_type_index, p0_spec);
+		if (lhs_rank == ConversionRank::NoMatch) continue;
 
-		return OperatorOverloadResult(&func_decl);
+		ConversionRank rhs_rank = rankOperandMatch(right_type, right_type_index, p1_spec);
+		if (rhs_rank == ConversionRank::NoMatch) continue;
+
+		candidates.push_back({lhs_rank, rhs_rank, nullptr, &func_decl, true});
 	}
 
-	return OperatorOverloadResult::no_overload();
+	// --- 3. Rank all candidates per [over.match.best]/2 ---
+	if (candidates.empty()) {
+		return OperatorOverloadResult::no_overload();
+	}
+
+	const OperatorCandidate* best = &candidates[0];
+	for (size_t i = 1; i < candidates.size(); ++i) {
+		const auto& cand = candidates[i];
+		bool cand_is_better = false;
+		bool cand_is_worse = false;
+
+		if (cand.lhs_rank < best->lhs_rank) cand_is_better = true;
+		else if (cand.lhs_rank > best->lhs_rank) cand_is_worse = true;
+
+		if (cand.rhs_rank < best->rhs_rank) cand_is_better = true;
+		else if (cand.rhs_rank > best->rhs_rank) cand_is_worse = true;
+
+		if (cand_is_better && !cand_is_worse) {
+			// Strictly better on at least one position, no worse on any
+			best = &cand;
+		} else if (!cand_is_better && !cand_is_worse) {
+			// Equal ranks: tiebreaker per [over.match.oper]/3.3 — prefer member
+			if (!cand.is_free_function && best->is_free_function) {
+				best = &cand;
+			}
+		}
+		// If cand_is_worse (or mixed better/worse), skip this candidate
+	}
+
+	// Return the winner
+	if (best->is_free_function) {
+		return OperatorOverloadResult(best->free_func);
+	} else {
+		return OperatorOverloadResult(best->member_func);
+	}
 }
 
 // ============================================================================
