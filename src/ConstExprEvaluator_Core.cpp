@@ -1692,7 +1692,9 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 				*matched_function,
 				arguments,
 				empty_bindings,
-				context);
+				context,
+				nullptr,
+				FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
 	};
 
 	if (auto current_struct_result = tryEvaluateCurrentStructStaticMemberFunction()) {
@@ -1990,13 +1992,25 @@ void Evaluator::load_template_bindings_from_type(const TypeInfo* source_type, Ev
 		return;
 	}
 
-	auto param_handles = gTemplateRegistry.getTemplateParameters(source_type->baseTemplateName());
+	StringHandle base_template_name = source_type->baseTemplateName();
+	auto param_handles = gTemplateRegistry.getTemplateParameters(base_template_name);
 	context.template_param_names.clear();
 	context.template_args.clear();
-	context.template_param_names.reserve(param_handles.size());
 	context.template_args.reserve(source_type->templateArgs().size());
-	for (StringHandle param_handle : param_handles) {
-		context.template_param_names.push_back(StringTable::getStringView(param_handle));
+	if (param_handles.empty()) {
+		auto template_node_opt = gTemplateRegistry.lookupTemplate(base_template_name);
+		if (template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
+			const auto& template_param_names = template_node_opt->as<TemplateClassDeclarationNode>().template_param_names();
+			context.template_param_names.reserve(template_param_names.size());
+			for (std::string_view param_name : template_param_names) {
+				context.template_param_names.push_back(param_name);
+			}
+		}
+	} else {
+		context.template_param_names.reserve(param_handles.size());
+		for (StringHandle param_handle : param_handles) {
+			context.template_param_names.push_back(StringTable::getStringView(param_handle));
+		}
 	}
 	for (const auto& arg_info : source_type->templateArgs()) {
 		context.template_args.push_back(toTemplateTypeArg(arg_info));
@@ -2035,7 +2049,8 @@ EvalResult Evaluator::evaluate_function_call_with_template_context(
 	const ChunkedVector<ASTNode>& arguments,
 	const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
 	EvaluationContext& context,
-	const TypeInfo* fallback_template_type) {
+	const TypeInfo* fallback_template_type,
+	FunctionCallTemplateBindingLoadMode binding_load_mode) {
 	auto saved_template_param_names = context.template_param_names;
 	auto saved_template_args = context.template_args;
 	auto restore_template_bindings = [&]() {
@@ -2043,7 +2058,9 @@ EvalResult Evaluator::evaluate_function_call_with_template_context(
 		context.template_args = std::move(saved_template_args);
 	};
 
-	if (context.template_param_names.empty() && context.template_args.empty()) {
+	if (binding_load_mode == FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable) {
+		try_load_current_struct_template_bindings(context);
+	} else if (context.template_param_names.empty() && context.template_args.empty()) {
 		try_load_current_struct_template_bindings(context);
 	}
 	if (context.template_param_names.empty() && context.template_args.empty() && fallback_template_type) {
