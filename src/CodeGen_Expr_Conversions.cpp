@@ -1857,6 +1857,25 @@ std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
 // Helper function to evaluate whether an expression is noexcept
 // Returns true if the expression is guaranteed not to throw, false otherwise
 bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
+	auto isFunctionDeclNoexcept = [&](const FunctionDeclarationNode& func_decl) -> bool {
+		if (!func_decl.is_noexcept()) {
+			return false;
+		}
+
+		if (!func_decl.has_noexcept_expression()) {
+			return true;
+		}
+
+		ConstExpr::EvaluationContext ctx(symbol_table);
+		if (global_symbol_table_) {
+			ctx.global_symbols = global_symbol_table_;
+		}
+		ctx.parser = parser_;
+
+		auto eval_result = ConstExpr::Evaluator::evaluate(*func_decl.noexcept_expression(), ctx);
+		return eval_result.success() && eval_result.as_bool();
+	};
+
 	// Literals are always noexcept
 	if (std::holds_alternative<BoolLiteralNode>(expr) ||
 	std::holds_alternative<NumericLiteralNode>(expr) ||
@@ -1925,7 +1944,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		auto symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(func_name));
 		if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = symbol->as<FunctionDeclarationNode>();
-			return func_decl.is_noexcept();
+			return isFunctionDeclNoexcept(func_decl);
 		}
 		// If we can't determine, conservatively assume it may throw
 		return false;
@@ -1935,7 +1954,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
 		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
 		const FunctionDeclarationNode& func_decl = member_call.function_declaration();
-		return func_decl.is_noexcept();
+		return isFunctionDeclNoexcept(func_decl);
 	}
 	
 	// Constructor calls: check if constructor is noexcept

@@ -329,11 +329,15 @@ private:
 	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context);
 	static EvalResult evaluate_alignof(const AlignofExprNode& alignof_expr, EvaluationContext& context);
 	static EvalResult evaluate_offsetof(const OffsetofExprNode& offsetof_expr);
+	static EvalResult evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
 	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
+	static bool is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context);
+	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
+	static const FunctionDeclarationNode* resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
 	// Extract ConstructorCallNode from an initializer, handling direct storage and
 	// ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).

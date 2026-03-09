@@ -81,6 +81,11 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		return evaluate_offsetof(std::get<OffsetofExprNode>(expr));
 	}
 
+	// For NoexceptExprNode
+	if (std::holds_alternative<NoexceptExprNode>(expr)) {
+		return evaluate_noexcept_expr(std::get<NoexceptExprNode>(expr), context);
+	}
+
 	// For ConstructorCallNode (type conversions like float(3.14), int(100))
 	if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		return evaluate_constructor_call(std::get<ConstructorCallNode>(expr), context);
@@ -679,6 +684,186 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 	}
 
 	return EvalResult::from_uint(static_cast<unsigned long long>(member_result.adjusted_offset));
+}
+
+EvalResult Evaluator::evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context) {
+	if (!noexcept_expr.expr().is<ExpressionNode>()) {
+		return EvalResult::from_bool(false);
+	}
+
+	return EvalResult::from_bool(is_expression_noexcept(noexcept_expr.expr().as<ExpressionNode>(), context));
+}
+
+bool Evaluator::is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context) {
+	if (!func_decl.is_noexcept()) {
+		return false;
+	}
+
+	if (!func_decl.has_noexcept_expression()) {
+		return true;
+	}
+
+	auto eval_result = evaluate(*func_decl.noexcept_expression(), context);
+	if (!eval_result.success()) {
+		return false;
+	}
+
+	return eval_result.as_bool();
+}
+
+const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context) {
+	StringHandle function_name_handle = func_call.function_declaration().identifier_token().handle();
+	auto current_match = find_current_struct_member_function_candidate(
+		function_name_handle,
+		func_call.arguments().size(),
+		context,
+		MemberFunctionLookupMode::LookupOnly,
+		false,
+		true);
+	if (current_match.function) {
+		return current_match.function;
+	}
+
+	if (!context.symbols) {
+		return nullptr;
+	}
+
+	auto lookup_function = [&](const SymbolTable* symbols, StringHandle name_handle) -> const FunctionDeclarationNode* {
+		if (!symbols || !name_handle.isValid()) {
+			return nullptr;
+		}
+
+		auto symbol = symbols->lookup(name_handle);
+		if (!symbol.has_value()) {
+			return nullptr;
+		}
+
+		return get_function_decl_node(*symbol);
+	};
+
+	if (func_call.has_qualified_name()) {
+		if (const FunctionDeclarationNode* qualified_decl = lookup_function(
+				context.symbols,
+				StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
+			return qualified_decl;
+		}
+	}
+
+	if (const FunctionDeclarationNode* direct_decl = lookup_function(context.symbols, function_name_handle)) {
+		return direct_decl;
+	}
+
+	if (context.global_symbols && context.global_symbols != context.symbols) {
+		if (func_call.has_qualified_name()) {
+			if (const FunctionDeclarationNode* qualified_decl = lookup_function(
+					context.global_symbols,
+					StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
+				return qualified_decl;
+			}
+		}
+
+		if (const FunctionDeclarationNode* global_decl = lookup_function(context.global_symbols, function_name_handle)) {
+			return global_decl;
+		}
+	}
+
+	return nullptr;
+}
+
+bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context) {
+	if (std::holds_alternative<BoolLiteralNode>(expr) ||
+		std::holds_alternative<NumericLiteralNode>(expr) ||
+		std::holds_alternative<StringLiteralNode>(expr)) {
+		return true;
+	}
+
+	if (std::holds_alternative<IdentifierNode>(expr) ||
+		std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+		std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
+		std::holds_alternative<MemberAccessNode>(expr) ||
+		std::holds_alternative<TypeTraitExprNode>(expr) ||
+		std::holds_alternative<LambdaExpressionNode>(expr) ||
+		std::holds_alternative<PseudoDestructorCallNode>(expr) ||
+		std::holds_alternative<NoexceptExprNode>(expr) ||
+		std::holds_alternative<SizeofExprNode>(expr) ||
+		std::holds_alternative<SizeofPackNode>(expr) ||
+		std::holds_alternative<AlignofExprNode>(expr) ||
+		std::holds_alternative<OffsetofExprNode>(expr)) {
+		return true;
+	}
+
+	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+		const auto& binop = std::get<BinaryOperatorNode>(expr);
+		bool lhs_noexcept = !binop.get_lhs().is<ExpressionNode>() ||
+			is_expression_noexcept(binop.get_lhs().as<ExpressionNode>(), context);
+		bool rhs_noexcept = !binop.get_rhs().is<ExpressionNode>() ||
+			is_expression_noexcept(binop.get_rhs().as<ExpressionNode>(), context);
+		return lhs_noexcept && rhs_noexcept;
+	}
+
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const auto& unary = std::get<UnaryOperatorNode>(expr);
+		return !unary.get_operand().is<ExpressionNode>() ||
+			is_expression_noexcept(unary.get_operand().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		const auto& ternary = std::get<TernaryOperatorNode>(expr);
+		bool cond_noexcept = !ternary.condition().is<ExpressionNode>() ||
+			is_expression_noexcept(ternary.condition().as<ExpressionNode>(), context);
+		bool true_noexcept = !ternary.true_expr().is<ExpressionNode>() ||
+			is_expression_noexcept(ternary.true_expr().as<ExpressionNode>(), context);
+		bool false_noexcept = !ternary.false_expr().is<ExpressionNode>() ||
+			is_expression_noexcept(ternary.false_expr().as<ExpressionNode>(), context);
+		return cond_noexcept && true_noexcept && false_noexcept;
+	}
+
+	if (std::holds_alternative<FunctionCallNode>(expr)) {
+		const auto& func_call = std::get<FunctionCallNode>(expr);
+		const FunctionDeclarationNode* func_decl = resolve_function_call_decl(func_call, context);
+		return func_decl && is_function_decl_noexcept(*func_decl, context);
+	}
+
+	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
+		return is_function_decl_noexcept(member_call.function_declaration(), context);
+	}
+
+	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+		const auto& subscript = std::get<ArraySubscriptNode>(expr);
+		return !subscript.index_expr().is<ExpressionNode>() ||
+			is_expression_noexcept(subscript.index_expr().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<StaticCastNode>(expr)) {
+		const auto& cast = std::get<StaticCastNode>(expr);
+		return !cast.expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<ConstCastNode>(expr)) {
+		const auto& cast = std::get<ConstCastNode>(expr);
+		return !cast.expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<ReinterpretCastNode>(expr)) {
+		const auto& cast = std::get<ReinterpretCastNode>(expr);
+		return !cast.expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<DynamicCastNode>(expr) ||
+		std::holds_alternative<TypeidNode>(expr) ||
+		std::holds_alternative<NewExpressionNode>(expr) ||
+		std::holds_alternative<DeleteExpressionNode>(expr) ||
+		std::holds_alternative<FoldExpressionNode>(expr) ||
+		std::holds_alternative<ThrowExpressionNode>(expr) ||
+		std::holds_alternative<ConstructorCallNode>(expr)) {
+		return false;
+	}
+
+	return false;
 }
 
 EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context) {
