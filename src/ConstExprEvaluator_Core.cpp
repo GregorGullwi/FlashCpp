@@ -1109,24 +1109,16 @@ EvalResult Evaluator::evaluate_callable_object(
 			return ctor_bind_result;
 		}
 
-		for (const auto& mem_init : matching_ctor->member_initializers()) {
-			auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-			if (!member_result.success()) {
-				return member_result;
+			auto member_bind_result = bind_members_from_constructor_initializers(
+				struct_info,
+				*matching_ctor,
+				ctor_param_bindings,
+				evaluation_bindings,
+				context,
+				false);
+			if (!member_bind_result.success()) {
+				return member_bind_result;
 			}
-			evaluation_bindings[mem_init.member_name] = member_result;
-		}
-		for (const auto& member : struct_info->members) {
-			std::string_view member_name = StringTable::getStringView(member.getName());
-			if (evaluation_bindings.find(member_name) != evaluation_bindings.end() || !member.default_initializer.has_value()) {
-				continue;
-			}
-			auto default_result = evaluate(member.default_initializer.value(), context);
-			if (!default_result.success()) {
-				return default_result;
-			}
-			evaluation_bindings[member_name] = default_result;
-		}
 
 		// Evaluate constructor body statements (e.g., member assignments like `m_val = x;`).
 		// The member initializer list is processed above; this handles the constructor body
