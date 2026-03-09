@@ -351,7 +351,8 @@ function Invoke-TestOneFile {
 					$returnValue = $LASTEXITCODE
 
 					$windowsExceptionCodes = @(
-						-1073741819, -1073740791, -1073741571, -1073740940, -1073741795
+						-1073741819, -1073740791, -1073741571, -1073740940, -1073741795,
+						-529697949  # 0xE06D7363 = uncaught MSVC C++ exception
 					)
 					$isWindowsCrash = $windowsExceptionCodes -contains $returnValue
 

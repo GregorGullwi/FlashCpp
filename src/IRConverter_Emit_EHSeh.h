@@ -653,27 +653,29 @@
 				emitRepMovsb();
 			}
 
-			// Set up arguments for _CxxThrowException
-			// RCX (first argument) = pointer to exception object on the frame
-			emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
-			// RDX (second argument) = pointer to _ThrowInfo metadata
+				// Set up arguments for _CxxThrowException
+				// RCX (first argument) = pointer to exception object on the frame
+				emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
+				// RDX (second argument) = pointer to _ThrowInfo metadata
 				std::string throw_type_name;
 				std::string throw_destructor_symbol;
-			if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
+				const StructTypeInfo* thrown_struct_info = nullptr;
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
 					const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
 					throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
-					if (const StructTypeInfo* thrown_struct_info = thrown_type_info.getStructInfo()) {
+					if (const StructTypeInfo* current_struct_info = thrown_type_info.getStructInfo()) {
+						thrown_struct_info = current_struct_info;
 						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
 					}
-			} else {
-				throw_type_name = std::string(getTypeName(throw_op.exception_type));
-			}
+				} else {
+					throw_type_name = std::string(getTypeName(throw_op.exception_type));
+				}
 
-			std::string throw_info_symbol;
-			if (!throw_type_name.empty() && throw_type_name != "void") {
-				bool is_simple_type = (throw_op.exception_type != Type::Struct);
-					throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type, throw_destructor_symbol);
-			}
+				std::string throw_info_symbol;
+				if (!throw_type_name.empty() && throw_type_name != "void") {
+					bool is_simple_type = (throw_op.exception_type != Type::Struct);
+					throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type, throw_destructor_symbol, thrown_struct_info);
+				}
 
 			if (!throw_info_symbol.empty()) {
 				emitLeaRipRelativeWithRelocation(X64Register::RDX, throw_info_symbol);

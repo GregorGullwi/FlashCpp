@@ -18,6 +18,7 @@
 #include <optional>
 #include <iostream>
 #include <iomanip>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
@@ -479,7 +480,7 @@ public:
 	void add_rdata_relocation(uint32_t rdata_offset, std::string_view symbol_name, uint32_t relocation_type = IMAGE_REL_AMD64_ADDR32NB);
 	std::string mangleTypeName(const std::string& type_name) const;
 	std::pair<std::string, std::string> getMsvcTypeDescriptorInfo(const std::string& type_name) const;
-		std::string get_or_create_exception_throw_info(const std::string& type_name, size_t type_size = 0, bool is_simple_type = false, std::string_view destructor_symbol = {});
+	std::string get_or_create_exception_throw_info(const std::string& type_name, size_t type_size = 0, bool is_simple_type = false, std::string_view destructor_symbol = {}, const StructTypeInfo* thrown_struct_info = nullptr);
 	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type);
 	void add_source_file(const std::string& filename);
 	void set_current_function_for_debug(const std::string& name, uint32_t file_id);
