@@ -352,39 +352,48 @@
 			// After the funclet ret, emit a fixup stub for the catch continuation path.
 			flushAllDirtyRegisters();
 
-			// Normal catch fallthrough must not inherit a stale catch-return flag.
-			// The flag is only meaningful when a return statement inside the catch body
-			// explicitly sets it and terminates the funclet early. If we reach CatchEnd,
-			// we know the catch is continuing normally, so clear the flag now before
-			// returning the continuation address to the CRT.
-			if (catch_funclet_return_flag_slot_offset_ != 0) {
-				emitXorRegReg(X64Register::RCX);
-				emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
-			}
+				StringHandle continuation_handle;
+				StringHandle fixup_handle;
+				bool has_continuation = false;
 
-			StringHandle continuation_handle;
-			StringHandle fixup_handle;
-			bool has_continuation = false;
+				if (instruction.hasTypedPayload()) {
+					const auto& catch_end_op = instruction.getTypedPayload<CatchEndOp>();
+					continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
+					has_continuation = true;
+					fixup_handle = getOrCreateCatchContinuationFixupLabel(continuation_handle);
 
-			if (instruction.hasTypedPayload()) {
-				const auto& catch_end_op = instruction.getTypedPayload<CatchEndOp>();
-				continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
-				has_continuation = true;
-				fixup_handle = getOrCreateCatchContinuationFixupLabel(continuation_handle);
+					// Multiple catch handlers in the same try block can share one continuation
+					// fixup stub. Reserve both return spill slots before emitting the first stub
+					// so a later handler with `return` cannot reuse a stub that omitted the
+					// return-flag / return-value path.
+					ensureCatchFuncletReturnSlot();
+					ensureCatchFuncletReturnFlagSlot();
 
-				// LEA RAX, [fixup_label] — return fixup entry address to the CRT
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x8D);
-				textSectionData.push_back(0x05);
-				uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				pending_branches_.push_back({fixup_handle, lea_patch});
-			} else {
-				emitXorRegReg(X64Register::RAX);
-			}
+					// Normal catch fallthrough must not inherit a stale catch-return flag.
+					// The flag is only meaningful when a return statement inside the catch body
+					// explicitly sets it and terminates the funclet early. If we reach CatchEnd,
+					// we know the catch is continuing normally, so clear the flag now before
+					// returning the continuation address to the CRT.
+					emitXorRegReg(X64Register::RCX);
+					emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+
+					// LEA RAX, [fixup_label] — return fixup entry address to the CRT
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x8D);
+					textSectionData.push_back(0x05);
+					uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					pending_branches_.push_back({fixup_handle, lea_patch});
+				} else {
+					if (catch_funclet_return_flag_slot_offset_ != 0) {
+						emitXorRegReg(X64Register::RCX);
+						emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+					}
+					emitXorRegReg(X64Register::RAX);
+				}
 
 			// Funclet epilogue
 			emitAddRSP(32);

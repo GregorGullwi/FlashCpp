@@ -2621,11 +2621,11 @@
 
 				flushAllDirtyRegisters();
 
-					int32_t catch_return_flag_slot = ensureCatchFuncletReturnFlagSlot();
-					emitMovImm32(X64Register::RCX, 1);
-					emitMovToFrame(X64Register::RCX, catch_return_flag_slot, 64);
+				int32_t catch_return_flag_slot = ensureCatchFuncletReturnFlagSlot();
+				emitMovImm32(X64Register::RCX, 1);
+				emitMovToFrame(X64Register::RCX, catch_return_flag_slot, 64);
 
-					if (current_catch_continuation_label_.isValid()) {
+				if (current_catch_continuation_label_.isValid()) {
 						StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
 						textSectionData.push_back(0x48);
 						textSectionData.push_back(0x8D);
