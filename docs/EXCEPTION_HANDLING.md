@@ -135,6 +135,8 @@ The Language-Specific Data Area (`.gcc_except_table`) contains:
 | 2026-03-09 | `get_or_create_class_typeinfo(StructTypeInfo*)` emits `__si_class_type_info` / `__vmi_class_type_info` | **Fixed `catch(Base&)` for derived exceptions** |
 | 2026-03-09 | `noexcept` enforcement: terminate LP (`__cxa_call_terminate`) injected for noexcept functions | **Enforces noexcept contract at runtime** |
 | 2026-03-09 | `noexcept(false)` evaluated correctly: no terminate LP for explicitly non-noexcept functions | **Fixed regression for `noexcept(false)` functions** |
+| 2026-03-09 | ELF prologue SUB RSP was capped at 240 bytes (Windows SET_FPREG limit incorrectly applied to ELF); fixed in `IRConverter_Conv_VarDecl.h` and `IRConverter_Conv_Memory.h` | **Fixed segfault for functions with 3+ try blocks on Linux** |
+| 2026-03-09 | `finalizeSections` always NOP'd `catch_continuation_sub_rsp_patches_` instead of patching with `eh_extra_stack_size`; fixed to match `handleFunctionDecl` logic (Windows-only, last function) | **Fixed potential stack corruption for Windows EH functions with >240-byte frame as last function** |
 
 ---
 
@@ -196,6 +198,7 @@ Key test files:
 - `test_exceptions_basic_ret0.cpp` — comprehensive exception test
 - `test_eh_catch_base_ref_ret0.cpp` — `catch(Base&)` catches `throw Derived{}` via SI typeinfo
 - `test_eh_catch_multi_base_ret0.cpp` — deep hierarchy: `catch(Base&)` → `catch(Middle&)` → `catch(Derived&)`
+- `test_eh_catch_multiple_inheritance_ref_ret0.cpp` — multiple inheritance: `catch(Left&)`, `catch(Right&)` from `Derived : Left, Right` (3 sequential try blocks; validates ELF frame-size fix)
 - `test_eh_rethrow_propagate_ret0.cpp` — `throw;` (rethrow) propagates with correct type info
 - `test_eh_noexcept_normal_ret0.cpp` — noexcept functions work normally + inner try/catch
 
