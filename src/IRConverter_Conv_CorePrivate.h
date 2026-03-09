@@ -1275,6 +1275,7 @@
 		current_function_reserved_catch_ref_temp_size_ = 0;
 		current_function_reserved_catch_ref_temps_.clear();
 		current_function_reserved_catch_obj_padding_size_ = 0;
+		current_function_reserved_catch_return_slot_size_ = 0;
 
 		auto it = function_spans.find(func_name);
 		if (it == function_spans.end()) {
@@ -1304,6 +1305,11 @@
 			    instruction.getOpcode() == IrOpcode::FunctionCleanupLP) {
 				current_function_has_cpp_eh_ = true;
 				break;
+			}
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				if (instruction.getOpcode() == IrOpcode::CatchBegin) {
+					current_function_reserved_catch_return_slot_size_ = 16;
+				}
 			}
 		}
 
@@ -1622,6 +1628,9 @@
 			}
 			if (current_function_reserved_catch_obj_padding_size_ != 0) {
 				stack_offset -= static_cast<int_fast32_t>(current_function_reserved_catch_obj_padding_size_);
+			}
+			if (current_function_reserved_catch_return_slot_size_ != 0) {
+				stack_offset -= static_cast<int_fast32_t>(current_function_reserved_catch_return_slot_size_);
 			}
 		}
 

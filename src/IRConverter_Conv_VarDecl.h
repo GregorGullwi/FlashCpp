@@ -689,6 +689,7 @@
 		current_function_reserved_catch_ref_temp_size_ = 0;
 		current_function_reserved_catch_ref_temps_.clear();
 		current_function_reserved_catch_obj_padding_size_ = 0;
+		current_function_reserved_catch_return_slot_size_ = 0;
 		current_function_try_blocks_.clear();
 		current_try_block_ = nullptr;
 		try_block_nesting_stack_.clear();
@@ -1350,10 +1351,15 @@
 		// Note: named_vars_size already includes parameter home space
 		// IMPORTANT: Don't include outgoing_args_space here - TempVars go AFTER named vars but BEFORE outgoing args
 		current_function_named_vars_size_ = func_stack_space.named_vars_size;
+			next_temp_var_offset_ = 8 + static_cast<int>(current_function_reserved_catch_obj_padding_size_
+				+ current_function_reserved_catch_return_slot_size_);
 
 			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 				if (!current_function_reserved_catch_ref_temps_.empty()) {
-					const uint32_t base_named_vars_size = current_function_named_vars_size_ - current_function_reserved_catch_ref_temp_size_;
+					const uint32_t base_named_vars_size = current_function_named_vars_size_
+						- current_function_reserved_catch_ref_temp_size_
+						- current_function_reserved_catch_obj_padding_size_
+						- current_function_reserved_catch_return_slot_size_;
 					uint32_t reserved_offset = 8;
 					for (StringHandle temp_handle : current_function_reserved_catch_ref_temps_) {
 						int32_t offset = -(static_cast<int32_t>(base_named_vars_size) + static_cast<int32_t>(reserved_offset));
@@ -1943,6 +1949,18 @@
 			return catch_funclet_return_slot_offset_;
 		}
 
+		if (current_function_reserved_catch_return_slot_size_ >= 16) {
+			uint32_t base_named_vars_size = current_function_named_vars_size_
+				- current_function_reserved_catch_ref_temp_size_
+				- current_function_reserved_catch_obj_padding_size_
+				- current_function_reserved_catch_return_slot_size_;
+			int32_t reserved_base = -static_cast<int32_t>(base_named_vars_size
+				+ current_function_reserved_catch_ref_temp_size_
+				+ current_function_reserved_catch_obj_padding_size_);
+			catch_funclet_return_slot_offset_ = reserved_base - 8;
+			return catch_funclet_return_slot_offset_;
+		}
+
 		if (variable_scopes.empty()) {
 			catch_funclet_return_slot_offset_ = -8;
 			return catch_funclet_return_slot_offset_;
@@ -1957,6 +1975,18 @@
 
 	int32_t ensureCatchFuncletReturnFlagSlot() {
 		if (catch_funclet_return_flag_slot_offset_ != 0) {
+			return catch_funclet_return_flag_slot_offset_;
+		}
+
+		if (current_function_reserved_catch_return_slot_size_ >= 16) {
+			uint32_t base_named_vars_size = current_function_named_vars_size_
+				- current_function_reserved_catch_ref_temp_size_
+				- current_function_reserved_catch_obj_padding_size_
+				- current_function_reserved_catch_return_slot_size_;
+			int32_t reserved_base = -static_cast<int32_t>(base_named_vars_size
+				+ current_function_reserved_catch_ref_temp_size_
+				+ current_function_reserved_catch_obj_padding_size_);
+			catch_funclet_return_flag_slot_offset_ = reserved_base - 16;
 			return catch_funclet_return_flag_slot_offset_;
 		}
 
