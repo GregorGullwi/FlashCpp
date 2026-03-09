@@ -2234,6 +2234,28 @@ EvalResult Evaluator::bind_evaluated_arguments(
 	return EvalResult::from_bool(true);
 }
 
+EvalResult Evaluator::bind_pre_evaluated_arguments(
+	const std::vector<ASTNode>& parameters,
+	const std::vector<EvalResult>& evaluated_arguments,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	std::string_view invalid_parameter_error,
+	bool skip_invalid_params) {
+	for (size_t i = 0; i < parameters.size() && i < evaluated_arguments.size(); ++i) {
+		const ASTNode& param_node = parameters[i];
+		if (!param_node.is<DeclarationNode>()) {
+			if (skip_invalid_params) {
+				continue;
+			}
+			return EvalResult::error(std::string(invalid_parameter_error));
+		}
+
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		bindings[param_decl.identifier_token().value()] = evaluated_arguments[i];
+	}
+
+	return EvalResult::from_bool(true);
+}
+
 EvalResult Evaluator::evaluate_single_return_block_with_bindings(
 	const ASTNode& body_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,

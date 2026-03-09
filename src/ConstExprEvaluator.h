@@ -352,6 +352,12 @@ private:
 		std::string_view invalid_parameter_error,
 		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
 		bool skip_invalid_params = false);
+	static EvalResult bind_pre_evaluated_arguments(
+		const std::vector<ASTNode>& parameters,
+		const std::vector<EvalResult>& evaluated_arguments,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		std::string_view invalid_parameter_error,
+		bool skip_invalid_params = false);
 	static EvalResult evaluate_single_return_block_with_bindings(
 		const ASTNode& body_node,
 		std::unordered_map<std::string_view, EvalResult>& bindings,

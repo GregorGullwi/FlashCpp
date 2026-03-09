@@ -1724,10 +1724,16 @@ EvalResult Evaluator::evaluate_nested_member_access(
 
 	std::unordered_map<std::string_view, EvalResult> inner_param_bindings;
 	const auto& inner_params = inner_matching_ctor->parameter_nodes();
-	if (!inner_params.empty() && inner_params[0].is<DeclarationNode>()) {
-		const DeclarationNode& param_decl = inner_params[0].as<DeclarationNode>();
-		std::string_view param_name = param_decl.identifier_token().value();
-		inner_param_bindings[param_name] = init_arg_result;
+		std::vector<EvalResult> inner_ctor_args;
+		inner_ctor_args.push_back(init_arg_result);
+		auto bind_result = bind_pre_evaluated_arguments(
+			inner_params,
+			inner_ctor_args,
+			inner_param_bindings,
+			"Invalid parameter node in inner constexpr constructor binding",
+			true);
+		if (!bind_result.success()) {
+			return bind_result;
 	}
 
 	for (const auto& mem_init : inner_matching_ctor->member_initializers()) {
@@ -1907,13 +1913,15 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 
 		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 		const auto& params = matching_ctor->parameter_nodes();
-		for (size_t i = 0; i < params.size() && i < evaluated_ctor_args.size(); ++i) {
-			if (params[i].is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-				std::string_view param_name = param_decl.identifier_token().value();
-				ctor_param_bindings[param_name] = evaluated_ctor_args[i];
+			auto bind_result = bind_pre_evaluated_arguments(
+				params,
+				evaluated_ctor_args,
+				ctor_param_bindings,
+				"Invalid parameter node in array element constructor binding",
+				true);
+			if (!bind_result.success()) {
+				return bind_result;
 			}
-		}
 
 		for (const auto& mem_init : matching_ctor->member_initializers()) {
 			if (mem_init.member_name == member_name) {
