@@ -784,7 +784,7 @@
 					sb.append("$unwind$")
 					  .append(StringTable::getStringView(current_function_mangled_name_))
 					  .append("$")
-					  .append(std::to_string(cleanup_funclet_index++));
+					  .append(static_cast<uint64_t>(cleanup_funclet_index++));
 					std::string symbol_name = std::string(sb.commit());
 					StringHandle symbol_handle = StringTable::getOrInternStringHandle(symbol_name);
 
