@@ -170,23 +170,6 @@ Re-evaluate whether any lookup-only helper now belongs in a more general semanti
 Deliverable:
 - either a follow-up extraction plan or an explicit decision to keep the helpers constexpr-local
 
-## Progress Update (2026-03-08)
-
-Completed slices:
-
-- `resolve_constexpr_object_source(...)` now covers more member-oriented constexpr consumers, including plain member access, nested member access, member function calls, and member-array subscript.
-- `evaluate_member_from_initializer(...)` now centralizes the constexpr-local member extraction path for aggregate/constructor/default-member cases in direct member access.
-- aggregate-member scanning in nested aggregate member access and member-array subscript now reuses `find_aggregate_member_initializer(...)` instead of open-coded designated/positional loops.
-- constructor-parameter binding for constructor-initialized constexpr objects now reuses shared constexpr-local helpers instead of repeating the same evaluate-and-bind loop at each member-oriented callsite.
-- constructor-initialized single-member evaluation now reuses a shared constexpr-local helper for constructor member-initializer lookup plus default-member fallback in the remaining nested/array-member paths.
-- full constructor-member materialization for constexpr member-function object extraction now reuses a shared constexpr-local helper instead of keeping a separate open-coded constructor/default-member binding ladder in `extract_object_members(...)`.
-
-What remains before this plan is "done enough":
-
-- re-audit the remaining lookup-only call/function-target helpers to see whether any are now clean enough for a broader semantic utility
-- decide whether the remaining lookup-only helpers should stay inside `ConstExprEvaluator` or be promoted only after a second non-constexpr consumer appears
-- document the explicit keep-local vs promote decision once a second non-constexpr consumer exists (or does not)
-
 ## Validation Strategy
 
 For each refactor slice:
