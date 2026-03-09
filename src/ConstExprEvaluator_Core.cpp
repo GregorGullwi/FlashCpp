@@ -1063,13 +1063,13 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Callable object is not a struct/class type");
 		}
 
-			// Known limitation: overload selection currently matches by arity only.
-			// If multiple same-arity operator() overloads exist, we reject as ambiguous.
-			auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
-			if (call_operator_match.ambiguous) {
-				return EvalResult::error("Ambiguous operator() overload: multiple candidates with same arity");
-			}
-			const FunctionDeclarationNode* call_operator = call_operator_match.function;
+		// Known limitation: overload selection currently matches by arity only.
+		// If multiple same-arity operator() overloads exist, we reject as ambiguous.
+		auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
+		if (call_operator_match.ambiguous) {
+			return EvalResult::error("Ambiguous operator() overload: multiple candidates with same arity");
+		}
+		const FunctionDeclarationNode* call_operator = call_operator_match.function;
 
 		if (!call_operator) {
 			return EvalResult::error("Callable object has no matching operator()");
@@ -1109,16 +1109,16 @@ EvalResult Evaluator::evaluate_callable_object(
 			return ctor_bind_result;
 		}
 
-			auto member_bind_result = bind_members_from_constructor_initializers(
-				struct_info,
-				*matching_ctor,
-				ctor_param_bindings,
-				evaluation_bindings,
-				context,
-				false);
-			if (!member_bind_result.success()) {
-				return member_bind_result;
-			}
+		auto member_bind_result = bind_members_from_constructor_initializers(
+			struct_info,
+			*matching_ctor,
+			ctor_param_bindings,
+			evaluation_bindings,
+			context,
+			false);
+		if (!member_bind_result.success()) {
+			return member_bind_result;
+		}
 
 		// Evaluate constructor body statements (e.g., member assignments like `m_val = x;`).
 		// The member initializer list is processed above; this handles the constructor body
@@ -1177,12 +1177,12 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 		context.current_depth++;
 		// Known limitation: only simple single-return constexpr operator() bodies are handled here.
-			auto result = evaluate_single_return_block_with_bindings(
-				definition.value(),
-				evaluation_bindings,
-				context,
-				"Callable object operator() body is not a block",
-				"Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
+		auto result = evaluate_single_return_block_with_bindings(
+			definition.value(),
+			evaluation_bindings,
+			context,
+			"Callable object operator() body is not a block",
+			"Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
 		context.current_depth--;
 		return result;
 	}
@@ -1200,11 +1200,11 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Brace-initialized callable object is not a struct/class type");
 		}
 
-			// Find operator()
-			auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
-			if (call_operator_match.ambiguous)
-				return EvalResult::error("Ambiguous operator() overload in brace-initialized callable object");
-			const FunctionDeclarationNode* call_operator = call_operator_match.function;
+		// Find operator()
+		auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
+		if (call_operator_match.ambiguous)
+			return EvalResult::error("Ambiguous operator() overload in brace-initialized callable object");
+		const FunctionDeclarationNode* call_operator = call_operator_match.function;
 		if (!call_operator)
 			return EvalResult::error("Brace-initialized callable object has no matching operator()");
 		if (!call_operator->is_constexpr())
@@ -1221,25 +1221,25 @@ EvalResult Evaluator::evaluate_callable_object(
 
 		// Bind call arguments to operator() parameters.
 		const auto& parameters = call_operator->parameter_nodes();
-			auto bind_result = bind_evaluated_arguments(
-				parameters,
-				arguments,
-				evaluation_bindings,
-				context,
-				"Invalid parameter node in brace-initialized callable object operator()",
-				nullptr,
-				true);
-			if (!bind_result.success()) return bind_result;
+		auto bind_result = bind_evaluated_arguments(
+			parameters,
+			arguments,
+			evaluation_bindings,
+			context,
+			"Invalid parameter node in brace-initialized callable object operator()",
+			nullptr,
+			true);
+		if (!bind_result.success()) return bind_result;
 
-			if (context.current_depth >= context.max_recursion_depth)
-				return EvalResult::error("Constexpr recursion depth limit exceeded");
-			context.current_depth++;
-			auto result = evaluate_single_return_block_with_bindings(
-				definition.value(),
-				evaluation_bindings,
-				context,
-				"operator() body in brace-initialized callable is not a block",
-				"Constexpr operator() in brace-initialized callable must have a single statement (complex bodies not yet supported)");
+		if (context.current_depth >= context.max_recursion_depth)
+			return EvalResult::error("Constexpr recursion depth limit exceeded");
+		context.current_depth++;
+		auto result = evaluate_single_return_block_with_bindings(
+			definition.value(),
+			evaluation_bindings,
+			context,
+			"operator() body in brace-initialized callable is not a block",
+			"Constexpr operator() in brace-initialized callable must have a single statement (complex bodies not yet supported)");
 		context.current_depth--;
 		return result;
 	}
@@ -1292,12 +1292,12 @@ EvalResult Evaluator::evaluate_lambda_call(
 	
 	EvalResult result;
 	if (body_node.is<BlockNode>()) {
-			result = evaluate_single_return_block_with_bindings(
-				body_node,
-				bindings,
-				context,
-				"Constexpr lambda body is not a block",
-				"Constexpr lambda must have a single return statement (complex statements not yet supported)");
+		result = evaluate_single_return_block_with_bindings(
+			body_node,
+			bindings,
+			context,
+			"Constexpr lambda body is not a block",
+			"Constexpr lambda must have a single return statement (complex statements not yet supported)");
 	} else if (body_node.is<ExpressionNode>()) {
 		// Expression body (implicit return)
 		result = evaluate_expression_with_bindings(body_node, bindings, context);
@@ -1670,13 +1670,13 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	auto tryEvaluateCurrentStructStaticMemberFunction = [&]() -> std::optional<EvalResult> {
 		const auto& arguments = func_call.arguments();
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-			auto current_match = find_current_struct_member_function_candidate(
-				func_name_handle,
-				arguments.size(),
-				context,
-				MemberFunctionLookupMode::ConstexprEvaluable,
-				false,
-				true);
+		auto current_match = find_current_struct_member_function_candidate(
+			func_name_handle,
+			arguments.size(),
+			context,
+			MemberFunctionLookupMode::ConstexprEvaluable,
+			false,
+			true);
 		if (current_match.ambiguous) {
 			return EvalResult::error("Ambiguous static member function overload in constant expression");
 		}
@@ -1687,14 +1687,14 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			return std::nullopt;
 		}
 
-			std::unordered_map<std::string_view, EvalResult> empty_bindings;
-			return evaluate_function_call_with_template_context(
-				*matched_function,
-				arguments,
-				empty_bindings,
-				context,
-				nullptr,
-				FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
+		std::unordered_map<std::string_view, EvalResult> empty_bindings;
+		return evaluate_function_call_with_template_context(
+			*matched_function,
+			arguments,
+			empty_bindings,
+			context,
+			nullptr,
+			FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
 	};
 
 	if (auto current_struct_result = tryEvaluateCurrentStructStaticMemberFunction()) {
@@ -1910,13 +1910,13 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			return EvalResult::error("Function argument count mismatch in constant expression");
 		}
 
-			// Pass empty bindings for top-level function calls
-			std::unordered_map<std::string_view, EvalResult> empty_bindings;
-			return evaluate_function_call_with_template_context(
-				func_decl,
-				arguments,
-				empty_bindings,
-				context);
+		// Pass empty bindings for top-level function calls
+		std::unordered_map<std::string_view, EvalResult> empty_bindings;
+		return evaluate_function_call_with_template_context(
+			func_decl,
+			arguments,
+			empty_bindings,
+			context);
 	}
 	
 	// Check if it's a TemplateFunctionDeclarationNode (template function)

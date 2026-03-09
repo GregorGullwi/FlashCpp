@@ -1769,25 +1769,25 @@ EvalResult Evaluator::evaluate_nested_member_access(
 
 	std::unordered_map<std::string_view, EvalResult> inner_param_bindings;
 	const auto& inner_params = inner_matching_ctor->parameter_nodes();
-		std::vector<EvalResult> inner_ctor_args;
-		inner_ctor_args.push_back(init_arg_result);
-		auto bind_result = bind_pre_evaluated_arguments(
-			inner_params,
-			inner_ctor_args,
-			inner_param_bindings,
-			"Invalid parameter node in inner constexpr constructor binding",
-			true);
-		if (!bind_result.success()) {
-			return bind_result;
+	std::vector<EvalResult> inner_ctor_args;
+	inner_ctor_args.push_back(init_arg_result);
+	auto bind_result = bind_pre_evaluated_arguments(
+		inner_params,
+		inner_ctor_args,
+		inner_param_bindings,
+		"Invalid parameter node in inner constexpr constructor binding",
+		true);
+	if (!bind_result.success()) {
+		return bind_result;
 	}
 
-		if (auto member_result = try_evaluate_member_from_constructor_initializers(
-			inner_struct_info,
-			*inner_matching_ctor,
-			inner_param_bindings,
-			final_member_name,
-			context)) {
-			return *member_result;
+	if (auto member_result = try_evaluate_member_from_constructor_initializers(
+		inner_struct_info,
+		*inner_matching_ctor,
+		inner_param_bindings,
+		final_member_name,
+		context)) {
+		return *member_result;
 	}
 
 	return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
@@ -1954,23 +1954,23 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 
 		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 		const auto& params = matching_ctor->parameter_nodes();
-			auto bind_result = bind_pre_evaluated_arguments(
-				params,
-				evaluated_ctor_args,
-				ctor_param_bindings,
-				"Invalid parameter node in array element constructor binding",
-				true);
-			if (!bind_result.success()) {
-				return bind_result;
-			}
+		auto bind_result = bind_pre_evaluated_arguments(
+			params,
+			evaluated_ctor_args,
+			ctor_param_bindings,
+			"Invalid parameter node in array element constructor binding",
+			true);
+		if (!bind_result.success()) {
+			return bind_result;
+		}
 
-			if (auto member_result = try_evaluate_member_from_constructor_initializers(
-				struct_info,
-				*matching_ctor,
-				ctor_param_bindings,
-				member_name,
-				context)) {
-				return *member_result;
+		if (auto member_result = try_evaluate_member_from_constructor_initializers(
+			struct_info,
+			*matching_ctor,
+			ctor_param_bindings,
+			member_name,
+			context)) {
+			return *member_result;
 		}
 
 		return EvalResult::error("Member '" + std::string(member_name) + "' not found in array element");
@@ -2162,9 +2162,9 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			*matched_function,
 			member_func_call.arguments(),
 			empty_b,
-				context,
-				nullptr,
-				FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
+			context,
+			nullptr,
+			FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
 	};
 	
 	// First, we need to get the struct type from the object to look up the actual function
@@ -2256,16 +2256,16 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			return EvalResult::error("Member function call requires a struct type");
 		}
 		type_index = type_spec.type_index();
-			if (type_index < gTypeInfo.size()) {
-				struct_info = gTypeInfo[type_index].getStructInfo();
-			}
-			if (!struct_info && declared_type_index != TypeIndex{0} && declared_type_index < gTypeInfo.size()) {
-				type_index = declared_type_index;
-				struct_info = gTypeInfo[type_index].getStructInfo();
-			}
-			if (!struct_info && type_index >= gTypeInfo.size()) {
-				return EvalResult::error("Invalid type index in member function call");
-			}
+		if (type_index < gTypeInfo.size()) {
+			struct_info = gTypeInfo[type_index].getStructInfo();
+		}
+		if (!struct_info && declared_type_index != TypeIndex{0} && declared_type_index < gTypeInfo.size()) {
+			type_index = declared_type_index;
+			struct_info = gTypeInfo[type_index].getStructInfo();
+		}
+		if (!struct_info && type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid type index in member function call");
+		}
 	} else {
 		// Brace-initialized object: resolve type from the declared object type.
 		if (declared_type_index == TypeIndex{0} || declared_type_index >= gTypeInfo.size()) {
@@ -2282,18 +2282,18 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	// Look up the actual member function in the struct's type info
 	const auto& arguments = member_func_call.arguments();
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-		auto member_function_match = find_member_function_candidate(
-			struct_info,
-			func_name_handle,
-			arguments.size(),
-			context,
-			MemberFunctionLookupMode::LookupOnly,
-			false,
-			true);
-		if (member_function_match.ambiguous) {
+	auto member_function_match = find_member_function_candidate(
+		struct_info,
+		func_name_handle,
+		arguments.size(),
+		context,
+		MemberFunctionLookupMode::LookupOnly,
+		false,
+		true);
+	if (member_function_match.ambiguous) {
 		return EvalResult::error("Ambiguous member function overload in constant expression");
 	}
-		const FunctionDeclarationNode* actual_func = member_function_match.function;
+	const FunctionDeclarationNode* actual_func = member_function_match.function;
 	
 	if (!actual_func) {
 		return EvalResult::error("Member function not found: " + std::string(func_name));
@@ -2537,20 +2537,20 @@ EvalResult Evaluator::extract_object_members(
 	}
 	
 	TypeIndex type_index = type_spec.type_index();
-		const TypeInfo* struct_type_info = nullptr;
-		const StructTypeInfo* struct_info = nullptr;
-		if (type_index < gTypeInfo.size()) {
-			struct_type_info = &gTypeInfo[type_index];
-			struct_info = struct_type_info->getStructInfo();
-		}
-		if (!struct_info && declared_type_index != TypeIndex{0} && declared_type_index < gTypeInfo.size()) {
-			type_index = declared_type_index;
-			struct_type_info = &gTypeInfo[type_index];
-			struct_info = struct_type_info->getStructInfo();
-		}
-		if (!struct_info && type_index >= gTypeInfo.size()) {
-			return EvalResult::error("Invalid type index in member function call");
-		}
+	const TypeInfo* struct_type_info = nullptr;
+	const StructTypeInfo* struct_info = nullptr;
+	if (type_index < gTypeInfo.size()) {
+		struct_type_info = &gTypeInfo[type_index];
+		struct_info = struct_type_info->getStructInfo();
+	}
+	if (!struct_info && declared_type_index != TypeIndex{0} && declared_type_index < gTypeInfo.size()) {
+		type_index = declared_type_index;
+		struct_type_info = &gTypeInfo[type_index];
+		struct_info = struct_type_info->getStructInfo();
+	}
+	if (!struct_info && type_index >= gTypeInfo.size()) {
+		return EvalResult::error("Invalid type index in member function call");
+	}
 	if (!struct_info) {
 		return EvalResult::error("Type is not a struct in member function call");
 	}

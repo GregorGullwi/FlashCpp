@@ -247,19 +247,19 @@ public:
 		const InitializerListNode& init_list,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
-		static EvalResult bind_members_from_constructor_initializers(
-			const StructTypeInfo* struct_info,
-			const ConstructorDeclarationNode& ctor_decl,
-			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
-			std::unordered_map<std::string_view, EvalResult>& member_bindings,
-			EvaluationContext& context,
-			bool ignore_default_initializer_errors);
-		static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
-			const StructTypeInfo* struct_info,
-			const ConstructorDeclarationNode& ctor_decl,
-			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
-			std::string_view member_name,
-			EvaluationContext& context);
+	static EvalResult bind_members_from_constructor_initializers(
+		const StructTypeInfo* struct_info,
+		const ConstructorDeclarationNode& ctor_decl,
+		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+		std::unordered_map<std::string_view, EvalResult>& member_bindings,
+		EvaluationContext& context,
+		bool ignore_default_initializer_errors);
+	static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
+		const StructTypeInfo* struct_info,
+		const ConstructorDeclarationNode& ctor_decl,
+		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+		std::string_view member_name,
+		EvaluationContext& context);
 	static EvalResult evaluate_member_array_subscript(
 		const MemberAccessNode& member_access,
 		size_t index,
@@ -448,12 +448,12 @@ private:
 		CurrentStructStaticLookupMode lookup_mode);
 	static std::optional<EvalResult> resolve_constexpr_member_source_from_initializer(
 		const std::optional<ASTNode>& object_initializer,
-			TypeIndex declared_type_index,
-			std::string_view member_name,
-			std::string_view usage_name,
-			EvaluationContext& context,
-			ResolvedConstexprMemberSource& resolved_member,
-			const std::unordered_map<std::string_view, EvalResult>* enclosing_bindings = nullptr);
+		TypeIndex declared_type_index,
+		std::string_view member_name,
+		std::string_view usage_name,
+		EvaluationContext& context,
+		ResolvedConstexprMemberSource& resolved_member,
+		const std::unordered_map<std::string_view, EvalResult>* enclosing_bindings = nullptr);
 	static std::optional<EvalResult> resolve_constexpr_object_source(
 		const IdentifierNode* object_identifier,
 		std::string_view object_name,
