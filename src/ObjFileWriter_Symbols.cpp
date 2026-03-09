@@ -439,7 +439,7 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 				uint32_t base_properties = base.is_virtual || !base_struct_info->virtual_bases.empty() ? CT_HasVirtualBase : 0;
 				uint32_t base_size = static_cast<uint32_t>(base_struct_info->total_size == 0 ? throw_size : base_struct_info->total_size);
 
-				add_catchable_type(StringTable::getStringView(base_type_info.name()), base_properties, base_offset, base.is_virtual ? 0 : -1, 0, base_size);
+					add_catchable_type(StringTable::getStringView(base_type_info.name()), base_properties, base_offset, -1, 0, base_size);
 
 				if (!base.is_virtual) {
 					collect_public_bases(base_struct_info, base_offset);
