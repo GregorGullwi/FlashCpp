@@ -1402,7 +1402,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
 				Type::Struct, type_index, 
-				static_cast<unsigned char>(struct_info.total_size * 8),
+					getStructTypeSizeBits(type_index),
 				brace_token
 			);
 			
@@ -1469,7 +1469,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			auto make_constructor_call = [&](std::vector<ASTNode>& parsed_elements) -> ParseResult {
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					Type::Struct, type_index,
-					static_cast<unsigned char>(struct_info.total_size * 8),
+					getStructTypeSizeBits(type_index),
 					brace_token
 				);
 

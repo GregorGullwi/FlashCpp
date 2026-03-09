@@ -469,6 +469,17 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
     ast_nodes_.reserve(default_ast_tree_size_);
 }
 
+int Parser::getStructTypeSizeBits(TypeIndex type_index) const {
+	if (type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		if (type_info.struct_info_) {
+			return static_cast<int>(type_info.struct_info_->total_size * 8);
+		}
+	}
+
+	return 0;
+}
+
 Parser::ScopedTokenPosition::ScopedTokenPosition(class Parser& parser, const std::source_location location)
     : parser_(parser), saved_handle_(parser.save_token_position()), location_(location) {}
 

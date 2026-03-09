@@ -75,6 +75,50 @@ std::optional<ASTNode> Evaluator::lookup_function_symbol(
 	return symbols.lookup(fallback_name);
 }
 
+namespace {
+	const EvalResult* findLocalBinding(std::string_view name, EvaluationContext& context) {
+		if (!context.local_bindings) {
+			return nullptr;
+		}
+
+		auto it = context.local_bindings->find(name);
+		return it == context.local_bindings->end() ? nullptr : &it->second;
+	}
+
+	EvalResult* findMutableLocalBinding(std::string_view name, EvaluationContext& context) {
+		if (!context.local_bindings) {
+			return nullptr;
+		}
+
+		auto it = context.local_bindings->find(name);
+		return it == context.local_bindings->end() ? nullptr : &it->second;
+	}
+
+	const EvalResult* findBindingValue(
+		std::string_view name,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		if (const EvalResult* local = findLocalBinding(name, context)) {
+			return local;
+		}
+
+		auto it = bindings.find(name);
+		return it == bindings.end() ? nullptr : &it->second;
+	}
+
+	EvalResult* findMutableBindingValue(
+		std::string_view name,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		if (EvalResult* local = findMutableLocalBinding(name, context)) {
+			return local;
+		}
+
+		auto it = bindings.find(name);
+		return it == bindings.end() ? nullptr : &it->second;
+	}
+}
+
 EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	const FunctionCallNode& func_call,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -87,20 +131,17 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		return EvalResult::error("Cannot evaluate function call: no symbol table provided");
 	}
 
-	auto bound_callable = bindings.find(func_name);
-	if (bound_callable != bindings.end() && (bound_callable->second.callable_var_decl || bound_callable->second.callable_lambda)) {
+	const EvalResult* bound_callable = findBindingValue(func_name, bindings, context);
+	if (bound_callable && (bound_callable->callable_var_decl || bound_callable->callable_lambda)) {
 		EvalResult* mutable_bound_callable = nullptr;
 		if (mutable_bindings) {
-			auto mutable_it = mutable_bindings->find(func_name);
-			if (mutable_it != mutable_bindings->end()) {
-				mutable_bound_callable = &mutable_it->second;
-			}
+			mutable_bound_callable = findMutableBindingValue(func_name, *mutable_bindings, context);
 		}
-		if (bound_callable->second.callable_var_decl) {
-			return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+		if (bound_callable->callable_var_decl) {
+			return evaluate_callable_object(*bound_callable->callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
 		}
-		return evaluate_lambda_call(*bound_callable->second.callable_lambda, func_call.arguments(), context, &bindings, mutable_bindings,
-			&bound_callable->second.callable_bindings,
+		return evaluate_lambda_call(*bound_callable->callable_lambda, func_call.arguments(), context, &bindings, mutable_bindings,
+			&bound_callable->callable_bindings,
 			mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 	}
 
@@ -187,20 +228,17 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	}
 
 	if (const IdentifierNode* callable_id = extract_callable_identifier()) {
-		auto callable_it = bindings.find(callable_id->name());
-		if (callable_it != bindings.end() && (callable_it->second.callable_var_decl || callable_it->second.callable_lambda)) {
+		const EvalResult* callable_value = findBindingValue(callable_id->name(), bindings, context);
+		if (callable_value && (callable_value->callable_var_decl || callable_value->callable_lambda)) {
 			EvalResult* mutable_bound_callable = nullptr;
 			if (mutable_bindings) {
-				auto mutable_it = mutable_bindings->find(callable_id->name());
-				if (mutable_it != mutable_bindings->end()) {
-					mutable_bound_callable = &mutable_it->second;
-				}
+				mutable_bound_callable = findMutableBindingValue(callable_id->name(), *mutable_bindings, context);
 			}
-			if (callable_it->second.callable_var_decl) {
-				return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+			if (callable_value->callable_var_decl) {
+				return evaluate_callable_object(*callable_value->callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
 			}
-			return evaluate_lambda_call(*callable_it->second.callable_lambda, member_func_call.arguments(), context, &bindings, mutable_bindings,
-				&callable_it->second.callable_bindings,
+			return evaluate_lambda_call(*callable_value->callable_lambda, member_func_call.arguments(), context, &bindings, mutable_bindings,
+				&callable_value->callable_bindings,
 				mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 		}
 	}
@@ -221,12 +259,12 @@ Evaluator::ResolvedBoundEvalResult Evaluator::resolve_bound_eval_result(
 			return resolved;
 		}
 
-		auto binding_it = bindings.find(bound_name);
-		if (binding_it == bindings.end()) {
+		const EvalResult* bound_value = findBindingValue(bound_name, bindings, context);
+		if (!bound_value) {
 			return resolved;
 		}
 
-		resolved.value = &binding_it->second;
+		resolved.value = bound_value;
 		return resolved;
 	}
 
@@ -738,17 +776,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
-			auto it = bindings.find(id.name());
-			if (it != bindings.end()) return it->second;
+			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
+				return *bound_value;
+			}
 			// fall through to existing logic as safety net
 		}
 
 		std::string_view name = id.name();
 
 		// Check if it's a bound parameter
-		auto it = bindings.find(name);
-		if (it != bindings.end()) {
-			return it->second;  // Return the bound value
+		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
+			return *bound_value;  // Return the bound value
 		}
 		
 		// Not a parameter, evaluate normally
@@ -780,6 +818,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				//   1. Plain identifier:     x = ...
 				//   2. this->member access:  this->x = ...
 				std::string_view var_name;
+					bool assign_to_member_binding = false;
 				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 					var_name = std::get<IdentifierNode>(lhs_expr).name();
 				} else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
@@ -790,6 +829,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						if (std::holds_alternative<IdentifierNode>(obj_expr) &&
 						    std::get<IdentifierNode>(obj_expr).name() == "this") {
 							var_name = ma.member_name();
+								assign_to_member_binding = true;
 						}
 					}
 				}
@@ -798,18 +838,31 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					// Evaluate the right-hand side
 					auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 					if (!rhs_result.success()) return rhs_result;
+
+						EvalResult* target_binding = nullptr;
+						if (assign_to_member_binding) {
+							auto member_it = bindings.find(var_name);
+							if (member_it != bindings.end()) {
+								target_binding = &member_it->second;
+							}
+						} else {
+							target_binding = findMutableBindingValue(var_name, bindings, context);
+						}
 					
 					// Perform the assignment
 					if (op == "=") {
-						bindings[var_name] = rhs_result;
+							if (target_binding) {
+								*target_binding = rhs_result;
+							} else {
+								bindings[var_name] = rhs_result;
+							}
 						return rhs_result;
 					} else {
 						// Compound assignment - get current value first
-						auto it = bindings.find(var_name);
-						if (it == bindings.end()) {
+							if (!target_binding) {
 							return EvalResult::error("Variable not found for compound assignment: " + std::string(var_name));
 						}
-						EvalResult current = it->second;
+							EvalResult current = *target_binding;
 						
 						// Apply the operation
 						EvalResult new_value;
@@ -826,7 +879,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						}
 						
 						if (!new_value.success()) return new_value;
-						bindings[var_name] = new_value;
+							*target_binding = new_value;
 						return new_value;
 					}
 				}
@@ -859,11 +912,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					std::string_view var_name = id.name();
 					
 					// Get current value
-					auto it = bindings.find(var_name);
-					if (it == bindings.end()) {
+						EvalResult* target_binding = findMutableBindingValue(var_name, bindings, context);
+						if (!target_binding) {
 						return EvalResult::error("Variable not found for increment/decrement: " + std::string(var_name));
 					}
-					EvalResult current = it->second;
+						EvalResult current = *target_binding;
 					
 					// Calculate new value
 					EvalResult one = EvalResult::from_int(1);
@@ -875,7 +928,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 					
 					if (!new_value.success()) return new_value;
-					bindings[var_name] = new_value;
+						*target_binding = new_value;
 					
 					// Return old value for postfix, new value for prefix
 					if (unary_op.is_prefix()) {
@@ -954,17 +1007,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
-			auto it = bindings.find(id.name());
-			if (it != bindings.end()) return it->second;
+			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
+				return *bound_value;
+			}
 			// fall through to existing logic as safety net
 		}
 
 		std::string_view name = id.name();
 
 		// Check if it's a bound parameter
-		auto it = bindings.find(name);
-		if (it != bindings.end()) {
-			return it->second;  // Return the bound value
+		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
+			return *bound_value;  // Return the bound value
 		}
 		
 		// Not a parameter, evaluate normally
@@ -3019,20 +3072,23 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	}
 
 	std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = member_bindings;
-	for (const auto& [name, val] : ctor_param_bindings) {
-		ctor_body_bindings[name] = val;
-	}
+	std::unordered_map<std::string_view, EvalResult> ctor_local_bindings = ctor_param_bindings;
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &ctor_local_bindings;
 
 	const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
 	for (const auto& ctor_stmt : ctor_body.get_statements()) {
 		auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
 		if (stmt_result.success()) {
+			context.local_bindings = saved_local_bindings;
 			break;
 		}
 		if (stmt_result.error_message != "Statement executed (not a return)") {
+			context.local_bindings = saved_local_bindings;
 			return stmt_result;
 		}
 	}
+	context.local_bindings = saved_local_bindings;
 
 	for (const auto& member : struct_info->members) {
 		std::string_view member_name = StringTable::getStringView(member.getName());

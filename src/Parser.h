@@ -933,6 +933,7 @@ public:  // Public methods for template instantiation
         bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;  // Check if two types are compatible
         std::string type_to_string(const TypeSpecifierNode& type) const;  // Convert type to string for error messages
         // Note: Use global ::get_type_size_bits() from AstNodeTypes.h for type sizes
+		int getStructTypeSizeBits(TypeIndex type_index) const;
         
         // Helper functions for std::initializer_list support
         // Check if a type is std::initializer_list<T>, returns element type index if so

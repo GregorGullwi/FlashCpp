@@ -2545,13 +2545,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// Create TypeSpecifierNode for the class
 				TypeIndex type_index = type_it->second->type_index_;
-				int type_size = 0;
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
-					if (type_info.struct_info_) {
-						type_size = static_cast<unsigned char>(type_info.struct_info_->total_size * 8);
-					}
-				}
+					int type_size = getStructTypeSizeBits(type_index);
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, identifier_token);
 				
 				// Create ConstructorCallNode
@@ -3151,14 +3145,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 					// Create TypeSpecifierNode for the constructor call
 					TypeIndex type_index = type_it->second->type_index_;
-					int type_size = 0;
-					// Look up the size
-					if (type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_index];
-						if (type_info.struct_info_) {
-							type_size = static_cast<unsigned char>(type_info.struct_info_->total_size * 8);
-						}
-					}
+					int type_size = getStructTypeSizeBits(type_index);
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(
 						Type::Struct, type_index, type_size, identifier_token);
 				
@@ -4577,7 +4564,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					
 					if (is_aggregate) {
 						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
-						unsigned char type_size = struct_info ? static_cast<unsigned char>(struct_info->total_size * 8) : 0;
+						int type_size = struct_info ? getStructTypeSizeBits(type_index) : 0;
 						auto type_spec = TypeSpecifierNode(Type::Struct, type_index, type_size, identifier_token);
 						ParseResult init_result = parse_brace_initializer(type_spec);
 						if (init_result.is_error()) {
@@ -4621,7 +4608,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							return ParseResult::error("Expected '}' after brace initializer", current_token_);
 						}
 						
-						unsigned char type_size = struct_info ? static_cast<unsigned char>(struct_info->total_size * 8) : 0;
+						int type_size = struct_info ? getStructTypeSizeBits(type_index) : 0;
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, identifier_token);
 						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 						return ParseResult::success(*result);

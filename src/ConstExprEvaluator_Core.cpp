@@ -2630,6 +2630,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		const VariableDeclarationNode& var_decl = stmt_node.as<VariableDeclarationNode>();
 		const DeclarationNode& decl = var_decl.declaration_node().as<DeclarationNode>();
 		std::string_view var_name = decl.identifier_token().value();
+			auto& declaration_bindings = context.local_bindings ? *context.local_bindings : bindings;
 		
 		// Evaluate the initializer if present
 		if (var_decl.initializer().has_value()) {
@@ -2639,12 +2640,21 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					EvalResult callable_result = EvalResult::from_callable(var_decl);
 					const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
 					if (lambda) {
-						auto capture_result = evaluate_lambda_captures(lambda->captures(), callable_result.callable_bindings, context, &bindings);
+						std::unordered_map<std::string_view, EvalResult> merged_outer_bindings;
+						const std::unordered_map<std::string_view, EvalResult>* capture_bindings = &bindings;
+						if (context.local_bindings) {
+							merged_outer_bindings = bindings;
+							for (const auto& [name, value] : *context.local_bindings) {
+								merged_outer_bindings[name] = value;
+							}
+							capture_bindings = &merged_outer_bindings;
+						}
+						auto capture_result = evaluate_lambda_captures(lambda->captures(), callable_result.callable_bindings, context, capture_bindings);
 						if (!capture_result.success()) {
 							return capture_result;
 						}
 					}
-					bindings[var_name] = std::move(callable_result);
+					declaration_bindings[var_name] = std::move(callable_result);
 				return EvalResult::error("Statement executed (not a return)");
 			}
 			
@@ -2658,7 +2668,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						if (!array_result.success()) {
 							return array_result;
 						}
-						bindings[var_name] = std::move(array_result);
+							declaration_bindings[var_name] = std::move(array_result);
 						return EvalResult::error("Statement executed (not a return)");
 					}
 
@@ -2666,7 +2676,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					if (!array_result.success()) {
 						return array_result;
 					}
-					bindings[var_name] = std::move(array_result);
+					declaration_bindings[var_name] = std::move(array_result);
 					return EvalResult::error("Statement executed (not a return)");
 				}
 
@@ -2680,7 +2690,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 								if (!object_result.success()) {
 									return object_result;
 								}
-								bindings[var_name] = std::move(object_result);
+								declaration_bindings[var_name] = std::move(object_result);
 								return EvalResult::error("Statement executed (not a return)");
 							}
 						}
@@ -2694,12 +2704,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			}
 			
 			// Add to bindings
-			bindings[var_name] = init_result;
+				declaration_bindings[var_name] = init_result;
 			return EvalResult::error("Statement executed (not a return)");
 		}
 		
 		// Uninitialized variable - set to 0
-		bindings[var_name] = EvalResult::from_int(0);
+			declaration_bindings[var_name] = EvalResult::from_int(0);
 		return EvalResult::error("Statement executed (not a return)");
 	}
 	
