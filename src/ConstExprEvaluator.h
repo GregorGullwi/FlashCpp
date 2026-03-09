@@ -214,12 +214,6 @@ public:
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
 	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);
 
-	// Helper for member initializer extraction (used by nested member access)
-	static std::optional<ASTNode> get_member_initializer(
-		const ConstructorCallNode& ctor_call,
-		const StructTypeInfo* struct_info,
-		std::string_view member_name_param,
-		[[maybe_unused]] EvaluationContext& context);
 	static const StructTypeInfo* get_struct_info_from_type(const TypeSpecifierNode& type_spec);
 	static EvalResult evaluate_nested_member_access(
 		const MemberAccessNode& inner_access,
@@ -235,6 +229,9 @@ public:
 		StringHandle member_name_handle,
 		std::string_view member_name,
 		EvaluationContext& context);
+	static EvalResult evaluate_static_member_initializer_or_default(
+		const StructStaticMember& static_member,
+		EvaluationContext& context);
 	static EvalResult evaluate_function_call_member_access(
 		const FunctionCallNode& func_call,
 		std::string_view member_name,
@@ -249,6 +246,19 @@ public:
 		const StructTypeInfo* struct_info,
 		const InitializerListNode& init_list,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
+	static EvalResult bind_members_from_constructor_initializers(
+		const StructTypeInfo* struct_info,
+		const ConstructorDeclarationNode& ctor_decl,
+		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+		std::unordered_map<std::string_view, EvalResult>& member_bindings,
+		EvaluationContext& context,
+		bool ignore_default_initializer_errors);
+	static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
+		const StructTypeInfo* struct_info,
+		const ConstructorDeclarationNode& ctor_decl,
+		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+		std::string_view member_name,
 		EvaluationContext& context);
 	static EvalResult evaluate_member_array_subscript(
 		const MemberAccessNode& member_access,
@@ -275,6 +285,37 @@ public:
 	};
 
 private:
+	enum class CurrentStructStaticLookupMode {
+		BoundOnly,
+		PreferCurrentStruct,
+	};
+
+	struct ResolvedCurrentStructStaticMember {
+		const StructStaticMember* static_member = nullptr;
+		const StructTypeInfo* owner_struct = nullptr;
+	};
+
+	struct ResolvedCurrentStructStaticInitializer {
+		const std::optional<ASTNode>* initializer = nullptr;
+		bool found = false;
+	};
+
+	struct ResolvedConstexprMemberSource {
+		std::optional<ASTNode> initializer;
+		const StructMember* member_info = nullptr;
+		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
+	};
+
+	struct ResolvedMemberFunctionCandidate {
+		const FunctionDeclarationNode* function = nullptr;
+		bool ambiguous = false;
+	};
+
+	enum class MemberFunctionLookupMode {
+		LookupOnly,
+		ConstexprEvaluable,
+	};
+
 	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
 	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
@@ -311,11 +352,44 @@ private:
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
+	enum class FunctionCallTemplateBindingLoadMode {
+		IfContextEmpty,
+		ForceCurrentStructIfAvailable,
+	};
+	static void load_template_bindings_from_type(const TypeInfo* source_type, EvaluationContext& context);
+	static bool try_load_current_struct_template_bindings(EvaluationContext& context);
+	static EvalResult evaluate_function_call_with_template_context(
+		const FunctionDeclarationNode& func_decl,
+		const ChunkedVector<ASTNode>& arguments,
+		const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
+		EvaluationContext& context,
+		const TypeInfo* fallback_template_type = nullptr,
+		FunctionCallTemplateBindingLoadMode binding_load_mode = FunctionCallTemplateBindingLoadMode::IfContextEmpty);
 	static EvalResult evaluate_function_call_with_bindings(
 		const FunctionDeclarationNode& func_decl,
 		const ChunkedVector<ASTNode>& arguments,
 		const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
 		EvaluationContext& context);
+	static EvalResult bind_evaluated_arguments(
+		const std::vector<ASTNode>& parameters,
+		const ChunkedVector<ASTNode>& arguments,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context,
+		std::string_view invalid_parameter_error,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
+		bool skip_invalid_params = false);
+	static EvalResult bind_pre_evaluated_arguments(
+		const std::vector<ASTNode>& parameters,
+		const std::vector<EvalResult>& evaluated_arguments,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		std::string_view invalid_parameter_error,
+		bool skip_invalid_params = false);
+	static EvalResult evaluate_single_return_block_with_bindings(
+		const ASTNode& body_node,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context,
+		std::string_view non_block_error,
+		std::string_view multi_statement_error);
 	static EvalResult evaluate_statement_with_bindings(
 		const ASTNode& stmt_node,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -330,6 +404,56 @@ private:
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	static std::optional<ASTNode> lookup_identifier_symbol(
+		const IdentifierNode* identifier,
+		std::string_view fallback_name,
+		const SymbolTable& symbols);
+	static std::optional<ASTNode> lookup_function_symbol(
+		const FunctionCallNode& func_call,
+		std::string_view fallback_name,
+		const SymbolTable& symbols);
+	static EvalResult evaluate_function_call_with_outer_bindings(
+		const FunctionCallNode& func_call,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
+	static ResolvedMemberFunctionCandidate find_call_operator_candidate(
+		const StructTypeInfo* struct_info,
+		size_t argument_count,
+		bool detect_ambiguity);
+	static ResolvedMemberFunctionCandidate find_member_function_candidate(
+		const StructTypeInfo* struct_info,
+		StringHandle function_name_handle,
+		size_t argument_count,
+		EvaluationContext& context,
+		MemberFunctionLookupMode lookup_mode,
+		bool require_static,
+		bool detect_ambiguity);
+	static ResolvedMemberFunctionCandidate find_current_struct_member_function_candidate(
+		StringHandle function_name_handle,
+		size_t argument_count,
+		EvaluationContext& context,
+		MemberFunctionLookupMode lookup_mode,
+		bool require_static,
+		bool detect_ambiguity_in_current_struct);
+	static std::optional<StringHandle> get_current_struct_static_lookup_name_handle(
+		const IdentifierNode* identifier,
+		CurrentStructStaticLookupMode lookup_mode);
+	static ResolvedCurrentStructStaticMember resolve_current_struct_static_member(
+		const IdentifierNode* identifier,
+		const EvaluationContext& context,
+		CurrentStructStaticLookupMode lookup_mode);
+	static ResolvedCurrentStructStaticInitializer resolve_current_struct_static_initializer(
+		const IdentifierNode* identifier,
+		const EvaluationContext& context,
+		CurrentStructStaticLookupMode lookup_mode);
+	static std::optional<EvalResult> resolve_constexpr_member_source_from_initializer(
+		const std::optional<ASTNode>& object_initializer,
+		TypeIndex declared_type_index,
+		std::string_view member_name,
+		std::string_view usage_name,
+		EvaluationContext& context,
+		ResolvedConstexprMemberSource& resolved_member,
+		const std::unordered_map<std::string_view, EvalResult>* enclosing_bindings = nullptr);
 	static std::optional<EvalResult> resolve_constexpr_object_source(
 		const IdentifierNode* object_identifier,
 		std::string_view object_name,

@@ -1,6 +1,61 @@
 # Constexpr Evaluator Refactor Plan (Forward-Looking)
 
-This note is intentionally **forward-looking only**. It does not restate already-landed fixes. The goal is to define the next cleanup/refactor steps around identifier/function/member resolution, while separating what should remain local to constexpr evaluation from what could become broadly reusable across the compiler.
+This note is primarily **forward-looking**. It defines the next cleanup/refactor steps around identifier/function/member resolution, while separating what should remain local to constexpr evaluation from what could become broadly reusable across the compiler. A short progress addendum is included so the remaining work stays grounded in what has already landed.
+
+## Progress Update (2026-03-08)
+
+### Landed checkpoint commits
+
+- `0fb14c95` — refactored shared constexpr lookup resolution helpers
+- `e444335a` — extracted constexpr member source resolution
+- `ccab61ff` — deduplicated constexpr identifier lookup helpers
+- `a7432001` — refactored constexpr function symbol lookup
+- `2b4c4544` — extracted constexpr function-call template context handling
+- `fd0ebc3e` — shared constexpr member-function candidate lookup
+- `e0430f14` — deduplicated bound constexpr function calls
+- `e3b700ba` — shared constexpr parameter binding
+- `5e3a7fb7` — shared callable operator lookup
+- `431e1962` — reused constexpr constructor member bindings
+- `a311908e` — shared constexpr single-return body evaluation
+- `14dae6af` — shared constexpr pre-evaluated ctor bindings
+- `46d27415` — shared constexpr ctor member initialization
+- `6b4b1255` — shared constexpr ctor member lookup
+- `3de8b202` — split constexpr member function lookup modes
+- `98c919eb` — shared current constexpr member function lookup
+- `a02435c4` — shared current struct static lookup gate
+- `48ea4682` — shared constexpr static member default tail
+
+### What is now complete
+
+- shared lookup helpers cover `resolved_name`/raw-name fallback and parser-stored function targets
+- current-struct static-member lookup/preference is centralized
+- current-struct/member-function candidate filtering is centralized for the migrated call paths
+- constexpr member-source extraction from object initializers is centralized for aggregate/designated/default-member/constructor-member cases
+- repeated template-binding save/restore logic around constexpr function-call evaluation is centralized
+- duplicated bound-expression function-call recursion branches are centralized through one helper
+- evaluated-argument parameter binding is centralized across regular function calls, lambda calls, callable objects, and member-function calls
+- callable `operator()` candidate scanning is centralized for the migrated callable-object paths
+- constructor/member extraction now reuses shared evaluated-argument binding where the callsites match exactly
+- repeated single-return block-body evaluation is centralized for callable objects, lambda block bodies, and member functions
+- pre-evaluated constructor-argument binding is centralized for the remaining nested and array-element member-resolution paths
+- constructor member-initializer application plus default-member fallback is centralized for the migrated callable-object and ctor-backed object extraction paths
+- single-target ctor member lookup with default-member fallback is centralized for the migrated nested and array-element member access paths
+- member-function candidate lookup now supports lookup-only vs constexpr-evaluable filtering without changing caller error behavior
+- lazy-instantiated current-struct plus base-template member-function lookup is centralized for the migrated function-call and member-function-call paths
+- current-struct static lookup mode gating plus identifier-name-handle normalization is centralized
+- the repeated static-member "evaluate initializer or synthesize scalar default" tail is centralized for the migrated instance-access paths
+
+### Early remaining follow-up seams
+
+- the obvious ctor/member-resolution micro-duplication is largely gone; remaining cleanup candidates are smaller and need re-audit before extraction
+- the main open question is now whether any lookup-only helper has earned promotion out of `ConstExprEvaluator`
+- remaining static-member duplication is now down to more behavior-specific paths (lazy instantiation, qualified fallback lookup, and array extraction)
+
+### Remaining likely steps after that
+
+- re-audit `evaluate_member_function_call`, static-member lookup, and nearby member-call paths for any remaining local duplication that still mixes lookup and evaluation
+- decide whether the current lookup-only helpers should remain constexpr-local or be promoted only once a second non-constexpr consumer exists
+- decide whether any lookup-only helper has earned promotion into a broader semantic utility, or should remain constexpr-local for now
 
 ## Goals
 
