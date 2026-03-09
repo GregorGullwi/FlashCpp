@@ -33,6 +33,7 @@ Basic and intermediate exception handling works end-to-end:
 | `_CxxThrowException` call generation | ✅ | ThrowInfo metadata generated via `get_or_create_exception_throw_info` |
 | Catch funclets with establisher-frame model | ✅ | LEA RBP from RDX |
 | Catch continuation and return bridging | ✅ | Fixup stubs for catch-return flow |
+| Cross-function exception propagation | ✅ | Covered by the `test_eh_twofunc_*` Windows regression tests |
 | `__CxxFrameHandler3` compatibility | ⚠️ | Needs ThrowInfo for full type matching |
 | `__try`/`__except`/`__finally` (Win32 SEH) | ✅ | `__C_specific_handler` integration |
 

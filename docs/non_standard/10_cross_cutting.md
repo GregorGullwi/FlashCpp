@@ -11,7 +11,7 @@ completeness only.
 | `throw;` rethrow not implemented on Linux | `docs/EXCEPTION_HANDLING.md` |
 | Class-type exception destructors not called | `docs/EXCEPTION_HANDLING.md` |
 | Stack unwinding with local destructors missing | `docs/EXCEPTION_HANDLING.md` |
-| Windows cross-function `catch` fails at runtime | `docs/known_ir_issues.md` |
+| Windows cross-function `catch` runtime regression (fixed) | `docs/EXCEPTION_HANDLING.md` |
 | Windows `_CxxThrowException` with NULL `ThrowInfo` | `docs/EXCEPTION_HANDLING.md` |
 | `constexpr` constructor body assignments not evaluated | `docs/CONSTEXPR_LIMITATIONS.md` |
 | Multi-statement `constexpr` functions not evaluated | `docs/CONSTEXPR_LIMITATIONS.md` |

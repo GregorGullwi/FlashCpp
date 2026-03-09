@@ -11,7 +11,7 @@ For the `__cpp_exceptions` macro deviation see [08_preprocessor.md](08_preproces
 | `throw;` (rethrow) not implemented | Linux | ✅ Fixed |
 | Class-type exception object destructors not called | Both | ✅ Fixed (Linux) |
 | Stack unwinding with local destructors not implemented | Both | ✅ Fixed (Linux) |
-| Cross-function `catch` fails at runtime | Windows | ❌ Known |
+| Cross-function `catch` fails at runtime | Windows | ✅ Fixed |
 | `_CxxThrowException` called with NULL `ThrowInfo` | Windows | ✅ Fixed |
 
 **See:** `docs/EXCEPTION_HANDLING.md` for full details on each item.
