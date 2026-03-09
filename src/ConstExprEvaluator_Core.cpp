@@ -1561,10 +1561,14 @@ EvalResult Evaluator::evaluate_lambda_call(
 	}
 
 	bool captures_this_by_reference = false;
+	std::vector<std::string_view> by_reference_capture_names;
 	for (const auto& capture : captures) {
 		if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
 			captures_this_by_reference = true;
-			break;
+			continue;
+		}
+		if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference && !capture.has_initializer()) {
+			by_reference_capture_names.push_back(capture.identifier_name());
 		}
 	}
 	
@@ -1591,6 +1595,14 @@ EvalResult Evaluator::evaluate_lambda_call(
 	}
 	
 	context.current_depth--;
+		if (result.success() && mutable_outer_bindings) {
+			for (std::string_view capture_name : by_reference_capture_names) {
+				auto binding_it = bindings.find(capture_name);
+				if (binding_it != bindings.end()) {
+					(*mutable_outer_bindings)[capture_name] = binding_it->second;
+				}
+		}
+		}
 	if (result.success() && captures_this_by_reference && mutable_outer_bindings && context.struct_info) {
 		for (const auto& member : context.struct_info->members) {
 			std::string_view member_name = StringTable::getStringView(member.getName());
