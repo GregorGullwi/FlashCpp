@@ -2142,6 +2142,25 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	// For lambda calls (operator()), we need special handling
 	const bool is_operator_call = (func_name == "operator()");
 
+		auto extract_lambda_from_object_expr = [&]() -> const LambdaExpressionNode* {
+			if (object_expr.is<LambdaExpressionNode>()) {
+				return &object_expr.as<LambdaExpressionNode>();
+			}
+			if (object_expr.is<ExpressionNode>()) {
+				const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+				if (std::holds_alternative<LambdaExpressionNode>(expr_node)) {
+					return &std::get<LambdaExpressionNode>(expr_node);
+				}
+			}
+			return nullptr;
+		};
+
+		if (is_operator_call) {
+			if (const LambdaExpressionNode* object_lambda = extract_lambda_from_object_expr()) {
+				return evaluate_lambda_call(*object_lambda, member_func_call.arguments(), context);
+			}
+		}
+
 	auto try_evaluate_current_struct_static_member = [&]() -> std::optional<EvalResult> {
 		StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
 		auto current_match = find_current_struct_member_function_candidate(

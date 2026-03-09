@@ -53,7 +53,11 @@
 			if (var_symbol.has_value()) {
 				info.captured_var_decls.push_back(*var_symbol);
 			} else {
-				FLASH_LOG(Codegen, Warning, "Lambda capture: variable '", var_name, "' not found in scope during lambda collection");
+					throw CompileError(std::string(StringBuilder()
+						.append("Lambda capture variable not found in scope: '")
+						.append(var_name)
+						.append("'")
+						.commit()));
 			}
 		}
 
