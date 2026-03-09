@@ -2,6 +2,14 @@
 
 namespace ConstExpr {
 
+namespace {
+	constexpr std::string_view kStatementExecutedWithoutReturn = "Statement executed (not a return)";
+
+	bool isStatementExecutedWithoutReturn(const EvalResult& result) {
+		return !result.success() && result.error_message == kStatementExecutedWithoutReturn;
+	}
+}
+
 // Main evaluation entry point
 // Evaluates a constant expression and returns the result
 EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& context) {
@@ -74,6 +82,16 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For AlignofExprNode
 	if (std::holds_alternative<AlignofExprNode>(expr)) {
 		return evaluate_alignof(std::get<AlignofExprNode>(expr), context);
+	}
+
+	// For OffsetofExprNode
+	if (std::holds_alternative<OffsetofExprNode>(expr)) {
+		return evaluate_offsetof(std::get<OffsetofExprNode>(expr));
+	}
+
+	// For NoexceptExprNode
+	if (std::holds_alternative<NoexceptExprNode>(expr)) {
+		return evaluate_noexcept_expr(std::get<NoexceptExprNode>(expr), context);
 	}
 
 	// For ConstructorCallNode (type conversions like float(3.14), int(100))
@@ -650,6 +668,229 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 	return EvalResult::error("Invalid alignof operand");
 }
 
+EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
+	const ASTNode& type_node = offsetof_expr.type_node();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("offsetof type argument must be TypeSpecifierNode");
+	}
+
+	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	if (type_spec.type() != Type::Struct) {
+		return EvalResult::error("offsetof requires a struct type");
+	}
+
+	size_t type_index = type_spec.type_index();
+	if (type_index >= gTypeInfo.size()) {
+		return EvalResult::error("Invalid type index for struct");
+	}
+
+	auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+		static_cast<TypeIndex>(type_index),
+		StringTable::getOrInternStringHandle(std::string(offsetof_expr.member_name())));
+	if (!member_result) {
+		return EvalResult::error("Member not found in struct");
+	}
+
+	return EvalResult::from_uint(static_cast<unsigned long long>(member_result.adjusted_offset));
+}
+
+EvalResult Evaluator::evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context) {
+	if (!noexcept_expr.expr().is<ExpressionNode>()) {
+		return EvalResult::from_bool(false);
+	}
+
+	return EvalResult::from_bool(is_expression_noexcept(noexcept_expr.expr().as<ExpressionNode>(), context));
+}
+
+bool Evaluator::is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context) {
+	if (!func_decl.is_noexcept()) {
+		return false;
+	}
+
+	if (!func_decl.has_noexcept_expression()) {
+		return true;
+	}
+
+	auto eval_result = evaluate(*func_decl.noexcept_expression(), context);
+	if (!eval_result.success()) {
+		return false;
+	}
+
+	return eval_result.as_bool();
+}
+
+const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context) {
+	StringHandle function_name_handle = func_call.function_declaration().identifier_token().handle();
+	auto current_match = find_current_struct_member_function_candidate(
+		function_name_handle,
+		func_call.arguments().size(),
+		context,
+		MemberFunctionLookupMode::LookupOnly,
+		false,
+		true);
+	if (current_match.function) {
+		return current_match.function;
+	}
+
+	if (!context.symbols) {
+		return nullptr;
+	}
+
+	auto lookup_function = [&](const SymbolTable* symbols, StringHandle name_handle) -> const FunctionDeclarationNode* {
+		if (!symbols || !name_handle.isValid()) {
+			return nullptr;
+		}
+
+		auto symbol = symbols->lookup(name_handle);
+		if (!symbol.has_value()) {
+			return nullptr;
+		}
+
+		return get_function_decl_node(*symbol);
+	};
+
+	if (func_call.has_qualified_name()) {
+		if (const FunctionDeclarationNode* qualified_decl = lookup_function(
+				context.symbols,
+				StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
+			return qualified_decl;
+		}
+	}
+
+	if (const FunctionDeclarationNode* direct_decl = lookup_function(context.symbols, function_name_handle)) {
+		return direct_decl;
+	}
+
+	if (context.global_symbols && context.global_symbols != context.symbols) {
+		if (func_call.has_qualified_name()) {
+			if (const FunctionDeclarationNode* qualified_decl = lookup_function(
+					context.global_symbols,
+					StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
+				return qualified_decl;
+			}
+		}
+
+		if (const FunctionDeclarationNode* global_decl = lookup_function(context.global_symbols, function_name_handle)) {
+			return global_decl;
+		}
+	}
+
+	return nullptr;
+}
+
+bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context) {
+	if (context.current_depth >= context.max_recursion_depth) {
+		return false;
+	}
+
+	struct NoexceptDepthGuard {
+		EvaluationContext& context;
+
+		explicit NoexceptDepthGuard(EvaluationContext& eval_context)
+			: context(eval_context) {
+			++context.current_depth;
+		}
+
+		~NoexceptDepthGuard() {
+			--context.current_depth;
+		}
+	} depth_guard(context);
+
+	if (std::holds_alternative<BoolLiteralNode>(expr) ||
+		std::holds_alternative<NumericLiteralNode>(expr) ||
+		std::holds_alternative<StringLiteralNode>(expr)) {
+		return true;
+	}
+
+	if (std::holds_alternative<IdentifierNode>(expr) ||
+		std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+		std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
+		std::holds_alternative<MemberAccessNode>(expr) ||
+		std::holds_alternative<TypeTraitExprNode>(expr) ||
+		std::holds_alternative<LambdaExpressionNode>(expr) ||
+		std::holds_alternative<PseudoDestructorCallNode>(expr) ||
+		std::holds_alternative<NoexceptExprNode>(expr) ||
+		std::holds_alternative<SizeofExprNode>(expr) ||
+		std::holds_alternative<SizeofPackNode>(expr) ||
+		std::holds_alternative<AlignofExprNode>(expr) ||
+		std::holds_alternative<OffsetofExprNode>(expr)) {
+		return true;
+	}
+
+	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+		const auto& binop = std::get<BinaryOperatorNode>(expr);
+		bool lhs_noexcept = !binop.get_lhs().is<ExpressionNode>() ||
+			is_expression_noexcept(binop.get_lhs().as<ExpressionNode>(), context);
+		bool rhs_noexcept = !binop.get_rhs().is<ExpressionNode>() ||
+			is_expression_noexcept(binop.get_rhs().as<ExpressionNode>(), context);
+		return lhs_noexcept && rhs_noexcept;
+	}
+
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const auto& unary = std::get<UnaryOperatorNode>(expr);
+		return !unary.get_operand().is<ExpressionNode>() ||
+			is_expression_noexcept(unary.get_operand().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		const auto& ternary = std::get<TernaryOperatorNode>(expr);
+		bool cond_noexcept = !ternary.condition().is<ExpressionNode>() ||
+			is_expression_noexcept(ternary.condition().as<ExpressionNode>(), context);
+		bool true_noexcept = !ternary.true_expr().is<ExpressionNode>() ||
+			is_expression_noexcept(ternary.true_expr().as<ExpressionNode>(), context);
+		bool false_noexcept = !ternary.false_expr().is<ExpressionNode>() ||
+			is_expression_noexcept(ternary.false_expr().as<ExpressionNode>(), context);
+		return cond_noexcept && true_noexcept && false_noexcept;
+	}
+
+	if (std::holds_alternative<FunctionCallNode>(expr)) {
+		const auto& func_call = std::get<FunctionCallNode>(expr);
+		const FunctionDeclarationNode* func_decl = resolve_function_call_decl(func_call, context);
+		return func_decl && is_function_decl_noexcept(*func_decl, context);
+	}
+
+	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
+		return is_function_decl_noexcept(member_call.function_declaration(), context);
+	}
+
+	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+		const auto& subscript = std::get<ArraySubscriptNode>(expr);
+		return !subscript.index_expr().is<ExpressionNode>() ||
+			is_expression_noexcept(subscript.index_expr().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<StaticCastNode>(expr)) {
+		const auto& cast = std::get<StaticCastNode>(expr);
+		return !cast.expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<ConstCastNode>(expr)) {
+		const auto& cast = std::get<ConstCastNode>(expr);
+		return !cast.expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<ReinterpretCastNode>(expr)) {
+		const auto& cast = std::get<ReinterpretCastNode>(expr);
+		return !cast.expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	}
+
+	if (std::holds_alternative<DynamicCastNode>(expr) ||
+		std::holds_alternative<TypeidNode>(expr) ||
+		std::holds_alternative<NewExpressionNode>(expr) ||
+		std::holds_alternative<DeleteExpressionNode>(expr) ||
+		std::holds_alternative<FoldExpressionNode>(expr) ||
+		std::holds_alternative<ThrowExpressionNode>(expr) ||
+		std::holds_alternative<ConstructorCallNode>(expr)) {
+		return false;
+	}
+
+	return false;
+}
+
 EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context) {
 	// Constructor calls like float(3.14), int(100), double(2.718), or type_identity<int>{}
 	// These are essentially type conversions/casts in constant expressions
@@ -953,7 +1194,8 @@ const ConstructorCallNode* Evaluator::extract_constructor_call(const std::option
 EvalResult Evaluator::evaluate_lambda_captures(
 	const std::vector<LambdaCaptureNode>& captures,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	
 	for (const auto& capture : captures) {
 		using CaptureKind = LambdaCaptureNode::CaptureKind;
@@ -966,13 +1208,23 @@ EvalResult Evaluator::evaluate_lambda_captures(
 				
 				// Check for init-capture: [x = expr]
 				if (capture.has_initializer()) {
-					auto init_result = evaluate(capture.initializer().value(), context);
+					auto init_result = (outer_bindings && capture.initializer().value().is<ExpressionNode>())
+						? evaluate_expression_with_bindings_const(capture.initializer().value(), *outer_bindings, context)
+						: evaluate(capture.initializer().value(), context);
 					if (!init_result.success()) {
 						return EvalResult::error("Failed to evaluate init-capture '" + 
 							std::string(var_name) + "': " + init_result.error_message);
 					}
 					bindings[var_name] = init_result;
 				} else {
+					if (outer_bindings) {
+						auto outer_it = outer_bindings->find(var_name);
+						if (outer_it != outer_bindings->end()) {
+							bindings[var_name] = outer_it->second;
+							break;
+						}
+					}
+
 					// Look up the variable in the symbol table
 					if (!context.symbols) {
 						return EvalResult::error("Cannot evaluate capture: no symbol table provided");
@@ -1038,12 +1290,13 @@ EvalResult Evaluator::evaluate_lambda_captures(
 EvalResult Evaluator::evaluate_callable_object(
 	const VariableDeclarationNode& var_decl,
 	const ChunkedVector<ASTNode>& arguments,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	
 	// Check for lambda
 	const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
 	if (lambda) {
-		return evaluate_lambda_call(*lambda, arguments, context);
+		return evaluate_lambda_call(*lambda, arguments, context, outer_bindings);
 	}
 	
 	// Check for ConstructorCallNode (user-defined functor), handling both direct storage
@@ -1103,7 +1356,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			ctor_param_bindings,
 			context,
 			"Invalid parameter node in callable object constructor",
-			nullptr,
+			outer_bindings,
 			true);
 		if (!ctor_bind_result.success()) {
 			return ctor_bind_result;
@@ -1166,7 +1419,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			evaluation_bindings,
 			context,
 			"Invalid parameter node in callable object operator()",
-			nullptr,
+			outer_bindings,
 			false);
 		if (!call_bind_result.success()) {
 			return call_bind_result;
@@ -1176,13 +1429,12 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
 		}
 		context.current_depth++;
-		// Known limitation: only simple single-return constexpr operator() bodies are handled here.
-		auto result = evaluate_single_return_block_with_bindings(
+		auto result = evaluate_block_with_bindings(
 			definition.value(),
 			evaluation_bindings,
 			context,
 			"Callable object operator() body is not a block",
-			"Constexpr callable object operator() must have a single return statement (complex statements not yet supported)");
+			"Constexpr callable object operator() did not return a value");
 		context.current_depth--;
 		return result;
 	}
@@ -1227,19 +1479,19 @@ EvalResult Evaluator::evaluate_callable_object(
 			evaluation_bindings,
 			context,
 			"Invalid parameter node in brace-initialized callable object operator()",
-			nullptr,
+			outer_bindings,
 			true);
 		if (!bind_result.success()) return bind_result;
 
 		if (context.current_depth >= context.max_recursion_depth)
 			return EvalResult::error("Constexpr recursion depth limit exceeded");
 		context.current_depth++;
-		auto result = evaluate_single_return_block_with_bindings(
+		auto result = evaluate_block_with_bindings(
 			definition.value(),
 			evaluation_bindings,
 			context,
 			"operator() body in brace-initialized callable is not a block",
-			"Constexpr operator() in brace-initialized callable must have a single statement (complex bodies not yet supported)");
+			"Constexpr operator() in brace-initialized callable did not return a value");
 		context.current_depth--;
 		return result;
 	}
@@ -1251,7 +1503,8 @@ EvalResult Evaluator::evaluate_callable_object(
 EvalResult Evaluator::evaluate_lambda_call(
 	const LambdaExpressionNode& lambda,
 	const ChunkedVector<ASTNode>& arguments,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
@@ -1272,14 +1525,15 @@ EvalResult Evaluator::evaluate_lambda_call(
 		arguments,
 		bindings,
 		context,
-		"Invalid parameter node in constexpr lambda");
+		"Invalid parameter node in constexpr lambda",
+		outer_bindings);
 	if (!bind_result.success()) {
 		return bind_result;
 	}
 	
 	// Handle captures - evaluate each captured variable and add to bindings
 	const auto& captures = lambda.captures();
-	auto capture_result = evaluate_lambda_captures(captures, bindings, context);
+	auto capture_result = evaluate_lambda_captures(captures, bindings, context, outer_bindings);
 	if (!capture_result.success()) {
 		return capture_result;
 	}
@@ -1292,12 +1546,12 @@ EvalResult Evaluator::evaluate_lambda_call(
 	
 	EvalResult result;
 	if (body_node.is<BlockNode>()) {
-		result = evaluate_single_return_block_with_bindings(
+		result = evaluate_block_with_bindings(
 			body_node,
 			bindings,
 			context,
 			"Constexpr lambda body is not a block",
-			"Constexpr lambda must have a single return statement (complex statements not yet supported)");
+			"Constexpr lambda did not return a value");
 	} else if (body_node.is<ExpressionNode>()) {
 		// Expression body (implicit return)
 		result = evaluate_expression_with_bindings(body_node, bindings, context);
@@ -2133,46 +2387,17 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// Increase recursion depth
 	context.current_depth++;
 	
-	// Evaluate the function body with parameter bindings
-	const ASTNode& body_node = definition.value();
-	if (!body_node.is<BlockNode>()) {
-		context.current_depth--;
-		restore_template_bindings();
-		return EvalResult::error("Function body is not a block");
-	}
-	
-	const BlockNode& body = body_node.as<BlockNode>();
-	const auto& statements = body.get_statements();
-	
-	// Evaluate all statements in the function body
-	// Local variable bindings are mutable - they can be added to as we process statements
 	std::unordered_map<std::string_view, EvalResult> local_bindings = param_bindings;
-	
-	for (size_t i = 0; i < statements.size(); i++) {
-		auto result = evaluate_statement_with_bindings(statements[i], local_bindings, context);
-		
-		// If the result is successful, it means a return value was computed
-		// This can happen either directly from a return statement, or indirectly
-		// from an if/while/for statement that contains a return
-		if (result.success()) {
-			context.current_depth--;
-			restore_template_bindings();
-			return result;
-		}
-		
-		// For other statements (like variable declarations), result contains the binding info
-		// The binding has already been added to local_bindings by evaluate_statement_with_bindings
-		if (!result.success() && result.error_message != "Statement executed (not a return)") {
-			// An actual error occurred
-			context.current_depth--;
-			restore_template_bindings();
-			return result;
-		}
-	}
+	auto result = evaluate_block_with_bindings(
+		definition.value(),
+		local_bindings,
+		context,
+		"Function body is not a block",
+		"Constexpr function did not return a value");
 
 	context.current_depth--;
 	restore_template_bindings();
-	return EvalResult::error("Constexpr function did not return a value");
+	return result;
 }
 
 EvalResult Evaluator::bind_evaluated_arguments(
@@ -2247,6 +2472,31 @@ EvalResult Evaluator::evaluate_single_return_block_with_bindings(
 	return evaluate_statement_with_bindings(statements[0], bindings, context);
 }
 
+EvalResult Evaluator::evaluate_block_with_bindings(
+	const ASTNode& body_node,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	std::string_view non_block_error,
+	std::string_view no_return_error) {
+	if (!body_node.is<BlockNode>()) {
+		return EvalResult::error(std::string(non_block_error));
+	}
+
+	const BlockNode& body = body_node.as<BlockNode>();
+	const auto& statements = body.get_statements();
+	for (size_t i = 0; i < statements.size(); i++) {
+		auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+		if (result.success()) {
+			return result;
+		}
+		if (!isStatementExecutedWithoutReturn(result)) {
+			return result;
+		}
+	}
+
+	return EvalResult::error(std::string(no_return_error));
+}
+
 EvalResult Evaluator::evaluate_statement_with_bindings(
 	const ASTNode& stmt_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -2273,6 +2523,11 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// Evaluate the initializer if present
 		if (var_decl.initializer().has_value()) {
 			const ASTNode& init_expr = var_decl.initializer().value();
+
+			if (extract_lambda_from_initializer(var_decl.initializer())) {
+				bindings[var_name] = EvalResult::from_callable(var_decl);
+				return EvalResult::error("Statement executed (not a return)");
+			}
 			
 			// Handle array initialization with InitializerListNode
 			if (init_expr.is<InitializerListNode>()) {
@@ -2344,24 +2599,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				}
 			}
 			
-			// Execute loop body
-			const ASTNode& body = for_stmt.get_body_statement();
-			if (body.is<BlockNode>()) {
-				const BlockNode& block = body.as<BlockNode>();
-				const auto& statements = block.get_statements();
-				for (size_t i = 0; i < statements.size(); i++) {
-					auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-					// If this was a return statement, propagate it up
-					if (statements[i].is<ReturnStatementNode>()) {
-						return result;
-					}
-				}
-			} else {
-				auto result = evaluate_statement_with_bindings(body, bindings, context);
-				// If this was a return statement, propagate it up
-				if (body.is<ReturnStatementNode>()) {
-					return result;
-				}
+			auto body_result = evaluate_statement_with_bindings(for_stmt.get_body_statement(), bindings, context);
+			if (body_result.success()) {
+				return body_result;
+			}
+			if (!isStatementExecutedWithoutReturn(body_result)) {
+				return body_result;
 			}
 			
 			// Execute update expression if present
@@ -2393,24 +2636,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				break;  // Exit loop when condition is false
 			}
 			
-			// Execute loop body
-			const ASTNode& body = while_stmt.get_body_statement();
-			if (body.is<BlockNode>()) {
-				const BlockNode& block = body.as<BlockNode>();
-				const auto& statements = block.get_statements();
-				for (size_t i = 0; i < statements.size(); i++) {
-					auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-					// If this was a return statement, propagate it up
-					if (statements[i].is<ReturnStatementNode>()) {
-						return result;
-					}
-				}
-			} else {
-				auto result = evaluate_statement_with_bindings(body, bindings, context);
-				// If this was a return statement, propagate it up
-				if (body.is<ReturnStatementNode>()) {
-					return result;
-				}
+			auto body_result = evaluate_statement_with_bindings(while_stmt.get_body_statement(), bindings, context);
+			if (body_result.success()) {
+				return body_result;
+			}
+			if (!isStatementExecutedWithoutReturn(body_result)) {
+				return body_result;
 			}
 		}
 		
@@ -2435,45 +2666,24 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		
 		// Execute then or else branch
 		if (cond_result.as_bool()) {
-			// Execute then branch
-			const ASTNode& then_stmt = if_stmt.get_then_statement();
-			if (then_stmt.is<BlockNode>()) {
-				const BlockNode& block = then_stmt.as<BlockNode>();
-				const auto& statements = block.get_statements();
-				for (size_t i = 0; i < statements.size(); i++) {
-					auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-					// If this was a return statement, propagate it up
-					if (statements[i].is<ReturnStatementNode>()) {
-						return result;
-					}
-				}
-			} else {
-				auto result = evaluate_statement_with_bindings(then_stmt, bindings, context);
-				if (then_stmt.is<ReturnStatementNode>()) {
-					return result;
-				}
+			auto then_result = evaluate_statement_with_bindings(if_stmt.get_then_statement(), bindings, context);
+			if (then_result.success()) {
+				return then_result;
+			}
+			if (!isStatementExecutedWithoutReturn(then_result)) {
+				return then_result;
 			}
 		} else if (if_stmt.has_else()) {
 			// Execute else branch
 			// Fix dangling reference warning by storing the value first
 			std::optional<ASTNode> else_stmt_opt = if_stmt.get_else_statement();
 			if (else_stmt_opt.has_value()) {
-				const ASTNode& else_stmt = *else_stmt_opt;
-				if (else_stmt.is<BlockNode>()) {
-					const BlockNode& block = else_stmt.as<BlockNode>();
-					const auto& statements = block.get_statements();
-					for (size_t i = 0; i < statements.size(); i++) {
-						auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-						// If this was a return statement, propagate it up
-						if (statements[i].is<ReturnStatementNode>()) {
-							return result;
-						}
-					}
-				} else {
-					auto result = evaluate_statement_with_bindings(else_stmt, bindings, context);
-					if (else_stmt.is<ReturnStatementNode>()) {
-						return result;
-					}
+				auto else_result = evaluate_statement_with_bindings(*else_stmt_opt, bindings, context);
+				if (else_result.success()) {
+					return else_result;
+				}
+				if (!isStatementExecutedWithoutReturn(else_result)) {
+					return else_result;
 				}
 			}
 		}
@@ -2496,16 +2706,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	
 	// Handle block statements (nested blocks)
 	if (stmt_node.is<BlockNode>()) {
-		const BlockNode& block = stmt_node.as<BlockNode>();
-		const auto& statements = block.get_statements();
-		for (size_t i = 0; i < statements.size(); i++) {
-			auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-			// If this was a return statement, propagate it up
-			if (statements[i].is<ReturnStatementNode>()) {
-				return result;
-			}
-		}
-		return EvalResult::error("Statement executed (not a return)");
+		return evaluate_block_with_bindings(
+			stmt_node,
+			bindings,
+			context,
+			"Constexpr block is not a block",
+			kStatementExecutedWithoutReturn);
 	}
 	
 	return EvalResult::error("Unsupported statement type in constexpr function");

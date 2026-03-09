@@ -71,6 +71,7 @@ struct EvalResult {
 	// Array support for local arrays in constexpr functions
 	bool is_array = false;
 	std::vector<int64_t> array_values;
+	const VariableDeclarationNode* callable_var_decl = nullptr;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -79,23 +80,27 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr};
+	}
+
+	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}};
+		return EvalResult{false, msg, type, false, {}, nullptr};
 	}
 
 	// Convenience helpers for common operations
@@ -328,11 +333,16 @@ private:
 	}
 	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context);
 	static EvalResult evaluate_alignof(const AlignofExprNode& alignof_expr, EvaluationContext& context);
+	static EvalResult evaluate_offsetof(const OffsetofExprNode& offsetof_expr);
+	static EvalResult evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
 	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
+	static bool is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context);
+	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
+	static const FunctionDeclarationNode* resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
 	// Extract ConstructorCallNode from an initializer, handling direct storage and
 	// ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
@@ -340,15 +350,18 @@ private:
 	static EvalResult evaluate_lambda_captures(
 		const std::vector<LambdaCaptureNode>& captures,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
-		EvaluationContext& context);
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 	static EvalResult evaluate_callable_object(
 		const VariableDeclarationNode& var_decl,
 		const ChunkedVector<ASTNode>& arguments,
-		EvaluationContext& context);
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 	static EvalResult evaluate_lambda_call(
 		const LambdaExpressionNode& lambda,
 		const ChunkedVector<ASTNode>& arguments,
-		EvaluationContext& context);
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
@@ -390,6 +403,12 @@ private:
 		EvaluationContext& context,
 		std::string_view non_block_error,
 		std::string_view multi_statement_error);
+	static EvalResult evaluate_block_with_bindings(
+		const ASTNode& body_node,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context,
+		std::string_view non_block_error,
+		std::string_view no_return_error);
 	static EvalResult evaluate_statement_with_bindings(
 		const ASTNode& stmt_node,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -414,6 +433,10 @@ private:
 		const SymbolTable& symbols);
 	static EvalResult evaluate_function_call_with_outer_bindings(
 		const FunctionCallNode& func_call,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
+	static std::optional<EvalResult> try_evaluate_bound_member_operator_call(
+		const ExpressionNode& expr,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
 	static ResolvedMemberFunctionCandidate find_call_operator_candidate(

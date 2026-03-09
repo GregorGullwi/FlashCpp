@@ -86,6 +86,11 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		return EvalResult::error("Cannot evaluate function call: no symbol table provided");
 	}
 
+	auto bound_callable = bindings.find(func_name);
+	if (bound_callable != bindings.end() && bound_callable->second.callable_var_decl) {
+		return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings);
+	}
+
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
 	if (!symbol_opt.has_value()) {
 		if (func_call.has_template_arguments() && context.parser) {
@@ -99,6 +104,11 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 
 	const ASTNode& symbol_node = symbol_opt.value();
 	if (!symbol_node.is<FunctionDeclarationNode>()) {
+		if (symbol_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+			return evaluate_callable_object(var_decl, func_call.arguments(), context, &bindings);
+		}
+
 		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
 			auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
 			if (var_result.success()) {
@@ -114,6 +124,62 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	}
 
 	return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
+}
+
+std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
+	const ExpressionNode& expr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	if (!std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		return std::nullopt;
+	}
+
+	const auto& member_func_call = std::get<MemberFunctionCallNode>(expr);
+	std::string_view func_name = member_func_call.function_declaration().decl_node().identifier_token().value();
+	if (func_name != "operator()") {
+		return std::nullopt;
+	}
+
+	auto extract_callable_identifier = [&]() -> const IdentifierNode* {
+		const ASTNode& object_expr = member_func_call.object();
+		if (object_expr.is<IdentifierNode>()) {
+			return &object_expr.as<IdentifierNode>();
+		}
+		if (object_expr.is<ExpressionNode>()) {
+			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr_node)) {
+				return &std::get<IdentifierNode>(expr_node);
+			}
+		}
+		return nullptr;
+	};
+
+	auto extract_lambda_from_object_expr = [&]() -> const LambdaExpressionNode* {
+		const ASTNode& object_expr = member_func_call.object();
+		if (object_expr.is<LambdaExpressionNode>()) {
+			return &object_expr.as<LambdaExpressionNode>();
+		}
+		if (object_expr.is<ExpressionNode>()) {
+			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+			if (std::holds_alternative<LambdaExpressionNode>(expr_node)) {
+				return &std::get<LambdaExpressionNode>(expr_node);
+			}
+		}
+		return nullptr;
+	};
+
+	if (const LambdaExpressionNode* lambda = extract_lambda_from_object_expr()) {
+		return evaluate_lambda_call(*lambda, member_func_call.arguments(), context, &bindings);
+	}
+
+	if (const IdentifierNode* callable_id = extract_callable_identifier()) {
+		auto callable_it = bindings.find(callable_id->name());
+		if (callable_it != bindings.end() && callable_it->second.callable_var_decl) {
+			return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings);
+		}
+	}
+
+	return std::nullopt;
 }
 
 Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_call_operator_candidate(
@@ -519,6 +585,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		const auto& func_call = std::get<FunctionCallNode>(expr);
 		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
 	}
+
+	// For direct lambda operator() calls inside a bound constexpr context
+	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context)) {
+		return *call_result;
+	}
 	
 	// For member access on 'this' (e.g., this->x in a member function)
 	// Reading is handled by the fall-through to evaluate_expression_with_bindings_const below.
@@ -594,6 +665,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& func_call = std::get<FunctionCallNode>(expr);
 		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
+	}
+
+	// For direct lambda operator() calls inside a bound constexpr context
+	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context)) {
+		return *call_result;
 	}
 	
 	// For member access on 'this' (e.g., this->x in a member function)
@@ -2142,6 +2218,25 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	// For lambda calls (operator()), we need special handling
 	const bool is_operator_call = (func_name == "operator()");
 
+	if (is_operator_call) {
+		auto extract_lambda_from_object_expr = [&]() -> const LambdaExpressionNode* {
+			if (object_expr.is<LambdaExpressionNode>()) {
+				return &object_expr.as<LambdaExpressionNode>();
+			}
+			if (object_expr.is<ExpressionNode>()) {
+				const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+				if (std::holds_alternative<LambdaExpressionNode>(expr_node)) {
+					return &std::get<LambdaExpressionNode>(expr_node);
+				}
+			}
+			return nullptr;
+		};
+
+		if (const LambdaExpressionNode* object_lambda = extract_lambda_from_object_expr()) {
+			return evaluate_lambda_call(*object_lambda, member_func_call.arguments(), context);
+		}
+	}
+
 	auto try_evaluate_current_struct_static_member = [&]() -> std::optional<EvalResult> {
 		StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
 		auto current_match = find_current_struct_member_function_candidate(
@@ -2353,13 +2448,12 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	context.current_depth++;
 	
 	// Evaluate the function body
-	// For simple constexpr functions, we expect a single return statement
-	auto result = evaluate_single_return_block_with_bindings(
+	auto result = evaluate_block_with_bindings(
 		definition.value(),
 		member_bindings,
 		context,
 		"Member function body is not a block",
-		"Constexpr member function must have a single return statement (complex statements not yet supported)");
+		"Constexpr member function did not return a value");
 	context.current_depth--;
 	restore_template_bindings();
 	return result;

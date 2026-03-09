@@ -251,20 +251,24 @@ static_assert(f() == 42);  // ❌ Not currently supported
 
 **Workaround:** Avoid dynamic allocation in constexpr code for now; prefer direct objects, aggregates, and fixed-size arrays.
 
-### ⚠️ Constexpr Lambdas Have Capture Limits
+### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
-Basic constexpr lambdas work, including explicit capture-by-value in supported shapes, but capture support is still incomplete.
+Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), init-captures, and multi-statement bodies in supported shapes, but capture support is still incomplete.
 
 **Currently unsupported in constexpr lambda evaluation:**
 
-- implicit capture `[=]`
-- implicit capture `[&]`
 - capture of `this`
 - capture of `*this`
 
 ```cpp
 constexpr int base = 10;
 constexpr auto ok = [base](int x) { return base + x; };  // ✅ explicit capture supported
+
+constexpr int f() {
+	constexpr int x = 40;
+	auto also_ok = [=]() { return x + 2; };
+	return also_ok();
+}
 
 struct S {
     int value = 42;
@@ -275,11 +279,16 @@ struct S {
 };
 ```
 
-**Workaround:** Prefer explicit capture-by-value of the exact constexpr data you need.
+**Workaround:** Prefer capturing concrete constexpr values instead of `this` / `*this`.
 
 ### ⚠️ Some Constant-Expression Forms Are Still Partial or Unsupported
 
 Some parsed expression kinds are not yet fully handled by the constexpr evaluator.
+
+**Now supported:**
+
+- `noexcept(expr)`
+- `offsetof(T, member)` for direct data-member access
 
 **Partial support:**
 
@@ -288,8 +297,6 @@ Some parsed expression kinds are not yet fully handled by the constexpr evaluato
 
 **Currently unsupported in constexpr evaluation:**
 
-- `noexcept(expr)`
-- `offsetof(T, member)`
 - `throw` expressions used in expression contexts
 
 These may currently fail with a generic "expression type not supported in constant expressions" error rather than a specialized diagnostic.
@@ -344,10 +351,14 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Default member initializers
 - ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
 - ✅ Unary `-` and `+` operators
-- ✅ Constexpr member function calls (single expression body)
+- ✅ Constexpr member function calls, including multi-statement bodies in supported shapes
 - ✅ Basic constexpr lambdas with explicit captures in supported shapes
+- ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`)
+- ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
 - ✅ Direct/member array subscript support in current supported shapes
+- ✅ `noexcept(expr)` in constexpr evaluation
+- ✅ `offsetof(T, member)` for direct data-member access in constexpr evaluation
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -358,9 +369,7 @@ Potential areas for enhancement (in order of complexity):
 - ❌ Constructor body statement execution
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
 - ❌ Implicit lambda captures (`[=]`, `[&]`) and `this` / `*this` capture in constexpr lambdas
-- ❌ Multi-statement constexpr function bodies
-- ❌ Control flow (if/while/for) in constexpr contexts
-- ❌ `noexcept(expr)`, `offsetof(...)`, and `throw` expressions in constexpr evaluation
+- ❌ `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
 ## Recommendations
@@ -369,10 +378,10 @@ Potential areas for enhancement (in order of complexity):
 
 1. **Use member initializer lists** instead of constructor body assignments when you need constexpr evaluation
 2. **Nested member access is okay in supported shapes** - prefer simple, directly initialized object graphs
-3. **Use single-expression member functions** - multi-statement bodies are not supported
+3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
 5. **Use explicit lambda captures** - avoid `[=]`, `[&]`, and `this`-capture in constexpr code paths
-6. **Avoid `new` / `delete`, `noexcept(expr)`, and `offsetof(...)` in constexpr code** for now
+6. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
 
 ### For Contributors
 

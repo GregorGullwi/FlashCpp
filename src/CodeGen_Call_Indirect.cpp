@@ -8,6 +8,8 @@
 		
 		// Get the object expression
 		ASTNode object_node = memberFunctionCallNode.object();
+		std::optional<StringHandle> immediate_lambda_object_name;
+		std::optional<TypeSpecifierNode> immediate_lambda_object_type;
 
 		// Special case: Immediate lambda invocation [](){}()
 		// Check if the object is a LambdaExpressionNode (either directly or wrapped in ExpressionNode)
@@ -31,7 +33,7 @@
 			// This ensures operator() and __invoke functions will be generated.
 			// Without this, the lambda is never added to collected_lambdas_ and
 			// its functions are never generated, causing linker errors.
-			generateLambdaExpressionIr(lambda);
+			auto lambda_ir = generateLambdaExpressionIr(lambda);
 			
 			// Check if this is a generic lambda (has auto parameters)
 			bool is_generic = false;
@@ -237,8 +239,21 @@
 				// Return the result with actual return type from lambda
 				return { lambda_return_type, lambda_return_size, ret_var, 0ULL };
 			}
-			// For capturing lambdas, fall through to the regular member function call path
-			// The closure object was already created by generateLambdaExpressionIr
+
+			if (lambda_ir.size() < 4 || !std::holds_alternative<StringHandle>(lambda_ir[2]) || !std::holds_alternative<unsigned long long>(lambda_ir[3])) {
+				throw InternalError("Immediate capturing lambda did not produce a named closure object");
+			}
+
+			immediate_lambda_object_name = std::get<StringHandle>(lambda_ir[2]);
+			immediate_lambda_object_type = TypeSpecifierNode(
+				Type::Struct,
+				static_cast<TypeIndex>(std::get<unsigned long long>(lambda_ir[3])),
+				static_cast<int>(std::get<int>(lambda_ir[1])),
+				memberFunctionCallNode.called_from()
+			);
+
+			// For capturing lambdas, continue into the regular member function call path
+			// using the generated closure variable as the object.
 		}
 
 		// Regular member function call on an expression
@@ -246,17 +261,25 @@
 		std::string_view object_name;
 		const DeclarationNode* object_decl = nullptr;
 		TypeSpecifierNode object_type;
+		const ExpressionNode* object_expr = nullptr;
 
-		// The object must be an ExpressionNode for regular member function calls
-		if (!object_node.is<ExpressionNode>()) {
-			throw InternalError("Member function call object must be an ExpressionNode");
-			return {};
+		if (immediate_lambda_object_name.has_value() && immediate_lambda_object_type.has_value()) {
+			object_name = StringTable::getStringView(*immediate_lambda_object_name);
+			object_type = *immediate_lambda_object_type;
+		} else {
+			// The object must be an ExpressionNode for regular member function calls.
+			// Immediate capturing lambdas synthesize a closure object above and do not
+			// need the original AST node to be wrapped in an ExpressionNode.
+			if (!object_node.is<ExpressionNode>()) {
+				throw InternalError("Member function call object must be an ExpressionNode");
+				return {};
+			}
+
+			object_expr = &object_node.as<ExpressionNode>();
 		}
 
-		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
-
-		if (std::holds_alternative<IdentifierNode>(object_expr)) {
-			const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
+		if (object_expr && std::holds_alternative<IdentifierNode>(*object_expr)) {
+			const IdentifierNode& object_ident = std::get<IdentifierNode>(*object_expr);
 			object_name = object_ident.name();
 
 			// Look up the object in both local and global symbol tables
@@ -295,9 +318,9 @@
 					}
 				}
 			}
-		} else if (std::holds_alternative<UnaryOperatorNode>(object_expr)) {
+		} else if (object_expr && std::holds_alternative<UnaryOperatorNode>(*object_expr)) {
 			// Handle dereference operator (from ptr->member transformation)
-			const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(object_expr);
+			const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(*object_expr);
 			if (unary_op.op() == "*") {
 				// This is a dereference - get the pointer operand
 				const ASTNode& operand_node = unary_op.get_operand();
@@ -324,9 +347,9 @@
 					}
 				}
 			}
-		} else if (std::holds_alternative<FunctionCallNode>(object_expr)) {
+		} else if (object_expr && std::holds_alternative<FunctionCallNode>(*object_expr)) {
 			// Handle function call returning a struct (e.g., getContainer().callback(args))
-			const FunctionCallNode& func_call = std::get<FunctionCallNode>(object_expr);
+			const FunctionCallNode& func_call = std::get<FunctionCallNode>(*object_expr);
 			const DeclarationNode& decl = func_call.function_declaration();
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
@@ -335,9 +358,9 @@
 					// object_name remains empty; expression will be evaluated when needed
 				}
 			}
-		} else if (std::holds_alternative<MemberFunctionCallNode>(object_expr)) {
+		} else if (object_expr && std::holds_alternative<MemberFunctionCallNode>(*object_expr)) {
 			// Handle member function call returning a struct (e.g., obj.getInner().callback(args))
-			const MemberFunctionCallNode& mem_call = std::get<MemberFunctionCallNode>(object_expr);
+			const MemberFunctionCallNode& mem_call = std::get<MemberFunctionCallNode>(*object_expr);
 			const DeclarationNode& decl = mem_call.function_declaration().decl_node();
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
@@ -346,7 +369,7 @@
 					// object_name remains empty; expression will be evaluated when needed
 				}
 			}
-		} else if (std::holds_alternative<MemberAccessNode>(object_expr)) {
+		} else if (object_expr && std::holds_alternative<MemberAccessNode>(*object_expr)) {
 			// Handle member access for function pointer calls
 			// This handles both simple cases like "this->callback" and nested cases like "o.inner.callback"
 			// When we see o.inner.callback():
@@ -354,7 +377,7 @@
 			// - func_name (from function_declaration) is "callback"
 			// We need to resolve the type of o.inner to get Inner, then check if callback is a function pointer member
 			
-			const MemberAccessNode& member_access = std::get<MemberAccessNode>(object_expr);
+			const MemberAccessNode& member_access = std::get<MemberAccessNode>(*object_expr);
 			const FunctionDeclarationNode& check_func_decl = memberFunctionCallNode.function_declaration();
 			std::string_view called_func_name = check_func_decl.decl_node().identifier_token().value();
 			
@@ -378,7 +401,7 @@
 									
 									// Generate member access chain for o.inner.callback
 									// First get o.inner
-									std::vector<IrOperand> base_result = visitExpressionNode(object_expr);
+					std::vector<IrOperand> base_result = visitExpressionNode(*object_expr);
 									TempVar base_temp = std::get<TempVar>(base_result[2]);
 									
 									// Now access the callback member from that
@@ -474,7 +497,7 @@
 
 		// Special case: Handle namespace-qualified function calls that were incorrectly parsed as member function calls
 		// This can happen when std::function() is parsed and the object is a namespace identifier
-		if (std::holds_alternative<QualifiedIdentifierNode>(object_expr)) {
+		if (object_expr && std::holds_alternative<QualifiedIdentifierNode>(*object_expr)) {
 			// This is a namespace-qualified function call, not a member function call
 			// Treat it as a regular function call instead
 			return convertMemberCallToFunctionCall(memberFunctionCallNode);
@@ -687,7 +710,7 @@
 						if (object_name.empty()) {
 							// Object is not a named variable - evaluate the expression to get a TempVar
 							// visitExpressionNode returns {Type, size_in_bits, value, ...} (at least 3 elements)
-							std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+						std::vector<IrOperand> obj_result = visitExpressionNode(*object_expr);
 							if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
 								throw InternalError("Function pointer member call: expression did not produce a TempVar");
 							}
@@ -958,7 +981,7 @@
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			if (object_name.empty()) {
 				// Object is a temporary expression result - evaluate it to get a TempVar
-				std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+					std::vector<IrOperand> obj_result = visitExpressionNode(*object_expr);
 				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
 					throw InternalError("Virtual call on expression: did not produce a TempVar");
 				}
@@ -1247,7 +1270,7 @@
 			if (object_name.empty()) {
 				// Object is a temporary expression result (e.g., getContainer().method())
 				// Evaluate the expression to get a TempVar, then take its address for the this pointer
-				std::vector<IrOperand> obj_result = visitExpressionNode(object_expr);
+					std::vector<IrOperand> obj_result = visitExpressionNode(*object_expr);
 				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
 					throw InternalError("Member function call on expression: did not produce a TempVar");
 				}

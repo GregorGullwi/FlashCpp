@@ -26,13 +26,3 @@ and converts all of them into explicit per-variable captures. Consequences:
 **Location:** `src/Parser_Expr_ControlFlowStmt.cpp:1036–1114`
 
 ---
-
-### 2.4 Missing Named Capture Produces a Warning, Not a Compile Error ❌
-
-**Standard:** All explicitly-named captured variables must be in scope at the lambda
-declaration point; failure is ill-formed (compile error).
-
-**FlashCpp:** When a captured variable cannot be resolved during the lambda-collection pass,
-a `Warning` is logged but compilation continues. The resulting closure may be malformed.
-
-**Location:** `src/CodeGen_Lambdas.cpp:80`
