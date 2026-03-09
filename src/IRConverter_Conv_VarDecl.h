@@ -1358,9 +1358,10 @@
 					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
 					offset = 16 + (paramNumber - param_offset_adjustment) * 8;
 					param_slot_index++;
-				} else if (type_specific_index < reg_threshold) {
+				} else if (type_specific_index + (is_two_reg_struct ? 2 : 1) <= reg_threshold) {
 					// Parameter comes from register - allocate home/shadow space.
 					// Use param_slot_index so two-register struct params don't collide with neighbours.
+					// For two-register structs, both slots must fit; otherwise fall through to stack path.
 					if (is_two_reg_struct) {
 						offset = (param_slot_index + 2) * -8;  // struct base at more-negative slot
 						param_slot_index += 2;
@@ -1425,7 +1426,7 @@
 					}
 				} else if (is_two_reg_struct) {
 					// Two-register struct: consume two consecutive integer registers
-					if (int_param_reg_index + 1 < max_int_regs) {
+					if (int_param_reg_index + 2 <= max_int_regs) {
 						src_reg    = getIntParamReg<TWriterClass>(int_param_reg_index++);
 						second_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
 						use_register = true;
@@ -1512,9 +1513,10 @@
 					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
 					offset = 16 + (paramNumber - param_offset_adjustment) * 8;
 					param_slot_index++;
-				} else if (type_specific_index < reg_threshold) {
+				} else if (type_specific_index + (is_two_reg_struct ? 2 : 1) <= reg_threshold) {
 					// Parameter comes from register - allocate home/shadow space.
 					// Use param_slot_index so two-register struct params don't collide with neighbours.
+					// For two-register structs, both slots must fit; otherwise fall through to stack path.
 					if (is_two_reg_struct) {
 						offset = (param_slot_index + 2) * -8;  // struct base at more-negative slot
 						param_slot_index += 2;
@@ -1576,7 +1578,7 @@
 					}
 				} else if (is_two_reg_struct) {
 					// Two-register struct: consume two consecutive integer registers
-					if (int_param_reg_index + 1 < max_int_regs) {
+					if (int_param_reg_index + 2 <= max_int_regs) {
 						src_reg    = getIntParamReg<TWriterClass>(int_param_reg_index++);
 						second_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
 						use_register = true;
