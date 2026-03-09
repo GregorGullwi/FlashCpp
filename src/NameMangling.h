@@ -216,7 +216,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		}
 		case Type::Nullptr:
 			// nullptr_t — encode as void pointer best-effort
-			output += "PAX";
+			output += "$$T";
 			break;
 		case Type::Auto:
 			// 'auto' should never appear in a mangled symbol — this indicates a compiler bug
