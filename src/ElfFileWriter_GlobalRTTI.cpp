@@ -369,8 +369,14 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		// Fill in inline (non-pointer) fields
 		// Itanium ABI flags for __vmi_class_type_info:
 		//   bit 0 (__non_diamond_repeat_mask = 0x1): class has a base appearing more than once
-		//                                            (but not in a diamond pattern)
+		//                                            (but not in a diamond pattern, i.e. virtual bases)
 		//   bit 1 (__diamond_shaped_mask = 0x2):     class has a diamond-shaped inheritance graph
+		//                                            (multiple paths to the same virtual base)
+		//
+		// IMPORTANT: setting __diamond_shaped_mask (0x2) incorrectly for non-diamond classes
+		// causes the personality routine to attempt virtual-base-table traversal, which crashes
+		// because non-virtual multiple-inheritance classes have no VTT.
+		// Only set flags when the corresponding pattern genuinely exists.
 		uint32_t flags = 0;
 		bool has_virtual = false;
 		for (const auto& base : base_classes) {
@@ -378,11 +384,12 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 				has_virtual = true;
 			}
 		}
-		if (has_virtual) flags |= 0x1; // virtual bases → may have repeated occurrences
-		// TODO: analyse the graph to set __diamond_shaped_mask (0x2) only when a genuine
-		//       diamond exists.  For now conservatively set it for all multiple-inheritance
-		//       classes since the cost is only a slightly slower personality routine.
-		if (n_bases > 1) flags |= 0x2;
+		// __non_diamond_repeat_mask: set only when there are virtual bases
+		// (which may repeat in the hierarchy)
+		if (has_virtual) flags |= 0x1;
+		// __diamond_shaped_mask (0x2): only set for actual diamond patterns.
+		// TODO: detect genuine diamonds by checking if any two transitive bases share
+		// a common ancestor that is a virtual base.  For now leave unset (safe default).
 
 		std::memcpy(zeros.data() + 16, &flags,   sizeof(uint32_t));
 		std::memcpy(zeros.data() + 20, &n_bases, sizeof(uint32_t));
