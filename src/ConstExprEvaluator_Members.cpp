@@ -259,12 +259,11 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	return result;
 }
 
-Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_static_member(
+std::optional<StringHandle> Evaluator::get_current_struct_static_lookup_name_handle(
 	const IdentifierNode* identifier,
-	const EvaluationContext& context,
 	CurrentStructStaticLookupMode lookup_mode) {
-	if (!identifier || context.struct_info == nullptr) {
-		return {};
+	if (!identifier) {
+		return std::nullopt;
 	}
 
 	bool should_try_current_struct = false;
@@ -281,7 +280,7 @@ Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_s
 	}
 
 	if (!should_try_current_struct) {
-		return {};
+		return std::nullopt;
 	}
 
 	StringHandle member_name_handle = identifier->nameHandle();
@@ -289,7 +288,23 @@ Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_s
 		member_name_handle = StringTable::getOrInternStringHandle(identifier->name());
 	}
 
-	auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(member_name_handle);
+	return member_name_handle;
+}
+
+Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_static_member(
+	const IdentifierNode* identifier,
+	const EvaluationContext& context,
+	CurrentStructStaticLookupMode lookup_mode) {
+	if (!identifier || context.struct_info == nullptr) {
+		return {};
+	}
+
+	auto member_name_handle = get_current_struct_static_lookup_name_handle(identifier, lookup_mode);
+	if (!member_name_handle.has_value()) {
+		return {};
+	}
+
+	auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(member_name_handle.value());
 	return { static_member, owner_struct };
 }
 
@@ -306,30 +321,13 @@ Evaluator::ResolvedCurrentStructStaticInitializer Evaluator::resolve_current_str
 		return { &static_member_result.static_member->initializer, true };
 	}
 
-	bool should_try_current_struct = false;
-	switch (lookup_mode) {
-	case CurrentStructStaticLookupMode::BoundOnly:
-		should_try_current_struct = identifier->binding() == IdentifierBinding::StaticMember;
-		break;
-	case CurrentStructStaticLookupMode::PreferCurrentStruct:
-		should_try_current_struct =
-			identifier->binding() == IdentifierBinding::StaticMember ||
-			identifier->binding() == IdentifierBinding::Global ||
-			identifier->binding() == IdentifierBinding::Unresolved;
-		break;
-	}
-
-	if (!should_try_current_struct || context.struct_node == nullptr) {
+	auto member_name_handle = get_current_struct_static_lookup_name_handle(identifier, lookup_mode);
+	if (!member_name_handle.has_value() || context.struct_node == nullptr) {
 		return {};
 	}
 
-	StringHandle member_name_handle = identifier->nameHandle();
-	if (!member_name_handle.isValid()) {
-		member_name_handle = StringTable::getOrInternStringHandle(identifier->name());
-	}
-
 	for (const auto& static_member : context.struct_node->static_members()) {
-		if (static_member.name == member_name_handle) {
+		if (static_member.name == member_name_handle.value()) {
 			return { &static_member.initializer, true };
 		}
 	}

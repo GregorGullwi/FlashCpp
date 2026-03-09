@@ -427,6 +427,9 @@ private:
 		MemberFunctionLookupMode lookup_mode,
 		bool require_static,
 		bool detect_ambiguity_in_current_struct);
+	static std::optional<StringHandle> get_current_struct_static_lookup_name_handle(
+		const IdentifierNode* identifier,
+		CurrentStructStaticLookupMode lookup_mode);
 	static ResolvedCurrentStructStaticMember resolve_current_struct_static_member(
 		const IdentifierNode* identifier,
 		const EvaluationContext& context,
