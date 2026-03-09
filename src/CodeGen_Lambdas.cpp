@@ -1,42 +1,30 @@
 #include "CodeGen.h"
 
-	std::vector<IrOperand> AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
-		// Collect lambda information for deferred generation
-		// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
-		// If target_var_name is provided, use it as the closure variable name (for variable declarations)
-		// Otherwise, create a temporary __closure_N variable
-
+	const LambdaInfo& AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
 		LambdaInfo info;
 		info.lambda_id = lambda.lambda_id();
-		
-		// Use StringBuilder to create persistent string_views for lambda names
-		// This ensures the names remain valid after LambdaInfo is moved
+
 		info.closure_type_name = StringBuilder()
 			.append("__lambda_")
 			.append(static_cast<int64_t>(lambda.lambda_id()))
 			.commit();
 
-		// Build operator_call_name: closure_type_name + "_operator_call"
 		info.operator_call_name = StringBuilder()
 			.append(info.closure_type_name)
 			.append("_operator_call")
 			.commit();
 
-		// Build invoke_name: closure_type_name + "_invoke"
 		info.invoke_name = StringBuilder()
 			.append(info.closure_type_name)
 			.append("_invoke")
 			.commit();
 
-		// Build conversion_op_name: closure_type_name + "_conversion"
 		info.conversion_op_name = StringBuilder()
 			.append(info.closure_type_name)
 			.append("_conversion")
 			.commit();
 
 		info.lambda_token = lambda.lambda_token();
-		
-		// Store enclosing struct info for [this] capture support
 		info.enclosing_struct_name = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : std::string_view();
 		if (current_struct_name_.isValid()) {
 			auto type_it = gTypesByName.find(current_struct_name_);
@@ -45,44 +33,30 @@
 			}
 		}
 
-		// Copy lambda body and captures (we need them later)
 		info.lambda_body = lambda.body();
 		info.captures = lambda.captures();
 		info.is_mutable = lambda.is_mutable();
 
-		// Collect captured variable declarations from current scope
 		for (const auto& capture : lambda.captures()) {
 			if (capture.is_capture_all()) {
-				// Capture-all ([=] or [&]) should have been expanded by the parser into explicit captures
-				// If we see one here, it means the parser didn't expand it (shouldn't happen)
 				continue;
 			}
-			
-			// Skip [this] and [*this] captures as they don't have an identifier to look up
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+				capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis ||
+				capture.has_initializer()) {
 				continue;
 			}
 
-			// Skip init-captures: [x = expr] defines a new variable, doesn't capture existing one
-			if (capture.has_initializer()) {
-				continue;
-			}
-
-			// Look up the captured variable in the current scope
 			std::string_view var_name = capture.identifier_name();
 			std::optional<ASTNode> var_symbol = symbol_table.lookup(var_name);
 
 			if (var_symbol.has_value()) {
-				// Store the variable declaration for later use
 				info.captured_var_decls.push_back(*var_symbol);
 			} else {
 				FLASH_LOG(Codegen, Warning, "Lambda capture: variable '", var_name, "' not found in scope during lambda collection");
 			}
 		}
 
-		// Determine return type
-		// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
 		info.return_type = Type::Void;
 		info.return_size = 0;
 		info.return_type_index = 0;
@@ -93,39 +67,47 @@
 			info.return_size = ret_type_node.size_in_bits();
 			info.return_type_index = ret_type_node.type_index();
 			info.returns_reference = ret_type_node.is_reference();
-			// If returning a reference, the size should be 64 bits (pointer size)
 			if (info.returns_reference) {
 				info.return_size = 64;
 			}
 		}
 
-		// Collect parameters and detect generic lambda (auto parameters)
 		size_t param_index = 0;
 		for (const auto& param : lambda.parameters()) {
 			if (param.is<DeclarationNode>()) {
 				const auto& param_decl = param.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				
-				// Detect auto parameters (generic lambda)
+
 				if (param_type.type() == Type::Auto) {
 					info.is_generic = true;
 					info.auto_param_indices.push_back(param_index);
 				}
-				
+
 				info.parameters.emplace_back(
 					param_type.type(),
 					param_type.size_in_bits(),
 					static_cast<int>(param_type.pointer_levels().size()),
 					std::string(param_decl.identifier_token().value())
 				);
-				// Also store the actual parameter node for symbol table
 				info.parameter_nodes.push_back(param);
 			}
 			param_index++;
 		}
 
-		// Look up the closure type (registered during parsing) BEFORE moving info
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(info.closure_type_name));
+		collected_lambdas_.push_back(std::move(info));
+		return collected_lambdas_.back();
+	}
+
+	std::vector<IrOperand> AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
+		// Collect lambda information for deferred generation
+		// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
+		// If target_var_name is provided, use it as the closure variable name (for variable declarations)
+		// Otherwise, create a temporary __closure_N variable
+
+		const LambdaInfo& lambda_info = collectLambdaForDeferredGeneration(lambda);
+
+		// Look up the closure type (registered during parsing)
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
 		if (type_it == gTypesByName.end()) {
 			// Error: closure type not found
 			TempVar dummy = var_counter.next();
@@ -133,10 +115,6 @@
 		}
 
 		const TypeInfo* closure_type = type_it->second;
-
-		// Store lambda info for later generation (after we've used closure_type_name)
-		collected_lambdas_.push_back(std::move(info));
-		const LambdaInfo& lambda_info = collected_lambdas_.back();
 
 		// Use target variable name if provided, otherwise create a temporary closure variable
 		std::string_view closure_var_name;

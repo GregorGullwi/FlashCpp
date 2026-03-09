@@ -186,6 +186,20 @@
 			size_t element_size = op.size_in_bits / 8;
 			if (node.initializer()) {
 				const ASTNode& init_node = *node.initializer();
+
+				if (const LambdaExpressionNode* lambda_ptr = extractLambdaFromInitializer(init_node)) {
+					auto closure_type = deduceLambdaClosureType(ast_node, decl.identifier_token());
+					if (closure_type.has_value() && lambda_ptr->captures().empty()) {
+						collectLambdaForDeferredGeneration(*lambda_ptr);
+						op.type = closure_type->type();
+						op.size_in_bits = static_cast<int>(closure_type->size_in_bits());
+						element_size = op.size_in_bits / 8;
+						op.is_initialized = true;
+						op.init_data.assign(element_size == 0 ? 1 : element_size, 0);
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), decl.identifier_token()));
+						return;
+					}
+				}
 				
 				// Handle struct/array initialization with InitializerListNode
 				if (init_node.is<InitializerListNode>()) {

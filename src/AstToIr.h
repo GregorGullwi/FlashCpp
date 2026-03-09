@@ -258,6 +258,7 @@ private:
 	std::vector<IrOperand> generateDynamicCastIr(const DynamicCastNode& dynamicCastNode);
 	std::vector<IrOperand> generateConstCastIr(const ConstCastNode& constCastNode);
 	std::vector<IrOperand> generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode);
+		const LambdaInfo& collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda);
 	std::vector<IrOperand> generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name = "");
 	void generateLambdaFunctions(const LambdaInfo& lambda_info);
 	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info);
