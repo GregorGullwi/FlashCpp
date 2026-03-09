@@ -350,18 +350,18 @@ private:
 	static EvalResult evaluate_lambda_captures(
 		const std::vector<LambdaCaptureNode>& captures,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
-			EvaluationContext& context,
-			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 	static EvalResult evaluate_callable_object(
 		const VariableDeclarationNode& var_decl,
 		const ChunkedVector<ASTNode>& arguments,
-			EvaluationContext& context,
-			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 	static EvalResult evaluate_lambda_call(
 		const LambdaExpressionNode& lambda,
 		const ChunkedVector<ASTNode>& arguments,
-			EvaluationContext& context,
-			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
