@@ -1026,6 +1026,7 @@
 						}
 						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.type == Type::Float);
 						regAlloc.release(temp_xmm);
+						stack_arg_count++;
 					} else if (is_two_reg_sysv) {
 						emitTwoRegStructToStack(arg, stack_offset);
 						stack_arg_count += 2;
