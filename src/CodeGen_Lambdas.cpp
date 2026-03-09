@@ -1,106 +1,106 @@
 #include "CodeGen.h"
 
-LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
-	LambdaInfo info;
-	info.lambda_id = lambda.lambda_id();
+	LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
+		LambdaInfo info;
+		info.lambda_id = lambda.lambda_id();
 
-	info.closure_type_name = StringBuilder()
-			.append("__lambda_")
-			.append(static_cast<int64_t>(lambda.lambda_id()))
-			.commit();
+		info.closure_type_name = StringBuilder()
+				.append("__lambda_")
+				.append(static_cast<int64_t>(lambda.lambda_id()))
+				.commit();
 
-	info.operator_call_name = StringBuilder()
-			.append(info.closure_type_name)
-			.append("_operator_call")
-			.commit();
+		info.operator_call_name = StringBuilder()
+				.append(info.closure_type_name)
+				.append("_operator_call")
+				.commit();
 
-	info.invoke_name = StringBuilder()
-			.append(info.closure_type_name)
-			.append("_invoke")
-			.commit();
+		info.invoke_name = StringBuilder()
+				.append(info.closure_type_name)
+				.append("_invoke")
+				.commit();
 
-	info.conversion_op_name = StringBuilder()
-			.append(info.closure_type_name)
-			.append("_conversion")
-			.commit();
+		info.conversion_op_name = StringBuilder()
+				.append(info.closure_type_name)
+				.append("_conversion")
+				.commit();
 
-	info.lambda_token = lambda.lambda_token();
-	info.enclosing_struct_name = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : std::string_view();
-	if (current_struct_name_.isValid()) {
-		auto type_it = gTypesByName.find(current_struct_name_);
-		if (type_it != gTypesByName.end()) {
-			info.enclosing_struct_type_index = type_it->second->type_index_;
-		}
-	}
-
-	info.lambda_body = lambda.body();
-	info.captures = lambda.captures();
-	info.is_mutable = lambda.is_mutable();
-
-	for (const auto& capture : lambda.captures()) {
-		if (capture.is_capture_all()) {
-			continue;
-		}
-		if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis ||
-			capture.has_initializer()) {
-			continue;
+		info.lambda_token = lambda.lambda_token();
+		info.enclosing_struct_name = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : std::string_view();
+		if (current_struct_name_.isValid()) {
+			auto type_it = gTypesByName.find(current_struct_name_);
+			if (type_it != gTypesByName.end()) {
+				info.enclosing_struct_type_index = type_it->second->type_index_;
+			}
 		}
 
-		std::string_view var_name = capture.identifier_name();
-		std::optional<ASTNode> var_symbol = symbol_table.lookup(var_name);
+		info.lambda_body = lambda.body();
+		info.captures = lambda.captures();
+		info.is_mutable = lambda.is_mutable();
 
-		if (var_symbol.has_value()) {
-			info.captured_var_decls.push_back(*var_symbol);
-		} else {
-			throw CompileError(std::string(StringBuilder()
-				.append("Lambda capture variable not found in scope: '")
-				.append(var_name)
-				.append("'")
-				.commit()));
-		}
-	}
-
-	info.return_type = Type::Void;
-	info.return_size = 0;
-	info.return_type_index = 0;
-	info.returns_reference = false;
-	if (lambda.return_type().has_value()) {
-		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
-		info.return_type = ret_type_node.type();
-		info.return_size = ret_type_node.size_in_bits();
-		info.return_type_index = ret_type_node.type_index();
-		info.returns_reference = ret_type_node.is_reference();
-		if (info.returns_reference) {
-			info.return_size = 64;
-		}
-	}
-
-	size_t param_index = 0;
-	for (const auto& param : lambda.parameters()) {
-		if (param.is<DeclarationNode>()) {
-			const auto& param_decl = param.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-			if (param_type.type() == Type::Auto) {
-				info.is_generic = true;
-				info.auto_param_indices.push_back(param_index);
+		for (const auto& capture : lambda.captures()) {
+			if (capture.is_capture_all()) {
+				continue;
+			}
+			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+				capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis ||
+				capture.has_initializer()) {
+				continue;
 			}
 
-			info.parameters.emplace_back(
-				param_type.type(),
-				param_type.size_in_bits(),
-				static_cast<int>(param_type.pointer_levels().size()),
-				std::string(param_decl.identifier_token().value())
-			);
-			info.parameter_nodes.push_back(param);
-		}
-		param_index++;
-	}
+			std::string_view var_name = capture.identifier_name();
+			std::optional<ASTNode> var_symbol = symbol_table.lookup(var_name);
 
-	collected_lambdas_.push_back(std::move(info));
-	return collected_lambdas_.back();
-}
+			if (var_symbol.has_value()) {
+				info.captured_var_decls.push_back(*var_symbol);
+			} else {
+				throw CompileError(std::string(StringBuilder()
+					.append("Lambda capture variable not found in scope: '")
+					.append(var_name)
+					.append("'")
+					.commit()));
+			}
+		}
+
+		info.return_type = Type::Void;
+		info.return_size = 0;
+		info.return_type_index = 0;
+		info.returns_reference = false;
+		if (lambda.return_type().has_value()) {
+			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
+			info.return_type = ret_type_node.type();
+			info.return_size = ret_type_node.size_in_bits();
+			info.return_type_index = ret_type_node.type_index();
+			info.returns_reference = ret_type_node.is_reference();
+			if (info.returns_reference) {
+				info.return_size = 64;
+			}
+		}
+
+		size_t param_index = 0;
+		for (const auto& param : lambda.parameters()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& param_decl = param.as<DeclarationNode>();
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+				if (param_type.type() == Type::Auto) {
+					info.is_generic = true;
+					info.auto_param_indices.push_back(param_index);
+				}
+
+				info.parameters.emplace_back(
+					param_type.type(),
+					param_type.size_in_bits(),
+					static_cast<int>(param_type.pointer_levels().size()),
+					std::string(param_decl.identifier_token().value())
+				);
+				info.parameter_nodes.push_back(param);
+			}
+			param_index++;
+		}
+
+		collected_lambdas_.push_back(std::move(info));
+		return collected_lambdas_.back();
+	}
 
 	std::vector<IrOperand> AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
 		// Collect lambda information for deferred generation
