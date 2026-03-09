@@ -379,8 +379,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 					}
 				}
 			} else {
-				// No signature info — encode as PFvvE (void(void)) as best effort
-				output += "vv";
+				throw InternalError("Itanium name mangling: FunctionPointer type missing function signature — cannot generate valid symbol");
 			}
 			output += 'E';
 			break;
