@@ -762,16 +762,19 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 		}
 		ip_to_state_entries.push_back({function_start + try_end_ip, post_try_state});
 
-		// MSVC FH3 also maps the user catch body inside the parent FuncInfo's ip2state map,
-		// but not the catch funclet prologue. The catch body executes in the dedicated catch
-		// state, then the epilogue transitions back to the owning try's landing/active state.
+			// MSVC FH3 also maps same-function catches in the parent FuncInfo's ip2state map.
+			// On Windows those catches are emitted as real funclets, so use the funclet end when
+			// available; the logical catch-body end can be too early or too late once fixup/return
+			// stubs are involved. After the catch completes, control resumes after the entire
+			// try/catch statement in the parent state, not in the handled try's own state.
 		for (const auto& catch_binding : layout.catches) {
 			const auto& handler = *catch_binding.handler;
 			if (handler.handler_offset != 0 && handler.handler_offset < function_size) {
 				ip_to_state_entries.push_back({function_start + handler.handler_offset, catch_binding.catch_state});
 			}
-			if (handler.handler_end_offset != 0 && handler.handler_end_offset <= function_size) {
-				ip_to_state_entries.push_back({function_start + handler.handler_end_offset, layout.try_low});
+				uint32_t catch_end_offset = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
+				if (catch_end_offset != 0 && catch_end_offset <= function_size) {
+					ip_to_state_entries.push_back({function_start + catch_end_offset, post_try_state});
 			}
 		}
 	}

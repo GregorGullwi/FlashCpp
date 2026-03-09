@@ -25,7 +25,12 @@
 		// Emit TryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
 
-		// Enable capture of try-block-scope vars for Phase 1 cleanup
+		// Enable capture of try-block-scope vars for Phase 1 cleanup.
+		// Nested try blocks must preserve the outer capture state so outer-scope
+		// destructible locals remain available to the outer landing pad.
+		bool saved_capture_try_cleanup = capture_try_cleanup_;
+		size_t saved_capture_try_cleanup_depth = capture_try_cleanup_depth_;
+		std::vector<ScopeVariableInfo> saved_captured_try_cleanup_vars = std::move(captured_try_cleanup_vars_);
 		captured_try_cleanup_vars_.clear();
 		capture_try_cleanup_ = true;
 		capture_try_cleanup_depth_ = scope_stack_.size() + 1;
@@ -36,15 +41,18 @@
 		// Disable capture and collect the vars — only converted to StringHandle pairs
 		// when there is actually a first catch handler that needs them.
 		capture_try_cleanup_ = false;
+		std::vector<ScopeVariableInfo> try_scope_cleanup_vars = std::move(captured_try_cleanup_vars_);
+		capture_try_cleanup_ = saved_capture_try_cleanup;
+		capture_try_cleanup_depth_ = saved_capture_try_cleanup_depth;
+		captured_try_cleanup_vars_ = std::move(saved_captured_try_cleanup_vars);
 		std::vector<std::pair<StringHandle, StringHandle>> try_cleanup_vars;
-		if (!captured_try_cleanup_vars_.empty()) {
-			for (const auto& var : captured_try_cleanup_vars_) {
+		if (!try_scope_cleanup_vars.empty()) {
+			for (const auto& var : try_scope_cleanup_vars) {
 				try_cleanup_vars.push_back({
 					StringTable::getOrInternStringHandle(var.struct_name),
 					StringTable::getOrInternStringHandle(var.variable_name)
 				});
 			}
-			captured_try_cleanup_vars_.clear();
 		}
 
 		// Emit TryEnd marker
