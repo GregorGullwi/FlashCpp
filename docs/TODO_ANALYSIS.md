@@ -1,7 +1,7 @@
 # TODO / FIXME Analysis
 
 **Date**: 2026-03-01 (last updated 2026-03-09)
-**Total items found**: 56 (44 TODO + 4 FIXME/minor + 1 discovered + 10 newly fixed)
+**Total items found**: 56 (44 TODO + 4 FIXME/minor + 1 discovered + 11 newly fixed)
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
 ---
@@ -142,20 +142,19 @@ Eight sites across `CodeGen_Expr_Operators.cpp`, `CodeGen_Visitors_Namespace.cpp
 
 ---
 
-## 22. Pointer Type in `Type` Enum ✅ Valid (open)
+## 22. Pointer Type in `Type` Enum ✅ Fixed (2026-03-09)
 
 | File | Line | Status |
 |------|------|--------|
-| `src/CodeGen_Call_Direct.cpp` | 932 | ✅ Valid |
+| `src/CodeGen_Call_Direct.cpp` | 932 | ✅ Fixed |
 
-When an array argument is passed to a function, the compiler emits `AddressOf` and then uses the *element* type with a hardcoded 64-bit size to represent the pointer:
+Rather than adding a new `Type::Pointer` enum value, the fix preserves pointer metadata through the existing IR payloads:
 
-```cpp
-irOperands.emplace_back(type_node.type());  // Element type, not Pointer type
-irOperands.emplace_back(64);               // Pointer size
-```
+- `src/IROperandHelpers.h` now interprets the optional 4th IR operand as `pointer_depth` for non-struct values.
+- `src/CodeGen_Call_Direct.cpp` and `src/CodeGen_Expr_Operators.cpp` re-apply parameter `TypeSpecifierNode` metadata when building `TypedValue` call/default arguments, so array-to-pointer decay keeps pointer depth, `type_index`, and qualifiers.
+- `src/CodeGen_MemberAccess.cpp` now reduces pointer depth correctly during pointer subscripting (`int** p; p[i]` yields `int*`, not `int`).
 
-Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `IrOperand`) would allow the IR to precisely represent the pointer's type and enable proper pointer arithmetic and type checking through the IR pipeline.
+This fixes the concrete failure mode behind the item: array arguments decaying to pointers across calls now retain enough type information for later IR stages, including multi-level pointer indexing. Tests: `test_array_decay_pointer_metadata_ret0.cpp`.
 
 ---
 
@@ -178,12 +177,12 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 | Status | Count |
 |--------|-------|
-| ✅ Fixed | 54 |
+| ✅ Fixed | 55 |
 | ✅ Verified / Already works | 10 |
-| ✅ Valid (open) | 2 |
+| ✅ Valid (open) | 1 |
 | **Total** | **52** (+ several post-analysis fixes) |
 
-**Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21). All item #8 constexpr evaluation gaps have been resolved.
+**Open items**: `__is_trivially_copyable`/`__is_trivial` full correctness (#21). All item #8 constexpr evaluation gaps have been resolved.
 
 ---
 
