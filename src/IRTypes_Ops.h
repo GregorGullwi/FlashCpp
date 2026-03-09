@@ -932,7 +932,8 @@ struct CatchEndOp {
 
 // Function-level cleanup landing pad (ELF/Linux only)
 // Emitted after the function return; called by the unwinder during phase-2 exception propagation.
-// Calls each listed destructor (LIFO order), then calls _Unwind_Resume to continue unwinding.
+	// Calls each listed destructor (LIFO order), then either calls _Unwind_Resume or
+	// __cxa_call_terminate depending on whether the enclosing function is noexcept.
 struct FunctionCleanupLPOp {
 	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;  // {struct_name, var_name} LIFO order
 };

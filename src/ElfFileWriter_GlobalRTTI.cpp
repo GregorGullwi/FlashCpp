@@ -1,6 +1,13 @@
 // ElfFileWriter_GlobalRTTI.cpp - Out-of-line method definitions for ElfFileWriter
 // Part of ElfFileWriter class (unity build)
 
+namespace {
+	std::set<std::string>& getCreatedClassTypeinfoSymbols() {
+		static std::set<std::string> created_class_typeinfos;
+		return created_class_typeinfos;
+	}
+}
+
 void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
                               bool is_initialized, std::span<const char> init_data) {
 	if (g_enable_debug_output) {
@@ -133,7 +140,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 	std::string typeinfo_symbol(builder.commit());
 
 	// Check if we've already created this symbol
-	static std::set<std::string> created_class_typeinfos;
+	auto& created_class_typeinfos = getCreatedClassTypeinfoSymbols();
 	if (created_class_typeinfos.find(typeinfo_symbol) != created_class_typeinfos.end()) {
 		return typeinfo_symbol;
 	}
@@ -242,11 +249,11 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 	builder.append("_ZTI").append(class_name.length()).append(class_name);
 	std::string typeinfo_symbol(builder.commit());
 
-	// Intentional static lifetime: typeinfo symbols are emitted once per compilation unit
-	// (same pattern as created_class_typeinfos in the flat overload above).  This deduplicates
-	// typeinfo symbols across multiple throw/catch sites in the same compilation unit.
-	static std::set<std::string> created_si_typeinfos;
-	if (created_si_typeinfos.find(typeinfo_symbol) != created_si_typeinfos.end()) {
+	// Intentional static lifetime: typeinfo symbols are emitted once per compilation unit.
+	// Reuse the same cache as the flat overload so delegation for classes without bases
+	// cannot re-emit _ZTS/_ZTI symbols on a subsequent hierarchical lookup.
+	auto& created_class_typeinfos = getCreatedClassTypeinfoSymbols();
+	if (created_class_typeinfos.find(typeinfo_symbol) != created_class_typeinfos.end()) {
 		return typeinfo_symbol;
 	}
 
@@ -445,7 +452,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 			typeinfo_symbol, class_name, n_bases);
 	}
 
-	created_si_typeinfos.insert(typeinfo_symbol);
+	created_class_typeinfos.insert(typeinfo_symbol);
 	return typeinfo_symbol;
 }
 

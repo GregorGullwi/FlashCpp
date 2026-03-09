@@ -987,7 +987,8 @@
 	// ============================================================================
 		// ELF-only: "no catch matched" marker — emitted before handlers_end_label.
 		// Generates code that loads the saved exception pointer and jumps to the
-		// function's cleanup LP (which calls local dtors then _Unwind_Resume).
+		// function's cleanup LP (which calls local dtors, then either resumes
+		// unwinding or terminates for noexcept functions).
 		// The LSDA is also patched (via has_cleanup) so the personality enters this
 		// landing pad during phase-2 when no typed catch handler matches.
 		// ============================================================================
@@ -1014,13 +1015,13 @@
 		}
 
 		// ============================================================================
-	// Phase 2: Function-level cleanup landing pad (ELF/Linux only)
-	// ============================================================================
+		// Phase 2: Function-level cleanup landing pad (ELF/Linux only)
+		// ============================================================================
 
-	void handleFunctionCleanupLP(const IrInstruction& instruction) {
-		if (!g_enable_exceptions) return;
+		void handleFunctionCleanupLP(const IrInstruction& instruction) {
+			if (!g_enable_exceptions) return;
 
-		const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
+			const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
 
 			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 				if (!op.cleanup_vars.empty()) {
@@ -1037,34 +1038,38 @@
 			}
 
 			if (op.cleanup_vars.empty()) {
-				// No local dtors — just call _Unwind_Resume with the exception pointer in RAX.
+				if (current_function_is_noexcept_) {
+					current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+				}
+
+				// No local dtors — tail directly to the appropriate exception-escape helper.
 				// MOV RDI, RAX  (RAX = _Unwind_Exception* set by either path above)
 				emitMovRegReg(X64Register::RDI, X64Register::RAX);
-				emitCall("_Unwind_Resume");
+				emitCall(current_function_is_noexcept_ ? "__cxa_call_terminate" : "_Unwind_Resume");
 				return;
 			}
 
-		// Record the offset of this cleanup landing pad within the function
-		current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			// Record the offset of this cleanup landing pad within the function
+			current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
-		// Flush any dirty virtual registers before the LP code
-		flushAllDirtyRegisters();
+			// Flush any dirty virtual registers before the LP code
+			flushAllDirtyRegisters();
 
-		// Allocate a frame slot to save the _Unwind_Exception* arriving in RAX
-		int32_t exc_save_offset = allocateElfTempStackSlot(8);
+			// Allocate a frame slot to save the _Unwind_Exception* arriving in RAX
+			int32_t exc_save_offset = allocateElfTempStackSlot(8);
 
-		// Save _Unwind_Exception* (RAX) to frame slot
-		emitMovToFrame(X64Register::RAX, exc_save_offset, 64);
+			// Save _Unwind_Exception* (RAX) to frame slot
+			emitMovToFrame(X64Register::RAX, exc_save_offset, 64);
 
-		// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
-		for (const auto& cv : op.cleanup_vars) {
-			emitInlineDestructorCall(cv);
+			// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
+			for (const auto& cv : op.cleanup_vars) {
+				emitInlineDestructorCall(cv);
+			}
+
+			// Load saved exception ptr into RDI (first arg on Linux) and continue exception escape.
+			emitMovFromFrameBySize(X64Register::RDI, exc_save_offset, 64);
+			emitCall(current_function_is_noexcept_ ? "__cxa_call_terminate" : "_Unwind_Resume");
 		}
-
-		// Load saved exception ptr into RDI (first arg on Linux) and call _Unwind_Resume
-		emitMovFromFrameBySize(X64Register::RDI, exc_save_offset, 64);
-		emitCall("_Unwind_Resume");
-	}
 
 	// ============================================================================
 	// Windows SEH (Structured Exception Handling) Handlers

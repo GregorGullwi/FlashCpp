@@ -722,12 +722,12 @@
 			current_function_cfi_.clear();
 			current_function_cleanup_lp_offset_ = 0;
 			current_function_is_noexcept_ = false;
-				elf_no_match_lp_label_ = StringHandle();
+			elf_no_match_lp_label_ = StringHandle();
 		}
 	}
 
 	// Helper: emit a noexcept terminate landing pad (ELF only) if the current function is
-	// declared noexcept and has no existing cleanup landing pad.
+	// declared noexcept and no cleanup LP was already emitted.
 	// The LP is reached by the personality routine when an exception would escape a noexcept
 	// function.  It calls __cxa_call_terminate(exception_ptr) which is [[noreturn]].
 	// Sets current_function_cleanup_lp_offset_ so the caller can register a CleanupBlockInfo.
