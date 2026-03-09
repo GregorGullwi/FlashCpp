@@ -253,7 +253,23 @@ static_assert(f() == 42);  // ❌ Not currently supported
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
-Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), implicit `this` through default member captures in supported shapes, init-captures, multi-statement bodies, simple member reads / constexpr member calls through `this` / `*this` capture, straightforward mutable by-reference local updates, straightforward identifier-based by-reference init-capture alias updates, straightforward mutable shared-object updates through `[this]`, straightforward mutable copy-local updates through `[*this]`, straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object, straightforward return of lambda closure objects from constexpr functions with repeated calls after local initialization, straightforward returned `[*this]` member closures after local aggregate object initialization, and straightforward nested lambdas that capture enclosing lambda/object state in supported shapes. Capture support is still incomplete beyond those supported shapes.
+Basic constexpr lambdas work, including:
+- Explicit captures
+- Default local captures (`[=]`, `[&]`)
+- Implicit `this` through default member captures in supported shapes
+- Init-captures
+- Multi-statement bodies
+- Simple member reads / constexpr member calls through `this` / `*this` capture
+- Straightforward mutable by-reference local updates
+- Straightforward identifier-based by-reference init-capture alias updates
+- Straightforward mutable shared-object updates through `[this]`
+- Straightforward mutable copy-local updates through `[*this]`
+- Straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object
+- Straightforward return of lambda closure objects from constexpr functions with repeated calls after local initialization
+- Straightforward returned `[*this]` member closures after local aggregate object initialization
+- Straightforward nested lambdas that capture enclosing lambda/object state in supported shapes
+
+Capture support is still incomplete beyond those supported shapes.
 
 **Still partial in constexpr lambda evaluation:**
 
