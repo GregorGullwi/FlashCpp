@@ -1758,6 +1758,10 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		return *member_error;
 	}
 
+	if (resolved_member.value.has_value()) {
+		return resolved_member.value.value();
+	}
+
 	if (!resolved_member.initializer.has_value()) {
 		return EvalResult::error("Internal error: unresolved member source in member access");
 	}
@@ -1890,20 +1894,22 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		return EvalResult::error("No matching constructor found for constexpr " + std::string(usage_name));
 	}
 
-	const ASTNode* member_initializer = nullptr;
+	const StructMember* member_info = find_member_info(struct_info);
+	if (!member_info) {
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in " + std::string(usage_name));
+	}
+	resolved_member.member_info = member_info;
+
+	bool initializer_uses_ctor_bindings = false;
 	for (const auto& mem_init : matching_ctor->member_initializers()) {
 		if (mem_init.member_name == member_name) {
-			member_initializer = &mem_init.initializer_expr;
+			resolved_member.initializer = mem_init.initializer_expr;
+			initializer_uses_ctor_bindings = true;
 			break;
 		}
 	}
-
-	if (auto resolve_error = resolve_explicit_member(struct_info, member_initializer)) {
-		return resolve_error;
-	}
-
-	if (member_initializer == nullptr) {
-		return std::nullopt;
+	if (!resolved_member.initializer.has_value() && member_info->default_initializer.has_value()) {
+		resolved_member.initializer = member_info->default_initializer.value();
 	}
 
 	const auto& params = matching_ctor->parameter_nodes();
@@ -1917,6 +1923,27 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		true);
 	if (!bind_result.success()) {
 		return bind_result;
+	}
+
+	std::unordered_map<std::string_view, EvalResult> member_bindings;
+	auto materialize_result = materialize_members_from_constructor(
+		struct_info,
+		*matching_ctor,
+		resolved_member.evaluation_bindings,
+		member_bindings,
+		context,
+		true);
+	if (!materialize_result.success()) {
+		return materialize_result;
+	}
+
+	auto member_it = member_bindings.find(member_name);
+	if (member_it == member_bindings.end()) {
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in " + std::string(usage_name) + " and has no default value");
+	}
+	resolved_member.value = member_it->second;
+	if (!initializer_uses_ctor_bindings) {
+		resolved_member.evaluation_bindings.clear();
 	}
 
 	return std::nullopt;
@@ -2055,7 +2082,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		return *resolve_error;
 	}
 
-	if (!intermediate_member_source.initializer.has_value() || !intermediate_member_source.member_info) {
+	if ((!intermediate_member_source.initializer.has_value() && !intermediate_member_source.value.has_value()) || !intermediate_member_source.member_info) {
 		return EvalResult::error("Internal error: unresolved intermediate member source in nested member access");
 	}
 
@@ -2069,6 +2096,17 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		? nullptr
 		: &intermediate_member_source.evaluation_bindings;
 
+	if (intermediate_member_source.value.has_value()) {
+		const EvalResult& intermediate_value = intermediate_member_source.value.value();
+		auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
+		if (final_member_it != intermediate_value.object_member_bindings.end()) {
+			return final_member_it->second;
+		}
+		if (!intermediate_member_source.initializer.has_value()) {
+			return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
+		}
+	}
+
 	if (intermediate_member_source.initializer->is<InitializerListNode>() ||
 		extract_constructor_call(intermediate_member_source.initializer)) {
 		ResolvedConstexprMemberSource final_member_source;
@@ -2081,6 +2119,10 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			final_member_source,
 			intermediate_bindings)) {
 			return *final_error;
+		}
+
+		if (final_member_source.value.has_value()) {
+			return final_member_source.value.value();
 		}
 
 		if (!final_member_source.initializer.has_value()) {
@@ -2943,23 +2985,77 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 	return EvalResult::from_bool(true);
 }
 
+EvalResult Evaluator::materialize_members_from_constructor(
+	const StructTypeInfo* struct_info,
+	const ConstructorDeclarationNode& ctor_decl,
+	std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+	std::unordered_map<std::string_view, EvalResult>& member_bindings,
+	EvaluationContext& context,
+	bool ignore_default_initializer_errors) {
+	auto member_bind_result = bind_members_from_constructor_initializers(
+		struct_info,
+		ctor_decl,
+		ctor_param_bindings,
+		member_bindings,
+		context,
+		ignore_default_initializer_errors);
+	if (!member_bind_result.success()) {
+		return member_bind_result;
+	}
+
+	const auto& ctor_definition = ctor_decl.get_definition();
+	if (!ctor_definition.has_value() || !ctor_definition->is<BlockNode>()) {
+		return EvalResult::from_bool(true);
+	}
+
+	std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = member_bindings;
+	for (const auto& [name, val] : ctor_param_bindings) {
+		ctor_body_bindings[name] = val;
+	}
+
+	const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
+	for (const auto& ctor_stmt : ctor_body.get_statements()) {
+		auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
+		if (stmt_result.success()) {
+			break;
+		}
+		if (stmt_result.error_message != "Statement executed (not a return)") {
+			return stmt_result;
+		}
+	}
+
+	for (const auto& member : struct_info->members) {
+		std::string_view member_name = StringTable::getStringView(member.getName());
+		auto it = ctor_body_bindings.find(member_name);
+		if (it != ctor_body_bindings.end()) {
+			member_bindings[member_name] = it->second;
+		}
+	}
+
+	return EvalResult::from_bool(true);
+}
+
 std::optional<EvalResult> Evaluator::try_evaluate_member_from_constructor_initializers(
 	const StructTypeInfo* struct_info,
 	const ConstructorDeclarationNode& ctor_decl,
 	std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
 	std::string_view member_name,
 	EvaluationContext& context) {
-	for (const auto& mem_init : ctor_decl.member_initializers()) {
-		if (mem_init.member_name == member_name) {
-			return evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-		}
+	std::unordered_map<std::string_view, EvalResult> member_bindings;
+	auto materialize_result = materialize_members_from_constructor(
+		struct_info,
+		ctor_decl,
+		ctor_param_bindings,
+		member_bindings,
+		context,
+		true);
+	if (!materialize_result.success()) {
+		return materialize_result;
 	}
 
-	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-	for (const auto& member : struct_info->members) {
-		if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
-			return evaluate(member.default_initializer.value(), context);
-		}
+	auto member_it = member_bindings.find(member_name);
+	if (member_it != member_bindings.end()) {
+		return member_it->second;
 	}
 
 	return std::nullopt;
@@ -3082,7 +3178,7 @@ EvalResult Evaluator::extract_object_members(
 		return bind_result;
 	}
 	
-	auto member_bind_result = bind_members_from_constructor_initializers(
+	auto member_bind_result = materialize_members_from_constructor(
 		struct_info,
 		*matching_ctor,
 		ctor_param_bindings,
@@ -3167,6 +3263,23 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 				context,
 				resolved_member)) {
 				return *resolve_error;
+			}
+
+			if (resolved_member.value.has_value()) {
+				const EvalResult& resolved_value = resolved_member.value.value();
+				if (!resolved_value.is_array) {
+					return EvalResult::error("Array member is not initialized with an array value");
+				}
+				if (!resolved_value.array_elements.empty()) {
+					if (index >= resolved_value.array_elements.size()) {
+						return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(resolved_value.array_elements.size()) + ")");
+					}
+					return resolved_value.array_elements[index];
+				}
+				if (index >= resolved_value.array_values.size()) {
+					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(resolved_value.array_values.size()) + ")");
+				}
+				return EvalResult::from_int(resolved_value.array_values[index]);
 			}
 
 			if (!resolved_member.initializer.has_value()) {

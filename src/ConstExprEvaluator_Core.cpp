@@ -1382,7 +1382,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
 		}
 
-		// Build object member bindings from constructor/member initializers.
+		// Build object member bindings from the full constructor materialization path.
 		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
 		const auto& ctor_args = ctor_call.arguments();
 		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
@@ -1404,7 +1404,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			return ctor_bind_result;
 		}
 
-		auto member_bind_result = bind_members_from_constructor_initializers(
+		auto member_bind_result = materialize_members_from_constructor(
 			struct_info,
 			*matching_ctor,
 			ctor_param_bindings,
@@ -1413,45 +1413,6 @@ EvalResult Evaluator::evaluate_callable_object(
 			false);
 		if (!member_bind_result.success()) {
 			return member_bind_result;
-		}
-
-		// Evaluate constructor body statements (e.g., member assignments like `m_val = x;`).
-		// The member initializer list is processed above; this handles the constructor body
-		// which may contain additional assignments or logic that modifies member state.
-		const auto& ctor_definition = matching_ctor->get_definition();
-		if (ctor_definition.has_value() && ctor_definition->is<BlockNode>()) {
-			const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
-			const auto& ctor_statements = ctor_body.get_statements();
-
-			// Merge constructor parameter bindings into evaluation_bindings so
-			// that body statements like `m_val = x;` can resolve parameter names.
-			// Parameters shadow members with the same name (correct C++ semantics).
-			std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = evaluation_bindings;
-			for (const auto& [name, val] : ctor_param_bindings) {
-				ctor_body_bindings[name] = val;
-			}
-
-			for (const auto& ctor_stmt : ctor_statements) {
-				auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
-				if (stmt_result.success()) {
-					// A return statement in a constructor body is unusual but valid
-					// (e.g., early return in constexpr constructor). Stop processing.
-					break;
-				}
-				if (!stmt_result.success() && stmt_result.error_message != "Statement executed (not a return)") {
-					return stmt_result;
-				}
-			}
-
-			// Copy back any member bindings that were modified by the constructor body.
-			// We only copy names that correspond to struct members (not constructor params).
-			for (const auto& member : struct_info->members) {
-				std::string_view member_name = StringTable::getStringView(member.getName());
-				auto it = ctor_body_bindings.find(member_name);
-				if (it != ctor_body_bindings.end()) {
-					evaluation_bindings[member_name] = it->second;
-				}
-			}
 		}
 
 		const auto& parameters = call_operator->parameter_nodes();

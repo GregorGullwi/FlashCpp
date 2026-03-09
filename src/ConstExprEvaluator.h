@@ -267,34 +267,41 @@ public:
 			const InitializerListNode& init_list,
 			EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
-	static EvalResult bind_members_from_initializer_list(
-		const StructTypeInfo* struct_info,
-		const InitializerListNode& init_list,
-		std::unordered_map<std::string_view, EvalResult>& bindings,
-		EvaluationContext& context);
-	static EvalResult bind_members_from_constructor_initializers(
-		const StructTypeInfo* struct_info,
-		const ConstructorDeclarationNode& ctor_decl,
-		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
-		std::unordered_map<std::string_view, EvalResult>& member_bindings,
-		EvaluationContext& context,
-		bool ignore_default_initializer_errors);
-	static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
-		const StructTypeInfo* struct_info,
-		const ConstructorDeclarationNode& ctor_decl,
-		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
-		std::string_view member_name,
-		EvaluationContext& context);
-	static EvalResult evaluate_member_array_subscript(
-		const MemberAccessNode& member_access,
-		size_t index,
-		EvaluationContext& context);
-	static EvalResult evaluate_variable_array_subscript(
-		const IdentifierNode& identifier,
-		size_t index,
-		EvaluationContext& context);
-	static bool isArithmeticType(Type type);
-	static bool isFundamentalType(Type type);
+		static EvalResult bind_members_from_initializer_list(
+			const StructTypeInfo* struct_info,
+			const InitializerListNode& init_list,
+			std::unordered_map<std::string_view, EvalResult>& bindings,
+			EvaluationContext& context);
+		static EvalResult bind_members_from_constructor_initializers(
+			const StructTypeInfo* struct_info,
+			const ConstructorDeclarationNode& ctor_decl,
+			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+			std::unordered_map<std::string_view, EvalResult>& member_bindings,
+			EvaluationContext& context,
+			bool ignore_default_initializer_errors);
+		static EvalResult materialize_members_from_constructor(
+			const StructTypeInfo* struct_info,
+			const ConstructorDeclarationNode& ctor_decl,
+			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+			std::unordered_map<std::string_view, EvalResult>& member_bindings,
+			EvaluationContext& context,
+			bool ignore_default_initializer_errors);
+		static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
+			const StructTypeInfo* struct_info,
+			const ConstructorDeclarationNode& ctor_decl,
+			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+			std::string_view member_name,
+			EvaluationContext& context);
+		static EvalResult evaluate_member_array_subscript(
+			const MemberAccessNode& member_access,
+			size_t index,
+			EvaluationContext& context);
+		static EvalResult evaluate_variable_array_subscript(
+			const IdentifierNode& identifier,
+			size_t index,
+			EvaluationContext& context);
+		static bool isArithmeticType(Type type);
+		static bool isFundamentalType(Type type);
 
 	// Helper struct to hold a ConstructorCallNode reference and its type info
 	struct StructObjectInfo {
@@ -320,16 +327,17 @@ private:
 		const StructTypeInfo* owner_struct = nullptr;
 	};
 
-	struct ResolvedCurrentStructStaticInitializer {
-		const std::optional<ASTNode>* initializer = nullptr;
-		bool found = false;
-	};
+		struct ResolvedCurrentStructStaticInitializer {
+			const std::optional<ASTNode>* initializer = nullptr;
+			bool found = false;
+		};
 
-	struct ResolvedConstexprMemberSource {
-		std::optional<ASTNode> initializer;
-		const StructMember* member_info = nullptr;
-		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
-	};
+		struct ResolvedConstexprMemberSource {
+			std::optional<ASTNode> initializer;
+			std::optional<EvalResult> value;
+			const StructMember* member_info = nullptr;
+			std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
+		};
 
 	struct ResolvedMemberFunctionCandidate {
 		const FunctionDeclarationNode* function = nullptr;
