@@ -81,21 +81,12 @@ ParseResult Parser::parse_template_function_declaration_body(
 		// Save position of '->' for SFINAE re-parsing of trailing return type
 		SaveHandle trailing_pos = save_token_position();
 		func_decl.set_trailing_return_type_position(trailing_pos);
-		advance();  // consume '->'
-		
-		// Enter a temporary scope for trailing return type parsing
-		// This allows parameter names to be visible in decltype expressions
-		gSymbolTable.enter_scope(ScopeType::Function);
-		
-		// Register function parameters so they're visible in trailing return type expressions
-		// Example: auto func(T __t, U __u) -> decltype(__t + __u)
+
+		// parse_trailing_return_type_with_params consumes '->', pushes a temporary SymbolTableScope
+		// so parameter names are visible for decltype expressions, then pops the scope on exit
+		// (including on exceptions — RAII).
 		const auto& params = func_decl.parameter_nodes();
-		register_parameters_in_scope(params);
-		
-		ParseResult trailing_type_specifier = parse_type_specifier();
-		
-		// Exit the temporary scope
-		gSymbolTable.exit_scope();
+		ParseResult trailing_type_specifier = parse_trailing_return_type_with_params(params);
 		
 		if (trailing_type_specifier.is_error()) {
 			return trailing_type_specifier;
@@ -106,9 +97,9 @@ ParseResult Parser::parse_template_function_declaration_body(
 			return ParseResult::error("Expected type specifier for trailing return type", current_token_);
 		}
 		
-		// Apply pointer and reference qualifiers to the trailing return type (e.g., T*, T&, T&&)
 		TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
-		consume_pointer_ref_modifiers(trailing_ts);
+		// Note: consume_pointer_ref_modifiers already called inside parse_trailing_return_type_with_params.
+		// trailing_ts is still used below for logging.
 		
 		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
@@ -130,10 +121,9 @@ ParseResult Parser::parse_template_function_declaration_body(
 		Token requires_token = peek_info();
 		advance(); // consume 'requires'
 		
-		// Enter a temporary scope for trailing requires clause parsing
-		// This allows parameter names to be visible in requires expressions
-		// Example: func(T __t, U __u) requires requires { __t + __u; }
-		gSymbolTable.enter_scope(ScopeType::Function);
+		// Enter a temporary scope for trailing requires clause parsing.
+		// Uses SymbolTableScope RAII so the scope is always exited even on exceptions.
+		FlashCpp::SymbolTableScope requires_scope(ScopeType::Function);
 		
 		// Register function parameters so they're visible in the constraint expression
 		const auto& params = func_decl.parameter_nodes();
@@ -141,9 +131,6 @@ ParseResult Parser::parse_template_function_declaration_body(
 		
 		// Parse the constraint expression
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		
-		// Exit the temporary scope
-		gSymbolTable.exit_scope();
 		
 		if (constraint_result.is_error()) {
 			return constraint_result;

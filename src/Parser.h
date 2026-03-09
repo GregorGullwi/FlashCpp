@@ -1054,6 +1054,11 @@ public:  // Public methods for template instantiation
         bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
         void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
         void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
+        // Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
+        // Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
+        // calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
+        // Returns ParseResult::error on failure, or success with a TypeSpecifierNode.
+        ParseResult parse_trailing_return_type_with_params(const std::vector<ASTNode>& params);
         
         // Helper to parse static member functions (reduces code duplication)
         bool parse_static_member_function(
