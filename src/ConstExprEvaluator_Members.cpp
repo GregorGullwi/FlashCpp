@@ -218,8 +218,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 
 	const auto& member_access = std::get<MemberAccessNode>(expr);
 	const ASTNode& object_expr = member_access.object();
-	EvalResult object_result;
-	bool have_object = false;
+	const EvalResult* object_result = nullptr;
+	std::optional<EvalResult> evaluated_object_result;
 
 	if (object_expr.is<IdentifierNode>()) {
 		if (object_expr.as<IdentifierNode>().name() == "this") {
@@ -229,27 +229,26 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 		if (object_it == bindings.end()) {
 			return std::nullopt;
 		}
-		object_result = object_it->second;
-		have_object = true;
+		object_result = &object_it->second;
 	} else if (object_expr.is<ExpressionNode>()) {
 		const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(object_expr_node) &&
 			std::get<IdentifierNode>(object_expr_node).name() == "this") {
 			return std::nullopt;
 		}
-		object_result = evaluate_expression_with_bindings_const(object_expr, bindings, context);
-		if (!object_result.success()) {
-			return object_result;
+		evaluated_object_result = evaluate_expression_with_bindings_const(object_expr, bindings, context);
+		if (!evaluated_object_result->success()) {
+			return *evaluated_object_result;
 		}
-		have_object = true;
+		object_result = &evaluated_object_result.value();
 	}
 
-	if (!have_object || object_result.object_type_index == 0) {
+	if (!object_result || object_result->object_type_index == 0) {
 		return std::nullopt;
 	}
 
-	auto member_it = object_result.object_member_bindings.find(member_access.member_name());
-	if (member_it == object_result.object_member_bindings.end()) {
+	auto member_it = object_result->object_member_bindings.find(member_access.member_name());
+	if (member_it == object_result->object_member_bindings.end()) {
 		return std::nullopt;
 	}
 
