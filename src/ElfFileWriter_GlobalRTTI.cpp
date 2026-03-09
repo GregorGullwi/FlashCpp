@@ -6,6 +6,48 @@ namespace {
 		static std::set<std::string> created_class_typeinfos;
 		return created_class_typeinfos;
 	}
+
+	/// Collect all unique virtual-base TypeIndex values reachable from \p si
+	/// (depth-first, left-to-right).  Adds to \p out; \p visited prevents cycles.
+	void collectReachableVBases(const StructTypeInfo* si,
+	                            std::vector<TypeIndex>& out,
+	                            std::set<TypeIndex>& seen_vb,
+	                            std::set<const StructTypeInfo*>& visited) {
+		if (!si || !visited.insert(si).second) return;
+		for (const auto& b : si->base_classes) {
+			if (b.is_virtual && seen_vb.insert(b.type_index).second) {
+				out.push_back(b.type_index);
+			}
+			if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
+				const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
+				collectReachableVBases(bsi, out, seen_vb, visited);
+			}
+		}
+	}
+
+	/// Recursively find the offset of a virtual base \p target_tidx from the
+	/// most-derived object starting at \p si + \p base_off.
+	/// Returns true and sets \p result if found.
+	bool findVBaseOffset(const StructTypeInfo* si, TypeIndex target_tidx,
+	                     size_t base_off, size_t& result,
+	                     std::set<const StructTypeInfo*>& visited) {
+		if (!si || !visited.insert(si).second) return false;
+		for (const auto& b : si->base_classes) {
+			if (b.type_index == target_tidx && b.is_virtual) {
+				result = base_off + b.offset;
+				return true;
+			}
+		}
+		// Recurse into non-virtual bases
+		for (const auto& b : si->base_classes) {
+			if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
+				const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
+				if (findVBaseOffset(bsi, target_tidx, base_off + b.offset, result, visited))
+					return true;
+			}
+		}
+		return false;
+	}
 }
 
 void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
@@ -402,26 +444,13 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		{
 			std::set<TypeIndex> global_vbases;
 			bool diamond = false;
-			// Recursive helper: collect all virtual-base TypeIndex values reachable
-			// from a given struct (including transitively through non-virtual bases).
-			std::function<void(const StructTypeInfo*, std::set<TypeIndex>&)> collectTransitiveVBases =
-				[&](const StructTypeInfo* si, std::set<TypeIndex>& out) {
-					if (!si) return;
-					for (const auto& b : si->base_classes) {
-						if (b.is_virtual) {
-							out.insert(b.type_index);
-						}
-						if (b.type_index < gTypeInfo.size()) {
-							const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
-							collectTransitiveVBases(bsi, out);
-						}
-					}
-				};
 			for (const auto& base : base_classes) {
 				if (base.type_index >= gTypeInfo.size()) continue;
 				const auto* bsi = gTypeInfo[base.type_index].getStructInfo();
-				std::set<TypeIndex> branch_vbases;
-				collectTransitiveVBases(bsi, branch_vbases);
+				std::vector<TypeIndex> branch_vbases;
+				std::set<TypeIndex> branch_seen;
+				std::set<const StructTypeInfo*> branch_visited;
+				collectReachableVBases(bsi, branch_vbases, branch_seen, branch_visited);
 				for (auto vb : branch_vbases) {
 					if (!global_vbases.insert(vb).second) {
 						diamond = true;
@@ -437,23 +466,11 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		// Collect all unique virtual bases reachable from this class (depth-first,
 		// left-to-right, same order as the vtable prefix). This is needed to compute
 		// the correct vtable-relative offset for virtual base entries.
-		std::vector<TypeIndex> vbase_order;  // TypeIndex of each unique vbase
+		std::vector<TypeIndex> vbase_order;
 		{
 			std::set<TypeIndex> seen_vb;
-			std::function<void(const StructTypeInfo*)> collectVBases =
-				[&](const StructTypeInfo* si) {
-					if (!si) return;
-					for (const auto& b : si->base_classes) {
-						if (b.is_virtual && seen_vb.insert(b.type_index).second) {
-							vbase_order.push_back(b.type_index);
-						}
-						if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
-							const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
-							collectVBases(bsi);
-						}
-					}
-				};
-			collectVBases(struct_info);
+			std::set<const StructTypeInfo*> visited;
+			collectReachableVBases(struct_info, vbase_order, seen_vb, visited);
 		}
 
 		// offset_flags for each base (inline: no relocation needed)
@@ -612,59 +629,21 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		}
 		if (this_struct) {
 			// Collect all unique virtual base TypeIndexes reachable from this class.
-			// Then look up the offset of each vbase within THIS class (the most-derived),
-			// not the intermediate class where the virtual specifier appears.
 			std::vector<TypeIndex> vbase_type_indices;
-			std::set<TypeIndex> seen;
-			std::function<void(const StructTypeInfo*)> collectVBases =
-				[&](const StructTypeInfo* si) {
-					if (!si) return;
-					for (const auto& b : si->base_classes) {
-						if (b.is_virtual && seen.insert(b.type_index).second) {
-							vbase_type_indices.push_back(b.type_index);
-						}
-						if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
-							const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
-							collectVBases(bsi);
-						}
-					}
-				};
-			collectVBases(this_struct);
+			{
+				std::set<TypeIndex> seen;
+				std::set<const StructTypeInfo*> visited;
+				collectReachableVBases(this_struct, vbase_type_indices, seen, visited);
+			}
 
-			// Now find each vbase's offset in THIS class.
-			// Virtual bases are shared: their offset is stored in the most-derived
-			// class's base_classes list (possibly inherited from a non-virtual parent).
+			// Now find each vbase's offset in THIS class (the most-derived).
+			// Virtual bases are shared: their actual offset is stored in the
+			// most-derived class's base_classes list or transitively through
+			// non-virtual parents.
 			for (TypeIndex vb_tidx : vbase_type_indices) {
 				size_t offset = 0;
-				// First check direct base_classes of the top-level struct
-				bool found = false;
-				for (const auto& b : this_struct->base_classes) {
-					if (b.type_index == vb_tidx && b.is_virtual) {
-						offset = b.offset;
-						found = true;
-						break;
-					}
-				}
-				if (!found) {
-					// Look through non-virtual parents for the vbase
-					for (const auto& b : this_struct->base_classes) {
-						if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
-							const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
-							if (bsi) {
-								for (const auto& bb : bsi->base_classes) {
-									if (bb.type_index == vb_tidx && bb.is_virtual) {
-										// The vbase offset from the perspective of
-										// the most-derived class = parent_offset + vbase_offset_in_parent
-										offset = b.offset + bb.offset;
-										found = true;
-										break;
-									}
-								}
-							}
-						}
-						if (found) break;
-					}
-				}
+				std::set<const StructTypeInfo*> visited;
+				findVBaseOffset(this_struct, vb_tidx, 0, offset, visited);
 				vbase_entries.push_back({offset});
 			}
 		}
