@@ -300,6 +300,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	if (!array_result.is_array) {
 		return EvalResult::error("Subscript on non-array variable in constant expression");
 	}
+	if (!array_result.array_elements.empty()) {
+		if (static_cast<size_t>(index) >= array_result.array_elements.size()) {
+			return EvalResult::error("Array index out of bounds in constant expression");
+		}
+		return array_result.array_elements[static_cast<size_t>(index)];
+	}
 	if (static_cast<size_t>(index) >= array_result.array_values.size()) {
 		return EvalResult::error("Array index out of bounds in constant expression");
 	}
@@ -2775,6 +2781,61 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 	return object_result;
 }
 
+EvalResult Evaluator::materialize_array_value(
+	Type element_type,
+	TypeIndex element_type_index,
+	const InitializerListNode& init_list,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	std::vector<EvalResult> array_elements;
+	array_elements.reserve(init_list.initializers().size());
+	std::vector<int64_t> array_values;
+	bool all_scalar_elements = true;
+
+	for (const auto& element : init_list.initializers()) {
+		EvalResult element_result;
+		if (element.is<InitializerListNode>() &&
+			(element_type == Type::Struct || element_type == Type::UserDefined) &&
+			element_type_index > 0 && element_type_index < gTypeInfo.size()) {
+			if (const StructTypeInfo* element_struct_info = gTypeInfo[element_type_index].getStructInfo()) {
+				element_result = materialize_aggregate_object_value(
+					element_struct_info,
+					element_type_index,
+					element.as<InitializerListNode>(),
+					context);
+			} else {
+				element_result = EvalResult::error("Array element type is not a struct");
+			}
+		} else if (bindings) {
+			element_result = evaluate_expression_with_bindings_const(element, *bindings, context);
+		} else {
+			element_result = evaluate(element, context);
+		}
+
+		if (!element_result.success()) {
+			return element_result;
+		}
+
+		if (element_result.object_type_index != 0 || element_result.is_array ||
+			element_result.callable_var_decl != nullptr || element_result.callable_lambda != nullptr) {
+			all_scalar_elements = false;
+		} else {
+			array_values.push_back(element_result.as_int());
+		}
+
+		array_elements.push_back(std::move(element_result));
+	}
+
+	EvalResult array_result;
+	array_result.error_type = EvalErrorType::None;
+	array_result.is_array = true;
+	array_result.array_elements = std::move(array_elements);
+	if (all_scalar_elements) {
+		array_result.array_values = std::move(array_values);
+	}
+	return array_result;
+}
+
 namespace {
 EvalResult materialize_member_initializer_value(
 	const StructMember& member_info,
@@ -2784,21 +2845,7 @@ EvalResult materialize_member_initializer_value(
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
 		if (member_info.is_array) {
-			std::vector<int64_t> array_values;
-			array_values.reserve(init_list.initializers().size());
-			for (const auto& element : init_list.initializers()) {
-				auto element_result = Evaluator::evaluate(element, context);
-				if (!element_result.success()) {
-					return element_result;
-				}
-				array_values.push_back(element_result.as_int());
-			}
-
-			EvalResult array_result;
-			array_result.error_type = EvalErrorType::None;
-			array_result.is_array = true;
-			array_result.array_values = std::move(array_values);
-			return array_result;
+			return Evaluator::materialize_array_value(member_info.type, member_info.type_index, init_list, context);
 		}
 
 		if ((member_info.type == Type::Struct || member_info.type == Type::UserDefined) &&

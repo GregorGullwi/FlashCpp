@@ -70,6 +70,7 @@ struct EvalResult {
 	
 		// Array support for local arrays in constexpr functions
 		bool is_array = false;
+		std::vector<EvalResult> array_elements;
 		std::vector<int64_t> array_values;
 		const VariableDeclarationNode* callable_var_decl = nullptr;
 		const LambdaExpressionNode* callable_lambda = nullptr;
@@ -84,31 +85,31 @@ struct EvalResult {
 
 		// Convenience constructors
 		static EvalResult from_bool(bool val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_int(long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_uint(unsigned long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_double(double val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl, nullptr, {}, 0, {}};
+			return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, nullptr, &lambda, {}, 0, {}};
+			return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, 0, {}};
 		}
 
 		static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-			return EvalResult{false, msg, type, false, {}, nullptr, nullptr, {}, 0, {}};
+			return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 	// Convenience helpers for common operations
@@ -260,6 +261,12 @@ public:
 			TypeIndex type_index,
 			const InitializerListNode& init_list,
 			EvaluationContext& context);
+		static EvalResult materialize_array_value(
+			Type element_type,
+			TypeIndex element_type_index,
+			const InitializerListNode& init_list,
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
 	static EvalResult bind_members_from_initializer_list(
 		const StructTypeInfo* struct_info,
 		const InitializerListNode& init_list,

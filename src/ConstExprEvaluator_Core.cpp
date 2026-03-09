@@ -1121,24 +1121,10 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	// Check if the initializer is an InitializerListNode (for arrays)
 	if (initializer->is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-		const auto& initializers = init_list.initializers();
-		
-		// Evaluate each element
-		std::vector<int64_t> array_values;
-		for (const auto& elem : initializers) {
-			auto elem_result = evaluate(elem, context);
-			if (!elem_result.success()) {
-				return elem_result;
-			}
-			array_values.push_back(elem_result.as_int());
+			if (var_decl.declaration().is_array() && var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+				return materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context);
 		}
-		
-		// Return as an array result
-		EvalResult array_result;
-		array_result.error_type = EvalErrorType::None;
-		array_result.is_array = true;
-		array_result.array_values = std::move(array_values);
-		return array_result;
 	}
 
 	// Recursively evaluate the initializer
@@ -2699,40 +2685,28 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+						if (decl.is_array()) {
+							auto array_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, &bindings);
+							if (!array_result.success()) {
+								return array_result;
+							}
+							bindings[var_name] = std::move(array_result);
+							return EvalResult::error("Statement executed (not a return)");
+						}
+
 						if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
 							type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-									auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context);
-									if (!object_result.success()) {
-										return object_result;
-									}
-									bindings[var_name] = std::move(object_result);
+								auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context);
+								if (!object_result.success()) {
+									return object_result;
+								}
+								bindings[var_name] = std::move(object_result);
 								return EvalResult::error("Statement executed (not a return)");
 							}
 						}
 					}
-				const auto& initializers = init_list.initializers();
-				
-				// Create array value - evaluate each element
-				std::vector<int64_t> array_values;
-				for (size_t i = 0; i < initializers.size(); i++) {
-					auto elem_result = evaluate_expression_with_bindings(initializers[i], bindings, context);
-					if (!elem_result.success()) {
-						return elem_result;
-					}
-					array_values.push_back(elem_result.as_int());
-				}
-				
-				// Store as an array binding
-				EvalResult array_result;
-				array_result.error_type = EvalErrorType::None;
-				array_result.is_array = true;
-				array_result.array_values = std::move(array_values);
-				bindings[var_name] = array_result;
-				
-				// Return a sentinel indicating statement executed successfully
-				return EvalResult::error("Statement executed (not a return)");
 			}
 			
 			// Regular expression initializer
