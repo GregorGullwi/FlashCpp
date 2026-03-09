@@ -229,6 +229,9 @@ public:
 		StringHandle member_name_handle,
 		std::string_view member_name,
 		EvaluationContext& context);
+	static EvalResult evaluate_static_member_initializer_or_default(
+		const StructStaticMember& static_member,
+		EvaluationContext& context);
 	static EvalResult evaluate_function_call_member_access(
 		const FunctionCallNode& func_call,
 		std::string_view member_name,

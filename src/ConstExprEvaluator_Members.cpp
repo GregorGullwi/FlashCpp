@@ -1193,15 +1193,11 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					// Note: Even if not marked const, we can evaluate constexpr initializers
 					if (static_member->initializer.has_value()) {
 						FLASH_LOG(ConstExpr, Debug, "Evaluating static member initializer");
-						return evaluate(static_member->initializer.value(), context);
 					}
 					
 					// If not constexpr or no initializer, return default value based on type
 					FLASH_LOG(ConstExpr, Debug, "Returning default value for type: ", static_cast<int>(static_member->type));
-					if (static_member->type == Type::Bool) {
-						return EvalResult::from_bool(false);
-					}
-					return EvalResult::from_int(0);
+					return evaluate_static_member_initializer_or_default(*static_member, context);
 				}
 			}
 		}
@@ -1363,15 +1359,7 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 						FLASH_LOG(ConstExpr, Debug, "Accessing static member through instance: ", member_name);
 
 						// Found a static member - evaluate its initializer if available
-						if (static_member->initializer.has_value()) {
-							return evaluate(static_member->initializer.value(), context);
-						}
-
-						// If no initializer, return default value based on type
-						if (static_member->type == Type::Bool) {
-							return EvalResult::from_bool(false);
-						}
-						return EvalResult::from_int(0);
+						return evaluate_static_member_initializer_or_default(*static_member, context);
 					}
 				}
 			}
@@ -2035,6 +2023,19 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 	}
 
 	return evaluateMemberFromCtorCall(*ctor_call_ptr);
+}
+
+EvalResult Evaluator::evaluate_static_member_initializer_or_default(
+	const StructStaticMember& static_member,
+	EvaluationContext& context) {
+	if (static_member.initializer.has_value()) {
+		return evaluate(static_member.initializer.value(), context);
+	}
+
+	if (static_member.type == Type::Bool) {
+		return EvalResult::from_bool(false);
+	}
+	return EvalResult::from_int(0);
 }
 
 // Helper function to look up and evaluate static member from struct info
