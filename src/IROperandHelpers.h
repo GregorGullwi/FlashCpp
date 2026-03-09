@@ -49,7 +49,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	// - non-struct values use it for pointer_depth
 	if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
 		unsigned long long metadata = std::get<unsigned long long>(operands[3]);
-		if (result.type == Type::Struct || result.type == Type::Enum) {
+		if (result.type == Type::Struct || result.type == Type::Enum || result.type == Type::UserDefined) {
 			result.type_index = static_cast<TypeIndex>(metadata);
 		} else {
 			result.pointer_depth = static_cast<int>(metadata);
