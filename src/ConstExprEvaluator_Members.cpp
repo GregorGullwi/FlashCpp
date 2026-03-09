@@ -205,6 +205,60 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 	return result;
 }
 
+Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member_function_candidate(
+	StringHandle function_name_handle,
+	size_t argument_count,
+	EvaluationContext& context,
+	MemberFunctionLookupMode lookup_mode,
+	bool require_static,
+	bool detect_ambiguity_in_current_struct) {
+	ResolvedMemberFunctionCandidate result;
+	if (!context.struct_info) {
+		return result;
+	}
+
+	if (context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+			context.struct_info->name, function_name_handle)) {
+		auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+			context.struct_info->name, function_name_handle);
+		if (lazy_info_opt.has_value()) {
+			context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
+			LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+				context.struct_info->name, function_name_handle);
+		}
+	}
+
+	result = find_member_function_candidate(
+		context.struct_info,
+		function_name_handle,
+		argument_count,
+		context,
+		lookup_mode,
+		require_static,
+		detect_ambiguity_in_current_struct);
+	if (result.function || result.ambiguous) {
+		return result;
+	}
+
+	auto struct_type_it = gTypesByName.find(context.struct_info->name);
+	if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+		const TypeInfo* struct_type = struct_type_it->second;
+		auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
+		if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
+			return find_member_function_candidate(
+				template_type_it->second->getStructInfo(),
+				function_name_handle,
+				argument_count,
+				context,
+				lookup_mode,
+				require_static,
+				false);
+		}
+	}
+
+	return result;
+}
+
 Evaluator::ResolvedCurrentStructStaticMember Evaluator::resolve_current_struct_static_member(
 	const IdentifierNode* identifier,
 	const EvaluationContext& context,
@@ -2089,50 +2143,15 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	const bool is_operator_call = (func_name == "operator()");
 
 	auto try_evaluate_current_struct_static_member = [&]() -> std::optional<EvalResult> {
-		if (!context.struct_info) {
-			return std::nullopt;
-		}
-
 		StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
-		bool needs_inst = context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
-				context.struct_info->name, fn_handle);
-		if (needs_inst) {
-			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
-				context.struct_info->name, fn_handle);
-			if (lazy_info_opt.has_value()) {
-				context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
-				LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-					context.struct_info->name, fn_handle);
-			}
-		}
-
-		auto current_match = find_member_function_candidate(
-			context.struct_info,
+		auto current_match = find_current_struct_member_function_candidate(
 			fn_handle,
 			member_func_call.arguments().size(),
 			context,
-				MemberFunctionLookupMode::ConstexprEvaluable,
+			MemberFunctionLookupMode::ConstexprEvaluable,
 			true,
 			false);
 		const FunctionDeclarationNode* matched_function = current_match.function;
-
-		if (!matched_function) {
-			auto base_sit = gTypesByName.find(context.struct_info->name);
-			if (base_sit != gTypesByName.end() && base_sit->second->isTemplateInstantiation()) {
-				auto base_tit = gTypesByName.find(base_sit->second->baseTemplateName());
-				if (base_tit != gTypesByName.end() && base_tit->second->isStruct()) {
-					auto base_match = find_member_function_candidate(
-						base_tit->second->getStructInfo(),
-						fn_handle,
-						member_func_call.arguments().size(),
-						context,
-							MemberFunctionLookupMode::ConstexprEvaluable,
-						true,
-						false);
-					matched_function = base_match.function;
-				}
-			}
-		}
 
 		if (!matched_function) {
 			return std::nullopt;

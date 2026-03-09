@@ -1668,59 +1668,20 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
 	auto tryEvaluateCurrentStructStaticMemberFunction = [&]() -> std::optional<EvalResult> {
-		if (!context.struct_info) {
-			return std::nullopt;
-		}
-
 		const auto& arguments = func_call.arguments();
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-
-		// Trigger lazy member function instantiation if needed
-		if (context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
-				context.struct_info->name, func_name_handle)) {
-			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
-				context.struct_info->name, func_name_handle);
-			if (lazy_info_opt.has_value()) {
-				context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
-				LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-					context.struct_info->name, func_name_handle);
-			}
-		}
-
-		auto current_match = find_member_function_candidate(
-			context.struct_info,
-			func_name_handle,
-			arguments.size(),
-			context,
+			auto current_match = find_current_struct_member_function_candidate(
+				func_name_handle,
+				arguments.size(),
+				context,
 				MemberFunctionLookupMode::ConstexprEvaluable,
-			false,
-			true);
+				false,
+				true);
 		if (current_match.ambiguous) {
 			return EvalResult::error("Ambiguous static member function overload in constant expression");
 		}
 
 		const FunctionDeclarationNode* matched_function = current_match.function;
-
-		// If not found in the instantiated struct, check the base template struct
-		if (!matched_function) {
-			auto struct_type_it = gTypesByName.find(context.struct_info->name);
-			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
-				const TypeInfo* struct_type = struct_type_it->second;
-				auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
-					if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
-						const StructTypeInfo* template_struct_info = template_type_it->second->getStructInfo();
-						auto template_match = find_member_function_candidate(
-							template_struct_info,
-							func_name_handle,
-							arguments.size(),
-							context,
-							MemberFunctionLookupMode::ConstexprEvaluable,
-							false,
-							false);
-						matched_function = template_match.function;
-				}
-			}
-		}
 
 		if (!matched_function) {
 			return std::nullopt;

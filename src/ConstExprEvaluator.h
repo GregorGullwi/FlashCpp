@@ -420,6 +420,13 @@ private:
 		MemberFunctionLookupMode lookup_mode,
 		bool require_static,
 		bool detect_ambiguity);
+	static ResolvedMemberFunctionCandidate find_current_struct_member_function_candidate(
+		StringHandle function_name_handle,
+		size_t argument_count,
+		EvaluationContext& context,
+		MemberFunctionLookupMode lookup_mode,
+		bool require_static,
+		bool detect_ambiguity_in_current_struct);
 	static ResolvedCurrentStructStaticMember resolve_current_struct_static_member(
 		const IdentifierNode* identifier,
 		const EvaluationContext& context,
