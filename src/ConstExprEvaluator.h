@@ -255,6 +255,11 @@ public:
 		EvaluationContext& context);
 	// Shared helper: bind struct members from an InitializerListNode (aggregate init)
 	// and apply default member initializers for any members not covered by the list.
+		static EvalResult materialize_aggregate_object_value(
+			const StructTypeInfo* struct_info,
+			TypeIndex type_index,
+			const InitializerListNode& init_list,
+			EvaluationContext& context);
 	static EvalResult bind_members_from_initializer_list(
 		const StructTypeInfo* struct_info,
 		const InitializerListNode& init_list,
@@ -459,6 +464,10 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 			EvaluationContext& context,
 			std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
+		static std::optional<EvalResult> try_evaluate_bound_member_access(
+			const ExpressionNode& expr,
+			const std::unordered_map<std::string_view, EvalResult>& bindings,
+			EvaluationContext& context);
 		static std::optional<EvalResult> try_evaluate_bound_member_function_call(
 			const ExpressionNode& expr,
 			const std::unordered_map<std::string_view, EvalResult>& bindings,

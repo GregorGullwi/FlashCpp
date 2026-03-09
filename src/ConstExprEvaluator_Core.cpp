@@ -2703,13 +2703,11 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-								EvalResult object_result = EvalResult::from_int(0);
-								object_result.object_type_index = type_spec.type_index();
-								auto bind_members_result = bind_members_from_initializer_list(struct_info, init_list, object_result.object_member_bindings, context);
-								if (!bind_members_result.success()) {
-									return bind_members_result;
-								}
-								bindings[var_name] = std::move(object_result);
+									auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context);
+									if (!object_result.success()) {
+										return object_result;
+									}
+									bindings[var_name] = std::move(object_result);
 								return EvalResult::error("Statement executed (not a return)");
 							}
 						}

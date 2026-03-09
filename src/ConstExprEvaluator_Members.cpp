@@ -208,6 +208,54 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	return std::nullopt;
 }
 
+std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
+	const ExpressionNode& expr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	if (!std::holds_alternative<MemberAccessNode>(expr)) {
+		return std::nullopt;
+	}
+
+	const auto& member_access = std::get<MemberAccessNode>(expr);
+	const ASTNode& object_expr = member_access.object();
+	EvalResult object_result;
+	bool have_object = false;
+
+	if (object_expr.is<IdentifierNode>()) {
+		if (object_expr.as<IdentifierNode>().name() == "this") {
+			return std::nullopt;
+		}
+		auto object_it = bindings.find(object_expr.as<IdentifierNode>().name());
+		if (object_it == bindings.end()) {
+			return std::nullopt;
+		}
+		object_result = object_it->second;
+		have_object = true;
+	} else if (object_expr.is<ExpressionNode>()) {
+		const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
+		if (std::holds_alternative<IdentifierNode>(object_expr_node) &&
+			std::get<IdentifierNode>(object_expr_node).name() == "this") {
+			return std::nullopt;
+		}
+		object_result = evaluate_expression_with_bindings_const(object_expr, bindings, context);
+		if (!object_result.success()) {
+			return object_result;
+		}
+		have_object = true;
+	}
+
+	if (!have_object || object_result.object_type_index == 0) {
+		return std::nullopt;
+	}
+
+	auto member_it = object_result.object_member_bindings.find(member_access.member_name());
+	if (member_it == object_result.object_member_bindings.end()) {
+		return std::nullopt;
+	}
+
+	return member_it->second;
+}
+
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	const ExpressionNode& expr,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -640,27 +688,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return evaluate_identifier(id, context);
 	}
 
-		if (std::holds_alternative<MemberAccessNode>(expr)) {
-			const auto& member_access = std::get<MemberAccessNode>(expr);
-			const ASTNode& object_expr = member_access.object();
-			const IdentifierNode* object_identifier = nullptr;
-			if (object_expr.is<IdentifierNode>()) {
-				object_identifier = &object_expr.as<IdentifierNode>();
-			} else if (object_expr.is<ExpressionNode>()) {
-				const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(object_expr_node)) {
-					object_identifier = &std::get<IdentifierNode>(object_expr_node);
-				}
-			}
-			if (object_identifier && object_identifier->name() != "this") {
-				auto object_it = bindings.find(object_identifier->name());
-				if (object_it != bindings.end() && object_it->second.object_type_index != 0) {
-					auto member_it = object_it->second.object_member_bindings.find(member_access.member_name());
-					if (member_it != object_it->second.object_member_bindings.end()) {
-						return member_it->second;
-					}
-				}
-			}
+		if (auto member_result = try_evaluate_bound_member_access(expr, bindings, context)) {
+			return *member_result;
 		}
 	
 	// For binary operators, recursively evaluate with bindings
@@ -871,27 +900,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 		return evaluate_identifier(id, context);
 	}
 
-		if (std::holds_alternative<MemberAccessNode>(expr)) {
-			const auto& member_access = std::get<MemberAccessNode>(expr);
-			const ASTNode& object_expr = member_access.object();
-			const IdentifierNode* object_identifier = nullptr;
-			if (object_expr.is<IdentifierNode>()) {
-				object_identifier = &object_expr.as<IdentifierNode>();
-			} else if (object_expr.is<ExpressionNode>()) {
-				const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(object_expr_node)) {
-					object_identifier = &std::get<IdentifierNode>(object_expr_node);
-				}
-			}
-			if (object_identifier && object_identifier->name() != "this") {
-				auto object_it = bindings.find(object_identifier->name());
-				if (object_it != bindings.end() && object_it->second.object_type_index != 0) {
-					auto member_it = object_it->second.object_member_bindings.find(member_access.member_name());
-					if (member_it != object_it->second.object_member_bindings.end()) {
-						return member_it->second;
-					}
-				}
-			}
+		if (auto member_result = try_evaluate_bound_member_access(expr, bindings, context)) {
+			return *member_result;
 		}
 	
 	// For binary operators, recursively evaluate with bindings
@@ -2727,6 +2737,24 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 
 // Shared helper: bind struct members from an InitializerListNode (aggregate init)
 // and apply default member initializers for any members not covered by the list.
+EvalResult Evaluator::materialize_aggregate_object_value(
+	const StructTypeInfo* struct_info,
+	TypeIndex type_index,
+	const InitializerListNode& init_list,
+	EvaluationContext& context) {
+	if (!struct_info) {
+		return EvalResult::error("Aggregate object is not a struct");
+	}
+
+	EvalResult object_result = EvalResult::from_int(0);
+	object_result.object_type_index = type_index;
+	auto bind_members_result = bind_members_from_initializer_list(struct_info, init_list, object_result.object_member_bindings, context);
+	if (!bind_members_result.success()) {
+		return bind_members_result;
+	}
+	return object_result;
+}
+
 EvalResult Evaluator::bind_members_from_initializer_list(
 	const StructTypeInfo* struct_info,
 	const InitializerListNode& init_list,
@@ -2735,14 +2763,30 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	// Bind members covered by the initializer list.
 	for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
 		std::string_view mname;
+		const StructMember* member_info = nullptr;
 		if (init_list.is_designated(mi)) {
 			// Designated initializer: use the member name from the designator
 			mname = StringTable::getStringView(init_list.member_name(mi));
+			member_info = struct_info->findMember(mname);
 		} else {
 			// Positional initializer: use the struct member at this index
 			mname = StringTable::getStringView(struct_info->members[mi].getName());
+			member_info = &struct_info->members[mi];
 		}
-		auto val = evaluate(init_list.initializers()[mi], context);
+
+		const ASTNode& initializer = init_list.initializers()[mi];
+		if (member_info && initializer.is<InitializerListNode>() &&
+			(member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
+			member_info->type_index > 0 && member_info->type_index < gTypeInfo.size()) {
+			if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index].getStructInfo()) {
+				auto val = materialize_aggregate_object_value(member_struct_info, member_info->type_index, initializer.as<InitializerListNode>(), context);
+				if (!val.success()) return val;
+				bindings[mname] = std::move(val);
+				continue;
+			}
+		}
+
+		auto val = evaluate(initializer, context);
 		if (!val.success()) return val;
 		bindings[mname] = val;
 	}
