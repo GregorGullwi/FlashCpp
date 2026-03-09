@@ -60,6 +60,20 @@ static_assert(p1.x == 10);  // ✅ Works
 static_assert(p1.y == 20);  // ✅ Works
 ```
 
+### ✅ Local Aggregate Object Member Access in Constexpr Functions (NEW)
+```cpp
+struct Point {
+    int x;
+};
+
+constexpr int f() {
+    Point p{42};
+    return p.x;
+}
+
+static_assert(f() == 42);  // ✅ Works
+```
+
 ### ✅ Complex Initializer Expressions
 ```cpp
 struct Rectangle {
@@ -253,12 +267,27 @@ static_assert(f() == 42);  // ❌ Not currently supported
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
-Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), init-captures, and multi-statement bodies in supported shapes, but capture support is still incomplete.
+Basic constexpr lambdas work, including:
+- Explicit captures
+- Default local captures (`[=]`, `[&]`)
+- Implicit `this` through default member captures in supported shapes
+- Init-captures
+- Multi-statement bodies
+- Simple member reads / constexpr member calls through `this` / `*this` capture
+- Straightforward mutable by-reference local updates
+- Straightforward identifier-based by-reference init-capture alias updates
+- Straightforward mutable shared-object updates through `[this]`
+- Straightforward mutable copy-local updates through `[*this]`
+- Straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object
+- Straightforward return of lambda closure objects from constexpr functions with repeated calls after local initialization
+- Straightforward returned `[*this]` member closures after local aggregate object initialization
+- Straightforward nested lambdas that capture enclosing lambda/object state in supported shapes
 
-**Currently unsupported in constexpr lambda evaluation:**
+Capture support is still incomplete beyond those supported shapes.
 
-- capture of `this`
-- capture of `*this`
+**Still partial in constexpr lambda evaluation:**
+
+- complex interactions through captured locals / `this` / `*this` (for example, relying on richer aliasing/object-identity behavior, non-identifier init-capture aliasing semantics, richer nested closure aliasing/copying behavior, or more advanced member-function dispatch through the captured object)
 
 ```cpp
 constexpr int base = 10;
@@ -273,13 +302,14 @@ constexpr int f() {
 struct S {
     int value = 42;
     constexpr int f() const {
-        auto bad = [this]() { return value; };
-        return bad();
+        auto ok = [=]() { return read(); };
+        return ok();
     }
+    constexpr int read() const { return value; }
 };
 ```
 
-**Workaround:** Prefer capturing concrete constexpr values instead of `this` / `*this`.
+**Workaround:** If you hit a remaining edge case, prefer capturing concrete constexpr values instead of depending on richer `this` / `*this` object behavior.
 
 ### ⚠️ Some Constant-Expression Forms Are Still Partial or Unsupported
 
@@ -308,6 +338,7 @@ These may currently fail with a generic "expression type not supported in consta
 When evaluating `p1.x` in a constant expression:
 
 1. **Identify the object**: `p1` must refer to a constexpr object/value source
+	- this now includes straightforward local aggregate objects already materialized in bound constexpr evaluation state
 2. **Get the initializer**: Look up `p1` and obtain its constexpr initializer
 3. **Resolve the object shape**: Handle constructor-initialized and aggregate-initialized forms
 4. **Locate the member**: Find the member `x` in the object initializer data
@@ -352,10 +383,11 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
 - ✅ Unary `-` and `+` operators
 - ✅ Constexpr member function calls, including multi-statement bodies in supported shapes
-- ✅ Basic constexpr lambdas with explicit captures in supported shapes
+- ✅ Constexpr lambdas with explicit captures, default captures, and current supported `this` / `*this` shapes
 - ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`)
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
+- ✅ Direct member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`)
 - ✅ Direct/member array subscript support in current supported shapes
 - ✅ `noexcept(expr)` in constexpr evaluation
 - ✅ `offsetof(T, member)` for direct data-member access in constexpr evaluation
@@ -368,7 +400,14 @@ Potential areas for enhancement (in order of complexity):
 ### Hard
 - ❌ Constructor body statement execution
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
-- ❌ Implicit lambda captures (`[=]`, `[&]`) and `this` / `*this` capture in constexpr lambdas
+- ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
+  - straightforward by-reference locals
+  - straightforward identifier-based by-reference init-capture aliases
+  - straightforward `[this]` / `[*this]` mutation behavior
+  - straightforward repeated-call mutable closure-local state
+  - straightforward returned closure-object state transfer
+  - straightforward returned `[*this]` member closures from local aggregate objects
+  - straightforward nested lambdas over enclosing state
 - ❌ `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
@@ -377,10 +416,20 @@ Potential areas for enhancement (in order of complexity):
 ### For Users
 
 1. **Use member initializer lists** instead of constructor body assignments when you need constexpr evaluation
-2. **Nested member access is okay in supported shapes** - prefer simple, directly initialized object graphs
+2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value`; prefer simple, directly initialized object graphs
 3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
-5. **Use explicit lambda captures** - avoid `[=]`, `[&]`, and `this`-capture in constexpr code paths
+5. **Use straightforward lambda captures** - the following work best:
+   - explicit captures
+   - straightforward local `&` captures
+   - straightforward identifier-based `&name = other` init-captures
+   - straightforward mutable by-value/init-capture local state
+   - straightforward returned closure objects from constexpr helper functions
+   - straightforward returned `[*this]` member closures from local aggregate objects
+   - local/default member captures
+   - simple `this` / `*this` member reads/calls
+   - straightforward nested lambdas over enclosing captured/member state
+   - straightforward mutable `[this]` / `[*this]` updates
 6. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
 
 ### For Contributors
@@ -471,12 +520,14 @@ constexpr int f() {
 }
 static_assert(f() == 42);  // Dynamic allocation not supported
 
-// Bad: Implicit capture / this-capture in constexpr lambdas
+// Still risky: richer captured-object aliasing/identity behavior in constexpr lambdas
 struct CaptureExample {
     int x = 7;
-    constexpr int value() const {
-        auto bad = [this]() { return x; };
-        return bad();
+    constexpr int bump() { x += 1; return x; }
+    constexpr int value() {
+        auto by_ref = [this]() mutable { return this->bump(); };
+        auto by_copy = [*this]() mutable { return this->bump(); };
+        return by_ref() + by_copy();
     }
 };
 

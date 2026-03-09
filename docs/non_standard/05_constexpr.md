@@ -87,30 +87,30 @@ Simple `a.b.c` chains work; function-result or cast-result bases do not.
 
 ---
 
-### 2.2 `[=]` / `[&]` Not Supported in Constexpr Lambda Evaluation ❌
+### 2.2 `[=]` / `[&]` Constexpr Lambda Capture Is Supported in Current Shapes ✅
 
 **Standard (C++20 [expr.const]):** A `constexpr` lambda may use implicit captures as long as
 all odr-used captured entities satisfy constant-expression constraints.
 
-**FlashCpp:** The constexpr evaluator returns a hard error for `AllByValue` and
-`AllByReference` capture kinds:
+**FlashCpp:** Capture-all lambdas are expanded during parsing into concrete captures in the
+supported cases. Existing constexpr regressions cover local default captures and default member
+captures that imply `this` in supported shapes.
 
-> *"Implicit capture [=] or [&] not supported in constexpr lambdas – use explicit captures"*
-
-**Location:** `src/ConstExprEvaluator_Core.cpp:989–994`
+**Location:** `src/Parser_Expr_ControlFlowStmt.cpp`, `docs/CONSTEXPR_LIMITATIONS.md:254–282`
 
 ---
 
-### 2.3 `[this]` and `[*this]` Captures Not Supported in Constexpr Context ❌
+### 2.3 `[this]` and `[*this]` Constexpr Lambda Capture Is Partial ⚠️
 
 **Standard (C++20 [expr.const]):** A `constexpr` lambda in a `constexpr` member function may
 capture `this` or `*this`.
 
-**FlashCpp:** The constexpr evaluator returns a hard error:
+**FlashCpp:** Basic supported shapes now work, including simple member reads/calls through
+explicit or implicit `this` capture, straightforward mutable shared-object updates through
+`[this]`, and straightforward mutable `[*this]` copy-local updates. Richer captured-object
+aliasing/identity behavior still remains partial.
 
-> *"Capture of 'this' not supported in constexpr lambdas"*
-
-**Location:** `src/ConstExprEvaluator_Core.cpp:996–1000`
+**Location:** `src/ConstExprEvaluator_Core.cpp`, `src/ConstExprEvaluator_Members.cpp`, `docs/CONSTEXPR_LIMITATIONS.md:254–282`
 
 ---
 
