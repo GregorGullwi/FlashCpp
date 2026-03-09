@@ -8,7 +8,6 @@
 #include <vector>
 #include <optional>
 #include <unordered_map>
-#include <functional>
 
 // Conversion rank for overload resolution
 // Lower rank = better match
@@ -1020,7 +1019,9 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		return can_convert_type(arg_type, param_type).rank;
 	};
 
-	// Determine LHS actual type
+	// Determine LHS actual type from gTypeInfo. If the type entry is invalid/void
+	// (e.g., template instantiation whose type_ wasn't explicitly set), treat as Struct
+	// since only struct types reach operator overload resolution.
 	Type left_type = Type::Void;
 	if (left_type_index > 0 && left_type_index < type_info_size) {
 		left_type = gTypeInfo[left_type_index].type_;
@@ -1028,7 +1029,8 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	}
 
 	// --- 1. Gather member-function candidates (recursive through base classes) ---
-	std::function<void(TypeIndex)> gatherMemberCandidates = [&](TypeIndex struct_idx) {
+	// Uses self-referencing lambda pattern to avoid std::function overhead.
+	auto gatherMemberCandidates = [&](auto& self, TypeIndex struct_idx) -> void {
 		if (struct_idx == 0 || struct_idx >= type_info_size) return;
 		const StructTypeInfo* si = gTypeInfo[struct_idx].getStructInfo();
 		if (!si) return;
@@ -1057,11 +1059,11 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		// Recurse into base classes
 		for (const auto& base_spec : si->base_classes) {
 			if (base_spec.type_index > 0 && base_spec.type_index < type_info_size) {
-				gatherMemberCandidates(base_spec.type_index);
+				self(self, base_spec.type_index);
 			}
 		}
 	};
-	gatherMemberCandidates(left_type_index);
+	gatherMemberCandidates(gatherMemberCandidates, left_type_index);
 
 	// --- 2. Gather free-function candidates from symbol table ---
 	std::string op_func_name = "operator";
