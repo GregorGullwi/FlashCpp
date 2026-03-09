@@ -89,7 +89,14 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 
 	auto bound_callable = bindings.find(func_name);
 	if (bound_callable != bindings.end() && bound_callable->second.callable_var_decl) {
-		return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings);
+		EvalResult* mutable_bound_callable = nullptr;
+		if (mutable_bindings) {
+			auto mutable_it = mutable_bindings->find(func_name);
+			if (mutable_it != mutable_bindings->end()) {
+				mutable_bound_callable = &mutable_it->second;
+			}
+		}
+		return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
 	}
 
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
@@ -177,7 +184,14 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	if (const IdentifierNode* callable_id = extract_callable_identifier()) {
 		auto callable_it = bindings.find(callable_id->name());
 		if (callable_it != bindings.end() && callable_it->second.callable_var_decl) {
-			return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings);
+			EvalResult* mutable_bound_callable = nullptr;
+			if (mutable_bindings) {
+				auto mutable_it = mutable_bindings->find(callable_id->name());
+				if (mutable_it != mutable_bindings->end()) {
+					mutable_bound_callable = &mutable_it->second;
+				}
+			}
+			return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
 		}
 	}
 

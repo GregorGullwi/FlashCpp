@@ -1195,7 +1195,8 @@ EvalResult Evaluator::evaluate_lambda_captures(
 	const std::vector<LambdaCaptureNode>& captures,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
-	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings) {
 	
 	for (const auto& capture : captures) {
 		using CaptureKind = LambdaCaptureNode::CaptureKind;
@@ -1205,6 +1206,13 @@ EvalResult Evaluator::evaluate_lambda_captures(
 			case CaptureKind::ByReference: {
 				// Named capture: [x] or [&x]
 				std::string_view var_name = capture.identifier_name();
+				if (capture.kind() == CaptureKind::ByValue && stored_capture_bindings) {
+					auto stored_it = stored_capture_bindings->find(var_name);
+					if (stored_it != stored_capture_bindings->end()) {
+						bindings[var_name] = stored_it->second;
+						break;
+					}
+				}
 				
 				// Check for init-capture: [x = expr]
 				if (capture.has_initializer()) {
@@ -1283,6 +1291,13 @@ EvalResult Evaluator::evaluate_lambda_captures(
 
 					for (const auto& member : context.struct_info->members) {
 						std::string_view member_name = StringTable::getStringView(member.getName());
+						if (capture.kind() == CaptureKind::CopyThis && stored_capture_bindings) {
+							auto stored_it = stored_capture_bindings->find(member_name);
+							if (stored_it != stored_capture_bindings->end()) {
+								bindings[member_name] = stored_it->second;
+								continue;
+							}
+						}
 						auto outer_it = outer_bindings->find(member_name);
 						if (outer_it != outer_bindings->end()) {
 							bindings[member_name] = outer_it->second;
@@ -1305,12 +1320,16 @@ EvalResult Evaluator::evaluate_callable_object(
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
-	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings) {
+	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings,
+	EvalResult* callable_state) {
 	
 	// Check for lambda
 	const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
 	if (lambda) {
-		return evaluate_lambda_call(*lambda, arguments, context, outer_bindings, mutable_outer_bindings);
+		const auto* stored_capture_bindings = callable_state ? &callable_state->callable_bindings : nullptr;
+		auto* mutable_stored_capture_bindings = callable_state ? &callable_state->callable_bindings : nullptr;
+		return evaluate_lambda_call(*lambda, arguments, context, outer_bindings, mutable_outer_bindings,
+			stored_capture_bindings, mutable_stored_capture_bindings);
 	}
 	
 	// Check for ConstructorCallNode (user-defined functor), handling both direct storage
@@ -1526,7 +1545,9 @@ EvalResult Evaluator::evaluate_lambda_call(
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
-	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings) {
+	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings,
+	const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_stored_capture_bindings) {
 	
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
@@ -1555,16 +1576,26 @@ EvalResult Evaluator::evaluate_lambda_call(
 	
 	// Handle captures - evaluate each captured variable and add to bindings
 	const auto& captures = lambda.captures();
-	auto capture_result = evaluate_lambda_captures(captures, bindings, context, outer_bindings);
+	auto capture_result = evaluate_lambda_captures(captures, bindings, context, outer_bindings, stored_capture_bindings);
 	if (!capture_result.success()) {
 		return capture_result;
 	}
 
 	bool captures_this_by_reference = false;
+	bool captures_copy_this = false;
 	std::vector<std::string_view> by_reference_capture_names;
+	std::vector<std::string_view> by_value_capture_names;
 	for (const auto& capture : captures) {
 		if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
 			captures_this_by_reference = true;
+			continue;
+		}
+		if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+			captures_copy_this = true;
+			continue;
+		}
+		if (capture.kind() == LambdaCaptureNode::CaptureKind::ByValue) {
+			by_value_capture_names.push_back(capture.identifier_name());
 			continue;
 		}
 		if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference && !capture.has_initializer()) {
@@ -1594,24 +1625,41 @@ EvalResult Evaluator::evaluate_lambda_call(
 		return EvalResult::error("Invalid lambda body in constant expression");
 	}
 	
-	context.current_depth--;
+		context.current_depth--;
+		if (result.success() && mutable_stored_capture_bindings) {
+			for (std::string_view capture_name : by_value_capture_names) {
+				auto binding_it = bindings.find(capture_name);
+				if (binding_it != bindings.end()) {
+					(*mutable_stored_capture_bindings)[capture_name] = binding_it->second;
+				}
+			}
+			if (captures_copy_this && context.struct_info) {
+				for (const auto& member : context.struct_info->members) {
+					std::string_view member_name = StringTable::getStringView(member.getName());
+					auto binding_it = bindings.find(member_name);
+					if (binding_it != bindings.end()) {
+						(*mutable_stored_capture_bindings)[member_name] = binding_it->second;
+					}
+				}
+			}
+		}
 		if (result.success() && mutable_outer_bindings) {
 			for (std::string_view capture_name : by_reference_capture_names) {
 				auto binding_it = bindings.find(capture_name);
 				if (binding_it != bindings.end()) {
 					(*mutable_outer_bindings)[capture_name] = binding_it->second;
 				}
-		}
-		}
-	if (result.success() && captures_this_by_reference && mutable_outer_bindings && context.struct_info) {
-		for (const auto& member : context.struct_info->members) {
-			std::string_view member_name = StringTable::getStringView(member.getName());
-			auto binding_it = bindings.find(member_name);
-			if (binding_it != bindings.end()) {
-				(*mutable_outer_bindings)[member_name] = binding_it->second;
 			}
 		}
-	}
+		if (result.success() && captures_this_by_reference && mutable_outer_bindings && context.struct_info) {
+			for (const auto& member : context.struct_info->members) {
+				std::string_view member_name = StringTable::getStringView(member.getName());
+				auto binding_it = bindings.find(member_name);
+				if (binding_it != bindings.end()) {
+					(*mutable_outer_bindings)[member_name] = binding_it->second;
+				}
+			}
+		}
 	return result;
 }
 
@@ -2576,7 +2624,15 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			const ASTNode& init_expr = var_decl.initializer().value();
 
 			if (extract_lambda_from_initializer(var_decl.initializer())) {
-				bindings[var_name] = EvalResult::from_callable(var_decl);
+					EvalResult callable_result = EvalResult::from_callable(var_decl);
+					const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
+					if (lambda) {
+						auto capture_result = evaluate_lambda_captures(lambda->captures(), callable_result.callable_bindings, context, &bindings);
+						if (!capture_result.success()) {
+							return capture_result;
+						}
+					}
+					bindings[var_name] = std::move(callable_result);
 				return EvalResult::error("Statement executed (not a return)");
 			}
 			

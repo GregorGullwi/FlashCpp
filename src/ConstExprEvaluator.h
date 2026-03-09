@@ -69,9 +69,10 @@ struct EvalResult {
 	EvalErrorType error_type = EvalErrorType::None;
 	
 	// Array support for local arrays in constexpr functions
-	bool is_array = false;
-	std::vector<int64_t> array_values;
-	const VariableDeclarationNode* callable_var_decl = nullptr;
+		bool is_array = false;
+		std::vector<int64_t> array_values;
+		const VariableDeclarationNode* callable_var_decl = nullptr;
+		std::unordered_map<std::string_view, EvalResult> callable_bindings;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -79,29 +80,29 @@ struct EvalResult {
 	}
 
 	// Convenience constructors
-	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr};
-	}
+		static EvalResult from_bool(bool val) {
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, {}};
+		}
 
-	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr};
-	}
+		static EvalResult from_int(long long val) {
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, {}};
+		}
 
-	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr};
-	}
+		static EvalResult from_uint(unsigned long long val) {
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, {}};
+		}
 
-	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr};
-	}
+		static EvalResult from_double(double val) {
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, {}};
+		}
 
-	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl};
-	}
+		static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
+			return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl, {}};
+		}
 
-	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, nullptr};
-	}
+		static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
+			return EvalResult{false, msg, type, false, {}, nullptr, {}};
+		}
 
 	// Convenience helpers for common operations
 	bool as_bool() const {
@@ -351,19 +352,23 @@ private:
 		const std::vector<LambdaCaptureNode>& captures,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context,
-		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
+			const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings = nullptr);
 	static EvalResult evaluate_callable_object(
 		const VariableDeclarationNode& var_decl,
 		const ChunkedVector<ASTNode>& arguments,
 		EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
-			std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings = nullptr);
+			std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings = nullptr,
+			EvalResult* callable_state = nullptr);
 	static EvalResult evaluate_lambda_call(
 		const LambdaExpressionNode& lambda,
 		const ChunkedVector<ASTNode>& arguments,
 		EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
-			std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings = nullptr);
+			std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings = nullptr,
+			const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings = nullptr,
+			std::unordered_map<std::string_view, EvalResult>* mutable_stored_capture_bindings = nullptr);
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
