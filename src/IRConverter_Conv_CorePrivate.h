@@ -1272,6 +1272,8 @@
 	
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
+		current_function_reserved_catch_ref_temp_size_ = 0;
+		current_function_reserved_catch_ref_temps_.clear();
 
 		auto it = function_spans.find(func_name);
 		if (it == function_spans.end()) {
@@ -1289,16 +1291,16 @@
 		// Clear temp_var_sizes for this function
 		temp_var_sizes_.clear();
 
-			// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
-			// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
-			// destructible locals that require unwind actions even without a local catch.
-			// Plain DestructorCall only describes normal in-function scope cleanup and must
-			// not force the EH-style prologue on its own, otherwise the emitted prologue can
-			// diverge from the writer-side unwind-code selection.
+		// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
+		// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
+		// destructible locals that require unwind actions even without a local catch.
+		// Plain DestructorCall only describes normal in-function scope cleanup and must
+		// not force the EH-style prologue on its own, otherwise the emitted prologue can
+		// diverge from the writer-side unwind-code selection.
 		current_function_has_cpp_eh_ = false;
 		for (const auto& instruction : it->second) {
-				if (instruction.getOpcode() == IrOpcode::TryBegin ||
-				    instruction.getOpcode() == IrOpcode::FunctionCleanupLP) {
+			if (instruction.getOpcode() == IrOpcode::TryBegin ||
+			    instruction.getOpcode() == IrOpcode::FunctionCleanupLP) {
 				current_function_has_cpp_eh_ = true;
 				break;
 			}
@@ -1440,6 +1442,28 @@
 				// For typed payload instructions, try common payload types
 				if (instruction.hasTypedPayload()) {
 					try {
+						if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+							if (const CatchBeginOp* catch_op = std::any_cast<CatchBeginOp>(&instruction.getTypedPayload())) {
+								if (catch_op->exception_temp.var_number != 0 &&
+								    (catch_op->is_reference() || catch_op->is_rvalue_reference())) {
+									StringHandle catch_temp_handle = StringTable::getOrInternStringHandle(catch_op->exception_temp.name());
+									bool already_reserved = false;
+									for (StringHandle existing : current_function_reserved_catch_ref_temps_) {
+										if (existing == catch_temp_handle) {
+											already_reserved = true;
+											break;
+										}
+									}
+									if (!already_reserved) {
+										current_function_reserved_catch_ref_temps_.push_back(catch_temp_handle);
+										current_function_reserved_catch_ref_temp_size_ += 8;
+									}
+									temp_var_sizes_[catch_temp_handle] = 64;
+									handled_by_typed_payload = true;
+								}
+							}
+						}
+
 						// Try BinaryOp (arithmetic, comparisons, logic)
 						if (const BinaryOp* bin_op = std::any_cast<BinaryOp>(&instruction.getTypedPayload())) {
 							if (std::holds_alternative<TempVar>(bin_op->result)) {
@@ -1575,6 +1599,12 @@
 			var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});
 		}
 
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (current_function_reserved_catch_ref_temp_size_ != 0) {
+				stack_offset -= static_cast<int_fast32_t>(current_function_reserved_catch_ref_temp_size_);
+			}
+		}
+
 		// Calculate space needed for TempVars
 		// Each TempVar uses 8 bytes (64-bit alignment)
 		// Calculate space for temp vars using actual sizes, not just count * 8
@@ -1627,10 +1657,15 @@
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
 			StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
-			auto& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(lookup_handle);
-			if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
-				int existing_offset = it->second.offset;
+			auto* current_scope = &variable_scopes.back();
+			for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
+				auto existing_it = scope_it->variables.find(lookup_handle);
+				if (existing_it == scope_it->variables.end() || existing_it->second.offset == INT_MIN) {
+					continue;
+				}
+
+				int existing_offset = existing_it->second.offset;
+				current_scope->variables[lookup_handle].offset = existing_offset;
 				
 				// Check if we need to extend the allocation for a larger size
 				// This can happen when a TempVar is first allocated with default size,
@@ -1639,11 +1674,11 @@
 				size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
 				
 				int32_t end_offset = existing_offset - size_in_bytes;
-				if (end_offset < variable_scopes.back().scope_stack_space) {
+				if (end_offset < current_scope->scope_stack_space) {
 					FLASH_LOG_FORMAT(Codegen, Debug,
 						"Extending scope_stack_space from {} to {} for pre-allocated {} (offset={}, size={})",
-						variable_scopes.back().scope_stack_space, end_offset, tempVar.name(), existing_offset, size_in_bytes);
-					variable_scopes.back().scope_stack_space = end_offset;
+						current_scope->scope_stack_space, end_offset, tempVar.name(), existing_offset, size_in_bytes);
+					current_scope->scope_stack_space = end_offset;
 				}
 				
 				FLASH_LOG_FORMAT(Codegen, Debug,
@@ -1656,7 +1691,8 @@
 			// allocated named variable (tracked in handleVariableDecl)
 			// This handles the duplicate entry problem where named variables get both a name entry
 			// and a TempVar entry
-			if (it != variable_scopes.back().variables.end() && it->second.offset == INT_MIN) {
+			auto it = current_scope->variables.find(lookup_handle);
+			if (it != current_scope->variables.end() && it->second.offset == INT_MIN) {
 				if (last_allocated_variable_name_.isValid() && last_allocated_variable_offset_ != 0) {
 					// Use the last allocated variable's offset for this TempVar
 					// Update the TempVar entry so future lookups are O(1)

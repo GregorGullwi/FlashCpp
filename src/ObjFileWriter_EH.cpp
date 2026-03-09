@@ -678,18 +678,18 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 			}
 			// For catch(...), pType remains 0 (no relocation needed)
 			
-			// catchObjOffset (dispCatchObj).
-			// The CRT copies the exception object to [EstablisherFrame + dispCatchObj].
-			// EstablisherFrame = RBP - effective_frame_size.
-			// The catch variable is at [rbp + catch_obj_offset] (catch_obj_offset is negative).
-			// So: (RBP - effective_frame_size) + dispCatchObj = RBP + catch_obj_offset
-			//     dispCatchObj = catch_obj_offset + effective_frame_size
-			int32_t catch_offset = handler.catch_obj_offset;
-			if (catch_offset != 0) {
-				catch_offset += static_cast<int32_t>(effective_frame_size);
-			}
-			appendLE_xdata(xdata, static_cast<uint32_t>(catch_offset));
-			
+				// catchObjOffset (dispCatchObj).
+				// The CRT copies the exception object to [EstablisherFrame + dispCatchObj].
+				// EstablisherFrame = RBP - effective_frame_size.
+				// The catch variable is at [rbp + catch_obj_offset] (catch_obj_offset is negative).
+				// So: (RBP - effective_frame_size) + dispCatchObj = RBP + catch_obj_offset
+				//     dispCatchObj = catch_obj_offset + effective_frame_size
+				int32_t catch_offset = handler.catch_obj_offset;
+				if (catch_offset != 0) {
+					catch_offset += static_cast<int32_t>(effective_frame_size);
+				}
+				appendLE_xdata(xdata, static_cast<uint32_t>(catch_offset));
+
 				// addressOfHandler - RVA of catch handler entry.
 				// Use a dedicated catch symbol to mirror MSVC's handler map relocation style.
 				uint32_t funclet_entry_offset = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
@@ -1068,37 +1068,37 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 				function_start + parent_range.end,
 				xdata_offset
 			});
-		} else {
-			// Post-catch parent ranges: need UNWIND_INFO with SizeOfProlog=0
-			if (!has_post_catch_xdata) {
-				// Create a new UNWIND_INFO: same unwind codes and frame register,
-				// but keep the same C++ handler/FuncInfo linkage with SizeOfProlog=0.
-				std::vector<char> post_catch_xdata = {
-					static_cast<char>(0x01 | (post_catch_unwind_flags << 3)),
-					static_cast<char>(0x00),              // SizeOfProlog = 0
-					static_cast<char>(unwind_info.count_of_codes),    // Same count of unwind codes
-					static_cast<char>(unwind_info.frame_reg_and_offset) // Same frame register and offset
-				};
-				for (auto b : unwind_info.codes) {
-					post_catch_xdata.push_back(static_cast<char>(b));
+			} else {
+				// Post-catch parent ranges: need UNWIND_INFO with SizeOfProlog=0
+				if (!has_post_catch_xdata) {
+					// Create a new UNWIND_INFO: same unwind codes and frame register,
+					// but keep the same C++ handler/FuncInfo linkage with SizeOfProlog=0.
+					std::vector<char> post_catch_xdata = {
+						static_cast<char>(0x01 | (post_catch_unwind_flags << 3)),
+						static_cast<char>(0x00),              // SizeOfProlog = 0
+						static_cast<char>(unwind_info.count_of_codes),    // Same count of unwind codes
+						static_cast<char>(unwind_info.frame_reg_and_offset) // Same frame register and offset
+					};
+					for (auto b : unwind_info.codes) {
+						post_catch_xdata.push_back(static_cast<char>(b));
+					}
+					uint32_t post_catch_handler_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
+					appendLE_xdata(post_catch_xdata, uint32_t(0));
+					uint32_t post_catch_funcinfo_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
+					appendLE_xdata(post_catch_xdata, xdata_offset + cpp_funcinfo_local_offset);
+					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+					post_catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
+					add_data(post_catch_xdata, SectionType::XDATA);
+					add_xdata_relocation(post_catch_xdata_offset + post_catch_handler_rva_local, "__CxxFrameHandler3");
+					add_cpp_funcinfo_relocation(post_catch_xdata_offset, post_catch_funcinfo_rva_local);
+					has_post_catch_xdata = true;
 				}
-				uint32_t post_catch_handler_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
-				appendLE_xdata(post_catch_xdata, uint32_t(0));
-				uint32_t post_catch_funcinfo_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
-				appendLE_xdata(post_catch_xdata, xdata_offset + cpp_funcinfo_local_offset);
-				auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-				post_catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
-				add_data(post_catch_xdata, SectionType::XDATA);
-				add_xdata_relocation(post_catch_xdata_offset + post_catch_handler_rva_local, "__CxxFrameHandler3");
-				add_cpp_funcinfo_relocation(post_catch_xdata_offset, post_catch_funcinfo_rva_local);
-				has_post_catch_xdata = true;
+				pending_pdata_entries.push_back({
+					function_start + parent_range.start,
+					function_start + parent_range.end,
+					post_catch_xdata_offset
+				});
 			}
-			pending_pdata_entries.push_back({
-				function_start + parent_range.start,
-				function_start + parent_range.end,
-				post_catch_xdata_offset
-			});
-		}
 	}
 
 	// Emit PDATA/XDATA for C++ catch funclets.
@@ -1124,7 +1124,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 					//   5: push rbp            (1 byte)   -> UWOP_PUSH_NONVOL @ offset 6
 					//   6: sub rsp, 32         (4 bytes)  -> UWOP_ALLOC_SMALL @ offset 10, info=3
 					// The following LEA RBP,[RDX+disp] is not included in SizeOfProlog.
-				std::vector<char> catch_xdata = {
+					std::vector<char> catch_xdata = {
 					static_cast<char>(0x19), // Version=1, Flags=3 (EHANDLER | UHANDLER)
 						static_cast<char>(0x0A), // SizeOfProlog = 10
 					static_cast<char>(0x02), // CountOfCodes = 2

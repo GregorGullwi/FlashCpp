@@ -678,6 +678,8 @@
 	void resetFunctionState() {
 		max_temp_var_index_ = 0;
 		next_temp_var_offset_ = 8;
+		current_function_reserved_catch_ref_temp_size_ = 0;
+		current_function_reserved_catch_ref_temps_.clear();
 		current_function_try_blocks_.clear();
 		current_try_block_ = nullptr;
 		try_block_nesting_stack_.clear();
@@ -698,10 +700,12 @@
 		catch_return_bridges_.clear();
 		catch_continuation_fixup_map_.clear();
 		catch_continuation_sub_rsp_patches_.clear();
+		catch_continuation_lea_rbp_patches_.clear();
 		eh_prologue_lea_rbp_offset_ = 0;
+		eh_prologue_extra_sub_rsp_offset_ = 0;
 		catch_funclet_lea_rbp_patches_.clear();
-			cleanup_funclet_lea_rbp_patches_.clear();
-			pending_windows_function_cleanup_vars_.clear();
+		cleanup_funclet_lea_rbp_patches_.clear();
+		pending_windows_function_cleanup_vars_.clear();
 		loop_context_stack_.clear();
 		inside_catch_handler_ = false;
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -791,10 +795,10 @@
 			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
 			// Some catch temp offsets are reserved through EH paths and may not be reflected in
 			// scope_stack_space at this point.
-				for (const auto& try_block : current_function_try_blocks_) {
+			for (const auto& try_block : current_function_try_blocks_) {
 				for (const auto& handler : try_block.catch_handlers) {
-						if (handler.catch_obj_stack_offset < 0) {
-							size_t required_stack = static_cast<size_t>(-handler.catch_obj_stack_offset);
+					if (handler.catch_obj_stack_offset < 0) {
+						size_t required_stack = static_cast<size_t>(-handler.catch_obj_stack_offset);
 						if (required_stack > total_stack) {
 							total_stack = required_stack;
 						}
@@ -824,50 +828,88 @@
 
 				emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 			
-			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
-			if (current_function_prologue_offset_ > 0) {
-				uint32_t patch_offset = current_function_prologue_offset_ + 3;
-				const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<uint32_t>(total_stack));
-				for (int i = 0; i < 4; i++) {
-					textSectionData[patch_offset + i] = bytes[i];
-				}
-			}
+				uint32_t eh_effective_frame_size = current_function_has_cpp_eh_
+					? static_cast<uint32_t>(std::min<uint32_t>(static_cast<uint32_t>(total_stack / 16), 15u) * 16)
+					: static_cast<uint32_t>(total_stack);
+				uint32_t eh_extra_stack_size = current_function_has_cpp_eh_
+					? static_cast<uint32_t>(total_stack) - eh_effective_frame_size
+					: 0;
 
-			// Patch catch continuation fixup SUB RSP instructions with the same stack size
-			for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
-				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
-				for (int i = 0; i < 4; i++) {
-					textSectionData[fixup_patch_offset + i] = bytes[i];
+				// Patch the main prologue SUB RSP immediate.
+				if (current_function_prologue_offset_ > 0) {
+					uint32_t patch_offset = current_function_prologue_offset_ + 3;
+					uint32_t prologue_stack = current_function_has_cpp_eh_ ? eh_effective_frame_size : static_cast<uint32_t>(total_stack);
+					const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(prologue_stack);
+					for (int i = 0; i < 4; i++) {
+						textSectionData[patch_offset + i] = bytes[i];
+					}
 				}
-			}
-			catch_continuation_sub_rsp_patches_.clear();
 
-			// Patch C++ EH prologue LEA RBP, [RSP + total_stack]
-			// The LEA instruction is: 48 8D AC 24 XX XX XX XX
-			// The imm32 starts at eh_prologue_lea_rbp_offset_ + 4
-			if (eh_prologue_lea_rbp_offset_ > 0) {
-				uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
-				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
-				for (int i = 0; i < 4; i++) {
-					textSectionData[lea_patch_offset + i] = bytes[i];
+				// Patch the optional post-frame SUB RSP in the EH prologue.
+				if (eh_prologue_extra_sub_rsp_offset_ > 0) {
+					if (eh_extra_stack_size > 0) {
+						uint32_t patch_offset = eh_prologue_extra_sub_rsp_offset_ + 3;
+						const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(eh_extra_stack_size);
+						for (int i = 0; i < 4; i++) {
+							textSectionData[patch_offset + i] = bytes[i];
+						}
+					} else {
+						static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
+						for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
+							textSectionData[eh_prologue_extra_sub_rsp_offset_ + i] = kSevenByteNop[i];
+						}
+					}
 				}
-			}
 
-			// Patch catch funclet LEA RBP, [RDX + total_stack] instructions
-			// The LEA instruction is: 48 8D AA XX XX XX XX
-			// The imm32 starts at offset + 3
-			for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
-				uint32_t lea_patch_offset = funclet_lea_offset + 3;
-				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
-				for (int i = 0; i < 4; i++) {
-					textSectionData[lea_patch_offset + i] = bytes[i];
+				// Patch catch continuation fixups to restore any post-frame stack space
+				// that lives below the establisher frame before resuming parent code.
+				for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
+					if (eh_extra_stack_size > 0) {
+						const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(eh_extra_stack_size);
+						for (int i = 0; i < 4; i++) {
+							textSectionData[fixup_patch_offset + i] = bytes[i];
+						}
+					} else {
+						uint32_t insn_offset = fixup_patch_offset - 3;
+						static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
+						for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
+							textSectionData[insn_offset + i] = kSevenByteNop[i];
+						}
+					}
 				}
-			}
-			catch_funclet_lea_rbp_patches_.clear();
+				catch_continuation_sub_rsp_patches_.clear();
+
+				for (auto fixup_patch_offset : catch_continuation_lea_rbp_patches_) {
+					const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+					for (int i = 0; i < 4; i++) {
+						textSectionData[fixup_patch_offset + i] = bytes[i];
+					}
+				}
+				catch_continuation_lea_rbp_patches_.clear();
+
+				// Patch C++ EH prologue LEA RBP, [RSP + effective_frame_size]
+				if (eh_prologue_lea_rbp_offset_ > 0) {
+					uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
+					const auto bytes = std::bit_cast<std::array<char, 4>>(eh_effective_frame_size);
+					for (int i = 0; i < 4; i++) {
+						textSectionData[lea_patch_offset + i] = bytes[i];
+					}
+				}
+
+				// Patch catch/cleanup funclet LEA RBP, [RDX + effective_frame_size] instructions.
+				uint32_t funclet_parent_rbp_disp = eh_effective_frame_size;
+				for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
+					uint32_t lea_patch_offset = funclet_lea_offset + 3;
+					const auto bytes = std::bit_cast<std::array<char, 4>>(funclet_parent_rbp_disp);
+					for (int i = 0; i < 4; i++) {
+						textSectionData[lea_patch_offset + i] = bytes[i];
+					}
+				}
+				catch_funclet_lea_rbp_patches_.clear();
 
 				for (auto funclet_lea_offset : cleanup_funclet_lea_rbp_patches_) {
 					uint32_t lea_patch_offset = funclet_lea_offset + 3;
-					const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+					const auto bytes = std::bit_cast<std::array<char, 4>>(funclet_parent_rbp_disp);
 					for (int i = 0; i < 4; i++) {
 						textSectionData[lea_patch_offset + i] = bytes[i];
 					}
@@ -1191,11 +1233,16 @@
 		}
 
 		if (use_eh_prologue_style) {
-			// C++ EH prologue: push rbp(1); sub rsp, N(7); lea rbp, [rsp+N](8)
-			// Total: 16 bytes. RBP = RSP_after_push + N_sub - N_sub + N_lea = S-8.
-			// FrameOffset = N/16 in UNWIND_INFO, establisher = RBP - N = RSP after sub.
+			// C++ EH prologue:
+			//   push rbp
+			//   sub rsp, primary
+			//   lea rbp, [rsp+primary]
+			//   sub rsp, extra
+			// where primary is capped to the max encodable SET_FPREG offset (240 bytes)
+			// and extra is any remaining allocation. The final SUB is patched to a 7-byte
+			// NOP block when no extra allocation is needed.
 
-			// SUB RSP, imm32 (7 bytes) - placeholder, patched at function end
+			// SUB RSP, imm32 (7 bytes) for the establisher-frame allocation.
 			current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
 			textSectionData.push_back(0x48); // REX.W
 			textSectionData.push_back(0x81); // SUB with 32-bit immediate
@@ -1213,6 +1260,17 @@
 			textSectionData.push_back(0xAC); // ModR/M: RBP, [SIB+disp32]
 			textSectionData.push_back(0x24); // SIB: base=RSP, index=none
 			textSectionData.push_back(0x00); // disp32 placeholder
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+
+			// Optional extra SUB RSP, imm32 (7 bytes) after SET_FPREG.
+			// Patched to either SUB RSP, extra or a 7-byte NOP sequence at function end.
+			eh_prologue_extra_sub_rsp_offset_ = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x81); // SUB with 32-bit immediate
+			textSectionData.push_back(0xEC); // RSP
+			textSectionData.push_back(0x00);
 			textSectionData.push_back(0x00);
 			textSectionData.push_back(0x00);
 			textSectionData.push_back(0x00);
@@ -1271,6 +1329,20 @@
 		// Note: named_vars_size already includes parameter home space
 		// IMPORTANT: Don't include outgoing_args_space here - TempVars go AFTER named vars but BEFORE outgoing args
 		current_function_named_vars_size_ = func_stack_space.named_vars_size;
+
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				if (!current_function_reserved_catch_ref_temps_.empty()) {
+					const uint32_t base_named_vars_size = current_function_named_vars_size_ - current_function_reserved_catch_ref_temp_size_;
+					uint32_t reserved_offset = 8;
+					for (StringHandle temp_handle : current_function_reserved_catch_ref_temps_) {
+						int32_t offset = -(static_cast<int32_t>(base_named_vars_size) + static_cast<int32_t>(reserved_offset));
+						auto& temp_info = variable_scopes.back().variables[temp_handle];
+						temp_info.offset = offset;
+						temp_info.size_in_bits = 64;
+						reserved_offset += 8;
+					}
+				}
+			}
 
 		// Handle parameters
 		struct ParameterInfo {
@@ -1860,6 +1932,39 @@
 		current_scope.scope_stack_space = reserved_slot;
 		catch_funclet_return_slot_offset_ = reserved_slot;
 		return catch_funclet_return_slot_offset_;
+	}
+
+	int32_t ensureCatchFuncletReturnFlagSlot() {
+		if (catch_funclet_return_flag_slot_offset_ != 0) {
+			return catch_funclet_return_flag_slot_offset_;
+		}
+
+		if (variable_scopes.empty()) {
+			catch_funclet_return_flag_slot_offset_ = -16;
+			return catch_funclet_return_flag_slot_offset_;
+		}
+
+		StackVariableScope& current_scope = variable_scopes.back();
+		int32_t reserved_slot = static_cast<int32_t>(current_scope.scope_stack_space - 8);
+		current_scope.scope_stack_space = reserved_slot;
+		catch_funclet_return_flag_slot_offset_ = reserved_slot;
+		return catch_funclet_return_flag_slot_offset_;
+	}
+
+	StringHandle getOrCreateCatchContinuationFixupLabel(StringHandle continuation_handle) {
+		auto it = catch_continuation_fixup_map_.find(continuation_handle);
+		if (it != catch_continuation_fixup_map_.end()) {
+			return it->second;
+		}
+
+		StringBuilder fixup_sb;
+		fixup_sb.append("__catch_fixup_")
+			.append(static_cast<uint64_t>(current_function_offset_))
+			.append("_")
+			.append(static_cast<uint64_t>(catch_continuation_fixup_map_.size()));
+		StringHandle fixup_handle = StringTable::getOrInternStringHandle(fixup_sb.commit());
+		catch_continuation_fixup_map_[continuation_handle] = fixup_handle;
+		return fixup_handle;
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
@@ -2465,58 +2570,28 @@
 
 				flushAllDirtyRegisters();
 
-				StringBuilder return_trampoline_sb;
-				return_trampoline_sb.append("__catch_return_trampoline_").append(static_cast<uint64_t>(catch_funclet_return_label_counter_++));
-				StringHandle return_trampoline_handle = StringTable::getOrInternStringHandle(return_trampoline_sb.commit());
+					int32_t catch_return_flag_slot = ensureCatchFuncletReturnFlagSlot();
+					emitMovImm32(X64Register::RCX, 1);
+					emitMovToFrame(X64Register::RCX, catch_return_flag_slot, 64);
 
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x8D);
-				textSectionData.push_back(0x05);
-				uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				pending_branches_.push_back({return_trampoline_handle, lea_patch});
+					if (current_catch_continuation_label_.isValid()) {
+						StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
+						textSectionData.push_back(0x48);
+						textSectionData.push_back(0x8D);
+						textSectionData.push_back(0x05);
+						uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+						textSectionData.push_back(0x00);
+						textSectionData.push_back(0x00);
+						textSectionData.push_back(0x00);
+						textSectionData.push_back(0x00);
+						pending_branches_.push_back({fixup_handle, lea_patch});
+					} else {
+						emitXorRegReg(X64Register::RAX);
+					}
 
 				emitAddRSP(32);
 				emitPopReg(X64Register::RBP);
 				textSectionData.push_back(0xC3);
-
-				uint32_t catch_funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-				if (current_catch_handler_) {
-					current_catch_handler_->handler_end_offset = catch_funclet_end_offset;
-					current_catch_handler_->funclet_end_offset = catch_funclet_end_offset;
-				}
-
-				label_positions_[return_trampoline_handle] = static_cast<uint32_t>(textSectionData.size());
-
-				// After _JumpToContinuation: RSP = establisher = S-8-N (correct frame level)
-				// RBP is corrupted by CRT. Restore it via LEA RBP, [RSP + N].
-				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()) + 4);
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x8D); // LEA
-				textSectionData.push_back(0xAC); // ModR/M: mod=10, reg=101(RBP), r/m=100(SIB)
-				textSectionData.push_back(0x24); // SIB: base=RSP, index=none
-				textSectionData.push_back(0x00); // disp32 placeholder (patched with total_stack)
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-
-				if (catch_return_slot != 0) {
-					emitMovFromFrame(X64Register::RAX, catch_return_slot);
-				}
-
-				// Standard epilogue: mov rsp, rbp; pop rbp; ret
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x89);
-				textSectionData.push_back(0xEC);
-				textSectionData.push_back(0x5D);
-				textSectionData.push_back(0xC3);
-
-				catch_funclet_terminated_by_return_ = true;
-
-				in_catch_funclet_ = false;
 				return;
 			}
 		}
