@@ -253,11 +253,11 @@ static_assert(f() == 42);  // ❌ Not currently supported
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
-Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), init-captures, multi-statement bodies, and simple member reads / constexpr member calls through explicit `this` / `*this` capture in supported shapes, but capture support is still incomplete.
+Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), implicit `this` through default member captures in supported shapes, init-captures, multi-statement bodies, and simple member reads / constexpr member calls through `this` / `*this` capture. Mutable `[*this]` copy-local updates in straightforward supported shapes also work, but capture support is still incomplete.
 
 **Still partial in constexpr lambda evaluation:**
 
-- complex interactions through captured `this` / `*this` (for example, relying on full object identity or more advanced member-function dispatch through the captured object)
+- complex interactions through captured `this` / `*this` (for example, relying on full shared-object identity, richer mutation semantics through `[this]`, or more advanced member-function dispatch through the captured object)
 
 ```cpp
 constexpr int base = 10;
@@ -272,7 +272,7 @@ constexpr int f() {
 struct S {
     int value = 42;
     constexpr int f() const {
-        auto ok = [this]() { return this->read(); };
+        auto ok = [=]() { return read(); };
         return ok();
     }
     constexpr int read() const { return value; }
@@ -352,7 +352,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
 - ✅ Unary `-` and `+` operators
 - ✅ Constexpr member function calls, including multi-statement bodies in supported shapes
-- ✅ Basic constexpr lambdas with explicit captures in supported shapes
+- ✅ Constexpr lambdas with explicit captures, default captures, and current supported `this` / `*this` shapes
 - ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`)
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
@@ -368,7 +368,7 @@ Potential areas for enhancement (in order of complexity):
 ### Hard
 - ❌ Constructor body statement execution
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
-- ❌ Rich captured-object semantics in constexpr lambdas beyond simple member reads/calls
+- ❌ Rich captured-object semantics in constexpr lambdas beyond simple member reads/calls and straightforward `*this` copy-local mutation
 - ❌ `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
@@ -380,7 +380,7 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested member access is okay in supported shapes** - prefer simple, directly initialized object graphs
 3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
-5. **Use straightforward lambda captures** - explicit captures, local default captures, and simple `this` / `*this` member reads/calls now work best
+5. **Use straightforward lambda captures** - explicit captures, local/default member captures, simple `this` / `*this` member reads/calls, and straightforward mutable `[*this]` updates work best
 6. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
 
 ### For Contributors
@@ -474,9 +474,9 @@ static_assert(f() == 42);  // Dynamic allocation not supported
 // Still risky: richer captured-object behavior in constexpr lambdas
 struct CaptureExample {
     int x = 7;
-    constexpr int read() const { return x; }
-    constexpr int value() const {
-        auto tricky = [this]() { return this->read(); };
+    constexpr int bump() { x += 1; return x; }
+    constexpr int value() {
+        auto tricky = [this]() mutable { return this->bump(); };
         return tricky();
     }
 };

@@ -185,7 +185,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	const ExpressionNode& expr,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
 	if (!std::holds_alternative<MemberFunctionCallNode>(expr)) {
 		return std::nullopt;
 	}
@@ -298,6 +299,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
 	context.current_depth--;
+	if (result.success() && mutable_bindings) {
+		for (const auto& member : context.struct_info->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			auto member_it = member_bindings.find(member_name);
+			if (member_it != member_bindings.end()) {
+				(*mutable_bindings)[member_name] = member_it->second;
+			}
+		}
+	}
 	restore_template_bindings();
 	return result;
 }
@@ -711,7 +721,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return *call_result;
 	}
 
-	if (auto member_call_result = try_evaluate_bound_member_function_call(expr, bindings, context)) {
+	if (auto member_call_result = try_evaluate_bound_member_function_call(expr, bindings, context, &bindings)) {
 		return *member_call_result;
 	}
 	
