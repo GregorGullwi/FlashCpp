@@ -639,6 +639,29 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		// Not a parameter, evaluate normally
 		return evaluate_identifier(id, context);
 	}
+
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			const auto& member_access = std::get<MemberAccessNode>(expr);
+			const ASTNode& object_expr = member_access.object();
+			const IdentifierNode* object_identifier = nullptr;
+			if (object_expr.is<IdentifierNode>()) {
+				object_identifier = &object_expr.as<IdentifierNode>();
+			} else if (object_expr.is<ExpressionNode>()) {
+				const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(object_expr_node)) {
+					object_identifier = &std::get<IdentifierNode>(object_expr_node);
+				}
+			}
+			if (object_identifier && object_identifier->name() != "this") {
+				auto object_it = bindings.find(object_identifier->name());
+				if (object_it != bindings.end() && object_it->second.object_type_index != 0) {
+					auto member_it = object_it->second.object_member_bindings.find(member_access.member_name());
+					if (member_it != object_it->second.object_member_bindings.end()) {
+						return member_it->second;
+					}
+				}
+			}
+		}
 	
 	// For binary operators, recursively evaluate with bindings
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
@@ -847,6 +870,29 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 		// Not a parameter, evaluate normally
 		return evaluate_identifier(id, context);
 	}
+
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			const auto& member_access = std::get<MemberAccessNode>(expr);
+			const ASTNode& object_expr = member_access.object();
+			const IdentifierNode* object_identifier = nullptr;
+			if (object_expr.is<IdentifierNode>()) {
+				object_identifier = &object_expr.as<IdentifierNode>();
+			} else if (object_expr.is<ExpressionNode>()) {
+				const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(object_expr_node)) {
+					object_identifier = &std::get<IdentifierNode>(object_expr_node);
+				}
+			}
+			if (object_identifier && object_identifier->name() != "this") {
+				auto object_it = bindings.find(object_identifier->name());
+				if (object_it != bindings.end() && object_it->second.object_type_index != 0) {
+					auto member_it = object_it->second.object_member_bindings.find(member_access.member_name());
+					if (member_it != object_it->second.object_member_bindings.end()) {
+						return member_it->second;
+					}
+				}
+			}
+		}
 	
 	// For binary operators, recursively evaluate with bindings
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
