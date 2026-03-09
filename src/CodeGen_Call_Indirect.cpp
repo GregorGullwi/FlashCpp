@@ -248,7 +248,7 @@
 			immediate_lambda_object_type = TypeSpecifierNode(
 				Type::Struct,
 				static_cast<TypeIndex>(std::get<unsigned long long>(lambda_ir[3])),
-				static_cast<unsigned char>(std::get<int>(lambda_ir[1])),
+				static_cast<int>(std::get<int>(lambda_ir[1])),
 				memberFunctionCallNode.called_from()
 			);
 
