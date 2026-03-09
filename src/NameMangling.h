@@ -219,9 +219,8 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			output += "PAX";
 			break;
 		case Type::Auto:
-			// 'auto' should not appear in a mangled symbol — treat as int for best-effort
-			output += 'H';
-			break;
+			// 'auto' should never appear in a mangled symbol — this indicates a compiler bug
+			throw InternalError("MSVC name mangling: 'auto' type reached mangling — return type deduction must happen before mangling");
 		default: throw CompileError("MSVC name mangling: unknown type — cannot generate valid symbol");
 	}
 }
@@ -391,9 +390,8 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			output += "Dn";
 			break;
 		case Type::Auto:
-			// 'auto' should not appear in a mangled symbol — treat as int for best-effort
-			output += 'i';
-			break;
+			// 'auto' should never appear in a mangled symbol — this indicates a compiler bug
+			throw InternalError("Itanium name mangling: 'auto' type reached mangling — return type deduction must happen before mangling");
 		default:
 			throw CompileError("Itanium name mangling: unknown type — cannot generate valid symbol");
 	}
