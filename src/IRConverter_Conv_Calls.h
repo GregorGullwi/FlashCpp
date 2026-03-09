@@ -116,7 +116,7 @@
 			// Windows x64 ABI uses a UNIFIED position counter: position 0 is always RCX or XMM0,
 			// position 1 is always RDX or XMM1, etc. — float and int arguments share the same
 			// 4 register slots. Linux SysV AMD64 uses SEPARATE banks (6 int + 8 float).
-			size_t temp_int_idx = 0;
+			size_t temp_int_idx = param_shift;  // Account for hidden return param (same as second pass)
 			size_t temp_float_idx = 0;
 			size_t stack_arg_count = 0;
 			

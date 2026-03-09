@@ -1336,11 +1336,10 @@
 							}
 						}
 					} else {
-						// Linux SysV AMD64: 'this'/hidden return param may consume int reg 0;
-						// for regular function calls, int_slots_start = param_shift (0 or 1).
-						// Use 0 here since param_shift isn't known at pre-scan time; the first
-						// pass in handleFunctionCall starts temp_int_idx at 0 as well.
-						outgoing_bytes = computeSysVOutgoingBytes(call_op->args, 0);
+						// Linux SysV AMD64: hidden return param consumes int reg 0 when present.
+						// uses_return_slot is available from the CallOp at pre-scan time.
+						size_t int_slots_start = call_op->uses_return_slot ? 1 : 0;
+						outgoing_bytes = computeSysVOutgoingBytes(call_op->args, int_slots_start);
 					}
 					
 					if (outgoing_bytes > max_outgoing_arg_bytes) {
