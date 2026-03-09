@@ -26,7 +26,7 @@ Basic and intermediate exception handling works end-to-end:
 | Rethrowing (`throw;`) | ✅ | Fixed: correct RSP alignment + full LSDA coverage |
 | Class-type exceptions with destructors | ✅ | Fixed (Linux): proper _ZTI/_ZTS typeinfo with vtable relocs; dtor arg to __cxa_throw |
 | Stack unwinding with local destructors | ✅ | Fixed (Linux): cleanup landing pads emitted for try-block-local vars (Phase 1) and function-scope vars (Phase 2) |
-| **Exception hierarchy matching** | ✅ | `catch(Base&)` catches `throw Derived{}` via `__si_class_type_info` / `__vmi_class_type_info` |
+| **Exception hierarchy matching** | ✅ | `catch(Base&)` catches `throw Derived{}` via `__si_class_type_info` / `__vmi_class_type_info`; virtual base matching via vtable vbase offsets |
 | `std::rethrow_exception` / `throw;` propagation | ✅ | `__cxa_rethrow` tested end-to-end |
 
 ### Windows (COFF / MSVC ABI): ✅ Partial
@@ -137,6 +137,10 @@ The Language-Specific Data Area (`.gcc_except_table`) contains:
 | 2026-03-09 | `noexcept(false)` evaluated correctly: no terminate LP for explicitly non-noexcept functions | **Fixed regression for `noexcept(false)` functions** |
 | 2026-03-09 | ELF prologue SUB RSP was capped at 240 bytes (Windows SET_FPREG limit incorrectly applied to ELF); fixed in `IRConverter_Conv_VarDecl.h` and `IRConverter_Conv_Memory.h` | **Fixed segfault for functions with 3+ try blocks on Linux** |
 | 2026-03-09 | `finalizeSections` always NOP'd `catch_continuation_sub_rsp_patches_` instead of patching with `eh_extra_stack_size`; fixed to match `handleFunctionDecl` logic (Windows-only, last function) | **Fixed potential stack corruption for Windows EH functions with >240-byte frame as last function** |
+| 2026-03-09 | Virtual base typeinfo offsets: `__vmi_class_type_info` offset_flags now uses vtable-relative offset (`-(3+k)*8`) for virtual bases instead of byte offset | **Fixed `catch(VBase&)` for diamond/virtual inheritance** |
+| 2026-03-09 | Vtable vbase prefix: classes with virtual bases now emit vbase offset entries before `offset_to_top` in the vtable | **Enables personality routine to locate virtual base subobjects at runtime** |
+| 2026-03-09 | Diamond flag detection (`__diamond_shaped_mask` 0x2) now correctly set when two bases share a common virtual ancestor | **Correct VMI typeinfo flags for diamond inheritance** |
+| 2026-03-09 | `vtable_offset` in `add_vtable` was captured before `add_typeinfo` appended to `.rodata`, causing vtable symbols/relocations to point into typeinfo data | **Fixed vtable pointer corruption for all ELF classes with RTTI** |
 
 ---
 
@@ -199,6 +203,10 @@ Key test files:
 - `test_eh_catch_base_ref_ret0.cpp` — `catch(Base&)` catches `throw Derived{}` via SI typeinfo
 - `test_eh_catch_multi_base_ret0.cpp` — deep hierarchy: `catch(Base&)` → `catch(Middle&)` → `catch(Derived&)`
 - `test_eh_catch_multiple_inheritance_ref_ret0.cpp` — multiple inheritance: `catch(Left&)`, `catch(Right&)` from `Derived : Left, Right` (3 sequential try blocks; validates ELF frame-size fix)
+- `test_eh_catch_virtual_base_ref_ret0.cpp` — diamond virtual inheritance: `catch(Left&)`, `catch(VBase&)` from `throw Derived{}` where `Left, Right : virtual VBase`
+- `test_eh_catch_virtual_base_value_after_ref_ret0.cpp` — by-value catch through virtual base after reference catch
+- `test_eh_catch_virtual_base_value_late_handler_ret0.cpp` — later typed catch handler materializes virtual-base catch object
+- `test_eh_catch_virtual_base_value_late_handler_return_ret0.cpp` — direct return from by-value virtual-base catch handler
 - `test_eh_rethrow_propagate_ret0.cpp` — `throw;` (rethrow) propagates with correct type info
 - `test_eh_noexcept_normal_ret0.cpp` — noexcept functions work normally + inner try/catch
 
