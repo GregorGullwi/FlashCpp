@@ -779,6 +779,23 @@ const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const Funct
 }
 
 bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context) {
+	if (context.current_depth >= context.max_recursion_depth) {
+		return false;
+	}
+
+	struct NoexceptDepthGuard {
+		EvaluationContext& context;
+
+		explicit NoexceptDepthGuard(EvaluationContext& eval_context)
+			: context(eval_context) {
+			++context.current_depth;
+		}
+
+		~NoexceptDepthGuard() {
+			--context.current_depth;
+		}
+	} depth_guard(context);
+
 	if (std::holds_alternative<BoolLiteralNode>(expr) ||
 		std::holds_alternative<NumericLiteralNode>(expr) ||
 		std::holds_alternative<StringLiteralNode>(expr)) {
