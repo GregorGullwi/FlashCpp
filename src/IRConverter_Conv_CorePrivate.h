@@ -1337,8 +1337,7 @@
 						}
 					} else {
 						// Linux SysV AMD64: hidden return param consumes int reg 0 when present.
-						// uses_return_slot is available from the CallOp at pre-scan time.
-						size_t int_slots_start = call_op->uses_return_slot ? 1 : 0;
+						size_t int_slots_start = call_op->usesReturnSlot() ? 1 : 0;
 						outgoing_bytes = computeSysVOutgoingBytes(call_op->args, int_slots_start);
 					}
 					
