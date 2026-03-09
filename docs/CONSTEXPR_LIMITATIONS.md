@@ -234,7 +234,7 @@ Array support is still incomplete in more complex cases.
 **Known remaining limitations include:**
 
 1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, including simple local scalar arrays and simple local aggregate-array member reads, but `int arr[] = {1,2,3}` can still fail in more complex parser/evaluator contexts
-2. **Statement-heavy constexpr evaluation**: more complex local/function-driven array cases can still run into broader statement-evaluation limits
+2. **Statement-heavy constexpr evaluation**: more complex local/function-driven array cases can still run into broader statement-evaluation limits, although straightforward local loop-driven reads over supported arrays now work
 
 **Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
 
@@ -392,6 +392,8 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Direct and nested member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`)
 - ✅ Direct/member array subscript support in current supported shapes, including straightforward local aggregate object reads like `obj.data[1]`
 - ✅ Straightforward inferred-size local arrays in constexpr functions, including simple scalar reads and simple aggregate-array element member reads
+- ✅ Straightforward local aggregate-array element reads in constexpr functions, including nested/member-array compositions like `items[i].inner.value` and `items[i].data[0]`
+- ✅ Straightforward loop-driven local array reads in constexpr functions, including `sum += arr[i]` and `sum += items[i].value`
 - ✅ `noexcept(expr)` in constexpr evaluation
 - ✅ `offsetof(T, member)` for direct data-member access in constexpr evaluation
 
@@ -421,7 +423,7 @@ Potential areas for enhancement (in order of complexity):
 1. **Use member initializer lists** instead of constructor body assignments when you need constexpr evaluation
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
-4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]` and straightforward local inferred-size arrays like `int arr[] = {1, 2}`
+4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
 5. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures
