@@ -104,6 +104,10 @@ private:
 
 	// Phase 2 capture state: vars captured by exitFunctionScope() awaiting LP emission
 	std::vector<std::pair<StringHandle, StringHandle>> pending_function_cleanup_vars_;
+		// Set by visitTryStatementNode() when any typed (non-catch-all) handlers are present.
+		// Used by emitPendingFunctionCleanupLP() to ensure FunctionCleanupLP is always emitted
+		// on ELF when ElfCatchNoMatch references need resolving.
+		bool function_has_typed_catch_ = false;
 
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node);
 	void visitStructDeclarationNode(const StructDeclarationNode& node);

@@ -177,6 +177,21 @@
 		}
 
 		// End of out-of-line catch handlers; resume normal flow after try/catch.
+		// Before the handlers_end_label, emit an ElfCatchNoMatch marker if any typed
+		// (non-catch-all) handlers were present.  In the ELF code generator this
+		// inserts "load exc_ptr; JMP cleanup_lp" so the exception propagates correctly
+		// when no handler matched.  On Windows this is a no-op.
+		bool has_typed_handlers = false;
+		for (size_t i = 0; i < node.catch_clauses().size(); ++i) {
+			if (!node.catch_clauses()[i].as<CatchClauseNode>().is_catch_all()) {
+				has_typed_handlers = true;
+				break;
+			}
+		}
+		if (has_typed_handlers) {
+			function_has_typed_catch_ = true;  // signal emitPendingFunctionCleanupLP
+			ir_.addInstruction(IrInstruction(IrOpcode::ElfCatchNoMatch, ElfCatchNoMatchOp{}, node.try_token()));
+		}
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_end_label)}, node.try_token()));
 	}
 

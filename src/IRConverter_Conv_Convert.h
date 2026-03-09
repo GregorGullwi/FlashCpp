@@ -377,6 +377,9 @@
 			case IrOpcode::FunctionCleanupLP:
 				handleFunctionCleanupLP(instruction);
 				break;
+			case IrOpcode::ElfCatchNoMatch:
+				handleElfCatchNoMatch(instruction);
+				break;
 			// Windows SEH (Structured Exception Handling)
 			case IrOpcode::SehTryBegin:
 				handleSehTryBegin(instruction);

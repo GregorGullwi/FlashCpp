@@ -144,6 +144,7 @@ enum class IrOpcode : int_fast16_t {
 	Throw,               // Throw exception: [exception_temp, type_index]
 	Rethrow,             // Rethrow current exception (throw; with no argument)
 	FunctionCleanupLP,   // Function-level cleanup landing pad (ELF/Linux only): destructor calls + _Unwind_Resume
+		ElfCatchNoMatch,     // ELF-only: emitted before handlers_end_label; jumps to cleanup LP when no catch matched
 	// Windows SEH (Structured Exception Handling)
 	SehTryBegin,         // Begin __try block: [label_for_handlers]
 	SehTryEnd,           // End __try block

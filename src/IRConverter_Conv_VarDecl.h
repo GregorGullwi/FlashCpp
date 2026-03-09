@@ -707,6 +707,7 @@
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			current_function_cfi_.clear();
 			current_function_cleanup_lp_offset_ = 0;
+				elf_no_match_lp_label_ = StringHandle();
 		}
 	}
 

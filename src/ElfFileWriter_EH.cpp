@@ -117,6 +117,19 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 						region.landing_pad_offset = 0;
 					}
 					region.catch_handlers = convert_catch_handlers(block);
+					// If no handler in the list is a catch-all, set has_cleanup so the LSDA
+					// action chain includes a cleanup entry. This causes the personality to
+					// enter the landing pad during phase-2 when no typed handler matches,
+					// allowing the ElfCatchNoMatch code to call _Unwind_Resume.
+					// (A catch-all always matches, so no "no match" case is possible when one
+					// is present, and the cleanup entry would be unreachable.)
+					if (!region.catch_handlers.empty()) {
+						bool has_catch_all = false;
+						for (const auto& h : region.catch_handlers) {
+							if (h.is_catch_all) { has_catch_all = true; break; }
+						}
+						region.has_cleanup = !has_catch_all;
+					}
 				}
 
 				lsda_info.try_regions.push_back(region);

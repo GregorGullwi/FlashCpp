@@ -45,11 +45,19 @@ void AstToIr::exitFunctionScope() {
 
 
 void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
-	if (pending_function_cleanup_vars_.empty()) return;
+	// Always emit FunctionCleanupLP when either:
+	// (a) There are function-scope local vars with destructors (the common case), OR
+	// (b) The function has typed catch handlers (function_has_typed_catch_ flag).
+	//     On ELF, ElfCatchNoMatch emits a forward reference to __elf_no_match_lp_<n>
+	//     that must be resolved by handleFunctionCleanupLP().  On Windows, the
+	//     ElfCatchNoMatch handler is a no-op, but emitting an extra FunctionCleanupLP
+	//     with empty cleanup_vars is also a no-op there (early return in the handler).
+	if (pending_function_cleanup_vars_.empty() && !function_has_typed_catch_) return;
 
 	FunctionCleanupLPOp cleanup_op;
 	cleanup_op.cleanup_vars = std::move(pending_function_cleanup_vars_);
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCleanupLP, std::move(cleanup_op), token));
+	function_has_typed_catch_ = false;
 }
 
 

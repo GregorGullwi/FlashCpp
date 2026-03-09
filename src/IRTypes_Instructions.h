@@ -1267,6 +1267,10 @@ public:
 		}
 		break;
 
+		case IrOpcode::ElfCatchNoMatch:
+			oss << "elf_catch_no_match";
+			break;
+
 		// Windows SEH opcodes
 		case IrOpcode::SehTryBegin:
 		{

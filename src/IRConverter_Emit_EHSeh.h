@@ -919,7 +919,49 @@
 			}
 		}
 
+		void emitJmpToLabel(StringHandle target_label) {
+			textSectionData.push_back(0xE9); // JMP rel32
+
+			uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
+
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+
+			pending_branches_.push_back({target_label, patch_position});
+		}
+
 	// ============================================================================
+		// ELF-only: "no catch matched" marker — emitted before handlers_end_label.
+		// Generates code that loads the saved exception pointer and jumps to the
+		// function's cleanup LP (which calls local dtors then _Unwind_Resume).
+		// The LSDA is also patched (via has_cleanup) so the personality enters this
+		// landing pad during phase-2 when no typed catch handler matches.
+		// ============================================================================
+
+		void handleElfCatchNoMatch([[maybe_unused]] const IrInstruction& instruction) {
+			if (!g_enable_exceptions) return;
+
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				return;  // Windows handles "no match" differently (funclets + RtlUnwindEx)
+			}
+
+			if (elf_exc_ptr_offset_ == 0) return;  // No active landing pad context
+
+			// Generate a unique label for this function's cleanup LP entry point
+			std::string lp_label = "__elf_no_match_lp_" + std::to_string(current_function_offset_);
+			elf_no_match_lp_label_ = StringTable::getOrInternStringHandle(lp_label);
+
+			// Load the saved _Unwind_Exception* from the landing-pad-entry save slot into RAX.
+			// handleFunctionCleanupLP() (or the stub below) expects RAX = exception pointer.
+			emitMovFromFrameBySize(X64Register::RAX, elf_exc_ptr_offset_, 64);
+
+			// JMP __elf_no_match_lp_<n>  (forward reference, resolved at function end)
+			emitJmpToLabel(elf_no_match_lp_label_);
+		}
+
+		// ============================================================================
 	// Phase 2: Function-level cleanup landing pad (ELF/Linux only)
 	// ============================================================================
 
@@ -927,10 +969,26 @@
 		if (!g_enable_exceptions) return;
 
 		const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
-		if (op.cleanup_vars.empty()) return;
 
 			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-				pending_windows_function_cleanup_vars_ = op.cleanup_vars;
+				if (!op.cleanup_vars.empty()) {
+					pending_windows_function_cleanup_vars_ = op.cleanup_vars;
+				}
+				return;
+			}
+
+			// If handleElfCatchNoMatch() set a forward-reference label, define it here
+			// so the "no catch matched" JMP enters the cleanup LP at the right place.
+			if (elf_no_match_lp_label_.isValid()) {
+				label_positions_[elf_no_match_lp_label_] = static_cast<uint32_t>(textSectionData.size());
+				elf_no_match_lp_label_ = StringHandle();
+			}
+
+			if (op.cleanup_vars.empty()) {
+				// No local dtors — just call _Unwind_Resume with the exception pointer in RAX.
+				// MOV RDI, RAX  (RAX = _Unwind_Exception* set by either path above)
+				emitMovRegReg(X64Register::RDI, X64Register::RAX);
+				emitCall("_Unwind_Resume");
 				return;
 			}
 

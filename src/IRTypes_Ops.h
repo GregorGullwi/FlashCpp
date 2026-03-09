@@ -936,6 +936,12 @@ struct FunctionCleanupLPOp {
 	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;  // {struct_name, var_name} LIFO order
 };
 
+// ELF-only marker: no typed catch handler matched the thrown exception.
+// Emitted right before handlers_end_label in each try block that has typed catch handlers.
+// In the ELF path, this generates: load elf_exc_ptr → RAX; JMP __elf_no_match_lp_<n>
+// Windows path: no-op (exceptions are handled differently).
+struct ElfCatchNoMatchOp {};
+
 // Throw exception operation
 struct ThrowOp {
 	TypeIndex type_index;         // Type of exception being thrown

@@ -59,6 +59,7 @@ public:
 		uint32_t try_length;          // Length of try block
 		uint32_t landing_pad_offset;  // Start of catch handler(s)
 		std::vector<CatchHandlerInfo> catch_handlers;  // Catch clauses
+		bool has_cleanup = false;     // True if the action chain should end in a cleanup entry (type_filter=0)
 	};
 	
 	// Information for generating LSDA for a function
@@ -275,10 +276,20 @@ private:
 				action_entries.push_back(type_filter_bytes);
 			}
 			
-			// Second pass: encode and write all entries with correct next_offset values
+			// Second pass: encode and write all entries with correct next_offset values.
+			// If append_cleanup is true, a final cleanup record (type_filter=0, next=0)
+			// is emitted after the typed catch entries. The last typed catch entry's
+			// next_offset points to this cleanup record (next_offset=1 = 1 byte ahead,
+			// since both type_filter and next_offset encode as single-byte SLEB128).
+			// This causes __gxx_personality_v0 to enter the landing pad during phase-2
+			// even when no typed catch handler matches (cleanup is always "handled").
+			bool append_cleanup = try_region.has_cleanup && !action_entries.empty();
+			// If appending cleanup, total_entries includes the cleanup record so the last
+			// typed entry's is_last flag is false and it gets next_offset=1 instead of 0.
+			size_t total_entries = action_entries.size() + (append_cleanup ? 1 : 0);
 			for (size_t i = 0; i < action_entries.size(); ++i) {
 				const auto& type_filter_bytes = action_entries[i];
-				bool is_last = (i == action_entries.size() - 1);
+				bool is_last = (i == total_entries - 1);
 				
 				// Write type filter
 				DwarfCFI::appendVector(data, type_filter_bytes);
@@ -304,6 +315,11 @@ private:
 				}
 				
 				DwarfCFI::appendSLEB128(data, next_offset);
+			}
+			// Append cleanup action entry when required (type_filter=0, next=0)
+			if (append_cleanup) {
+				DwarfCFI::appendSLEB128(data, static_cast<int64_t>(0));  // type_filter=0 → cleanup
+				DwarfCFI::appendSLEB128(data, static_cast<int64_t>(0));  // next=0 → end of chain
 			}
 		}
 		
