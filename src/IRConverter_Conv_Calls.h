@@ -1,3 +1,48 @@
+	// ── Two-register struct helpers ──────────────────────────────────────
+	// SysV AMD64 ABI: 9-16 byte by-value structs are passed/received in two
+	// consecutive general-purpose registers.  These helpers centralise the
+	// codegen so that handleFunctionCall and handleConstructorCall don't
+	// duplicate the same emit sequences.
+
+	/// Resolve a TypedValue (StringHandle or TempVar) to its frame offset.
+	int resolveTypedValueFrameOffset(const TypedValue& arg) {
+		if (std::holds_alternative<StringHandle>(arg.value)) {
+			return variable_scopes.back().variables[std::get<StringHandle>(arg.value)].offset;
+		} else if (std::holds_alternative<TempVar>(arg.value)) {
+			return getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
+		}
+		return 0;
+	}
+
+	/// Emit code to store both 8-byte halves of a two-register struct to
+	/// consecutive RSP-relative stack slots (used when the struct overflows
+	/// the register file).
+	void emitTwoRegStructToStack(const TypedValue& arg, int stack_offset) {
+		int src_offset = resolveTypedValueFrameOffset(arg);
+		X64Register lo_reg = allocateRegisterWithSpilling();
+		X64Register hi_reg = allocateRegisterWithSpilling();
+		emitMovFromFrame(lo_reg, src_offset);
+		emitMovFromFrame(hi_reg, src_offset + 8);
+		emitStoreToRSP(textSectionData, lo_reg, stack_offset);
+		emitStoreToRSP(textSectionData, hi_reg, stack_offset + 8);
+		regAlloc.release(lo_reg);
+		regAlloc.release(hi_reg);
+	}
+
+	/// Emit code to load both 8-byte halves of a two-register struct into
+	/// two consecutive integer parameter registers.  `target_reg` already
+	/// holds the first register; `int_reg_index` is advanced for the second.
+	void emitTwoRegStructToRegs(int src_offset, X64Register target_reg,
+	                            size_t& int_reg_index, size_t max_int_regs) {
+		emitMovFromFrame(target_reg, src_offset);
+		if (int_reg_index < max_int_regs) {
+			X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+			emitMovFromFrame(second_reg, src_offset + 8);
+		} else {
+			FLASH_LOG(Codegen, Warning, "Two-register struct has no second register available");
+		}
+	}
+
 	void handleFunctionCall(const IrInstruction& instruction) {
 		// Use typed payload
 		if (instruction.hasTypedPayload()) {
@@ -192,27 +237,7 @@
 						regAlloc.release(temp_xmm);
 						stack_arg_count++;
 					} else if (is_two_reg_struct) {
-						// SysV AMD64: two-register struct that overflows the register file is
-						// passed as two consecutive 8-byte slots on the stack (memory class).
-						// Load each 8-byte half from the struct's frame slot and store to RSP.
-						auto get_struct_frame_offset = [&]() -> int {
-							if (std::holds_alternative<StringHandle>(arg.value)) {
-								StringHandle var_handle = std::get<StringHandle>(arg.value);
-								return variable_scopes.back().variables[var_handle].offset;
-							} else if (std::holds_alternative<TempVar>(arg.value)) {
-								return getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
-							}
-							return 0;
-						};
-						int src_offset = get_struct_frame_offset();
-						X64Register lo_reg = allocateRegisterWithSpilling();
-						X64Register hi_reg = allocateRegisterWithSpilling();
-						emitMovFromFrame(lo_reg, src_offset);
-						emitMovFromFrame(hi_reg, src_offset + 8);
-						emitStoreToRSP(textSectionData, lo_reg, stack_offset);
-						emitStoreToRSP(textSectionData, hi_reg, stack_offset + 8);
-						regAlloc.release(lo_reg);
-						regAlloc.release(hi_reg);
+						emitTwoRegStructToStack(arg, stack_offset);
 						stack_arg_count += 2;
 					} else {
 						// For integer arguments, use the existing code path
@@ -339,23 +364,9 @@
 				}
 				
 				// Handle System V AMD64 ABI: Structs 9-16 bytes passed in TWO consecutive registers
-				if (is_two_register_struct && std::holds_alternative<StringHandle>(arg.value)) {
-					StringHandle object_name_handle = std::get<StringHandle>(arg.value);
-					int object_offset = variable_scopes.back().variables[object_name_handle].offset;
-					
-					// Load first 8 bytes into target_reg (already allocated)
-					emitMovFromFrame(target_reg, object_offset);
-					
-					// Check if we have a second register available
-					if (int_reg_index < max_int_regs) {
-						// Load second 8 bytes into next integer register
-						X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
-						emitMovFromFrame(second_reg, object_offset + 8);
-					} else {
-						// No second register available - need to spill to stack
-						// This case should be rare in practice
-						FLASH_LOG(Codegen, Warning, "Two-register struct has no second register available");
-					}
+				if (is_two_register_struct && (std::holds_alternative<StringHandle>(arg.value) || std::holds_alternative<TempVar>(arg.value))) {
+					int src_offset = resolveTypedValueFrameOffset(arg);
+					emitTwoRegStructToRegs(src_offset, target_reg, int_reg_index, max_int_regs);
 					continue;
 				}
 				
@@ -381,25 +392,6 @@
 					} else {
 						// Variable holds an object value - take its address with LEA
 						emitLeaFromFrame(target_reg, var_offset);
-					}
-					continue;
-				}
-				
-				// Handle System V AMD64 ABI: TempVar structs 9-16 bytes passed in TWO consecutive registers
-				if (is_two_register_struct && std::holds_alternative<TempVar>(arg.value)) {
-					const auto& temp_var = std::get<TempVar>(arg.value);
-					int var_offset = getStackOffsetFromTempVar(temp_var);
-					
-					// Load first 8 bytes into target_reg (already allocated)
-					emitMovFromFrame(target_reg, var_offset);
-					
-					// Check if we have a second register available
-					if (int_reg_index < max_int_regs) {
-						// Load second 8 bytes into next integer register
-						X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
-						emitMovFromFrame(second_reg, var_offset + 8);
-					} else {
-						FLASH_LOG(Codegen, Warning, "Two-register TempVar struct has no second register available");
 					}
 					continue;
 				}
@@ -1034,12 +1026,15 @@
 						}
 						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.type == Type::Float);
 						regAlloc.release(temp_xmm);
+					} else if (is_two_reg_sysv) {
+						emitTwoRegStructToStack(arg, stack_offset);
+						stack_arg_count += 2;
 					} else {
 						X64Register temp_reg = loadTypedValueIntoRegister(arg);
 						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 						regAlloc.release(temp_reg);
+						stack_arg_count++;
 					}
-					stack_arg_count++;
 				}
 			}
 		}
@@ -1151,6 +1146,8 @@
 								// Temp var holds a value - take its address
 								emitLeaFromFrame(target_reg, param_offset);
 							}
+						} else if (is_two_reg_sysv) {
+							emitTwoRegStructToRegs(param_offset, target_reg, int_reg_index, max_int_regs);
 						} else {
 							// For value parameters: source (sized stack slot) -> dest (64-bit register)
 							emitMovFromFrameSized(
@@ -1173,11 +1170,7 @@
 								// LEA target_reg, [RBP + param_offset]
 								emitLeaFromFrame(target_reg, param_offset);
 							} else if (is_two_reg_sysv) {
-								// Two-register struct: bytes 0-7 in target_reg, bytes 8-15 in next register.
-								// Availability of the second slot was already checked above.
-								emitMovFromFrame(target_reg, param_offset);
-								X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
-								emitMovFromFrame(second_reg, param_offset + 8);
+								emitTwoRegStructToRegs(param_offset, target_reg, int_reg_index, max_int_regs);
 							} else {
 								// For value parameters: source (sized stack slot) -> dest (64-bit register)
 								emitMovFromFrameSized(
