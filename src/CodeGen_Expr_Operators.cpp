@@ -866,7 +866,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Check for operator overload (member function or free function)
 				SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
 				auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
-					lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table);
+					lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table, rhsType);
 				
 				if (overload_result.has_overload && overload_result.is_free_function) {
 					// Found a free-function operator overload: operator+(LHSType, RHSType)
@@ -965,10 +965,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					}
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-					return {return_type.type(), call_op.return_size_in_bits, result_var, return_type.type_index()};
+					return {return_type.type(), static_cast<int>(return_type.size_in_bits()), result_var, return_type.type_index()};
 				}
 				
-				if (overload_result.has_overload) {
+				else if (overload_result.has_overload) {
 					// Found a member operator overload! Generate a member function call
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving binary operator{} overload for type index {}", 
 					op, lhs_type_index);
