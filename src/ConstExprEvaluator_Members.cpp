@@ -1259,6 +1259,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		if (!initializer.has_value()) {
 			return EvalResult::error("Constexpr variable has no initializer: " + qualified_id.full_name());
 		}
+
 		return evaluate(initializer.value(), context);
 	}
 
@@ -2161,7 +2162,9 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			*matched_function,
 			member_func_call.arguments(),
 			empty_b,
-			context);
+				context,
+				nullptr,
+				FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
 	};
 	
 	// First, we need to get the struct type from the object to look up the actual function
@@ -2253,10 +2256,16 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			return EvalResult::error("Member function call requires a struct type");
 		}
 		type_index = type_spec.type_index();
-		if (type_index >= gTypeInfo.size()) {
-			return EvalResult::error("Invalid type index in member function call");
-		}
-		struct_info = gTypeInfo[type_index].getStructInfo();
+			if (type_index < gTypeInfo.size()) {
+				struct_info = gTypeInfo[type_index].getStructInfo();
+			}
+			if (!struct_info && declared_type_index != TypeIndex{0} && declared_type_index < gTypeInfo.size()) {
+				type_index = declared_type_index;
+				struct_info = gTypeInfo[type_index].getStructInfo();
+			}
+			if (!struct_info && type_index >= gTypeInfo.size()) {
+				return EvalResult::error("Invalid type index in member function call");
+			}
 	} else {
 		// Brace-initialized object: resolve type from the declared object type.
 		if (declared_type_index == TypeIndex{0} || declared_type_index >= gTypeInfo.size()) {
@@ -2320,6 +2329,28 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	if (!bind_result.success()) {
 		return bind_result;
 	}
+
+	auto saved_template_param_names = context.template_param_names;
+	auto saved_template_args = context.template_args;
+	auto restore_template_bindings = [&]() {
+		context.template_param_names = std::move(saved_template_param_names);
+		context.template_args = std::move(saved_template_args);
+	};
+
+	if (actual_func->has_outer_template_bindings()) {
+		context.template_param_names.clear();
+		context.template_args.clear();
+		context.template_param_names.reserve(actual_func->outer_template_param_names().size());
+		context.template_args.reserve(actual_func->outer_template_args().size());
+		for (StringHandle param_name : actual_func->outer_template_param_names()) {
+			context.template_param_names.push_back(StringTable::getStringView(param_name));
+		}
+		for (const auto& arg : actual_func->outer_template_args()) {
+			context.template_args.push_back(toTemplateTypeArg(arg));
+		}
+	} else {
+		load_template_bindings_from_type(&gTypeInfo[type_index], context);
+	}
 	
 	// Increase recursion depth
 	context.current_depth++;
@@ -2333,6 +2364,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		"Member function body is not a block",
 		"Constexpr member function must have a single return statement (complex statements not yet supported)");
 	context.current_depth--;
+	restore_template_bindings();
 	return result;
 }
 
@@ -2505,12 +2537,20 @@ EvalResult Evaluator::extract_object_members(
 	}
 	
 	TypeIndex type_index = type_spec.type_index();
-	if (type_index >= gTypeInfo.size()) {
-		return EvalResult::error("Invalid type index in member function call");
-	}
-	
-	const TypeInfo& struct_type_info = gTypeInfo[type_index];
-	const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+		const TypeInfo* struct_type_info = nullptr;
+		const StructTypeInfo* struct_info = nullptr;
+		if (type_index < gTypeInfo.size()) {
+			struct_type_info = &gTypeInfo[type_index];
+			struct_info = struct_type_info->getStructInfo();
+		}
+		if (!struct_info && declared_type_index != TypeIndex{0} && declared_type_index < gTypeInfo.size()) {
+			type_index = declared_type_index;
+			struct_type_info = &gTypeInfo[type_index];
+			struct_info = struct_type_info->getStructInfo();
+		}
+		if (!struct_info && type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid type index in member function call");
+		}
 	if (!struct_info) {
 		return EvalResult::error("Type is not a struct in member function call");
 	}
