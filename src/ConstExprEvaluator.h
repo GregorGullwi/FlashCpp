@@ -468,6 +468,10 @@ private:
 			const ExpressionNode& expr,
 			const std::unordered_map<std::string_view, EvalResult>& bindings,
 			EvaluationContext& context);
+		static std::optional<EvalResult> try_evaluate_bound_array_subscript(
+			const ExpressionNode& expr,
+			const std::unordered_map<std::string_view, EvalResult>& bindings,
+			EvaluationContext& context);
 		static std::optional<EvalResult> try_evaluate_bound_member_function_call(
 			const ExpressionNode& expr,
 			const std::unordered_map<std::string_view, EvalResult>& bindings,

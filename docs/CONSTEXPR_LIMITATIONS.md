@@ -74,7 +74,7 @@ constexpr int f() {
 static_assert(f() == 42);  // ✅ Works
 ```
 
-This also includes straightforward nested local aggregate reads in constexpr functions, such as `obj.inner.value`.
+This also includes straightforward nested local aggregate reads in constexpr functions, such as `obj.inner.value`, and straightforward local member-array reads such as `obj.data[1]`.
 
 ### ✅ Complex Initializer Expressions
 ```cpp
@@ -217,7 +217,7 @@ Several array-related constexpr forms are supported in simple/supported shapes:
 
 - direct array subscripts such as `values[1]`
 - array-element member access such as `items[1].value`
-- member-array subscripts such as `box.data[1]`
+- member-array subscripts such as `box.data[1]`, including straightforward local aggregate object cases inside constexpr functions
 
 ```cpp
 struct Container {
@@ -390,7 +390,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
 - ✅ Direct and nested member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`)
-- ✅ Direct/member array subscript support in current supported shapes
+- ✅ Direct/member array subscript support in current supported shapes, including straightforward local aggregate object reads like `obj.data[1]`
 - ✅ `noexcept(expr)` in constexpr evaluation
 - ✅ `offsetof(T, member)` for direct data-member access in constexpr evaluation
 
@@ -420,7 +420,7 @@ Potential areas for enhancement (in order of complexity):
 1. **Use member initializer lists** instead of constructor body assignments when you need constexpr evaluation
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
-4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
+4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`
 5. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures

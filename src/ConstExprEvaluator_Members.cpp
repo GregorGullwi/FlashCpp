@@ -256,6 +256,57 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 	return member_it->second;
 }
 
+std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
+	const ExpressionNode& expr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	if (!std::holds_alternative<ArraySubscriptNode>(expr)) {
+		return std::nullopt;
+	}
+
+	const auto& subscript = std::get<ArraySubscriptNode>(expr);
+	auto index_result = evaluate_expression_with_bindings_const(subscript.index_expr(), bindings, context);
+	if (!index_result.success()) {
+		return index_result;
+	}
+
+	long long index = index_result.as_int();
+	if (index < 0) {
+		return EvalResult::error("Negative array index in constant expression");
+	}
+
+	const ASTNode& array_expr = subscript.array_expr();
+	EvalResult array_result;
+	bool have_array = false;
+
+	if (array_expr.is<IdentifierNode>()) {
+		auto array_it = bindings.find(array_expr.as<IdentifierNode>().name());
+		if (array_it == bindings.end()) {
+			return std::nullopt;
+		}
+		array_result = array_it->second;
+		have_array = true;
+	} else if (array_expr.is<ExpressionNode>()) {
+		array_result = evaluate_expression_with_bindings_const(array_expr, bindings, context);
+		if (!array_result.success()) {
+			return array_result;
+		}
+		have_array = true;
+	}
+
+	if (!have_array) {
+		return std::nullopt;
+	}
+	if (!array_result.is_array) {
+		return EvalResult::error("Subscript on non-array variable in constant expression");
+	}
+	if (static_cast<size_t>(index) >= array_result.array_values.size()) {
+		return EvalResult::error("Array index out of bounds in constant expression");
+	}
+
+	return EvalResult::from_int(array_result.array_values[static_cast<size_t>(index)]);
+}
+
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	const ExpressionNode& expr,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -691,6 +742,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		if (auto member_result = try_evaluate_bound_member_access(expr, bindings, context)) {
 			return *member_result;
 		}
+
+		if (auto array_result = try_evaluate_bound_array_subscript(expr, bindings, context)) {
+			return *array_result;
+		}
 	
 	// For binary operators, recursively evaluate with bindings
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
@@ -970,43 +1025,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 		// Fall through to normal evaluation for non-this member access
 	}
 	
-	// For array subscript (e.g., arr[i] where arr is a parameter)
-	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
-		const auto& subscript = std::get<ArraySubscriptNode>(expr);
-		
-		// Evaluate the index
-		auto index_result = evaluate_expression_with_bindings_const(subscript.index_expr(), bindings, context);
-		if (!index_result.success()) {
-			return index_result;
-		}
-		
-		long long index = index_result.as_int();
-		if (index < 0) {
-			return EvalResult::error("Negative array index in constant expression");
-		}
-		
-		// Get the array expression
-		const ASTNode& array_expr = subscript.array_expr();
-		if (array_expr.is<ExpressionNode>()) {
-			const ExpressionNode& array_expr_node = array_expr.as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(array_expr_node)) {
-				std::string_view var_name = std::get<IdentifierNode>(array_expr_node).name();
-				
-				// Check if it's in bindings (parameter array)
-				auto it = bindings.find(var_name);
-				if (it != bindings.end()) {
-					const EvalResult& array_result = it->second;
-					if (array_result.is_array) {
-						if (static_cast<size_t>(index) >= array_result.array_values.size()) {
-							return EvalResult::error("Array index out of bounds in constant expression");
-						}
-						return EvalResult::from_int(array_result.array_values[static_cast<size_t>(index)]);
-					}
-					return EvalResult::error("Subscript on non-array variable in constant expression");
-				}
-				// Fall through to normal variable lookup
-			}
-		}
+		if (auto array_result = try_evaluate_bound_array_subscript(expr, bindings, context)) {
+			return *array_result;
 	}
 	
 	// For literals and other expressions without parameters, evaluate normally
@@ -2755,6 +2775,48 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 	return object_result;
 }
 
+namespace {
+EvalResult materialize_member_initializer_value(
+	const StructMember& member_info,
+	const ASTNode& initializer,
+	EvaluationContext& context) {
+	if (initializer.is<InitializerListNode>()) {
+		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
+
+		if (member_info.is_array) {
+			std::vector<int64_t> array_values;
+			array_values.reserve(init_list.initializers().size());
+			for (const auto& element : init_list.initializers()) {
+				auto element_result = Evaluator::evaluate(element, context);
+				if (!element_result.success()) {
+					return element_result;
+				}
+				array_values.push_back(element_result.as_int());
+			}
+
+			EvalResult array_result;
+			array_result.error_type = EvalErrorType::None;
+			array_result.is_array = true;
+			array_result.array_values = std::move(array_values);
+			return array_result;
+		}
+
+		if ((member_info.type == Type::Struct || member_info.type == Type::UserDefined) &&
+			member_info.type_index > 0 && member_info.type_index < gTypeInfo.size()) {
+			if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info.type_index].getStructInfo()) {
+				return Evaluator::materialize_aggregate_object_value(
+					member_struct_info,
+					member_info.type_index,
+					init_list,
+					context);
+			}
+		}
+	}
+
+	return Evaluator::evaluate(initializer, context);
+}
+}
+
 EvalResult Evaluator::bind_members_from_initializer_list(
 	const StructTypeInfo* struct_info,
 	const InitializerListNode& init_list,
@@ -2775,15 +2837,11 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 		}
 
 		const ASTNode& initializer = init_list.initializers()[mi];
-		if (member_info && initializer.is<InitializerListNode>() &&
-			(member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
-			member_info->type_index > 0 && member_info->type_index < gTypeInfo.size()) {
-			if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index].getStructInfo()) {
-				auto val = materialize_aggregate_object_value(member_struct_info, member_info->type_index, initializer.as<InitializerListNode>(), context);
+			if (member_info) {
+				auto val = materialize_member_initializer_value(*member_info, initializer, context);
 				if (!val.success()) return val;
 				bindings[mname] = std::move(val);
 				continue;
-			}
 		}
 
 		auto val = evaluate(initializer, context);
@@ -2795,7 +2853,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 		const auto& member = struct_info->members[mi];
 		std::string_view mname = StringTable::getStringView(member.getName());
 		if (bindings.find(mname) == bindings.end() && member.default_initializer.has_value()) {
-			auto default_result = evaluate(member.default_initializer.value(), context);
+			auto default_result = materialize_member_initializer_value(member, member.default_initializer.value(), context);
 			if (!default_result.success()) return default_result;
 			bindings[mname] = default_result;
 		}
