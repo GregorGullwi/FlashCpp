@@ -22,6 +22,8 @@ This note is primarily **forward-looking**. It defines the next cleanup/refactor
 - `6b4b1255` — shared constexpr ctor member lookup
 - `3de8b202` — split constexpr member function lookup modes
 - `98c919eb` — shared current constexpr member function lookup
+- `a02435c4` — shared current struct static lookup gate
+- `48ea4682` — shared constexpr static member default tail
 
 ### What is now complete
 
@@ -40,11 +42,14 @@ This note is primarily **forward-looking**. It defines the next cleanup/refactor
 - single-target ctor member lookup with default-member fallback is centralized for the migrated nested and array-element member access paths
 - member-function candidate lookup now supports lookup-only vs constexpr-evaluable filtering without changing caller error behavior
 - lazy-instantiated current-struct plus base-template member-function lookup is centralized for the migrated function-call and member-function-call paths
+- current-struct static lookup mode gating plus identifier-name-handle normalization is centralized
+- the repeated static-member "evaluate initializer or synthesize scalar default" tail is centralized for the migrated instance-access paths
 
 ### Early remaining follow-up seams
 
 - the obvious ctor/member-resolution micro-duplication is largely gone; remaining cleanup candidates are smaller and need re-audit before extraction
 - the main open question is now whether any lookup-only helper has earned promotion out of `ConstExprEvaluator`
+- remaining static-member duplication is now down to more behavior-specific paths (lazy instantiation, qualified fallback lookup, and array extraction)
 
 ### Remaining likely steps after that
 
