@@ -60,13 +60,16 @@
 			TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
 			
 			CatchHandler handler;
-			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+				handler.handler_offset = 0;
 			handler.handler_end_offset = 0;
-			handler.funclet_entry_offset = handler.handler_offset;
+				handler.funclet_entry_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			handler.funclet_end_offset = 0;
 			
 			// Extract data from typed payload
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+				if (try_block.cleanup_vars.empty()) {
+					try_block.cleanup_vars = catch_op.cleanup_vars;
+				}
 			handler.type_index = catch_op.type_index;
 			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
 			handler.is_const = catch_op.is_const;
@@ -286,21 +289,35 @@
 			textSectionData.push_back(0x10);
 			emitPushReg(X64Register::RBP);
 			emitSubRSP(32);
-			// LEA RBP, [RDX + imm32] — RDX is the establisher frame (RSP after parent prologue)
-			// Adding total_stack gives RBP = establisher + N = RSP_after_sub + N = S-8.
-			// This matches the parent function's RBP so frame-relative accesses work.
-			// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
-			catch_funclet_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x8D); // LEA
-			textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
-			textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
+				// For frame-pointer based parent functions, rebuild the same frame pointer from
+				// the establisher frame (RDX) so the catch body can keep using normal RBP-relative
+				// local/catch-object offsets.
+				// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
+				catch_funclet_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8D); // LEA
+				textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
+				textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
 			in_catch_funclet_ = true;
 			catch_funclet_terminated_by_return_ = false;
 			current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
+
+				// Windows FH3 materializes the catch object into the dispCatchObj slot.
+				// For reference catches, that slot holds a pointer to the exception object,
+				// so later VariableDecl handling must load/dereference it instead of taking
+				// the address of the slot itself.
+				if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
+					int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+					setReferenceInfo(stack_offset, catch_op.exception_type, 64, false, catch_op.exception_temp);
+				}
+
+					if (current_catch_handler_) {
+						current_catch_handler_->handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+					}
+
 		}
 	}
 
@@ -641,9 +658,14 @@
 			// RCX (first argument) = pointer to exception object on the frame
 			emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
 			// RDX (second argument) = pointer to _ThrowInfo metadata
-			std::string throw_type_name;
+				std::string throw_type_name;
+				std::string throw_destructor_symbol;
 			if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
-				throw_type_name = std::string(StringTable::getStringView(gTypeInfo[throw_op.type_index].name()));
+					const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
+					throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
+					if (const StructTypeInfo* thrown_struct_info = thrown_type_info.getStructInfo()) {
+						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
+					}
 			} else {
 				throw_type_name = std::string(getTypeName(throw_op.exception_type));
 			}
@@ -651,7 +673,7 @@
 			std::string throw_info_symbol;
 			if (!throw_type_name.empty() && throw_type_name != "void") {
 				bool is_simple_type = (throw_op.exception_type != Type::Struct);
-				throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type);
+					throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type, throw_destructor_symbol);
 			}
 
 			if (!throw_info_symbol.empty()) {
@@ -731,16 +753,178 @@
 		regAlloc.invalidateCallerSavedRegisters();
 	}
 
+		void emitWindowsCleanupFuncletsAndPopulateUnwindMap() {
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				return;
+			}
+
+			current_function_unwind_map_.clear();
+			size_t cleanup_funclet_index = 0;
+
+			auto emitCleanupFunclet = [&](const std::vector<std::pair<StringHandle, StringHandle>>& cleanup_vars) -> StringHandle {
+				if (cleanup_vars.empty() || !current_function_mangled_name_.isValid()) {
+					return StringHandle();
+				}
+
+				StringBuilder sb;
+				sb.append("$unwind$")
+				  .append(StringTable::getStringView(current_function_mangled_name_))
+				  .append("$")
+				  .append(std::to_string(cleanup_funclet_index++));
+				std::string symbol_name = std::string(sb.commit());
+				StringHandle symbol_handle = StringTable::getOrInternStringHandle(symbol_name);
+
+				uint32_t funclet_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+				writer.add_static_text_symbol(symbol_name, current_function_offset_ + funclet_offset);
+
+				emitPushReg(X64Register::RBP);
+				emitSubRSP(32);
+					// Cleanup funclets receive the parent establisher frame in RDX.
+					// Reconstruct the parent RBP so frame-relative local offsets match the
+					// parent function's normal codegen.
+					cleanup_funclet_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+					textSectionData.push_back(0x48); // REX.W
+					textSectionData.push_back(0x8D); // LEA
+					textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
+					textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+
+				for (const auto& cv : cleanup_vars) {
+					emitInlineDestructorCall(cv);
+				}
+
+				emitAddRSP(32);
+				emitPopReg(X64Register::RBP);
+				textSectionData.push_back(0xC3);
+				return symbol_handle;
+			};
+
+			auto populateCleanupChain = [&](const std::vector<std::pair<StringHandle, StringHandle>>& cleanup_vars,
+				int32_t head_state,
+				int32_t tail_to_state) {
+				if (cleanup_vars.empty() || head_state < 0) {
+					return;
+				}
+				if (static_cast<size_t>(head_state) >= current_function_unwind_map_.size()) {
+					return;
+				}
+
+				std::vector<StringHandle> actions;
+				actions.reserve(cleanup_vars.size());
+				for (const auto& cleanup_var : cleanup_vars) {
+					std::vector<std::pair<StringHandle, StringHandle>> single_cleanup_var;
+					single_cleanup_var.push_back(cleanup_var);
+					actions.push_back(emitCleanupFunclet(single_cleanup_var));
+				}
+
+				if (actions.empty() || !actions.front().isValid()) {
+					return;
+				}
+
+				size_t extra_state_start = current_function_unwind_map_.size();
+				if (cleanup_vars.size() > 1) {
+					current_function_unwind_map_.resize(current_function_unwind_map_.size() + cleanup_vars.size() - 1);
+				}
+
+				current_function_unwind_map_[static_cast<size_t>(head_state)].action = actions.front();
+				current_function_unwind_map_[static_cast<size_t>(head_state)].to_state =
+					cleanup_vars.size() > 1 ? static_cast<int32_t>(extra_state_start) : tail_to_state;
+
+				for (size_t i = 1; i < cleanup_vars.size(); ++i) {
+					int32_t state_index = static_cast<int32_t>(extra_state_start + (i - 1));
+					int32_t next_to_state = tail_to_state;
+					if (i + 1 < cleanup_vars.size()) {
+						next_to_state = state_index + 1;
+					}
+					current_function_unwind_map_[static_cast<size_t>(state_index)] = {next_to_state, actions[i]};
+				}
+			};
+
+			if (current_function_try_blocks_.empty()) {
+				if (!pending_windows_function_cleanup_vars_.empty()) {
+					current_function_unwind_map_.assign(1, UnwindMapEntry{});
+					populateCleanupChain(pending_windows_function_cleanup_vars_, 0, -1);
+					if (!current_function_unwind_map_[0].action.isValid()) {
+						current_function_unwind_map_.clear();
+					}
+				}
+				pending_windows_function_cleanup_vars_.clear();
+				return;
+			}
+
+			std::vector<size_t> sorted_indices(current_function_try_blocks_.size());
+			for (size_t i = 0; i < sorted_indices.size(); ++i) {
+				sorted_indices[i] = i;
+			}
+			std::sort(sorted_indices.begin(), sorted_indices.end(), [&](size_t a, size_t b) {
+				uint32_t range_a = current_function_try_blocks_[a].try_end_offset - current_function_try_blocks_[a].try_start_offset;
+				uint32_t range_b = current_function_try_blocks_[b].try_end_offset - current_function_try_blocks_[b].try_start_offset;
+				return range_a < range_b;
+			});
+
+			std::vector<int> parent_index(sorted_indices.size(), -1);
+			for (size_t i = 0; i < sorted_indices.size(); ++i) {
+				const auto& inner = current_function_try_blocks_[sorted_indices[i]];
+				for (size_t j = i + 1; j < sorted_indices.size(); ++j) {
+					const auto& outer = current_function_try_blocks_[sorted_indices[j]];
+					if (outer.try_start_offset <= inner.try_start_offset && inner.try_end_offset <= outer.try_end_offset) {
+						parent_index[i] = static_cast<int>(j);
+						break;
+					}
+				}
+			}
+
+			std::vector<int32_t> try_low_by_sorted_index(sorted_indices.size(), -1);
+			int32_t next_state = 0;
+			for (int i = static_cast<int>(sorted_indices.size()) - 1; i >= 0; --i) {
+				try_low_by_sorted_index[i] = next_state++;
+			}
+
+			std::vector<std::vector<int32_t>> catch_states_by_sorted_index(sorted_indices.size());
+			for (size_t i = 0; i < sorted_indices.size(); ++i) {
+				const auto& try_block = current_function_try_blocks_[sorted_indices[i]];
+				catch_states_by_sorted_index[i].reserve(try_block.catch_handlers.size());
+				for ([[maybe_unused]] const auto& handler : try_block.catch_handlers) {
+					catch_states_by_sorted_index[i].push_back(next_state++);
+				}
+			}
+
+			current_function_unwind_map_.assign(static_cast<size_t>(next_state), UnwindMapEntry{});
+			for (size_t i = 0; i < sorted_indices.size(); ++i) {
+				const auto& try_block = current_function_try_blocks_[sorted_indices[i]];
+
+				int32_t to_state = -1;
+				if (parent_index[i] >= 0) {
+					to_state = try_low_by_sorted_index[parent_index[i]];
+				}
+
+				current_function_unwind_map_[static_cast<size_t>(try_low_by_sorted_index[i])].to_state = to_state;
+				for (int32_t catch_state : catch_states_by_sorted_index[i]) {
+					current_function_unwind_map_[static_cast<size_t>(catch_state)].to_state = to_state;
+				}
+
+				populateCleanupChain(try_block.cleanup_vars, try_low_by_sorted_index[i], to_state);
+			}
+
+			pending_windows_function_cleanup_vars_.clear();
+		}
+
 	// ============================================================================
 	// Phase 2: Function-level cleanup landing pad (ELF/Linux only)
 	// ============================================================================
 
 	void handleFunctionCleanupLP(const IrInstruction& instruction) {
 		if (!g_enable_exceptions) return;
-		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) return;
 
 		const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
 		if (op.cleanup_vars.empty()) return;
+
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				pending_windows_function_cleanup_vars_ = op.cleanup_vars;
+				return;
+			}
 
 		// Record the offset of this cleanup landing pad within the function
 		current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;

@@ -1651,18 +1651,15 @@
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
-			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-			auto seh_try_blocks = convertSehInfoToWriterFormat();
-
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 
 			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
-			for (const auto& try_block : try_blocks) {
-				for (const auto& handler : try_block.catch_handlers) {
-					if (handler.catch_obj_offset < 0) {
-						size_t required_stack = static_cast<size_t>(-handler.catch_obj_offset);
+				for (const auto& try_block : current_function_try_blocks_) {
+					for (const auto& handler : try_block.catch_handlers) {
+						if (handler.catch_obj_stack_offset < 0) {
+							size_t required_stack = static_cast<size_t>(-handler.catch_obj_stack_offset);
 						if (required_stack > total_stack) {
 							total_stack = required_stack;
 						}
@@ -1685,6 +1682,8 @@
 			if (total_stack % 16 != 0) {
 				total_stack = (total_stack + 15) & ~15;  // Round up to next 16n
 			}
+
+				emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 			
 			// Patch the SUB RSP immediate at prologue offset + 3
 			if (current_function_prologue_offset_ > 0) {
@@ -1722,6 +1721,18 @@
 				}
 			}
 			catch_funclet_lea_rbp_patches_.clear();
+
+				for (auto funclet_lea_offset : cleanup_funclet_lea_rbp_patches_) {
+					uint32_t lea_patch_offset = funclet_lea_offset + 3;
+					const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+					for (int i = 0; i < 4; i++) {
+						textSectionData[lea_patch_offset + i] = bytes[i];
+					}
+				}
+				cleanup_funclet_lea_rbp_patches_.clear();
+
+				auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+				auto seh_try_blocks = convertSehInfoToWriterFormat();
 			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 

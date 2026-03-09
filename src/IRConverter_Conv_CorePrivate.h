@@ -1289,10 +1289,14 @@
 		// Clear temp_var_sizes for this function
 		temp_var_sizes_.clear();
 
-		// Pre-scan: detect C++ exception handling (try/catch) in this function
+			// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
+			// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
+			// destructible locals that require unwind actions even without a local catch.
 		current_function_has_cpp_eh_ = false;
 		for (const auto& instruction : it->second) {
-			if (instruction.getOpcode() == IrOpcode::TryBegin) {
+				if (instruction.getOpcode() == IrOpcode::TryBegin ||
+				    instruction.getOpcode() == IrOpcode::FunctionCleanupLP ||
+				    instruction.getOpcode() == IrOpcode::DestructorCall) {
 				current_function_has_cpp_eh_ = true;
 				break;
 			}

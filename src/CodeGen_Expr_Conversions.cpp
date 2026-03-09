@@ -516,6 +516,40 @@
 			// Phase 4: Using StringHandle for lookup
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
 
+			const DeclarationNode* decl = lookupDeclaration(identifier_handle);
+			const TypeSpecifierNode* type_node = decl ? &decl->type_node().as<TypeSpecifierNode>() : nullptr;
+
+			if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && type_node) {
+				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
+				if (binding_info.is_global_or_static && binding_info.type != Type::Void && binding_info.size_in_bits > 0) {
+					int size_bits = (type_node->pointer_depth() > 0 || type_node->is_reference() || type_node->is_function_pointer())
+						? 64
+						: static_cast<int>(type_node->size_in_bits());
+
+					TempVar result_temp = var_counter.next();
+					GlobalLoadOp load_op;
+					load_op.result.type = type_node->type();
+					load_op.result.size_in_bits = size_bits;
+					load_op.result.value = result_temp;
+					load_op.global_name = binding_info.store_name;
+					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), unaryOperatorNode.get_token()));
+
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name),
+						type_node->type(), size_bits));
+
+					out.clear();
+					out.emplace_back(type_node->type());
+					out.emplace_back(size_bits);
+					out.emplace_back(result_temp);
+					unsigned long long fourth_element = (type_node->type() == Type::Struct)
+						? static_cast<unsigned long long>(type_node->type_index())
+						: ((type_node->pointer_depth() > 0) ? static_cast<unsigned long long>(type_node->pointer_depth()) : 0ULL);
+					out.emplace_back(fourth_element);
+					return true;
+				}
+			}
+
 			// Static local variables are stored as globals with mangled names
 			auto static_local_it = static_local_names_.find(identifier_handle);
 			if (static_local_it != static_local_names_.end()) {
@@ -527,12 +561,9 @@
 				return true;
 			}
 
-			const DeclarationNode* decl = lookupDeclaration(identifier_handle);
 			if (!decl) {
 				return false;
 			}
-
-			const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
 
 			out.clear();
 			out.emplace_back(type_node->type());

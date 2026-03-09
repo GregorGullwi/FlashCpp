@@ -1154,18 +1154,59 @@
 		return allocateRegisterWithSpilling(X64Register::Count);
 	}
 
+		bool isRestrictedCatchFuncletRegister(X64Register reg) const {
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				return false;
+			}
+			if (!in_catch_funclet_) {
+				return false;
+			}
+			switch (reg) {
+				case X64Register::RBX:
+				case X64Register::RSI:
+				case X64Register::RDI:
+				case X64Register::R12:
+				case X64Register::R13:
+				case X64Register::R14:
+				case X64Register::R15:
+					return true;
+				default:
+					return false;
+			}
+		}
+
 	// Allocate a register, spilling one to the stack if necessary, excluding a specific register
 	X64Register allocateRegisterWithSpilling(X64Register exclude) {
 		// Try to allocate a free register first (excluding the specified one)
 		for (auto& reg : regAlloc.registers) {
-			if (!reg.isAllocated && reg.reg < X64Register::XMM0 && reg.reg != exclude) {
+				if (!reg.isAllocated && reg.reg < X64Register::XMM0 && reg.reg != exclude && !isRestrictedCatchFuncletRegister(reg.reg)) {
 				reg.isAllocated = true;
 				return reg.reg;
 			}
 		}
 
 		// No free registers - need to spill one (excluding the specified one)
-		auto reg_to_spill = regAlloc.findRegisterToSpill(exclude);
+			auto reg_to_spill = [&]() -> std::optional<X64Register> {
+				X64Register best_candidate = X64Register::Count;
+				bool found_dirty = false;
+				for (size_t i = static_cast<size_t>(X64Register::RAX); i <= static_cast<size_t>(X64Register::R15); ++i) {
+					const auto& reg = regAlloc.registers[i];
+					if (!reg.isAllocated || reg.reg == X64Register::RSP || reg.reg == X64Register::RBP || reg.reg == exclude || isRestrictedCatchFuncletRegister(reg.reg)) {
+						continue;
+					}
+					if (!reg.isDirty) {
+						return reg.reg;
+					}
+					if (best_candidate == X64Register::Count) {
+						best_candidate = reg.reg;
+						found_dirty = true;
+					}
+				}
+				if (found_dirty) {
+					return best_candidate;
+				}
+				return std::nullopt;
+			}();
 		if (!reg_to_spill.has_value()) {
 			throw InternalError("No registers available for spilling");
 		}
