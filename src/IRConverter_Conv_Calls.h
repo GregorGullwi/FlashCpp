@@ -1144,13 +1144,13 @@
 					bool should_pass_address = is_reference_param || shouldPassStructByAddress(arg, is_two_reg_sysv);
 
 					if (should_pass_address && std::holds_alternative<StringHandle>(paramValue)) {
-						StringHandle object_name_handle = std::get<StringHandle>(paramValue);
-						int object_offset = variable_scopes.back().variables[object_name_handle].offset;
-						auto ref_it = reference_stack_info_.find(object_offset);
+						StringHandle obj_name_handle = std::get<StringHandle>(paramValue);
+						int obj_off = variable_scopes.back().variables[obj_name_handle].offset;
+						auto ref_it = reference_stack_info_.find(obj_off);
 						if (ref_it != reference_stack_info_.end()) {
-							emitMovFromFrame(target_reg, object_offset);
+							emitMovFromFrame(target_reg, obj_off);
 						} else {
-							emitLeaFromFrame(target_reg, object_offset);
+							emitLeaFromFrame(target_reg, obj_off);
 						}
 						continue;
 					}
