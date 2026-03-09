@@ -1356,7 +1356,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			ctor_param_bindings,
 			context,
 			"Invalid parameter node in callable object constructor",
-				outer_bindings,
+			outer_bindings,
 			true);
 		if (!ctor_bind_result.success()) {
 			return ctor_bind_result;
@@ -1419,7 +1419,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			evaluation_bindings,
 			context,
 			"Invalid parameter node in callable object operator()",
-				outer_bindings,
+			outer_bindings,
 			false);
 		if (!call_bind_result.success()) {
 			return call_bind_result;
@@ -1479,7 +1479,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			evaluation_bindings,
 			context,
 			"Invalid parameter node in brace-initialized callable object operator()",
-				outer_bindings,
+			outer_bindings,
 			true);
 		if (!bind_result.success()) return bind_result;
 
@@ -2666,25 +2666,25 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		
 		// Execute then or else branch
 		if (cond_result.as_bool()) {
-				auto then_result = evaluate_statement_with_bindings(if_stmt.get_then_statement(), bindings, context);
-				if (then_result.success()) {
-					return then_result;
-				}
-				if (!isStatementExecutedWithoutReturn(then_result)) {
-					return then_result;
-				}
+			auto then_result = evaluate_statement_with_bindings(if_stmt.get_then_statement(), bindings, context);
+			if (then_result.success()) {
+				return then_result;
+			}
+			if (!isStatementExecutedWithoutReturn(then_result)) {
+				return then_result;
+			}
 		} else if (if_stmt.has_else()) {
 			// Execute else branch
 			// Fix dangling reference warning by storing the value first
 			std::optional<ASTNode> else_stmt_opt = if_stmt.get_else_statement();
 			if (else_stmt_opt.has_value()) {
-					auto else_result = evaluate_statement_with_bindings(*else_stmt_opt, bindings, context);
-					if (else_result.success()) {
-						return else_result;
-					}
-					if (!isStatementExecutedWithoutReturn(else_result)) {
-						return else_result;
-					}
+				auto else_result = evaluate_statement_with_bindings(*else_stmt_opt, bindings, context);
+				if (else_result.success()) {
+					return else_result;
+				}
+				if (!isStatementExecutedWithoutReturn(else_result)) {
+					return else_result;
+				}
 			}
 		}
 		
@@ -2706,12 +2706,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	
 	// Handle block statements (nested blocks)
 	if (stmt_node.is<BlockNode>()) {
-			return evaluate_block_with_bindings(
-				stmt_node,
-				bindings,
-				context,
-				"Constexpr block is not a block",
-				kStatementExecutedWithoutReturn);
+		return evaluate_block_with_bindings(
+			stmt_node,
+			bindings,
+			context,
+			"Constexpr block is not a block",
+			kStatementExecutedWithoutReturn);
 	}
 	
 	return EvalResult::error("Unsupported statement type in constexpr function");
