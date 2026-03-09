@@ -1181,6 +1181,9 @@
 							}
 						}
 					}
+				} else {
+					// Struct doesn't fit in registers — advance counter to stay in sync with first pass
+					int_reg_index += regs_needed;
 				}
 			}
 			// Args that don't fit in registers were already placed on the stack in the first pass above
