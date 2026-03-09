@@ -1298,6 +1298,11 @@
 		// For non-variadic SysV 9-16 byte by-value struct params, it advances by 2 (two register slots);
 		// for all other params it advances by 1.  This ensures their frame offsets don't collide.
 		int param_slot_index = static_cast<int>(param_offset_adjustment);
+		// stack_param_index counts how many parameter slots have overflowed to the stack so far,
+		// regardless of type (float vs int).  On SysV AMD64, float and int register banks are
+		// independent, so both can overflow at the same time — using a single unified counter
+		// ensures callee stack-param offsets match the caller's stack_arg_count-based layout.
+		size_t stack_param_index = 0;
 		
 		// First pass: collect all parameter information
 		if (!instruction.hasTypedPayload()) {
@@ -1373,7 +1378,10 @@
 					// Parameter comes from stack - calculate positive offset
 					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
 					// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
-					offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(type_specific_index - reg_threshold) * 8;
+					// Use stack_param_index (not type_specific_index - reg_threshold) so that mixed
+					// float and int stack params get consecutive slots matching the caller's layout.
+					offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(stack_param_index) * 8;
+					stack_param_index += is_two_reg_struct ? 2 : 1;
 					param_slot_index += is_two_reg_struct ? 2 : 1;
 				}
 
@@ -1478,6 +1486,7 @@
 			int_param_reg_index = param_offset_adjustment;
 			float_param_reg_index = 0;
 			param_slot_index = static_cast<int>(param_offset_adjustment);
+			stack_param_index = 0;
 		
 			for (size_t i = 0; i < func_decl.parameters.size(); ++i) {
 				const auto& param = func_decl.parameters[i];
@@ -1527,7 +1536,10 @@
 				} else {
 					// Parameter comes from stack - calculate positive offset
 					// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
-					offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(type_specific_index - reg_threshold) * 8;
+					// Use stack_param_index (not type_specific_index - reg_threshold) so that mixed
+					// float and int stack params get consecutive slots matching the caller's layout.
+					offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(stack_param_index) * 8;
+					stack_param_index += is_two_reg_struct ? 2 : 1;
 					param_slot_index += is_two_reg_struct ? 2 : 1;
 				}
 
