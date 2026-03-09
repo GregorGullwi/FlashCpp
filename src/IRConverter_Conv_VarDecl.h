@@ -712,6 +712,24 @@
 		}
 	}
 
+	// Helper: emit a noexcept terminate landing pad (ELF only) if the current function is
+	// declared noexcept and has no existing cleanup landing pad.
+	// The LP is reached by the personality routine when an exception would escape a noexcept
+	// function.  It calls __cxa_call_terminate(exception_ptr) which is [[noreturn]].
+	// Sets current_function_cleanup_lp_offset_ so the caller can register a CleanupBlockInfo.
+	void injectNoexceptTerminateLPIfNeeded() {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (g_enable_exceptions && current_function_is_noexcept_ && current_function_cleanup_lp_offset_ == 0) {
+				current_function_cleanup_lp_offset_ =
+					static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+				// Exception pointer arrives in RAX (Itanium ABI landing-pad calling convention).
+				// Move it to RDI (first SysV integer argument) then call __cxa_call_terminate.
+				emitMovRegReg(X64Register::RDI, X64Register::RAX);
+				emitCall("__cxa_call_terminate");
+			}
+		}
+	}
+
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		assert(instruction.hasTypedPayload() && "FunctionDecl instruction must use typed payload");
 		
@@ -859,23 +877,8 @@
 				auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 				auto seh_try_blocks = convertSehInfoToWriterFormat();
 
-			// For noexcept functions (ELF only): inject a terminate landing pad that covers
-			// the whole function body.  Any exception escaping a noexcept function must
-			// cause std::terminate() to be called (C++ standard [except.terminate]).
-			// We emit a minimal LP that calls __cxa_call_terminate and register it as a
-			// cleanup block so the LSDA personality routine will jump here instead of
-			// propagating the exception to the caller.
-			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-				if (g_enable_exceptions && current_function_is_noexcept_ && current_function_cleanup_lp_offset_ == 0) {
-					// Record LP offset within the function
-					current_function_cleanup_lp_offset_ =
-						static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-					// Landing pad: exception pointer arrives in RAX (Itanium ABI calling convention)
-					// Move it to RDI (first SysV argument) and call __cxa_call_terminate.
-					emitMovRegReg(X64Register::RDI, X64Register::RAX);
-					emitCall("__cxa_call_terminate");
-				}
-			}
+			// noexcept enforcement: inject terminate LP if needed (ELF only)
+			injectNoexceptTerminateLPIfNeeded();
 
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 

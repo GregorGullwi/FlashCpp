@@ -211,7 +211,8 @@
 						else
 							is_truly_noexcept = (std::get<double>(nlv) != 0.0);
 					}
-					// For complex noexcept(expr), conservatively keep true
+					// For complex noexcept(expr) (e.g. noexcept(sizeof(T) < 8)), conservatively keep true.
+					// TODO: use ConstExpr::Evaluator to evaluate non-trivial constant expressions.
 				}
 			}
 			func_decl_op.is_noexcept = is_truly_noexcept;

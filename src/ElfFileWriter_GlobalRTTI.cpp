@@ -242,7 +242,9 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 	builder.append("_ZTI").append(class_name.length()).append(class_name);
 	std::string typeinfo_symbol(builder.commit());
 
-	// Check if already created
+	// Intentional static lifetime: typeinfo symbols are emitted once per compilation unit
+	// (same pattern as created_class_typeinfos in the flat overload above).  This deduplicates
+	// typeinfo symbols across multiple throw/catch sites in the same compilation unit.
 	static std::set<std::string> created_si_typeinfos;
 	if (created_si_typeinfos.find(typeinfo_symbol) != created_si_typeinfos.end()) {
 		return typeinfo_symbol;
@@ -365,13 +367,22 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		std::vector<char> zeros(ti_size, 0);
 
 		// Fill in inline (non-pointer) fields
+		// Itanium ABI flags for __vmi_class_type_info:
+		//   bit 0 (__non_diamond_repeat_mask = 0x1): class has a base appearing more than once
+		//                                            (but not in a diamond pattern)
+		//   bit 1 (__diamond_shaped_mask = 0x2):     class has a diamond-shaped inheritance graph
 		uint32_t flags = 0;
+		bool has_virtual = false;
 		for (const auto& base : base_classes) {
 			if (base.is_virtual) {
-				flags |= 0x1; // __non_diamond_repeat_mask if re-used virtual base
+				has_virtual = true;
 			}
 		}
-		if (n_bases > 1) flags |= 0x2; // __diamond_shaped_mask (conservative)
+		if (has_virtual) flags |= 0x1; // virtual bases → may have repeated occurrences
+		// TODO: analyse the graph to set __diamond_shaped_mask (0x2) only when a genuine
+		//       diamond exists.  For now conservatively set it for all multiple-inheritance
+		//       classes since the cost is only a slightly slower personality routine.
+		if (n_bases > 1) flags |= 0x2;
 
 		std::memcpy(zeros.data() + 16, &flags,   sizeof(uint32_t));
 		std::memcpy(zeros.data() + 20, &n_bases, sizeof(uint32_t));
