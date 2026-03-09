@@ -969,8 +969,9 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		} else if (right_type != Type::Void) {
 			rhs_matches = (p1_spec.type() == right_type);
 		} else {
-			// Accept any match when we don't have enough type info
-			rhs_matches = true;
+			// No right-operand type information at all: skip this overload to avoid
+			// silently selecting the wrong candidate. Only accept exact type matches.
+			rhs_matches = false;
 		}
 		if (!rhs_matches) continue;
 

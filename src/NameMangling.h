@@ -196,13 +196,15 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			output += "P6A";
 			if (type_node.has_function_signature()) {
 				const auto& sig = type_node.function_signature();
+				// Use explicit constructor (not default + set_type) to prevent uninitialized
+				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
 				TypeSpecifierNode ret_spec(sig.return_type, TypeQualifier::None, 0);
 				appendTypeCode(output, ret_spec);
 				if (sig.parameter_types.empty()) {
 					output += 'X';  // void parameter list
 				} else {
 					for (Type pt : sig.parameter_types) {
-						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);
+						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);  // explicit ctor: see above
 						appendTypeCode(output, param_spec);
 					}
 				}
@@ -364,7 +366,8 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			output += "PF";
 			if (type_node.has_function_signature()) {
 				const auto& sig = type_node.function_signature();
-				// Encode return type (use a properly initialized TypeSpecifierNode wrapper)
+				// Use explicit constructor (not default + set_type) to prevent uninitialized
+				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
 				TypeSpecifierNode ret_spec(sig.return_type, TypeQualifier::None, 0);
 				appendItaniumTypeCode(output, ret_spec);
 				// Encode parameter types
@@ -372,7 +375,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 					output += 'v';  // void parameter list
 				} else {
 					for (Type pt : sig.parameter_types) {
-						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);
+						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);  // explicit ctor: see above
 						appendItaniumTypeCode(output, param_spec);
 					}
 				}

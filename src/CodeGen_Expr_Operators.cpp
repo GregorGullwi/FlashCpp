@@ -923,58 +923,43 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						call_op.return_slot = result_var;
 					}
 					
+					// Helper: take address of operand for reference parameters
+					auto passOperandArg = [&](const std::vector<IrOperand>& operands, Type opType, int opSize, std::string_view role, CallOp& cop) -> bool {
+						std::variant<StringHandle, TempVar> val;
+						if (std::holds_alternative<StringHandle>(operands[2])) {
+							val = std::get<StringHandle>(operands[2]);
+						} else if (std::holds_alternative<TempVar>(operands[2])) {
+							val = std::get<TempVar>(operands[2]);
+						} else {
+							FLASH_LOG_FORMAT(Codegen, Error, "Cannot take address of free-function operator {}", role);
+							return false;
+						}
+						TempVar addr = var_counter.next();
+						AddressOfOp addr_op;
+						addr_op.result = addr;
+						addr_op.operand.type = opType;
+						addr_op.operand.size_in_bits = opSize;
+						addr_op.operand.pointer_depth = 0;
+						std::visit([&addr_op](auto&& v) { addr_op.operand.value = v; }, val);
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
+						TypedValue arg;
+						arg.type = opType;
+						arg.size_in_bits = 64;  // reference is always a pointer (64-bit)
+						arg.value = addr;
+						cop.args.push_back(arg);
+						return true;
+					};
+					
 					// Pass LHS as first argument
 					if (!param_types.empty() && param_types[0].is_reference()) {
-						std::variant<StringHandle, TempVar> lhs_value;
-						if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
-							lhs_value = std::get<StringHandle>(lhsIrOperands[2]);
-						} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
-							lhs_value = std::get<TempVar>(lhsIrOperands[2]);
-						} else {
-							FLASH_LOG(Codegen, Error, "Cannot take address of free-function operator LHS");
-							return {};
-						}
-						TempVar lhs_addr = var_counter.next();
-						AddressOfOp addr_op;
-						addr_op.result = lhs_addr;
-						addr_op.operand.type = lhsType;
-						addr_op.operand.size_in_bits = lhsSize;
-						addr_op.operand.pointer_depth = 0;
-						std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
-						TypedValue lhs_arg;
-						lhs_arg.type = lhsType;
-						lhs_arg.size_in_bits = 64;
-						lhs_arg.value = lhs_addr;
-						call_op.args.push_back(lhs_arg);
+						if (!passOperandArg(lhsIrOperands, lhsType, lhsSize, "LHS", call_op)) return {};
 					} else {
 						call_op.args.push_back(toTypedValue(lhsIrOperands));
 					}
 					
 					// Pass RHS as second argument
 					if (param_types.size() >= 2 && param_types[1].is_reference()) {
-						std::variant<StringHandle, TempVar> rhs_value;
-						if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
-							rhs_value = std::get<StringHandle>(rhsIrOperands[2]);
-						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-							rhs_value = std::get<TempVar>(rhsIrOperands[2]);
-						} else {
-							FLASH_LOG(Codegen, Error, "Cannot take address of free-function operator RHS");
-							return {};
-						}
-						TempVar rhs_addr = var_counter.next();
-						AddressOfOp rhs_addr_op;
-						rhs_addr_op.result = rhs_addr;
-						rhs_addr_op.operand.type = rhsType;
-						rhs_addr_op.operand.size_in_bits = rhsSize;
-						rhs_addr_op.operand.pointer_depth = 0;
-						std::visit([&rhs_addr_op](auto&& val) { rhs_addr_op.operand.value = val; }, rhs_value);
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(rhs_addr_op), binaryOperatorNode.get_token()));
-						TypedValue rhs_arg;
-						rhs_arg.type = rhsType;
-						rhs_arg.size_in_bits = 64;
-						rhs_arg.value = rhs_addr;
-						call_op.args.push_back(rhs_arg);
+						if (!passOperandArg(rhsIrOperands, rhsType, rhsSize, "RHS", call_op)) return {};
 					} else {
 						call_op.args.push_back(toTypedValue(rhsIrOperands));
 					}
