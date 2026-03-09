@@ -21,14 +21,17 @@ functions and inline friend functions (hidden friends) are findable via ADL.
 
 ---
 
-### 1.2 Free-Function Operator Overloads Invisible to Binary Operator Resolution ✅
+### 1.2 Free-Function Operator Overloads Invisible to Binary Operator Resolution ⚠️
 
 **Standard (C++20 [over.match.oper]):** Resolving `a op b` must consider both member and
-non-member (free-function) operator overloads from ordinary lookup and ADL.
+non-member (free-function) operator overloads from ordinary lookup and ADL, ranking all
+candidates together via standard overload resolution.
 
 **FlashCpp:** `findBinaryOperatorOverloadWithFreeFunction` (OverloadResolution.h) searches member
-functions first, then falls back to namespace-scope free-function operators found in the symbol
-table. Both member and non-member operator overloads are now fully supported.
+functions first (exact type match only), then falls back to namespace-scope free-function
+operators found in the symbol table. Both member and non-member operator overloads are supported,
+but they are not ranked in a unified candidate set per [over.match.oper]. ADL candidates are
+also not yet searched for operator overloads.
 
 **Location:** `src/OverloadResolution.h` — `findBinaryOperatorOverloadWithFreeFunction()`,
 `OperatorOverloadResult::is_free_function`; `src/CodeGen_Expr_Operators.cpp` — free-function
@@ -59,7 +62,7 @@ truly unknown types instead of silently emitting `'i'`/`'H'` (int). Previously-m
 are now properly handled:
 - `Type::Enum` — encoded by name (same as struct) from `gTypeInfo`
 - `Type::FunctionPointer` — `PF<return><params>E` (Itanium) / `P6A<return><params>@Z` (MSVC)
-- `Type::Nullptr` — `Dn` (Itanium) / `PAX` (MSVC)
+- `Type::Nullptr` — `Dn` (Itanium) / `$$T` (MSVC)
 - `Type::Auto` — throws `InternalError` (should never reach mangling; indicates a compiler bug)
 
 **Location:** `src/NameMangling.h` — `appendItaniumTypeCode()`, `appendMsvcTypeCode()`

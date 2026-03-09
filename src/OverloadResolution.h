@@ -897,10 +897,12 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 			}
 		}
 	}
-	// Phase 2: No exact match found, return first matching operator (fallback)
-	if (first_match) {
-		return OperatorOverloadResult(first_match);
-	}
+	// Phase 2: No exact type match found among member operators.
+	// Do NOT fall back to a type-mismatched member operator — per C++20 [over.match.oper],
+	// non-member (free-function) candidates must also be considered. Returning a mismatched
+	// member here would suppress the free-function search in
+	// findBinaryOperatorOverloadWithFreeFunction. Instead, fall through to base-class search
+	// and ultimately return no_overload so the caller can check free functions too.
 	
 	// Search base classes recursively
 	for (const auto& base_spec : left_struct_info->base_classes) {
