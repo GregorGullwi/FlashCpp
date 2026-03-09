@@ -1272,9 +1272,45 @@
 
 		for (const auto& instruction : it->second) {
 			// Look for TempVar operands in the instruction
-			func_stack_space.shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall));
+			func_stack_space.shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall
+			                                                  && instruction.getOpcode() != IrOpcode::ConstructorCall));
 			
-			// Track outgoing call argument space
+			// Track outgoing call argument space for function calls AND constructor calls.
+			// Both place overflow arguments at RSP-relative offsets, so we must pre-allocate
+			// enough outgoing arg space for the largest call in this function.
+
+			// Lambda: compute outgoing stack bytes for a set of arguments on Linux SysV AMD64.
+			// int_slots_start: number of integer register slots already consumed (e.g., 1 for 'this').
+			auto computeSysVOutgoingBytes = [](const std::vector<TypedValue>& args, size_t int_slots_start) -> size_t {
+				size_t int_slots_used = int_slots_start;
+				size_t float_slots_used = 0;
+				size_t int_stack_slots = 0;
+				size_t float_stack_slots = 0;
+				constexpr size_t max_int_regs = 6;
+				constexpr size_t max_float_regs = 8;
+				for (const auto& arg : args) {
+					bool arg_is_float = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference() && arg.pointer_depth == 0;
+					bool arg_is_two_reg = arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 &&
+					                     !arg.is_reference() && arg.pointer_depth == 0;
+					size_t slots = arg_is_two_reg ? 2 : 1;
+					if (arg_is_float) {
+						if (float_slots_used < max_float_regs) float_slots_used++;
+						else float_stack_slots++;
+					} else {
+						if (int_slots_used + slots <= max_int_regs) {
+							int_slots_used += slots;
+						} else if (int_slots_used < max_int_regs) {
+							// Partial overflow: struct needs 2 but only 1 slot left — all goes to stack
+							int_stack_slots += slots;
+							int_slots_used = max_int_regs;
+						} else {
+							int_stack_slots += slots;
+						}
+					}
+				}
+				return (int_stack_slots + float_stack_slots) * 8;
+			};
+
 			if (instruction.getOpcode() == IrOpcode::FunctionCall && instruction.hasTypedPayload()) {
 				if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
 					// For Windows variadic calls: ALL args on stack starting at RSP+0
@@ -1300,13 +1336,38 @@
 							}
 						}
 					} else {
-						// Linux: First 6 in registers, rest on stack starting at RSP+0
-						if (arg_count > 6) {
-							outgoing_bytes = (arg_count - 6) * 8;
-						}
-						// No shadow space on Linux
+						// Linux SysV AMD64: hidden return param consumes int reg 0 when present.
+						size_t int_slots_start = call_op->usesReturnSlot() ? 1 : 0;
+						outgoing_bytes = computeSysVOutgoingBytes(call_op->args, int_slots_start);
 					}
 					
+					if (outgoing_bytes > max_outgoing_arg_bytes) {
+						max_outgoing_arg_bytes = outgoing_bytes;
+					}
+				}
+			}
+
+			// Constructor calls: 'this' always occupies integer register 0, so explicit
+			// arguments start with int_slots_used = 1.
+			if (instruction.getOpcode() == IrOpcode::ConstructorCall && instruction.hasTypedPayload()) {
+				if (const ConstructorCallOp* ctor_op = std::any_cast<ConstructorCallOp>(&instruction.getTypedPayload())) {
+					constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+					size_t arg_count = ctor_op->arguments.size();
+					size_t outgoing_bytes = 0;
+
+					if (is_coff_format) {
+						// Windows: 'this' uses position 0, so effective arg count = args + 1
+						size_t total = arg_count + 1;  // +1 for 'this'
+						if (total > 4) {
+							outgoing_bytes = 32 + (total - 4) * 8;
+						} else {
+							outgoing_bytes = 32;  // Shadow space
+						}
+					} else {
+						// Linux SysV: 'this' consumes 1 int register slot
+						outgoing_bytes = computeSysVOutgoingBytes(ctor_op->arguments, /*int_slots_start=*/1);
+					}
+
 					if (outgoing_bytes > max_outgoing_arg_bytes) {
 						max_outgoing_arg_bytes = outgoing_bytes;
 					}

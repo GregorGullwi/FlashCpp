@@ -31,3 +31,30 @@ double external_mixed_stack(int i1, double d1, int i2, double d2, int i3, double
            i1, d1, i2, d2, i3, d3, i4, d4, i5, d5);
     return i1 + d1 + i2 + d2 + i3 + d3 + i4 + d4 + i5 + d5;
 }
+
+typedef struct Big3 {
+    int a;
+    int b;
+    int c;
+} Big3;
+
+int external_sum_big3(Big3 value) {
+    printf("external_sum_big3: %d %d %d\n", value.a, value.b, value.c);
+    return value.a + value.b + value.c;
+}
+
+// Test: Big3 passed after 4 ints — still fits in registers (RDI-R8 for ints, R9+stack? no:
+// i1→RDI, i2→RSI, i3→RDX, i4→RCX, Big3 low→R8, Big3 high→R9 — all 6 registers used)
+int external_big3_after_4_ints(int i1, int i2, int i3, int i4, Big3 value) {
+    printf("external_big3_after_4_ints: %d %d %d %d | %d %d %d\n",
+           i1, i2, i3, i4, value.a, value.b, value.c);
+    return i1 + i2 + i3 + i4 + value.a + value.b + value.c;
+}
+
+// Test: Big3 passed after 5 ints — Big3 overflows to the stack
+// i1→RDI, i2→RSI, i3→RDX, i4→RCX, i5→R8 (5 regs used, only 1 left, Big3 needs 2 → stack)
+int external_big3_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big3 value) {
+    printf("external_big3_after_5_ints: %d %d %d %d %d | %d %d %d\n",
+           i1, i2, i3, i4, i5, value.a, value.b, value.c);
+    return i1 + i2 + i3 + i4 + i5 + value.a + value.b + value.c;
+}
