@@ -52,6 +52,21 @@
 
 			if (var_symbol.has_value()) {
 				info.captured_var_decls.push_back(*var_symbol);
+			} else if (current_lambda_context_.isActive()) {
+				StringHandle var_name_handle = StringTable::getOrInternStringHandle(var_name);
+				auto capture_type_it = current_lambda_context_.capture_types.find(var_name_handle);
+				if (current_lambda_context_.captures.count(var_name_handle) > 0 &&
+					capture_type_it != current_lambda_context_.capture_types.end()) {
+					ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(capture_type_it->second);
+					DeclarationNode& synthetic_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(type_node, capture.identifier_token());
+					info.captured_var_decls.push_back(ASTNode::emplace_node<DeclarationNode>(synthetic_decl));
+				} else {
+					throw CompileError(std::string(StringBuilder()
+						.append("Lambda capture variable not found in scope: '")
+						.append(var_name)
+						.append("'")
+						.commit()));
+				}
 			} else {
 				throw CompileError(std::string(StringBuilder()
 					.append("Lambda capture variable not found in scope: '")
