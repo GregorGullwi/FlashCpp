@@ -298,15 +298,7 @@
 				// For frame-pointer based parent functions, rebuild the same frame pointer from
 				// the establisher frame (RDX) so the catch body can keep using normal RBP-relative
 				// local/catch-object offsets.
-				// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
-				catch_funclet_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x8D); // LEA
-				textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
-				textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
+				emitFuncletLeaRbpFromRdx(catch_funclet_lea_rbp_patches_);
 			in_catch_funclet_ = true;
 			catch_funclet_terminated_by_return_ = false;
 			current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
@@ -736,6 +728,25 @@
 	}
 
 	// ============================================================================
+	// Funclet prologue helper: LEA RBP, [RDX + disp32] with deferred patch
+	// ============================================================================
+
+	// Emits REX.W LEA RBP, [RDX+disp32] with a zero placeholder and records the
+	// instruction offset so it can be patched later with the parent function's
+	// total_stack value.  Used by both catch funclet and cleanup funclet prologues.
+	void emitFuncletLeaRbpFromRdx(std::vector<uint32_t>& patch_list) {
+		// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
+		patch_list.push_back(static_cast<uint32_t>(textSectionData.size()));
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0x8D); // LEA
+		textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
+		textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+	}
+
+	// ============================================================================
 	// Inline destructor call helper (shared by Phase 1 and Phase 2 cleanup LP)
 	// ============================================================================
 
@@ -785,14 +796,7 @@
 					// Cleanup funclets receive the parent establisher frame in RDX.
 					// Reconstruct the parent RBP so frame-relative local offsets match the
 					// parent function's normal codegen.
-					cleanup_funclet_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
-					textSectionData.push_back(0x48); // REX.W
-					textSectionData.push_back(0x8D); // LEA
-					textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
-					textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
-					textSectionData.push_back(0x00);
-					textSectionData.push_back(0x00);
-					textSectionData.push_back(0x00);
+					emitFuncletLeaRbpFromRdx(cleanup_funclet_lea_rbp_patches_);
 
 					for (const auto& cv : cleanup_vars) {
 						emitInlineDestructorCall(cv);
