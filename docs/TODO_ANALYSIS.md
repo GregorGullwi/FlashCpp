@@ -1,6 +1,6 @@
 # TODO / FIXME Analysis
 
-**Date**: 2026-03-01 (last updated 2026-03-06)
+**Date**: 2026-03-01 (last updated 2026-03-09)
 **Total items found**: 56 (44 TODO + 4 FIXME/minor + 1 discovered + 10 newly fixed)
 **Search scope**: `src/**/*.cpp`, `src/**/*.h`
 
@@ -179,11 +179,11 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 | Status | Count |
 |--------|-------|
 | ✅ Fixed | 54 |
-| ✅ Verified / Already works | 9 |
+| ✅ Verified / Already works | 10 |
 | ✅ Valid (open) | 2 |
 | **Total** | **52** (+ several post-analysis fixes) |
 
-**Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21), assignment through reference-returning methods (#29). All item #8 constexpr evaluation gaps have been resolved.
+**Open items**: `Type::Pointer` enum (#22), `__is_trivially_copyable`/`__is_trivial` full correctness (#21). All item #8 constexpr evaluation gaps have been resolved.
 
 ---
 
@@ -213,8 +213,8 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 
 ---
 
-## 29. Assignment Through Reference-Returning Methods (Open)
-Assigning through a reference returned by a member function (e.g., `h.getRef() = 42;`) does not update the underlying member. The returned reference is treated as an rvalue rather than as an lvalue. Workaround: assign directly to the member.
+## 29. Assignment Through Reference-Returning Methods ✅ Verified / Already works (2026-03-09)
+`src/CodeGen_Call_Direct.cpp` and `src/CodeGen_Call_Indirect.cpp` already mark reference-returning calls as indirect lvalues/xvalues, so assignments store through the referenced target instead of a temporary. Rebuilt the compiler and verified `h.getRef() = 40; h.getRef() += 2;` with tests `ref_return_member_param_ret42.cpp` and `test_ref_return_member_field_assignment_ret42.cpp`.
 
 ---
 
