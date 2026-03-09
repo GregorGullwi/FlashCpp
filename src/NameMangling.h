@@ -209,7 +209,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 					}
 				}
 			} else {
-				output += "XH";  // void(int) as best effort
+				throw InternalError("MSVC name mangling: FunctionPointer type missing function signature — cannot generate valid symbol");
 			}
 			output += "@Z";
 			break;
