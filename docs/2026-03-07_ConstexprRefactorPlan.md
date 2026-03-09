@@ -17,6 +17,11 @@ This note is primarily **forward-looking**. It defines the next cleanup/refactor
 - `5e3a7fb7` — shared callable operator lookup
 - `431e1962` — reused constexpr constructor member bindings
 - `a311908e` — shared constexpr single-return body evaluation
+- `14dae6af` — shared constexpr pre-evaluated ctor bindings
+- `46d27415` — shared constexpr ctor member initialization
+- `6b4b1255` — shared constexpr ctor member lookup
+- `3de8b202` — split constexpr member function lookup modes
+- `98c919eb` — shared current constexpr member function lookup
 
 ### What is now complete
 
@@ -30,16 +35,21 @@ This note is primarily **forward-looking**. It defines the next cleanup/refactor
 - callable `operator()` candidate scanning is centralized for the migrated callable-object paths
 - constructor/member extraction now reuses shared evaluated-argument binding where the callsites match exactly
 - repeated single-return block-body evaluation is centralized for callable objects, lambda block bodies, and member functions
+- pre-evaluated constructor-argument binding is centralized for the remaining nested and array-element member-resolution paths
+- constructor member-initializer application plus default-member fallback is centralized for the migrated callable-object and ctor-backed object extraction paths
+- single-target ctor member lookup with default-member fallback is centralized for the migrated nested and array-element member access paths
+- member-function candidate lookup now supports lookup-only vs constexpr-evaluable filtering without changing caller error behavior
+- lazy-instantiated current-struct plus base-template member-function lookup is centralized for the migrated function-call and member-function-call paths
 
 ### Early remaining follow-up seams
 
-- tiny pre-evaluated constructor-argument binding loops still exist in some member-resolution paths
-- after those are settled, the main open question is whether any lookup-only helper now deserves promotion out of `ConstExprEvaluator`
+- the obvious ctor/member-resolution micro-duplication is largely gone; remaining cleanup candidates are smaller and need re-audit before extraction
+- the main open question is now whether any lookup-only helper has earned promotion out of `ConstExprEvaluator`
 
 ### Remaining likely steps after that
 
-- finish any remaining constructor/member binding micro-duplication that is still constexpr-local but not yet worthier of a broader helper
-- re-audit `evaluate_member_function_call` and nearby member-call paths for any remaining local duplication that still mixes lookup and evaluation
+- re-audit `evaluate_member_function_call`, static-member lookup, and nearby member-call paths for any remaining local duplication that still mixes lookup and evaluation
+- decide whether the current lookup-only helpers should remain constexpr-local or be promoted only once a second non-constexpr consumer exists
 - decide whether any lookup-only helper has earned promotion into a broader semantic utility, or should remain constexpr-local for now
 
 ## Goals
