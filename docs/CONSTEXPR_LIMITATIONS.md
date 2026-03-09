@@ -403,7 +403,17 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested member access is okay in supported shapes** - prefer simple, directly initialized object graphs
 3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
-5. **Use straightforward lambda captures** - explicit captures, straightforward local `&` captures, straightforward identifier-based `&name = other` init-captures, straightforward mutable by-value/init-capture local state, straightforward returned closure objects from constexpr helper functions, straightforward returned `[*this]` member closures from local aggregate objects, local/default member captures, simple `this` / `*this` member reads/calls, straightforward nested lambdas over enclosing captured/member state, and straightforward mutable `[this]` / `[*this]` updates work best
+5. **Use straightforward lambda captures** - the following work best:
+   - explicit captures
+   - straightforward local `&` captures
+   - straightforward identifier-based `&name = other` init-captures
+   - straightforward mutable by-value/init-capture local state
+   - straightforward returned closure objects from constexpr helper functions
+   - straightforward returned `[*this]` member closures from local aggregate objects
+   - local/default member captures
+   - simple `this` / `*this` member reads/calls
+   - straightforward nested lambdas over enclosing captured/member state
+   - straightforward mutable `[this]` / `[*this]` updates
 6. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
 
 ### For Contributors
