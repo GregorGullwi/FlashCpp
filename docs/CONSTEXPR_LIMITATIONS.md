@@ -281,6 +281,10 @@ struct S {
 
 Some parsed expression kinds are not yet fully handled by the constexpr evaluator.
 
+**Now supported:**
+
+- `offsetof(T, member)` for direct data-member access
+
 **Partial support:**
 
 - fold expressions require template instantiation context
@@ -289,7 +293,6 @@ Some parsed expression kinds are not yet fully handled by the constexpr evaluato
 **Currently unsupported in constexpr evaluation:**
 
 - `noexcept(expr)`
-- `offsetof(T, member)`
 - `throw` expressions used in expression contexts
 
 These may currently fail with a generic "expression type not supported in constant expressions" error rather than a specialized diagnostic.
@@ -348,6 +351,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Basic constexpr lambdas with explicit captures in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
 - ✅ Direct/member array subscript support in current supported shapes
+- ✅ `offsetof(T, member)` for direct data-member access in constexpr evaluation
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -360,7 +364,7 @@ Potential areas for enhancement (in order of complexity):
 - ❌ Implicit lambda captures (`[=]`, `[&]`) and `this` / `*this` capture in constexpr lambdas
 - ❌ Multi-statement constexpr function bodies
 - ❌ Control flow (if/while/for) in constexpr contexts
-- ❌ `noexcept(expr)`, `offsetof(...)`, and `throw` expressions in constexpr evaluation
+- ❌ `noexcept(expr)` and `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
 ## Recommendations
@@ -372,7 +376,7 @@ Potential areas for enhancement (in order of complexity):
 3. **Use single-expression member functions** - multi-statement bodies are not supported
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
 5. **Use explicit lambda captures** - avoid `[=]`, `[&]`, and `this`-capture in constexpr code paths
-6. **Avoid `new` / `delete`, `noexcept(expr)`, and `offsetof(...)` in constexpr code** for now
+6. **Avoid `new` / `delete`, `noexcept(expr)`, and `throw` expressions in constexpr code** for now
 
 ### For Contributors
 

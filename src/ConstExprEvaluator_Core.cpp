@@ -76,6 +76,11 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		return evaluate_alignof(std::get<AlignofExprNode>(expr), context);
 	}
 
+	// For OffsetofExprNode
+	if (std::holds_alternative<OffsetofExprNode>(expr)) {
+		return evaluate_offsetof(std::get<OffsetofExprNode>(expr));
+	}
+
 	// For ConstructorCallNode (type conversions like float(3.14), int(100))
 	if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		return evaluate_constructor_call(std::get<ConstructorCallNode>(expr), context);
@@ -648,6 +653,32 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 	}
 	
 	return EvalResult::error("Invalid alignof operand");
+}
+
+EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
+	const ASTNode& type_node = offsetof_expr.type_node();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("offsetof type argument must be TypeSpecifierNode");
+	}
+
+	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	if (type_spec.type() != Type::Struct) {
+		return EvalResult::error("offsetof requires a struct type");
+	}
+
+	size_t type_index = type_spec.type_index();
+	if (type_index >= gTypeInfo.size()) {
+		return EvalResult::error("Invalid type index for struct");
+	}
+
+	auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+		static_cast<TypeIndex>(type_index),
+		StringTable::getOrInternStringHandle(std::string(offsetof_expr.member_name())));
+	if (!member_result) {
+		return EvalResult::error("Member not found in struct");
+	}
+
+	return EvalResult::from_uint(static_cast<unsigned long long>(member_result.adjusted_offset));
 }
 
 EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context) {

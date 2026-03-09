@@ -328,6 +328,7 @@ private:
 	}
 	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context);
 	static EvalResult evaluate_alignof(const AlignofExprNode& alignof_expr, EvaluationContext& context);
+	static EvalResult evaluate_offsetof(const OffsetofExprNode& offsetof_expr);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
 	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
