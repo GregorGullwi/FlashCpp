@@ -394,12 +394,67 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		// __non_diamond_repeat_mask: set only when there are virtual bases
 		// (which may repeat in the hierarchy)
 		if (has_virtual) flags |= 0x1;
-		// __diamond_shaped_mask (0x2): only set for actual diamond patterns.
-		// TODO: detect genuine diamonds by checking if any two transitive bases share
-		// a common ancestor that is a virtual base.  For now leave unset (safe default).
+
+		// __diamond_shaped_mask (0x2): set when two or more bases share a common
+		// virtual base ancestor (diamond inheritance).  Detect by collecting all
+		// transitive virtual-base TypeIndex values reachable from each direct base
+		// and checking for overlap.
+		{
+			std::set<TypeIndex> global_vbases;
+			bool diamond = false;
+			// Recursive helper: collect all virtual-base TypeIndex values reachable
+			// from a given struct (including transitively through non-virtual bases).
+			std::function<void(const StructTypeInfo*, std::set<TypeIndex>&)> collectTransitiveVBases =
+				[&](const StructTypeInfo* si, std::set<TypeIndex>& out) {
+					if (!si) return;
+					for (const auto& b : si->base_classes) {
+						if (b.is_virtual) {
+							out.insert(b.type_index);
+						}
+						if (b.type_index < gTypeInfo.size()) {
+							const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
+							collectTransitiveVBases(bsi, out);
+						}
+					}
+				};
+			for (const auto& base : base_classes) {
+				if (base.type_index >= gTypeInfo.size()) continue;
+				const auto* bsi = gTypeInfo[base.type_index].getStructInfo();
+				std::set<TypeIndex> branch_vbases;
+				collectTransitiveVBases(bsi, branch_vbases);
+				for (auto vb : branch_vbases) {
+					if (!global_vbases.insert(vb).second) {
+						diamond = true;
+					}
+				}
+			}
+			if (diamond) flags |= 0x2;
+		}
 
 		std::memcpy(zeros.data() + 16, &flags,   sizeof(uint32_t));
 		std::memcpy(zeros.data() + 20, &n_bases, sizeof(uint32_t));
+
+		// Collect all unique virtual bases reachable from this class (depth-first,
+		// left-to-right, same order as the vtable prefix). This is needed to compute
+		// the correct vtable-relative offset for virtual base entries.
+		std::vector<TypeIndex> vbase_order;  // TypeIndex of each unique vbase
+		{
+			std::set<TypeIndex> seen_vb;
+			std::function<void(const StructTypeInfo*)> collectVBases =
+				[&](const StructTypeInfo* si) {
+					if (!si) return;
+					for (const auto& b : si->base_classes) {
+						if (b.is_virtual && seen_vb.insert(b.type_index).second) {
+							vbase_order.push_back(b.type_index);
+						}
+						if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
+							const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
+							collectVBases(bsi);
+						}
+					}
+				};
+			collectVBases(struct_info);
+		}
 
 		// offset_flags for each base (inline: no relocation needed)
 		for (uint32_t i = 0; i < n_bases; ++i) {
@@ -408,7 +463,25 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 			// public_mask = 0x2, virtual_mask = 0x1
 			uint64_t public_bit  = (base.access == AccessSpecifier::Public) ? 0x2ULL : 0ULL;
 			uint64_t virtual_bit = base.is_virtual ? 0x1ULL : 0ULL;
-			uint64_t offset_flags = (static_cast<uint64_t>(base.offset) << 8) | public_bit | virtual_bit;
+
+			int64_t offset_value;
+			if (base.is_virtual) {
+				// For virtual bases, the Itanium ABI stores the byte offset from the
+				// vptr to the vtable slot that holds the actual vbase offset at runtime.
+				// Vtable layout: [...vbase_offsets..., offset_to_top, RTTI, func_ptrs]
+				// The vptr points to func_ptrs[0].  vtable[-1] = RTTI, [-2] = offset_to_top,
+				// [-3] = first vbase_offset, [-4] = second, etc.
+				// So the offset for vbase at index k is -(3 + k) * 8.
+				auto it = std::find(vbase_order.begin(), vbase_order.end(), base.type_index);
+				size_t vbase_idx = (it != vbase_order.end())
+					? static_cast<size_t>(std::distance(vbase_order.begin(), it))
+					: 0;
+				offset_value = -static_cast<int64_t>((3 + vbase_idx) * 8);
+			} else {
+				offset_value = static_cast<int64_t>(base.offset);
+			}
+
+			uint64_t offset_flags = (static_cast<uint64_t>(offset_value) << 8) | public_bit | virtual_bit;
 			std::memcpy(zeros.data() + 32 + i * 16, &offset_flags, sizeof(uint64_t));
 		}
 
@@ -476,14 +549,12 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		throw std::runtime_error(".rodata section not found");
 	}
 	
-	uint32_t vtable_offset = rodata->get_size();
-	
 	// Itanium C++ ABI vtable structure:
 	// - Offset to top (8 bytes) - always 0 for simple cases
 	// - RTTI pointer (8 bytes) - pointer to typeinfo structure
 	// - Function pointers (8 bytes each)
 	
-	// First, emit typeinfo if available
+	// First, emit typeinfo if available (goes into .rodata BEFORE the vtable)
 	std::string typeinfo_symbol;
 	if (rtti_info && rtti_info->itanium_type_info) {
 		// Generate typeinfo symbol name: _ZTI + mangled class name
@@ -509,6 +580,10 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		}
 	}
 	
+	// Capture vtable_offset AFTER typeinfo emission, since add_typeinfo also
+	// appends to .rodata and would shift the vtable position.
+	uint32_t vtable_offset = rodata->get_size();
+	
 	char vtable_data_buf[8192]; // Stack-based buffer for vtable (reasonable max size)
 	size_t vtable_data_size = 0;
 	
@@ -519,6 +594,99 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		std::memcpy(vtable_data_buf + vtable_data_size, data, size);
 		vtable_data_size += size;
 	};
+
+	// Collect unique virtual bases for this class (depth-first, left-to-right)
+	// so we can emit vbase offset entries in the vtable prefix.
+	struct VBaseEntry { size_t offset_from_derived; };
+	std::vector<VBaseEntry> vbase_entries;
+	{
+		// Find the StructTypeInfo for this class by scanning gTypeInfo
+		const StructTypeInfo* this_struct = nullptr;
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
+		for (size_t ti = 0; ti < gTypeInfo.size(); ++ti) {
+			const StructTypeInfo* si = gTypeInfo[ti].getStructInfo();
+			if (si && si->getName() == class_name_handle) {
+				this_struct = si;
+				break;
+			}
+		}
+		if (this_struct) {
+			// Collect all unique virtual base TypeIndexes reachable from this class.
+			// Then look up the offset of each vbase within THIS class (the most-derived),
+			// not the intermediate class where the virtual specifier appears.
+			std::vector<TypeIndex> vbase_type_indices;
+			std::set<TypeIndex> seen;
+			std::function<void(const StructTypeInfo*)> collectVBases =
+				[&](const StructTypeInfo* si) {
+					if (!si) return;
+					for (const auto& b : si->base_classes) {
+						if (b.is_virtual && seen.insert(b.type_index).second) {
+							vbase_type_indices.push_back(b.type_index);
+						}
+						if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
+							const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
+							collectVBases(bsi);
+						}
+					}
+				};
+			collectVBases(this_struct);
+
+			// Now find each vbase's offset in THIS class.
+			// Virtual bases are shared: their offset is stored in the most-derived
+			// class's base_classes list (possibly inherited from a non-virtual parent).
+			for (TypeIndex vb_tidx : vbase_type_indices) {
+				size_t offset = 0;
+				// First check direct base_classes of the top-level struct
+				bool found = false;
+				for (const auto& b : this_struct->base_classes) {
+					if (b.type_index == vb_tidx && b.is_virtual) {
+						offset = b.offset;
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					// Look through non-virtual parents for the vbase
+					for (const auto& b : this_struct->base_classes) {
+						if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
+							const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
+							if (bsi) {
+								for (const auto& bb : bsi->base_classes) {
+									if (bb.type_index == vb_tidx && bb.is_virtual) {
+										// The vbase offset from the perspective of
+										// the most-derived class = parent_offset + vbase_offset_in_parent
+										offset = b.offset + bb.offset;
+										found = true;
+										break;
+									}
+								}
+							}
+						}
+						if (found) break;
+					}
+				}
+				vbase_entries.push_back({offset});
+			}
+		}
+	}
+	size_t n_vbase_entries = vbase_entries.size();
+
+	FLASH_LOG_FORMAT(Codegen, Debug, "  vtable '{}': {} vbase entries in prefix",
+	                 vtable_symbol, n_vbase_entries);
+	for (size_t i = 0; i < n_vbase_entries; ++i) {
+		FLASH_LOG_FORMAT(Codegen, Debug, "    vbase[{}] offset_from_derived={}",
+		                 i, vbase_entries[i].offset_from_derived);
+	}
+
+	// Emit vbase offset entries (before offset_to_top).
+	// Itanium ABI vtable layout for classes with virtual bases:
+	//   [vbase_offset[n-1]] [vbase_offset[n-2]] ... [vbase_offset[0]] [offset_to_top] [RTTI] [func_ptrs...]
+	// The vptr points to func_ptrs[0].
+	// vbase_offset[i] is at vtable[-(3+i)] i.e. -(3+i)*8 bytes from the vptr.
+	for (size_t i = n_vbase_entries; i > 0; --i) {
+		int64_t vbase_off = static_cast<int64_t>(vbase_entries[i - 1].offset_from_derived);
+		append_bytes(&vbase_off, 8);
+	}
 	
 	// Offset to top (8 bytes, value = 0)
 	uint64_t offset_to_top = 0;
@@ -537,10 +705,13 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// Add vtable data to .rodata
 	rodata->append_data(vtable_data_buf, vtable_data_size);
 	
-	// Add vtable symbol pointing to the function pointer array (skip offset-to-top and RTTI)
-	uint32_t symbol_offset = vtable_offset + 16;  // Skip offset-to-top (8) and RTTI (8)
+	// Header size = vbase prefix + offset_to_top + RTTI
+	uint32_t header_size = static_cast<uint32_t>(n_vbase_entries * 8 + 16);
+	
+	// Add vtable symbol pointing to the function pointer array (skip prefix, offset-to-top, and RTTI)
+	uint32_t symbol_offset = vtable_offset + header_size;
 	getOrCreateSymbol(vtable_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
-	                  rodata->get_index(), symbol_offset, vtable_data_size - 16);
+	                  rodata->get_index(), symbol_offset, vtable_data_size - header_size);
 	
 	// Add relocations for each function pointer
 	[[maybe_unused]] auto* rela_rodata = getOrCreateRelocationSection(".rodata");
@@ -549,7 +720,8 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// Add relocation for RTTI pointer if typeinfo was emitted
 	if (!typeinfo_symbol.empty()) {
 		auto typeinfo_symbol_idx = getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL);
-		uint32_t rtti_reloc_offset = vtable_offset + 8;  // Offset to top is first 8 bytes
+		// RTTI pointer is at vtable_offset + vbase_prefix_size + offset_to_top_size
+		uint32_t rtti_reloc_offset = vtable_offset + static_cast<uint32_t>(n_vbase_entries * 8) + 8;
 		rela_accessor->add_entry(rtti_reloc_offset, typeinfo_symbol_idx, ELFIO::R_X86_64_64, 0);
 		
 		FLASH_LOG_FORMAT(Codegen, Debug, "  Added relocation for typeinfo {} at offset {}", 
@@ -561,7 +733,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		auto func_symbol_idx = getOrCreateSymbol(function_symbols[i], ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
 		
 		// Add relocation for this function pointer
-		uint32_t reloc_offset = vtable_offset + 16 + (i * 8);  // Skip header + i*8 for function pointer
+		uint32_t reloc_offset = vtable_offset + header_size + static_cast<uint32_t>(i * 8);
 		rela_accessor->add_entry(reloc_offset, func_symbol_idx, ELFIO::R_X86_64_64, 0);
 		
 		FLASH_LOG_FORMAT(Codegen, Debug, "  Added relocation for function {} at offset {}", 
