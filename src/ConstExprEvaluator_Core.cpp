@@ -1304,12 +1304,13 @@ EvalResult Evaluator::evaluate_callable_object(
 	const VariableDeclarationNode& var_decl,
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
-	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings) {
 	
 	// Check for lambda
 	const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
 	if (lambda) {
-		return evaluate_lambda_call(*lambda, arguments, context, outer_bindings);
+		return evaluate_lambda_call(*lambda, arguments, context, outer_bindings, mutable_outer_bindings);
 	}
 	
 	// Check for ConstructorCallNode (user-defined functor), handling both direct storage
@@ -1524,7 +1525,8 @@ EvalResult Evaluator::evaluate_lambda_call(
 	const LambdaExpressionNode& lambda,
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
-	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings) {
 	
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
@@ -1557,6 +1559,14 @@ EvalResult Evaluator::evaluate_lambda_call(
 	if (!capture_result.success()) {
 		return capture_result;
 	}
+
+	bool captures_this_by_reference = false;
+	for (const auto& capture : captures) {
+		if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+			captures_this_by_reference = true;
+			break;
+		}
+	}
 	
 	// Increase recursion depth
 	context.current_depth++;
@@ -1581,6 +1591,15 @@ EvalResult Evaluator::evaluate_lambda_call(
 	}
 	
 	context.current_depth--;
+	if (result.success() && captures_this_by_reference && mutable_outer_bindings && context.struct_info) {
+		for (const auto& member : context.struct_info->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			auto binding_it = bindings.find(member_name);
+			if (binding_it != bindings.end()) {
+				(*mutable_outer_bindings)[member_name] = binding_it->second;
+			}
+		}
+	}
 	return result;
 }
 

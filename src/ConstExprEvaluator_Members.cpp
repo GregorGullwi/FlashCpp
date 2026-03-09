@@ -78,7 +78,8 @@ std::optional<ASTNode> Evaluator::lookup_function_symbol(
 EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	const FunctionCallNode& func_call,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
 	const DeclarationNode& func_decl_node = func_call.function_declaration();
 	std::string_view func_name = func_decl_node.identifier_token().value();
 
@@ -88,7 +89,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 
 	auto bound_callable = bindings.find(func_name);
 	if (bound_callable != bindings.end() && bound_callable->second.callable_var_decl) {
-		return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings);
+		return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings);
 	}
 
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
@@ -106,7 +107,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	if (!symbol_node.is<FunctionDeclarationNode>()) {
 		if (symbol_node.is<VariableDeclarationNode>()) {
 			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-			return evaluate_callable_object(var_decl, func_call.arguments(), context, &bindings);
+			return evaluate_callable_object(var_decl, func_call.arguments(), context, &bindings, mutable_bindings);
 		}
 
 		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
@@ -129,7 +130,8 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	const ExpressionNode& expr,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
 	if (!std::holds_alternative<MemberFunctionCallNode>(expr)) {
 		return std::nullopt;
 	}
@@ -169,13 +171,13 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	};
 
 	if (const LambdaExpressionNode* lambda = extract_lambda_from_object_expr()) {
-		return evaluate_lambda_call(*lambda, member_func_call.arguments(), context, &bindings);
+		return evaluate_lambda_call(*lambda, member_func_call.arguments(), context, &bindings, mutable_bindings);
 	}
 
 	if (const IdentifierNode* callable_id = extract_callable_identifier()) {
 		auto callable_it = bindings.find(callable_id->name());
 		if (callable_it != bindings.end() && callable_it->second.callable_var_decl) {
-			return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings);
+			return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings);
 		}
 	}
 
@@ -713,11 +715,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	// For function calls (for recursion)
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& func_call = std::get<FunctionCallNode>(expr);
-		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
+		return evaluate_function_call_with_outer_bindings(func_call, bindings, context, &bindings);
 	}
 
 	// For direct lambda operator() calls inside a bound constexpr context
-	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context)) {
+	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context, &bindings)) {
 		return *call_result;
 	}
 

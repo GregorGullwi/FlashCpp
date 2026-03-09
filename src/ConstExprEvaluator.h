@@ -356,12 +356,14 @@ private:
 		const VariableDeclarationNode& var_decl,
 		const ChunkedVector<ASTNode>& arguments,
 		EvaluationContext& context,
-		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
+			std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings = nullptr);
 	static EvalResult evaluate_lambda_call(
 		const LambdaExpressionNode& lambda,
 		const ChunkedVector<ASTNode>& arguments,
 		EvaluationContext& context,
-		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
+			std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings = nullptr);
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
@@ -434,11 +436,13 @@ private:
 	static EvalResult evaluate_function_call_with_outer_bindings(
 		const FunctionCallNode& func_call,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
-		EvaluationContext& context);
+			EvaluationContext& context,
+			std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
 	static std::optional<EvalResult> try_evaluate_bound_member_operator_call(
 		const ExpressionNode& expr,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
-		EvaluationContext& context);
+			EvaluationContext& context,
+			std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
 		static std::optional<EvalResult> try_evaluate_bound_member_function_call(
 			const ExpressionNode& expr,
 			const std::unordered_map<std::string_view, EvalResult>& bindings,

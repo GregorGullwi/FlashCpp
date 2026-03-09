@@ -106,8 +106,9 @@ captures that imply `this` in supported shapes.
 capture `this` or `*this`.
 
 **FlashCpp:** Basic supported shapes now work, including simple member reads/calls through
-explicit or implicit `this` capture, plus straightforward mutable `[*this]` copy-local updates.
-Richer captured-object behavior still remains partial.
+explicit or implicit `this` capture, straightforward mutable shared-object updates through
+`[this]`, and straightforward mutable `[*this]` copy-local updates. Richer captured-object
+aliasing/identity behavior still remains partial.
 
 **Location:** `src/ConstExprEvaluator_Core.cpp`, `src/ConstExprEvaluator_Members.cpp`, `docs/CONSTEXPR_LIMITATIONS.md:254–282`
 
