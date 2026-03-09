@@ -1121,9 +1121,16 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	// Check if the initializer is an InitializerListNode (for arrays)
 	if (initializer->is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-			if (var_decl.declaration().is_array() && var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+		if (var_decl.declaration().is_array()) {
+			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
 				return materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context);
+			}
+
+			// Preserve the older generic array materialization for declarations whose
+			// array element type is not represented as a TypeSpecifierNode (for example,
+			// decltype()-spelled or still-dependent array element types).
+			return materialize_array_value(Type::Auto, 0, init_list, context);
 		}
 	}
 
@@ -2644,17 +2651,27 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			// Handle array initialization with InitializerListNode
 			if (init_expr.is<InitializerListNode>()) {
 				const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+				if (decl.is_array()) {
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-						if (decl.is_array()) {
-							auto array_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, &bindings);
-							if (!array_result.success()) {
-								return array_result;
-							}
-							bindings[var_name] = std::move(array_result);
-							return EvalResult::error("Statement executed (not a return)");
+						auto array_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, &bindings);
+						if (!array_result.success()) {
+							return array_result;
 						}
+						bindings[var_name] = std::move(array_result);
+						return EvalResult::error("Statement executed (not a return)");
+					}
 
+					auto array_result = materialize_array_value(Type::Auto, 0, init_list, context, &bindings);
+					if (!array_result.success()) {
+						return array_result;
+					}
+					bindings[var_name] = std::move(array_result);
+					return EvalResult::error("Statement executed (not a return)");
+				}
+
+				if (decl.type_node().is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 						if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
 							type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
