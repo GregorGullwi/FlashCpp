@@ -8,6 +8,8 @@
 		
 		// Get the object expression
 		ASTNode object_node = memberFunctionCallNode.object();
+		std::optional<StringHandle> immediate_lambda_object_name;
+		std::optional<TypeSpecifierNode> immediate_lambda_object_type;
 
 		// Special case: Immediate lambda invocation [](){}()
 		// Check if the object is a LambdaExpressionNode (either directly or wrapped in ExpressionNode)
@@ -31,7 +33,7 @@
 			// This ensures operator() and __invoke functions will be generated.
 			// Without this, the lambda is never added to collected_lambdas_ and
 			// its functions are never generated, causing linker errors.
-			generateLambdaExpressionIr(lambda);
+			auto lambda_ir = generateLambdaExpressionIr(lambda);
 			
 			// Check if this is a generic lambda (has auto parameters)
 			bool is_generic = false;
@@ -237,8 +239,21 @@
 				// Return the result with actual return type from lambda
 				return { lambda_return_type, lambda_return_size, ret_var, 0ULL };
 			}
-			// For capturing lambdas, fall through to the regular member function call path
-			// The closure object was already created by generateLambdaExpressionIr
+
+			if (lambda_ir.size() < 4 || !std::holds_alternative<StringHandle>(lambda_ir[2]) || !std::holds_alternative<unsigned long long>(lambda_ir[3])) {
+				throw InternalError("Immediate capturing lambda did not produce a named closure object");
+			}
+
+			immediate_lambda_object_name = std::get<StringHandle>(lambda_ir[2]);
+			immediate_lambda_object_type = TypeSpecifierNode(
+				Type::Struct,
+				static_cast<TypeIndex>(std::get<unsigned long long>(lambda_ir[3])),
+				static_cast<unsigned char>(std::get<int>(lambda_ir[1])),
+				memberFunctionCallNode.called_from()
+			);
+
+			// For capturing lambdas, continue into the regular member function call path
+			// using the generated closure variable as the object.
 		}
 
 		// Regular member function call on an expression
@@ -255,7 +270,10 @@
 
 		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 
-		if (std::holds_alternative<IdentifierNode>(object_expr)) {
+		if (immediate_lambda_object_name.has_value() && immediate_lambda_object_type.has_value()) {
+			object_name = StringTable::getStringView(*immediate_lambda_object_name);
+			object_type = *immediate_lambda_object_type;
+		} else if (std::holds_alternative<IdentifierNode>(object_expr)) {
 			const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
 			object_name = object_ident.name();
 

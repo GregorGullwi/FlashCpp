@@ -86,6 +86,11 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		return EvalResult::error("Cannot evaluate function call: no symbol table provided");
 	}
 
+	auto bound_callable = bindings.find(func_name);
+	if (bound_callable != bindings.end() && bound_callable->second.callable_var_decl) {
+		return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings);
+	}
+
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
 	if (!symbol_opt.has_value()) {
 		if (func_call.has_template_arguments() && context.parser) {
@@ -99,6 +104,11 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 
 	const ASTNode& symbol_node = symbol_opt.value();
 	if (!symbol_node.is<FunctionDeclarationNode>()) {
+		if (symbol_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+			return evaluate_callable_object(var_decl, func_call.arguments(), context, &bindings);
+		}
+
 		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
 			auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
 			if (var_result.success()) {
@@ -519,6 +529,52 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		const auto& func_call = std::get<FunctionCallNode>(expr);
 		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
 	}
+
+	// For direct lambda operator() calls inside a bound constexpr context
+	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		const auto& member_func_call = std::get<MemberFunctionCallNode>(expr);
+		std::string_view func_name = member_func_call.function_declaration().decl_node().identifier_token().value();
+		if (func_name == "operator()") {
+			auto extract_callable_identifier = [&]() -> const IdentifierNode* {
+				const ASTNode& object_expr = member_func_call.object();
+				if (object_expr.is<IdentifierNode>()) {
+					return &object_expr.as<IdentifierNode>();
+				}
+				if (object_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr_node)) {
+						return &std::get<IdentifierNode>(expr_node);
+					}
+				}
+				return nullptr;
+			};
+
+			auto extract_lambda_from_object_expr = [&]() -> const LambdaExpressionNode* {
+				const ASTNode& object_expr = member_func_call.object();
+				if (object_expr.is<LambdaExpressionNode>()) {
+					return &object_expr.as<LambdaExpressionNode>();
+				}
+				if (object_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+					if (std::holds_alternative<LambdaExpressionNode>(expr_node)) {
+						return &std::get<LambdaExpressionNode>(expr_node);
+					}
+				}
+				return nullptr;
+			};
+
+			if (const LambdaExpressionNode* lambda = extract_lambda_from_object_expr()) {
+				return evaluate_lambda_call(*lambda, member_func_call.arguments(), context, &bindings);
+			}
+
+			if (const IdentifierNode* callable_id = extract_callable_identifier()) {
+				auto callable_it = bindings.find(callable_id->name());
+				if (callable_it != bindings.end() && callable_it->second.callable_var_decl) {
+					return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings);
+				}
+			}
+		}
+	}
 	
 	// For member access on 'this' (e.g., this->x in a member function)
 	// Reading is handled by the fall-through to evaluate_expression_with_bindings_const below.
@@ -594,6 +650,52 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& func_call = std::get<FunctionCallNode>(expr);
 		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
+	}
+
+	// For direct lambda operator() calls inside a bound constexpr context
+	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		const auto& member_func_call = std::get<MemberFunctionCallNode>(expr);
+		std::string_view func_name = member_func_call.function_declaration().decl_node().identifier_token().value();
+		if (func_name == "operator()") {
+			auto extract_callable_identifier = [&]() -> const IdentifierNode* {
+				const ASTNode& object_expr = member_func_call.object();
+				if (object_expr.is<IdentifierNode>()) {
+					return &object_expr.as<IdentifierNode>();
+				}
+				if (object_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr_node)) {
+						return &std::get<IdentifierNode>(expr_node);
+					}
+				}
+				return nullptr;
+			};
+
+			auto extract_lambda_from_object_expr = [&]() -> const LambdaExpressionNode* {
+				const ASTNode& object_expr = member_func_call.object();
+				if (object_expr.is<LambdaExpressionNode>()) {
+					return &object_expr.as<LambdaExpressionNode>();
+				}
+				if (object_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+					if (std::holds_alternative<LambdaExpressionNode>(expr_node)) {
+						return &std::get<LambdaExpressionNode>(expr_node);
+					}
+				}
+				return nullptr;
+			};
+
+			if (const LambdaExpressionNode* lambda = extract_lambda_from_object_expr()) {
+				return evaluate_lambda_call(*lambda, member_func_call.arguments(), context, &bindings);
+			}
+
+			if (const IdentifierNode* callable_id = extract_callable_identifier()) {
+				auto callable_it = bindings.find(callable_id->name());
+				if (callable_it != bindings.end() && callable_it->second.callable_var_decl) {
+					return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings);
+				}
+			}
+		}
 	}
 	
 	// For member access on 'this' (e.g., this->x in a member function)

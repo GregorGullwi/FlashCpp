@@ -1177,7 +1177,8 @@ const ConstructorCallNode* Evaluator::extract_constructor_call(const std::option
 EvalResult Evaluator::evaluate_lambda_captures(
 	const std::vector<LambdaCaptureNode>& captures,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	
 	for (const auto& capture : captures) {
 		using CaptureKind = LambdaCaptureNode::CaptureKind;
@@ -1190,13 +1191,23 @@ EvalResult Evaluator::evaluate_lambda_captures(
 				
 				// Check for init-capture: [x = expr]
 				if (capture.has_initializer()) {
-					auto init_result = evaluate(capture.initializer().value(), context);
+					auto init_result = (outer_bindings && capture.initializer().value().is<ExpressionNode>())
+						? evaluate_expression_with_bindings_const(capture.initializer().value(), *outer_bindings, context)
+						: evaluate(capture.initializer().value(), context);
 					if (!init_result.success()) {
 						return EvalResult::error("Failed to evaluate init-capture '" + 
 							std::string(var_name) + "': " + init_result.error_message);
 					}
 					bindings[var_name] = init_result;
 				} else {
+					if (outer_bindings) {
+						auto outer_it = outer_bindings->find(var_name);
+						if (outer_it != outer_bindings->end()) {
+							bindings[var_name] = outer_it->second;
+							break;
+						}
+					}
+
 					// Look up the variable in the symbol table
 					if (!context.symbols) {
 						return EvalResult::error("Cannot evaluate capture: no symbol table provided");
@@ -1262,12 +1273,13 @@ EvalResult Evaluator::evaluate_lambda_captures(
 EvalResult Evaluator::evaluate_callable_object(
 	const VariableDeclarationNode& var_decl,
 	const ChunkedVector<ASTNode>& arguments,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	
 	// Check for lambda
 	const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
 	if (lambda) {
-		return evaluate_lambda_call(*lambda, arguments, context);
+		return evaluate_lambda_call(*lambda, arguments, context, outer_bindings);
 	}
 	
 	// Check for ConstructorCallNode (user-defined functor), handling both direct storage
@@ -1327,7 +1339,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			ctor_param_bindings,
 			context,
 			"Invalid parameter node in callable object constructor",
-			nullptr,
+				outer_bindings,
 			true);
 		if (!ctor_bind_result.success()) {
 			return ctor_bind_result;
@@ -1390,7 +1402,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			evaluation_bindings,
 			context,
 			"Invalid parameter node in callable object operator()",
-			nullptr,
+				outer_bindings,
 			false);
 		if (!call_bind_result.success()) {
 			return call_bind_result;
@@ -1450,7 +1462,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			evaluation_bindings,
 			context,
 			"Invalid parameter node in brace-initialized callable object operator()",
-			nullptr,
+				outer_bindings,
 			true);
 		if (!bind_result.success()) return bind_result;
 
@@ -1474,7 +1486,8 @@ EvalResult Evaluator::evaluate_callable_object(
 EvalResult Evaluator::evaluate_lambda_call(
 	const LambdaExpressionNode& lambda,
 	const ChunkedVector<ASTNode>& arguments,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
@@ -1495,14 +1508,15 @@ EvalResult Evaluator::evaluate_lambda_call(
 		arguments,
 		bindings,
 		context,
-		"Invalid parameter node in constexpr lambda");
+		"Invalid parameter node in constexpr lambda",
+		outer_bindings);
 	if (!bind_result.success()) {
 		return bind_result;
 	}
 	
 	// Handle captures - evaluate each captured variable and add to bindings
 	const auto& captures = lambda.captures();
-	auto capture_result = evaluate_lambda_captures(captures, bindings, context);
+	auto capture_result = evaluate_lambda_captures(captures, bindings, context, outer_bindings);
 	if (!capture_result.success()) {
 		return capture_result;
 	}
@@ -2492,6 +2506,11 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// Evaluate the initializer if present
 		if (var_decl.initializer().has_value()) {
 			const ASTNode& init_expr = var_decl.initializer().value();
+
+			if (extract_lambda_from_initializer(var_decl.initializer())) {
+				bindings[var_name] = EvalResult::from_callable(var_decl);
+				return EvalResult::error("Statement executed (not a return)");
+			}
 			
 			// Handle array initialization with InitializerListNode
 			if (init_expr.is<InitializerListNode>()) {

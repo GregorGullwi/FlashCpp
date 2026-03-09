@@ -251,20 +251,24 @@ static_assert(f() == 42);  // ❌ Not currently supported
 
 **Workaround:** Avoid dynamic allocation in constexpr code for now; prefer direct objects, aggregates, and fixed-size arrays.
 
-### ⚠️ Constexpr Lambdas Have Capture Limits
+### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
-Basic constexpr lambdas work, including explicit capture-by-value and multi-statement bodies in supported shapes, but capture support is still incomplete.
+Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), init-captures, and multi-statement bodies in supported shapes, but capture support is still incomplete.
 
 **Currently unsupported in constexpr lambda evaluation:**
 
-- implicit capture `[=]`
-- implicit capture `[&]`
 - capture of `this`
 - capture of `*this`
 
 ```cpp
 constexpr int base = 10;
 constexpr auto ok = [base](int x) { return base + x; };  // ✅ explicit capture supported
+
+constexpr int f() {
+	constexpr int x = 40;
+	auto also_ok = [=]() { return x + 2; };
+	return also_ok();
+}
 
 struct S {
     int value = 42;
@@ -275,7 +279,7 @@ struct S {
 };
 ```
 
-**Workaround:** Prefer explicit capture-by-value of the exact constexpr data you need.
+**Workaround:** Prefer capturing concrete constexpr values instead of `this` / `*this`.
 
 ### ⚠️ Some Constant-Expression Forms Are Still Partial or Unsupported
 
