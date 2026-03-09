@@ -253,11 +253,11 @@ static_assert(f() == 42);  // ❌ Not currently supported
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
-Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), implicit `this` through default member captures in supported shapes, init-captures, multi-statement bodies, simple member reads / constexpr member calls through `this` / `*this` capture, straightforward mutable by-reference local updates, straightforward mutable shared-object updates through `[this]`, straightforward mutable copy-local updates through `[*this]`, and straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object. Capture support is still incomplete beyond those supported shapes.
+Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), implicit `this` through default member captures in supported shapes, init-captures, multi-statement bodies, simple member reads / constexpr member calls through `this` / `*this` capture, straightforward mutable by-reference local updates, straightforward identifier-based by-reference init-capture alias updates, straightforward mutable shared-object updates through `[this]`, straightforward mutable copy-local updates through `[*this]`, and straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object. Capture support is still incomplete beyond those supported shapes.
 
 **Still partial in constexpr lambda evaluation:**
 
-- complex interactions through captured locals / `this` / `*this` (for example, relying on richer aliasing/object-identity behavior, init-capture aliasing semantics, nested closure aliasing/copying behavior, or more advanced member-function dispatch through the captured object)
+- complex interactions through captured locals / `this` / `*this` (for example, relying on richer aliasing/object-identity behavior, non-identifier init-capture aliasing semantics, nested closure aliasing/copying behavior, or more advanced member-function dispatch through the captured object)
 
 ```cpp
 constexpr int base = 10;
@@ -368,7 +368,7 @@ Potential areas for enhancement (in order of complexity):
 ### Hard
 - ❌ Constructor body statement execution
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
-- ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond straightforward by-reference locals, straightforward `[this]` / `[*this]` mutation behavior, and straightforward repeated-call mutable closure-local state
+- ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond straightforward by-reference locals, straightforward identifier-based by-reference init-capture aliases, straightforward `[this]` / `[*this]` mutation behavior, and straightforward repeated-call mutable closure-local state
 - ❌ `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
@@ -380,7 +380,7 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested member access is okay in supported shapes** - prefer simple, directly initialized object graphs
 3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
-5. **Use straightforward lambda captures** - explicit captures, straightforward local `&` captures, straightforward mutable by-value/init-capture local state, local/default member captures, simple `this` / `*this` member reads/calls, and straightforward mutable `[this]` / `[*this]` updates work best
+5. **Use straightforward lambda captures** - explicit captures, straightforward local `&` captures, straightforward identifier-based `&name = other` init-captures, straightforward mutable by-value/init-capture local state, local/default member captures, simple `this` / `*this` member reads/calls, and straightforward mutable `[this]` / `[*this]` updates work best
 6. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
 
 ### For Contributors
