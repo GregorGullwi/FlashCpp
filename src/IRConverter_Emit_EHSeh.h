@@ -753,9 +753,7 @@
 
 		// Build mangled destructor name using the shared helper
 		auto mangled_name = buildDestructorMangledNameFromString(StringTable::getStringView(struct_name_h));
-		std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
-		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
-		writer.add_relocation(textSectionData.size() - 4, mangled_name);
+		emitCall(mangled_name);
 		regAlloc.invalidateCallerSavedRegisters();
 	}
 
@@ -802,7 +800,7 @@
 
 					emitAddRSP(32);
 					emitPopReg(X64Register::RBP);
-					textSectionData.push_back(0xC3);
+					emitRet();
 					return symbol_handle;
 				};
 
