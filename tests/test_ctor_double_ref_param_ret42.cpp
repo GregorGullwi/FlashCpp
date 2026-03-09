@@ -20,14 +20,14 @@
 //   - main() returns 42
 
 struct Writer {
-    int dummy;
-    Writer(double& out) {
-        out = 42.0;
-    }
+	int dummy;
+	Writer(double& out) {
+		out = 42.0;
+	}
 };
 
 int main() {
-    double d = 0.0;
-    Writer w(d);
-    return (int)d; // Expected: 42
+	double d = 0.0;
+	Writer w(d);
+	return (int)d; // Expected: 42
 }
