@@ -1204,7 +1204,38 @@
 			setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, is_rvalue_ref));
 		}
 	}
-	
+
+	// Build the mangled symbol name for the complete-object destructor of a class.
+	// Used by handleThrow (destructor arg to __cxa_throw) and handleDestructorCall.
+	// Returns empty string when the struct has no user-defined destructor.
+	std::string buildDestructorMangledName(const StructTypeInfo& si) {
+		for (const auto& mf : si.member_functions) {
+			if (mf.is_destructor) {
+				std::string_view class_sv = StringTable::getStringView(si.getName());
+				return buildDestructorMangledNameFromString(class_sv);
+			}
+		}
+		return {};
+	}
+
+	// Build the mangled name for a destructor from a class-name string view.
+	// Used by cleanup landing pad helpers (Phase 1 and Phase 2 stack unwinding)
+	// and by buildDestructorMangledName(StructTypeInfo).
+	std::string buildDestructorMangledNameFromString(std::string_view class_sv) {
+		std::string class_name_str(class_sv);
+		std::string func_name = "~" + class_name_str;
+		size_t colon_pos = class_sv.rfind("::");
+		if (colon_pos != std::string_view::npos) {
+			func_name = "~" + class_name_str.substr(colon_pos + 2);
+			class_name_str = class_name_str.substr(0, colon_pos);
+		}
+		std::vector<TypeSpecifierNode> empty_params;
+		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
+		sig.class_name = class_name_str;
+		return std::string(writer.generateMangledName(func_name, sig));
+	}
+
 	// Helper function to check if a TempVar or stack offset is a reference
 	// Checks TempVar metadata first (preferred), then falls back to stack offset lookup
 	bool isReference(TempVar temp_var, int32_t stack_offset) const {
@@ -1258,10 +1289,16 @@
 		// Clear temp_var_sizes for this function
 		temp_var_sizes_.clear();
 
-		// Pre-scan: detect C++ exception handling (try/catch) in this function
+			// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
+			// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
+			// destructible locals that require unwind actions even without a local catch.
+			// Plain DestructorCall only describes normal in-function scope cleanup and must
+			// not force the EH-style prologue on its own, otherwise the emitted prologue can
+			// diverge from the writer-side unwind-code selection.
 		current_function_has_cpp_eh_ = false;
 		for (const auto& instruction : it->second) {
-			if (instruction.getOpcode() == IrOpcode::TryBegin) {
+				if (instruction.getOpcode() == IrOpcode::TryBegin ||
+				    instruction.getOpcode() == IrOpcode::FunctionCleanupLP) {
 				current_function_has_cpp_eh_ = true;
 				break;
 			}

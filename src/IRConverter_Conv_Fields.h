@@ -125,6 +125,7 @@
 		uint32_t try_start_offset;  // Code offset where try block starts
 		uint32_t try_end_offset;  // Code offset where try block ends
 		std::vector<CatchHandler> catch_handlers;  // Associated catch clauses
+			std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;  // {struct_name, var_name} destroyed when unwinding this try state
 	};
 
 	// Destructor unwinding support
@@ -136,8 +137,8 @@
 	};
 
 	struct UnwindMapEntry {
-		int to_state;  // State to transition to after unwinding
-		StringHandle action;  // Name of destructor to call (or empty for no action)
+			int to_state = -1;  // State to transition to after unwinding
+			StringHandle action;  // Name of destructor to call (or empty for no action)
 	};
 
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
@@ -164,6 +165,8 @@
 	std::vector<uint32_t> catch_continuation_sub_rsp_patches_;  // Offsets of SUB RSP IMM32 in fixup code, patched with total_stack at function end
 	uint32_t eh_prologue_lea_rbp_offset_ = 0;  // Offset of LEA RBP,[RSP+N] in C++ EH prologue, patched with total_stack
 	std::vector<uint32_t> catch_funclet_lea_rbp_patches_;  // Offsets of LEA RBP,[RDX+N] in catch funclets, patched with total_stack
+		std::vector<uint32_t> cleanup_funclet_lea_rbp_patches_;  // Offsets of LEA RBP,[RDX+N] in cleanup funclets, patched with total_stack
+		std::vector<std::pair<StringHandle, StringHandle>> pending_windows_function_cleanup_vars_;  // Function-scope cleanup vars for Windows FH3 unwind funclets
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
@@ -179,6 +182,8 @@
 	std::vector<ElfCatchFilterPatch> elf_catch_filter_patches_;
 	int32_t elf_exc_ptr_offset_ = 0;   // Stack offset for saved exception pointer
 	int32_t elf_selector_offset_ = 0;  // Stack offset for saved selector value
+	uint32_t current_function_cleanup_lp_offset_ = 0;  // Offset of function-level cleanup LP (ELF Phase 2)
+		StringHandle elf_no_match_lp_label_;  // Label for the "no catch matched" entry point into the cleanup LP
 
 	// Windows SEH (Structured Exception Handling) tracking
 	struct SehExceptHandler {

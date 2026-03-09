@@ -60,13 +60,16 @@
 			TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
 			
 			CatchHandler handler;
-			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+				handler.handler_offset = 0;
 			handler.handler_end_offset = 0;
-			handler.funclet_entry_offset = handler.handler_offset;
+				handler.funclet_entry_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			handler.funclet_end_offset = 0;
 			
 			// Extract data from typed payload
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+				if (try_block.cleanup_vars.empty()) {
+					try_block.cleanup_vars = catch_op.cleanup_vars;
+				}
 			handler.type_index = catch_op.type_index;
 			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
 			handler.is_const = catch_op.is_const;
@@ -92,6 +95,12 @@
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			inside_catch_handler_ = true;
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// For ELF, handler_offset is the LSDA landing pad address.
+			// funclet_entry_offset was assigned the current code position above;
+			// set handler_offset to the same value so the LSDA points here.
+			if (current_catch_handler_) {
+				current_catch_handler_->handler_offset = current_catch_handler_->funclet_entry_offset;
+			}
 			// Landing pad: call __cxa_begin_catch to get the exception object
 			//
 			// For try blocks with MULTIPLE catch handlers, the personality routine
@@ -123,6 +132,12 @@
 				emitMovToFrame(X64Register::RAX, elf_exc_ptr_offset_, 64);
 				// mov [rbp+selector_offset], edx (32-bit)
 				emitMovToFrameBySize(X64Register::RDX, elf_selector_offset_, 32);
+
+				// Phase 1: call destructors for variables declared in the try block scope.
+				// These must be destroyed before dispatching to the catch handler.
+				for (const auto& cv : catch_op.cleanup_vars) {
+					emitInlineDestructorCall(cv);
+				}
 			}
 			
 			// For non-last handlers, emit selector comparison + skip jump.
@@ -180,14 +195,21 @@
 						std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
 					}
 					emitMovToFrame(X64Register::RAX, stack_offset, 64);
+					// Mark the slot as holding a reference pointer so that the
+					// subsequent VariableDecl reference-initialization uses MOV
+					// (load the stored pointer) rather than LEA (take address).
+					setReferenceInfo(stack_offset, catch_op.exception_type,
+					                 64,  // The slot holds a 64-bit pointer
+					                 catch_op.is_rvalue_reference(),
+					                 catch_op.exception_temp);
 				} else {
-					// Get type size for dereferencing
-					// For built-in types, use get_type_size_bits directly
-					// For user-defined types, look up in gTypeInfo
+					// Non-reference catch: __cxa_begin_catch returns a pointer to the
+					// exception object. Store the pointer and mark the slot as a
+					// reference so VarDecl's struct-copy path dereferences it when
+					// initializing the catch variable (e.g., `catch (MyEx e)`).
+					// For built-in scalar types, dereference directly here since
+					// VarDecl does not use setReferenceInfo for small PODs.
 					int type_size_bits = 0;
-					
-					// Check if this is a built-in type that get_type_size_bits can handle
-					// These are types where the Type enum directly maps to a size
 					bool is_builtin = false;
 					switch (catch_op.exception_type) {
 						case Type::Bool:
@@ -216,36 +238,43 @@
 					}
 					
 					if (is_builtin) {
-						// Built-in type - use direct lookup
 						type_size_bits = get_type_size_bits(catch_op.exception_type);
 					} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
-						// User-defined type - look up in gTypeInfo
 						const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
 						type_size_bits = type_info.type_size_;
 					}
-					size_t type_size = type_size_bits / 8;  // Convert bits to bytes
-					
+					size_t type_size = type_size_bits / 8;
+
 					if (g_enable_debug_output) {
 						std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exception_type)
 						          << " type_size_bits=" << type_size_bits
 						          << " type_size=" << type_size << std::endl;
 					}
-					
-					// Load value from exception object and store to catch variable
-					if (type_size <= 8 && type_size > 0) {
-						// Small POD: load from [RAX] and store to frame
-						// Move value from [RAX] to RCX
+
+					if (is_builtin && type_size <= 8 && type_size > 0) {
+						// Small scalar POD: dereference directly and store value
 						if (g_enable_debug_output) {
 							std::cerr << "[DEBUG][Codegen] CatchBegin: dereferencing exception value" << std::endl;
 						}
 						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
 						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
 					} else {
-						// Large type or unknown size: just store pointer (64-bit pointer)
+						// Struct or large type: store the pointer and let VarDecl
+						// dereference it via the reference_stack_info_ mechanism.
 						if (g_enable_debug_output) {
-							std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (large or unknown type)" << std::endl;
+							std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (struct/large type)" << std::endl;
 						}
 						emitMovToFrame(X64Register::RAX, stack_offset, 64);
+						// Mark this slot so VarDecl's struct-copy path dereferences it.
+						// type_size_bits may be 0 if the type was not found in gTypeInfo
+						// (e.g., a forward-declared type). Using 64 as a fallback is safe
+						// because this field in ReferenceInfo is used as a hint to select
+						// between MOV and LEA — it does not control the actual copy size
+						// (that comes from the VarDecl initializer's own size_in_bits).
+						setReferenceInfo(stack_offset, catch_op.exception_type,
+						                 type_size_bits > 0 ? type_size_bits : 64,
+						                 false,
+						                 catch_op.exception_temp);
 					}
 				}
 			}
@@ -266,21 +295,27 @@
 			textSectionData.push_back(0x10);
 			emitPushReg(X64Register::RBP);
 			emitSubRSP(32);
-			// LEA RBP, [RDX + imm32] — RDX is the establisher frame (RSP after parent prologue)
-			// Adding total_stack gives RBP = establisher + N = RSP_after_sub + N = S-8.
-			// This matches the parent function's RBP so frame-relative accesses work.
-			// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
-			catch_funclet_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x8D); // LEA
-			textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
-			textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
+				// For frame-pointer based parent functions, rebuild the same frame pointer from
+				// the establisher frame (RDX) so the catch body can keep using normal RBP-relative
+				// local/catch-object offsets.
+				emitFuncletLeaRbpFromRdx(catch_funclet_lea_rbp_patches_);
 			in_catch_funclet_ = true;
 			catch_funclet_terminated_by_return_ = false;
 			current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
+
+				// Windows FH3 materializes the catch object into the dispCatchObj slot.
+				// For reference catches, that slot holds a pointer to the exception object,
+				// so later VariableDecl handling must load/dereference it instead of taking
+				// the address of the slot itself.
+				if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
+					int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+					setReferenceInfo(stack_offset, catch_op.exception_type, 64, false, catch_op.exception_temp);
+				}
+
+					if (current_catch_handler_) {
+						current_catch_handler_->handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+					}
+
 		}
 	}
 
@@ -528,8 +563,22 @@
 				emitXorRegReg(X64Register::RSI);
 			}
 			
-			// RDX = destructor function pointer (NULL for POD types)
-			emitXorRegReg(X64Register::RDX);
+			// RDX = destructor function pointer (NULL for POD types; for class types,
+			// pass the complete-object destructor so __cxa_end_catch can call it when
+			// the exception object's refcount reaches zero).
+			std::string destructor_symbol;
+			if (exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
+				const TypeInfo& ti_ref = gTypeInfo[throw_op.type_index];
+				const StructTypeInfo* si = ti_ref.getStructInfo();
+				if (si) {
+					destructor_symbol = buildDestructorMangledName(*si);
+				}
+			}
+			if (!destructor_symbol.empty()) {
+				emitLeaRipRelativeWithRelocation(X64Register::RDX, destructor_symbol);
+			} else {
+				emitXorRegReg(X64Register::RDX);
+			}
 			
 			emitCall("__cxa_throw");
 			// Note: __cxa_throw never returns
@@ -607,9 +656,14 @@
 			// RCX (first argument) = pointer to exception object on the frame
 			emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
 			// RDX (second argument) = pointer to _ThrowInfo metadata
-			std::string throw_type_name;
+				std::string throw_type_name;
+				std::string throw_destructor_symbol;
 			if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
-				throw_type_name = std::string(StringTable::getStringView(gTypeInfo[throw_op.type_index].name()));
+					const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
+					throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
+					if (const StructTypeInfo* thrown_struct_info = thrown_type_info.getStructInfo()) {
+						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
+					}
 			} else {
 				throw_type_name = std::string(getTypeName(throw_op.exception_type));
 			}
@@ -617,7 +671,7 @@
 			std::string throw_info_symbol;
 			if (!throw_type_name.empty() && throw_type_name != "void") {
 				bool is_simple_type = (throw_op.exception_type != Type::Struct);
-				throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type);
+					throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type, throw_destructor_symbol);
 			}
 
 			if (!throw_info_symbol.empty()) {
@@ -647,10 +701,12 @@
 		// Platform-specific rethrow implementation
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
-			// Call __cxa_rethrow() with no arguments
-			// System V AMD64 calling convention - no arguments needed
-			
-			emitSubRSP(8); // Align stack to 16 bytes before call
+			// Call __cxa_rethrow() with no arguments.
+			// throw; is always executed inside a catch handler (landing pad).
+			// The unwinder restores RSP = CFA before jumping to the landing pad,
+			// which leaves RSP 16-byte aligned (CFA = RBP + 16, RBP even-aligned).
+			// Do NOT emit sub rsp,8 here — that would misalign RSP and crash
+			// movaps instructions inside _Unwind_RaiseException.
 			emitCall("__cxa_rethrow");
 			// Note: __cxa_rethrow never returns
 			
@@ -669,6 +725,293 @@
 			// Same PDATA range fix: emit int 3 so the return address is within the function range.
 			textSectionData.push_back(static_cast<char>(0xCC)); // int 3 (unreachable)
 		}
+	}
+
+	// ============================================================================
+	// Funclet prologue helper: LEA RBP, [RDX + disp32] with deferred patch
+	// ============================================================================
+
+	// Emits REX.W LEA RBP, [RDX+disp32] with a zero placeholder and records the
+	// instruction offset so it can be patched later with the parent function's
+	// total_stack value.  Used by both catch funclet and cleanup funclet prologues.
+	void emitFuncletLeaRbpFromRdx(std::vector<uint32_t>& patch_list) {
+		// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
+		patch_list.push_back(static_cast<uint32_t>(textSectionData.size()));
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0x8D); // LEA
+		textSectionData.push_back(0xAA); // ModR/M: mod=10, reg=101(RBP), r/m=010(RDX)
+		textSectionData.push_back(0x00); // disp32 placeholder (patched at function end)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+	}
+
+	// ============================================================================
+	// Inline destructor call helper (shared by Phase 1 and Phase 2 cleanup LP)
+	// ============================================================================
+
+	void emitInlineDestructorCall(const std::pair<StringHandle, StringHandle>& cleanup_var) {
+		const auto& [struct_name_h, var_name_h] = cleanup_var;
+		const VariableInfo* var_info = findVariableInfo(var_name_h);
+		if (!var_info) {
+			FLASH_LOG(Codegen, Warning, "emitInlineDestructorCall: variable not found: ",
+			          StringTable::getStringView(var_name_h));
+			return;
+		}
+
+		X64Register this_reg = getIntParamReg<TWriterClass>(0);
+		emitLeaFromFrame(this_reg, var_info->offset);
+
+		// Build mangled destructor name using the shared helper
+		auto mangled_name = buildDestructorMangledNameFromString(StringTable::getStringView(struct_name_h));
+		emitCall(mangled_name);
+		regAlloc.invalidateCallerSavedRegisters();
+	}
+
+		void emitWindowsCleanupFuncletsAndPopulateUnwindMap() {
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				return;
+			} else {
+				current_function_unwind_map_.clear();
+				size_t cleanup_funclet_index = 0;
+
+				auto emitCleanupFunclet = [&](const std::vector<std::pair<StringHandle, StringHandle>>& cleanup_vars) -> StringHandle {
+					if (cleanup_vars.empty() || !current_function_mangled_name_.isValid()) {
+						return StringHandle();
+					}
+
+					StringBuilder sb;
+					sb.append("$unwind$")
+					  .append(StringTable::getStringView(current_function_mangled_name_))
+					  .append("$")
+					  .append(static_cast<uint64_t>(cleanup_funclet_index++));
+					std::string symbol_name = std::string(sb.commit());
+					StringHandle symbol_handle = StringTable::getOrInternStringHandle(symbol_name);
+
+					uint32_t funclet_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+					writer.add_static_text_symbol(symbol_name, current_function_offset_ + funclet_offset);
+
+					emitPushReg(X64Register::RBP);
+					emitSubRSP(32);
+					// Cleanup funclets receive the parent establisher frame in RDX.
+					// Reconstruct the parent RBP so frame-relative local offsets match the
+					// parent function's normal codegen.
+					emitFuncletLeaRbpFromRdx(cleanup_funclet_lea_rbp_patches_);
+
+					for (const auto& cv : cleanup_vars) {
+						emitInlineDestructorCall(cv);
+					}
+
+					emitAddRSP(32);
+					emitPopReg(X64Register::RBP);
+					emitRet();
+					return symbol_handle;
+				};
+
+				auto populateCleanupChain = [&](const std::vector<std::pair<StringHandle, StringHandle>>& cleanup_vars,
+					int32_t head_state,
+					int32_t tail_to_state) {
+					if (cleanup_vars.empty() || head_state < 0) {
+						return;
+					}
+					if (static_cast<size_t>(head_state) >= current_function_unwind_map_.size()) {
+						return;
+					}
+
+					std::vector<StringHandle> actions;
+					actions.reserve(cleanup_vars.size());
+					for (const auto& cleanup_var : cleanup_vars) {
+						std::vector<std::pair<StringHandle, StringHandle>> single_cleanup_var;
+						single_cleanup_var.push_back(cleanup_var);
+						actions.push_back(emitCleanupFunclet(single_cleanup_var));
+					}
+
+					if (actions.empty() || !actions.front().isValid()) {
+						return;
+					}
+
+					size_t extra_state_start = current_function_unwind_map_.size();
+					if (cleanup_vars.size() > 1) {
+						current_function_unwind_map_.resize(current_function_unwind_map_.size() + cleanup_vars.size() - 1);
+					}
+
+					current_function_unwind_map_[static_cast<size_t>(head_state)].action = actions.front();
+					current_function_unwind_map_[static_cast<size_t>(head_state)].to_state =
+						cleanup_vars.size() > 1 ? static_cast<int32_t>(extra_state_start) : tail_to_state;
+
+					for (size_t i = 1; i < cleanup_vars.size(); ++i) {
+						int32_t state_index = static_cast<int32_t>(extra_state_start + (i - 1));
+						int32_t next_to_state = tail_to_state;
+						if (i + 1 < cleanup_vars.size()) {
+							next_to_state = state_index + 1;
+						}
+						current_function_unwind_map_[static_cast<size_t>(state_index)] = {next_to_state, actions[i]};
+					}
+				};
+
+				if (current_function_try_blocks_.empty()) {
+					if (!pending_windows_function_cleanup_vars_.empty()) {
+						current_function_unwind_map_.assign(1, UnwindMapEntry{});
+						populateCleanupChain(pending_windows_function_cleanup_vars_, 0, -1);
+						if (!current_function_unwind_map_[0].action.isValid()) {
+							current_function_unwind_map_.clear();
+						}
+					}
+					pending_windows_function_cleanup_vars_.clear();
+					return;
+				}
+
+				std::vector<size_t> sorted_indices(current_function_try_blocks_.size());
+				for (size_t i = 0; i < sorted_indices.size(); ++i) {
+					sorted_indices[i] = i;
+				}
+				std::sort(sorted_indices.begin(), sorted_indices.end(), [&](size_t a, size_t b) {
+					uint32_t range_a = current_function_try_blocks_[a].try_end_offset - current_function_try_blocks_[a].try_start_offset;
+					uint32_t range_b = current_function_try_blocks_[b].try_end_offset - current_function_try_blocks_[b].try_start_offset;
+					return range_a < range_b;
+				});
+
+				std::vector<int> parent_index(sorted_indices.size(), -1);
+				for (size_t i = 0; i < sorted_indices.size(); ++i) {
+					const auto& inner = current_function_try_blocks_[sorted_indices[i]];
+					for (size_t j = i + 1; j < sorted_indices.size(); ++j) {
+						const auto& outer = current_function_try_blocks_[sorted_indices[j]];
+						if (outer.try_start_offset <= inner.try_start_offset && inner.try_end_offset <= outer.try_end_offset) {
+							parent_index[i] = static_cast<int>(j);
+							break;
+						}
+					}
+				}
+
+				std::vector<int32_t> try_low_by_sorted_index(sorted_indices.size(), -1);
+				int32_t next_state = 0;
+				for (int i = static_cast<int>(sorted_indices.size()) - 1; i >= 0; --i) {
+					try_low_by_sorted_index[i] = next_state++;
+				}
+
+				std::vector<std::vector<int32_t>> catch_states_by_sorted_index(sorted_indices.size());
+				for (size_t i = 0; i < sorted_indices.size(); ++i) {
+					const auto& try_block = current_function_try_blocks_[sorted_indices[i]];
+					catch_states_by_sorted_index[i].reserve(try_block.catch_handlers.size());
+					for ([[maybe_unused]] const auto& handler : try_block.catch_handlers) {
+						catch_states_by_sorted_index[i].push_back(next_state++);
+					}
+				}
+
+				current_function_unwind_map_.assign(static_cast<size_t>(next_state), UnwindMapEntry{});
+				for (size_t i = 0; i < sorted_indices.size(); ++i) {
+					const auto& try_block = current_function_try_blocks_[sorted_indices[i]];
+
+					int32_t to_state = -1;
+					if (parent_index[i] >= 0) {
+						to_state = try_low_by_sorted_index[parent_index[i]];
+					}
+
+					current_function_unwind_map_[static_cast<size_t>(try_low_by_sorted_index[i])].to_state = to_state;
+					for (int32_t catch_state : catch_states_by_sorted_index[i]) {
+						current_function_unwind_map_[static_cast<size_t>(catch_state)].to_state = to_state;
+					}
+
+					populateCleanupChain(try_block.cleanup_vars, try_low_by_sorted_index[i], to_state);
+				}
+
+				pending_windows_function_cleanup_vars_.clear();
+			}
+		}
+
+		void emitJmpToLabel(StringHandle target_label) {
+			textSectionData.push_back(0xE9); // JMP rel32
+
+			uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
+
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+
+			pending_branches_.push_back({target_label, patch_position});
+		}
+
+	// ============================================================================
+		// ELF-only: "no catch matched" marker — emitted before handlers_end_label.
+		// Generates code that loads the saved exception pointer and jumps to the
+		// function's cleanup LP (which calls local dtors then _Unwind_Resume).
+		// The LSDA is also patched (via has_cleanup) so the personality enters this
+		// landing pad during phase-2 when no typed catch handler matches.
+		// ============================================================================
+
+		void handleElfCatchNoMatch([[maybe_unused]] const IrInstruction& instruction) {
+			if (!g_enable_exceptions) return;
+
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				return;  // Windows handles "no match" differently (funclets + RtlUnwindEx)
+			}
+
+			if (elf_exc_ptr_offset_ == 0) return;  // No active landing pad context
+
+			// Generate a unique label for this function's cleanup LP entry point
+			std::string lp_label = "__elf_no_match_lp_" + std::to_string(current_function_offset_);
+			elf_no_match_lp_label_ = StringTable::getOrInternStringHandle(lp_label);
+
+			// Load the saved _Unwind_Exception* from the landing-pad-entry save slot into RAX.
+			// handleFunctionCleanupLP() (or the stub below) expects RAX = exception pointer.
+			emitMovFromFrameBySize(X64Register::RAX, elf_exc_ptr_offset_, 64);
+
+			// JMP __elf_no_match_lp_<n>  (forward reference, resolved at function end)
+			emitJmpToLabel(elf_no_match_lp_label_);
+		}
+
+		// ============================================================================
+	// Phase 2: Function-level cleanup landing pad (ELF/Linux only)
+	// ============================================================================
+
+	void handleFunctionCleanupLP(const IrInstruction& instruction) {
+		if (!g_enable_exceptions) return;
+
+		const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
+
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				if (!op.cleanup_vars.empty()) {
+					pending_windows_function_cleanup_vars_ = op.cleanup_vars;
+				}
+				return;
+			}
+
+			// If handleElfCatchNoMatch() set a forward-reference label, define it here
+			// so the "no catch matched" JMP enters the cleanup LP at the right place.
+			if (elf_no_match_lp_label_.isValid()) {
+				label_positions_[elf_no_match_lp_label_] = static_cast<uint32_t>(textSectionData.size());
+				elf_no_match_lp_label_ = StringHandle();
+			}
+
+			if (op.cleanup_vars.empty()) {
+				// No local dtors — just call _Unwind_Resume with the exception pointer in RAX.
+				// MOV RDI, RAX  (RAX = _Unwind_Exception* set by either path above)
+				emitMovRegReg(X64Register::RDI, X64Register::RAX);
+				emitCall("_Unwind_Resume");
+				return;
+			}
+
+		// Record the offset of this cleanup landing pad within the function
+		current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+		// Flush any dirty virtual registers before the LP code
+		flushAllDirtyRegisters();
+
+		// Allocate a frame slot to save the _Unwind_Exception* arriving in RAX
+		int32_t exc_save_offset = allocateElfTempStackSlot(8);
+
+		// Save _Unwind_Exception* (RAX) to frame slot
+		emitMovToFrame(X64Register::RAX, exc_save_offset, 64);
+
+		// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
+		for (const auto& cv : op.cleanup_vars) {
+			emitInlineDestructorCall(cv);
+		}
+
+		// Load saved exception ptr into RDI (first arg on Linux) and call _Unwind_Resume
+		emitMovFromFrameBySize(X64Register::RDI, exc_save_offset, 64);
+		emitCall("_Unwind_Resume");
 	}
 
 	// ============================================================================

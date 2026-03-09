@@ -467,6 +467,7 @@ public:
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
 	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None);
+		void add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset);
 	void add_data(std::span<const uint8_t> data, SectionType section_type);
 	void add_data(std::span<const char> data, SectionType section_type);
 	void add_relocation(uint64_t offset, std::string_view symbol_name);
@@ -478,7 +479,7 @@ public:
 	void add_rdata_relocation(uint32_t rdata_offset, std::string_view symbol_name, uint32_t relocation_type = IMAGE_REL_AMD64_ADDR32NB);
 	std::string mangleTypeName(const std::string& type_name) const;
 	std::pair<std::string, std::string> getMsvcTypeDescriptorInfo(const std::string& type_name) const;
-	std::string get_or_create_exception_throw_info(const std::string& type_name, size_t type_size = 0, bool is_simple_type = false);
+		std::string get_or_create_exception_throw_info(const std::string& type_name, size_t type_size = 0, bool is_simple_type = false, std::string_view destructor_symbol = {});
 	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type);
 	void add_source_file(const std::string& filename);
 	void set_current_function_for_debug(const std::string& name, uint32_t file_id);
@@ -523,7 +524,7 @@ public:
 	void ensure_type_descriptor(const std::string& type_name);
 	void build_cpp_exception_metadata(std::vector<char>& xdata, uint32_t xdata_offset, uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, uint32_t effective_frame_size, uint32_t stack_frame_size, uint32_t cpp_funcinfo_rva_field_offset, bool has_cpp_funcinfo_rva_field, uint32_t& cpp_funcinfo_local_offset_out, std::vector<uint32_t>& cpp_xdata_rva_field_offsets, std::vector<uint32_t>& cpp_text_rva_field_offsets);
 	void emit_exception_relocations(uint32_t xdata_offset, uint32_t handler_rva_offset, bool is_seh, bool is_cpp, const std::vector<ScopeTableReloc>& scope_relocs, const std::vector<uint32_t>& cpp_xdata_rva_field_offsets, const std::vector<uint32_t>& cpp_text_rva_field_offsets);
-	void build_pdata_entries(uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, bool is_cpp, uint32_t xdata_offset, const UnwindCodeResult& unwind_info, uint32_t cpp_funcinfo_local_offset);
+		void build_pdata_entries(uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, bool is_cpp, uint32_t xdata_offset, const UnwindCodeResult& unwind_info, uint32_t cpp_funcinfo_local_offset);
 
 	// --- Method declarations (ObjFileWriter_RTTI.cpp) ---
 	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}, uint32_t stack_frame_size = 0);

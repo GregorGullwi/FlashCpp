@@ -381,8 +381,15 @@ public:
 		uint32_t lsda_pointer_offset = 0;
 	};
 
+	// Cleanup landing pad info for function-level stack unwinding (ELF Phase 2)
+	struct CleanupBlockInfo {
+		uint32_t region_start;   // Start of code region that needs cleanup (usually 0)
+		uint32_t region_end;     // End of region = start of the cleanup LP itself
+		uint32_t cleanup_lp;     // Offset of the cleanup landing pad
+	};
+
 	// --- Method declarations (ElfFileWriter_EH.cpp) ---
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<CFIInstruction>& cfi_instructions = {});
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<CFIInstruction>& cfi_instructions = {}, const std::vector<CleanupBlockInfo>& cleanup_blocks = {});
 	std::string get_typeinfo_symbol(const std::string& type_name) const;
 	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, int64_t addend = -4);
 	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset);

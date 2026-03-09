@@ -74,6 +74,18 @@ void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32
 	if (g_enable_debug_output) std::cerr << "Function symbol added successfully" << std::endl;
 }
 
+void ObjectFileWriter::add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset) {
+	auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+	auto* symbol = coffi_.get_symbol(symbol_name);
+	if (!symbol) {
+		symbol = coffi_.add_symbol(symbol_name);
+	}
+	symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
+	symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+	symbol->set_section_number(section_text->get_index() + 1);
+	symbol->set_value(section_offset);
+}
+
 void ObjectFileWriter::add_data(std::span<const uint8_t> data, SectionType section_type) {
 	add_data(std::span<const char>(reinterpret_cast<const char*>(data.data()), data.size()), section_type);
 }
@@ -320,7 +332,7 @@ std::pair<std::string, std::string> ObjectFileWriter::getMsvcTypeDescriptorInfo(
 	return {"??_R0" + mangled_type_name, mangled_type_name};
 }
 
-std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::string& type_name, size_t type_size, bool is_simple_type) {
+std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::string& type_name, size_t type_size, bool is_simple_type, std::string_view destructor_symbol) {
 	if (type_name.empty() || type_name == "void") {
 		return std::string();
 	}
@@ -428,6 +440,13 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 		throw_info_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
 		throw_info_sym->set_section_number(rdata_section->get_index() + 1);
 		throw_info_sym->set_value(throw_info_offset);
+
+		if (!destructor_symbol.empty()) {
+			// pmfnUnwind should reference a real destructor only when one is required and emitted.
+			// For trivial implicit destructors (e.g. throw bad_any_cast{}), forcing a destructor
+			// symbol here creates an unnecessary unresolved external during link.
+			add_rdata_relocation(throw_info_offset + 4, destructor_symbol, IMAGE_REL_AMD64_ADDR32NB);
+		}
 
 		add_rdata_relocation(throw_info_offset + 12, catchable_array_symbol, IMAGE_REL_AMD64_ADDR32NB);
 	}

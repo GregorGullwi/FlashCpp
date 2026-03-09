@@ -916,6 +916,8 @@ struct CatchBeginOp {
 	bool is_const;                // True if caught by const
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Catch binding reference qualifier
 	bool is_catch_all;            // True for catch(...) - catches all exceptions
+	// Cleanup variables from the try block scope (ELF Phase 1: called in landing pad before dispatch)
+	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;  // {struct_name, var_name} LIFO order
 
 	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
@@ -926,6 +928,19 @@ struct CatchBeginOp {
 struct CatchEndOp {
 	std::string_view continuation_label;  // Label to continue parent function execution after catch funclet returns
 };
+
+// Function-level cleanup landing pad (ELF/Linux only)
+// Emitted after the function return; called by the unwinder during phase-2 exception propagation.
+// Calls each listed destructor (LIFO order), then calls _Unwind_Resume to continue unwinding.
+struct FunctionCleanupLPOp {
+	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;  // {struct_name, var_name} LIFO order
+};
+
+// ELF-only marker: no typed catch handler matched the thrown exception.
+// Emitted right before handlers_end_label in each try block that has typed catch handlers.
+// In the ELF path, this generates: load elf_exc_ptr → RAX; JMP __elf_no_match_lp_<n>
+// Windows path: no-op (exceptions are handled differently).
+struct ElfCatchNoMatchOp {};
 
 // Throw exception operation
 struct ThrowOp {

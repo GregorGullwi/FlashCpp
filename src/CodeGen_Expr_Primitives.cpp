@@ -473,7 +473,13 @@
 						op.result.value = result_temp;
 						op.global_name = effective_name;
 						op.is_array = is_array_type;
+						StringHandle saved_global_name = op.global_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+						if (!is_array_type) {
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+								LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+								type_n.type(), size_bits));
+						}
 						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
 						return { type_n.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 					}
@@ -850,7 +856,13 @@
 				}
 				
 				op.is_array = is_array_type;  // Arrays need LEA to get address
-				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+					StringHandle saved_global_name = op.global_name;
+					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+					if (!is_array_type) {
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+							LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+							type_node.type(), size_bits));
+					}
 
 				// Return the temp variable that will hold the loaded value
 				// For pointers and arrays, return 64 bits (pointer size)
@@ -1464,19 +1476,29 @@
 			if (is_global) {
 				// Generate GlobalLoad for namespace-qualified global variable
 				TempVar result_temp = var_counter.next();
+					bool is_array_type = decl_node.is_array() || type_node.is_array();
+					bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
+					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
-				op.result.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					op.result.size_in_bits = size_bits;
 				op.result.value = result_temp;
 				// Use fully qualified name (ns::value) to match the global variable symbol
 				op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
 					qualifiedIdNode.namespace_handle(),
 					StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
-				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+					op.is_array = is_array_type;
+					StringHandle saved_global_name = op.global_name;
+					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+					if (!is_array_type) {
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+							LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+							type_node.type(), size_bits));
+					}
 
 				// Return the temp variable that will hold the loaded value
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
+					return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			} else {
 				// Local variable - just return the name
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
@@ -1492,7 +1514,9 @@
 			// Namespace-scoped variables are always global
 			// Generate GlobalLoad for namespace-qualified global variable
 			TempVar result_temp = var_counter.next();
-			int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+				bool is_array_type = decl_node.is_array() || type_node.is_array();
+				bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
+				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.type = type_node.type();
 			op.result.size_in_bits = size_bits;
@@ -1501,7 +1525,14 @@
 			op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
 				qualifiedIdNode.namespace_handle(),
 				StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
-			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+				op.is_array = is_array_type;
+				StringHandle saved_global_name = op.global_name;
+				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+				if (!is_array_type) {
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+						LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+						type_node.type(), size_bits));
+				}
 
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)

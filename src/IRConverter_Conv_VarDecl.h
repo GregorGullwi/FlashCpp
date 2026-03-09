@@ -700,10 +700,14 @@
 		catch_continuation_sub_rsp_patches_.clear();
 		eh_prologue_lea_rbp_offset_ = 0;
 		catch_funclet_lea_rbp_patches_.clear();
+			cleanup_funclet_lea_rbp_patches_.clear();
+			pending_windows_function_cleanup_vars_.clear();
 		loop_context_stack_.clear();
 		inside_catch_handler_ = false;
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			current_function_cfi_.clear();
+			current_function_cleanup_lp_offset_ = 0;
+				elf_no_match_lp_label_ = StringHandle();
 		}
 	}
 
@@ -761,9 +765,6 @@
 		
 		// Finalize previous function before starting new one
 		if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
-			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-			auto seh_try_blocks = convertSehInfoToWriterFormat();
-
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
@@ -771,10 +772,10 @@
 			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
 			// Some catch temp offsets are reserved through EH paths and may not be reflected in
 			// scope_stack_space at this point.
-			for (const auto& try_block : try_blocks) {
+				for (const auto& try_block : current_function_try_blocks_) {
 				for (const auto& handler : try_block.catch_handlers) {
-					if (handler.catch_obj_offset < 0) {
-						size_t required_stack = static_cast<size_t>(-handler.catch_obj_offset);
+						if (handler.catch_obj_stack_offset < 0) {
+							size_t required_stack = static_cast<size_t>(-handler.catch_obj_stack_offset);
 						if (required_stack > total_stack) {
 							total_stack = required_stack;
 						}
@@ -801,6 +802,8 @@
 			if (total_stack % 16 != 0) {
 				total_stack = (total_stack + 15) & ~static_cast<size_t>(15);
 			}
+
+				emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 			
 			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
 			if (current_function_prologue_offset_ > 0) {
@@ -842,6 +845,18 @@
 				}
 			}
 			catch_funclet_lea_rbp_patches_.clear();
+
+				for (auto funclet_lea_offset : cleanup_funclet_lea_rbp_patches_) {
+					uint32_t lea_patch_offset = funclet_lea_offset + 3;
+					const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+					for (int i = 0; i < 4; i++) {
+						textSectionData[lea_patch_offset + i] = bytes[i];
+					}
+				}
+				cleanup_funclet_lea_rbp_patches_.clear();
+
+				auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+				auto seh_try_blocks = convertSehInfoToWriterFormat();
 			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
@@ -854,7 +869,12 @@
 				// Patch ELF catch handler selector filter values before passing to writer.
 				// The filter values must match the LSDA type table ordering.
 				patchElfCatchFilterValues(try_blocks);
-				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+				// Build cleanup block info for Phase 2 function-level cleanup LPs
+				std::vector<ElfFileWriter::CleanupBlockInfo> cleanup_blocks;
+				if (current_function_cleanup_lp_offset_ > 0) {
+					cleanup_blocks.push_back({0, current_function_cleanup_lp_offset_, current_function_cleanup_lp_offset_});
+				}
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_, cleanup_blocks);
 				elf_catch_filter_patches_.clear();
 			} else {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));

@@ -88,8 +88,33 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		return info;
 	}
 	default:
+		break;
+	}
+
+	if (identifier.binding() != IdentifierBinding::Unresolved) {
 		return info;
 	}
+
+	auto static_local_it = static_local_names_.find(identifier_handle);
+	if (static_local_it != static_local_names_.end()) {
+		info.is_global_or_static = true;
+		info.store_name = static_local_it->second.mangled_name;
+		info.type = static_local_it->second.type;
+		info.size_in_bits = static_local_it->second.size_in_bits;
+		return info;
+	}
+
+	if (global_symbol_table_) {
+		const auto global_symbol = global_symbol_table_->lookup(identifier.name());
+		if (global_symbol.has_value()) {
+			auto mangle_it = global_variable_names_.find(identifier_handle);
+			info.store_name = (mangle_it != global_variable_names_.end()) ? mangle_it->second : identifier_handle;
+			info.is_global_or_static = info.store_name.isValid();
+			tryPopulateTypeFromDeclaration(*global_symbol);
+		}
+	}
+
+	return info;
 }
 
 std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type) {

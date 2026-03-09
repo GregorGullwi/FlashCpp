@@ -263,4 +263,4 @@ Adding a `Type::Pointer` enumerator (or a dedicated `pointer_depth` field to `Ir
 - Preserve declaration-suffix assembler rename metadata for variables declared with `__asm("symbol")` / `__asm__("symbol")`; function declarations now retain the requested external symbol.
 - Stop defining both `__GNUC__` and `_MSC_VER` simultaneously once header-compatibility strategy is in place for both library families.
 - Only raise `__cpp_consteval`, `__cpp_constexpr_dynamic_alloc`, or a higher `__cpp_constexpr` level again after the underlying constexpr/consteval features are actually implemented.
-- Re-evaluate `__cpp_exceptions` once exception handling is complete enough for standard-library throw paths.
+- Re-evaluate `__cpp_exceptions` once exception handling is complete enough for standard-library throw paths. ✅ **Done** — `__cpp_exceptions=199711L` is now defined; basic throw/catch/unwind works on ELF.

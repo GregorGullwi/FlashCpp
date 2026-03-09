@@ -4,7 +4,8 @@
 void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start,
                                  uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks,
                                  [[maybe_unused]] const std::vector<UnwindMapEntryInfo>& unwind_map,
-                                 const std::vector<ElfFileWriter::CFIInstruction>& cfi_instructions) {
+                                 const std::vector<ElfFileWriter::CFIInstruction>& cfi_instructions,
+                                 const std::vector<ElfFileWriter::CleanupBlockInfo>& cleanup_blocks) {
 	// Check if exception info has already been added for this function (O(1) with unordered_set)
 	std::string mangled_name_str(mangled_name);
 	if (!added_exception_functions_.insert(mangled_name_str).second) {
@@ -17,12 +18,12 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 	fde_info.function_start_offset = function_start;
 	fde_info.function_length = function_size;
 	fde_info.function_symbol = std::move(mangled_name_str);
-	fde_info.has_exception_handling = !try_blocks.empty();
+	fde_info.has_exception_handling = !try_blocks.empty() || !cleanup_blocks.empty();
 	fde_info.cfi_instructions = cfi_instructions;  // Store CFI instructions
 	
 	functions_with_fdes_.push_back(fde_info);
 	
-	// Generate LSDA if function has exception handling
+	// Generate LSDA if function has exception handling or cleanup landing pads
 	if (fde_info.has_exception_handling) {
 		LSDAGenerator::FunctionLSDAInfo lsda_info;
 
@@ -41,25 +42,14 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 		std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(),
 		         [](const auto& a, const auto& b) { return a.try_start_offset < b.try_start_offset; });
 
-		// Find the minimum landing pad offset (first catch handler)
-		uint32_t min_landing_pad_offset = fde_info.function_length;
-		for (const auto& try_block : sorted_try_blocks) {
-			for (const auto& handler : try_block.catch_handlers) {
-				if (handler.handler_offset < min_landing_pad_offset) {
-					min_landing_pad_offset = handler.handler_offset;
-				}
-			}
-		}
-
 		// Determine function_end_offset for call site coverage.
-		// For simple (non-nested) try blocks, stop at the first landing pad.
-		// For nested try blocks, the outer try may extend past landing pads
-		// (covering the inner catch handler code), so use the max try end offset.
-		uint32_t max_try_end_offset = 0;
-		for (const auto& try_block : sorted_try_blocks) {
-			max_try_end_offset = std::max(max_try_end_offset, try_block.try_end_offset);
-		}
-		uint32_t function_end_offset = std::max(min_landing_pad_offset, max_try_end_offset);
+		// The ENTIRE function must be covered by call site entries.
+		// If the PC during phase-2 unwinding falls in a range not covered by
+		// any call site entry, __gxx_personality_v0 calls std::terminate().
+		// This includes catch handler bodies (code after __cxa_begin_catch all
+		// the way to the function epilogue), which must be mapped with lpad=0
+		// so that rethrows inside a catch handler propagate to the caller.
+		uint32_t function_end_offset = fde_info.function_length;
 
 		// Helper lambda to convert catch handlers for a try block into LSDA format
 		auto convert_catch_handlers = [&](const ObjectFileWriter::TryBlockInfo& try_block) {
@@ -127,6 +117,19 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 						region.landing_pad_offset = 0;
 					}
 					region.catch_handlers = convert_catch_handlers(block);
+					// If no handler in the list is a catch-all, set has_cleanup so the LSDA
+					// action chain includes a cleanup entry. This causes the personality to
+					// enter the landing pad during phase-2 when no typed handler matches,
+					// allowing the ElfCatchNoMatch code to call _Unwind_Resume.
+					// (A catch-all always matches, so no "no match" case is possible when one
+					// is present, and the cleanup entry would be unreachable.)
+					if (!region.catch_handlers.empty()) {
+						bool has_catch_all = false;
+						for (const auto& h : region.catch_handlers) {
+							if (h.is_catch_all) { has_catch_all = true; break; }
+						}
+						region.has_cleanup = !has_catch_all;
+					}
 				}
 
 				lsda_info.try_regions.push_back(region);
@@ -153,6 +156,97 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 			no_handler_region.try_length = function_end_offset - region_start;
 			no_handler_region.landing_pad_offset = 0;  // No handler
 			lsda_info.try_regions.push_back(no_handler_region);
+		}
+
+		// Phase 2: Add cleanup block entries for function-level cleanup landing pads.
+		// For regions outside try blocks (landing_pad_offset==0), redirect to the
+		// cleanup LP so function-scope destructors run during stack unwinding.
+		// The cleanup LP code region itself must keep landing_pad_offset=0 to
+		// prevent re-entry.
+		if (!cleanup_blocks.empty()) {
+			if (try_blocks.empty()) {
+				// Simple case: no try blocks, only cleanup.
+				// Generate two entries: the cleanup region and the LP itself.
+				lsda_info.try_regions.clear();
+				for (const auto& cb : cleanup_blocks) {
+					// Region before the cleanup LP: point to the cleanup LP
+					if (cb.region_end > cb.region_start) {
+						LSDAGenerator::TryRegionInfo cleanup_region;
+						cleanup_region.try_start_offset = cb.region_start;
+						cleanup_region.try_length = cb.region_end - cb.region_start;
+						cleanup_region.landing_pad_offset = cb.cleanup_lp;
+						// catch_handlers is empty → action = 0 (cleanup-only in LSDA)
+						lsda_info.try_regions.push_back(cleanup_region);
+					}
+					// The cleanup LP code itself must have lp=0 to prevent re-entry
+					if (function_end_offset > cb.cleanup_lp) {
+						LSDAGenerator::TryRegionInfo lp_region;
+						lp_region.try_start_offset = cb.cleanup_lp;
+						lp_region.try_length = function_end_offset - cb.cleanup_lp;
+						lp_region.landing_pad_offset = 0;
+						lsda_info.try_regions.push_back(lp_region);
+					}
+				}
+			} else {
+				// Mixed case: both try blocks and cleanup blocks.
+				// Patch existing regions with landing_pad_offset==0 that fall
+				// within a cleanup block's range to point to the cleanup LP.
+				// Then split any region that spans the cleanup LP boundary so
+				// the LP code itself keeps landing_pad_offset=0.
+				for (const auto& cb : cleanup_blocks) {
+					std::vector<LSDAGenerator::TryRegionInfo> patched_regions;
+					for (const auto& region : lsda_info.try_regions) {
+						uint32_t r_start = region.try_start_offset;
+						uint32_t r_end = r_start + region.try_length;
+
+						if (region.landing_pad_offset != 0 || region.try_length == 0) {
+							// Region already has a handler (try block) — keep as-is
+							patched_regions.push_back(region);
+							continue;
+						}
+
+						// Region has no handler. Check overlap with cleanup range.
+						// Cleanup range: [cb.region_start, cb.region_end) → redirect to cb.cleanup_lp
+						// LP code range: [cb.cleanup_lp, function_end) → keep lp=0
+
+						// Portion before cleanup range: keep lp=0
+						if (r_start < cb.region_start && r_end > cb.region_start) {
+							LSDAGenerator::TryRegionInfo before;
+							before.try_start_offset = r_start;
+							before.try_length = cb.region_start - r_start;
+							before.landing_pad_offset = 0;
+							patched_regions.push_back(before);
+							r_start = cb.region_start;
+						}
+
+						// Portion inside cleanup range but before LP code: redirect
+						uint32_t cleanup_code_start = cb.cleanup_lp;
+						if (r_start < cleanup_code_start && r_end > r_start &&
+						    r_start < cb.region_end) {
+							uint32_t redirect_end = std::min({r_end, cleanup_code_start, cb.region_end});
+							if (redirect_end > r_start) {
+								LSDAGenerator::TryRegionInfo redirected;
+								redirected.try_start_offset = r_start;
+								redirected.try_length = redirect_end - r_start;
+								redirected.landing_pad_offset = cb.cleanup_lp;
+								// No catch_handlers → action = 0 (cleanup-only)
+								patched_regions.push_back(redirected);
+								r_start = redirect_end;
+							}
+						}
+
+						// Remaining portion (LP code or beyond): keep lp=0
+						if (r_start < r_end) {
+							LSDAGenerator::TryRegionInfo remainder;
+							remainder.try_start_offset = r_start;
+							remainder.try_length = r_end - r_start;
+							remainder.landing_pad_offset = 0;
+							patched_regions.push_back(remainder);
+						}
+					}
+					lsda_info.try_regions = std::move(patched_regions);
+				}
+			}
 		}
 
 		// Use the already-stored function symbol string to avoid creating another copy

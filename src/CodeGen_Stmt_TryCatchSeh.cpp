@@ -25,8 +25,35 @@
 		// Emit TryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
 
+		// Enable capture of try-block-scope vars for Phase 1 cleanup.
+		// Nested try blocks must preserve the outer capture state so outer-scope
+		// destructible locals remain available to the outer landing pad.
+		bool saved_capture_try_cleanup = capture_try_cleanup_;
+		size_t saved_capture_try_cleanup_depth = capture_try_cleanup_depth_;
+		std::vector<ScopeVariableInfo> saved_captured_try_cleanup_vars = std::move(captured_try_cleanup_vars_);
+		captured_try_cleanup_vars_.clear();
+		capture_try_cleanup_ = true;
+		capture_try_cleanup_depth_ = scope_stack_.size() + 1;
+
 		// Visit try block
 		visit(node.try_block());
+
+		// Disable capture and collect the vars — only converted to StringHandle pairs
+		// when there is actually a first catch handler that needs them.
+		capture_try_cleanup_ = false;
+		std::vector<ScopeVariableInfo> try_scope_cleanup_vars = std::move(captured_try_cleanup_vars_);
+		capture_try_cleanup_ = saved_capture_try_cleanup;
+		capture_try_cleanup_depth_ = saved_capture_try_cleanup_depth;
+		captured_try_cleanup_vars_ = std::move(saved_captured_try_cleanup_vars);
+		std::vector<std::pair<StringHandle, StringHandle>> try_cleanup_vars;
+		if (!try_scope_cleanup_vars.empty()) {
+			for (const auto& var : try_scope_cleanup_vars) {
+				try_cleanup_vars.push_back({
+					StringTable::getOrInternStringHandle(var.struct_name),
+					StringTable::getOrInternStringHandle(var.variable_name)
+				});
+			}
+		}
 
 		// Emit TryEnd marker
 		ir_.addInstruction(IrOpcode::TryEnd, {}, node.try_token());
@@ -75,6 +102,10 @@
 				catch_op.is_const = type_node.is_const();
 				catch_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_lvalue_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				catch_op.is_catch_all = false;  // This is a typed catch, not catch(...)
+				// Phase 1: first handler gets the cleanup vars for try-block-local destructors
+				if (catch_index == 0) {
+					catch_op.cleanup_vars = try_cleanup_vars;
+				}
 				ir_.addInstruction(IrInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token()));
 
 				// Add the exception variable to the symbol table for the catch block scope
@@ -121,6 +152,10 @@
 				catch_op.is_const = false;
 				catch_op.ref_qualifier = CVReferenceQualifier::None;
 				catch_op.is_catch_all = true;  // This IS catch(...)
+				// Phase 1: first handler gets the cleanup vars for try-block-local destructors
+				if (catch_index == 0) {
+					catch_op.cleanup_vars = try_cleanup_vars;
+				}
 				ir_.addInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token());
 				symbol_table.enter_scope(ScopeType::Block);
 			}
@@ -142,6 +177,21 @@
 		}
 
 		// End of out-of-line catch handlers; resume normal flow after try/catch.
+		// Before the handlers_end_label, emit an ElfCatchNoMatch marker if any typed
+		// (non-catch-all) handlers were present.  In the ELF code generator this
+		// inserts "load exc_ptr; JMP cleanup_lp" so the exception propagates correctly
+		// when no handler matched.  On Windows this is a no-op.
+		bool has_typed_handlers = false;
+		for (size_t i = 0; i < node.catch_clauses().size(); ++i) {
+			if (!node.catch_clauses()[i].as<CatchClauseNode>().is_catch_all()) {
+				has_typed_handlers = true;
+				break;
+			}
+		}
+		if (has_typed_handlers) {
+			function_has_typed_catch_ = true;  // signal emitPendingFunctionCleanupLP
+			ir_.addInstruction(IrInstruction(IrOpcode::ElfCatchNoMatch, ElfCatchNoMatchOp{}, node.try_token()));
+		}
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_end_label)}, node.try_token()));
 	}
 

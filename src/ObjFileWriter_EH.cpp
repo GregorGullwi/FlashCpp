@@ -174,13 +174,18 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 
 	struct CatchStateBinding {
 		const CatchHandlerInfo* handler;
+		int32_t old_catch_state;
 		int32_t catch_state;
 	};
 
 	struct TryStateLayout {
+		int32_t old_try_state;
+		int32_t landing_state;
+		int32_t active_try_state;
 		int32_t try_low;
 		int32_t try_high;
 		int32_t catch_high;
+		bool has_cleanup_landing;
 		std::vector<CatchStateBinding> catches;
 	};
 
@@ -190,11 +195,14 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	// Sort try blocks innermost-first (smaller range first) — MSVC convention.
 	// This must happen BEFORE state assignment so states follow nesting order.
         std::vector<TryBlockInfo> sorted_try_blocks(try_blocks.begin(), try_blocks.end());
-        std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(), [](const auto& a, const auto& b) {
-            uint32_t range_a = a.try_end_offset - a.try_start_offset;
-            uint32_t range_b = b.try_end_offset - b.try_start_offset;
-            return range_a < range_b;
-        });
+	        std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(), [](const auto& a, const auto& b) {
+	            uint32_t range_a = a.try_end_offset - a.try_start_offset;
+	            uint32_t range_b = b.try_end_offset - b.try_start_offset;
+	            if (range_a != range_b) {
+	                return range_a < range_b;
+	            }
+	            return a.try_start_offset < b.try_start_offset;
+	        });
 
 	// Determine nesting relationships: block j contains block i if
 	// j.start <= i.start && i.end <= j.end (sorted innermost-first, so j > i means j is outer).
@@ -210,31 +218,123 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 		}
 	}
 
-	// Assign states following MSVC/clang convention:
-	// - Each try block gets its own try_low state (even if nested)
-	// - Outer try blocks get lower state numbers (assigned first)
-	// - Inner try blocks get higher state numbers
-	// - Catch handlers get states after their owning try
-	// Process outermost-first for state assignment, then keep innermost-first order for output.
-
-	// First pass: assign try_low states outermost-first (reverse of sorted order)
-	std::vector<int32_t> assigned_try_low(sorted_try_blocks.size(), -1);
-	int32_t next_state = 0;
-	for (int i = static_cast<int>(sorted_try_blocks.size()) - 1; i >= 0; i--) {
-		assigned_try_low[i] = next_state++;
+	// Reconstruct the IR state numbering first. The IR currently uses:
+	//   - one try state per try block (outermost-first numbering)
+	//   - catch states after all try states
+	//   - extra cleanup chain states appended after that when needed
+	std::vector<int32_t> old_try_state_by_sorted_index(sorted_try_blocks.size(), -1);
+	int32_t next_old_state = 0;
+	for (int i = static_cast<int>(sorted_try_blocks.size()) - 1; i >= 0; --i) {
+		old_try_state_by_sorted_index[i] = next_old_state++;
 	}
 
-	// Second pass: assign catch states and build layouts innermost-first
-	for (size_t i = 0; i < sorted_try_blocks.size(); i++) {
+	std::vector<std::vector<int32_t>> old_catch_states_by_sorted_index(sorted_try_blocks.size());
+	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
+		old_catch_states_by_sorted_index[i].reserve(sorted_try_blocks[i].catch_handlers.size());
+		for ([[maybe_unused]] const auto& handler : sorted_try_blocks[i].catch_handlers) {
+			old_catch_states_by_sorted_index[i].push_back(next_old_state++);
+		}
+	}
+
+	auto unwind_state_has_action = [&](int32_t state) -> bool {
+		return state >= 0 && static_cast<size_t>(state) < unwind_map.size() && !unwind_map[static_cast<size_t>(state)].action.empty();
+	};
+
+	// FH3 same-function try/catch needs a distinct post-cleanup landing state before
+	// control transfers into catch funclets. Synthesize that state only when the try
+	// both owns cleanup work and has catches.
+	std::vector<bool> has_cleanup_landing_by_sorted_index(sorted_try_blocks.size(), false);
+	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
+		has_cleanup_landing_by_sorted_index[i] = !sorted_try_blocks[i].catch_handlers.empty() &&
+			unwind_state_has_action(old_try_state_by_sorted_index[i]);
+	}
+
+		std::vector<std::vector<size_t>> child_indices_by_sorted_index(sorted_try_blocks.size());
+		std::vector<size_t> top_level_sorted_indices;
+		for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
+			if (parent_index[i] >= 0) {
+				child_indices_by_sorted_index[static_cast<size_t>(parent_index[i])].push_back(i);
+			} else {
+				top_level_sorted_indices.push_back(i);
+			}
+		}
+
+		auto sort_try_indices_by_source_order = [&](std::vector<size_t>& indices) {
+			std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
+				if (sorted_try_blocks[a].try_start_offset != sorted_try_blocks[b].try_start_offset) {
+					return sorted_try_blocks[a].try_start_offset < sorted_try_blocks[b].try_start_offset;
+				}
+				return sorted_try_blocks[a].try_end_offset < sorted_try_blocks[b].try_end_offset;
+			});
+		};
+
+		sort_try_indices_by_source_order(top_level_sorted_indices);
+		for (auto& child_indices : child_indices_by_sorted_index) {
+			sort_try_indices_by_source_order(child_indices);
+		}
+
+	std::vector<int32_t> landing_state_by_sorted_index(sorted_try_blocks.size(), -1);
+	std::vector<int32_t> try_low_by_sorted_index(sorted_try_blocks.size(), -1);
+		std::vector<std::vector<int32_t>> catch_states_by_sorted_index(sorted_try_blocks.size());
+	int32_t next_state = 0;
+
+		auto assign_emitted_states = [&](auto&& self, size_t try_index) -> void {
+			if (has_cleanup_landing_by_sorted_index[try_index]) {
+				landing_state_by_sorted_index[try_index] = next_state++;
+			}
+			try_low_by_sorted_index[try_index] = next_state++;
+
+			for (size_t child_index : child_indices_by_sorted_index[try_index]) {
+				self(self, child_index);
+			}
+
+			auto& catch_states = catch_states_by_sorted_index[try_index];
+			catch_states.reserve(sorted_try_blocks[try_index].catch_handlers.size());
+			for ([[maybe_unused]] const auto& handler : sorted_try_blocks[try_index].catch_handlers) {
+				catch_states.push_back(next_state++);
+			}
+		};
+
+		for (size_t top_level_index : top_level_sorted_indices) {
+			assign_emitted_states(assign_emitted_states, top_level_index);
+		}
+
+	std::vector<int32_t> state_remap(unwind_map.size(), -1);
+	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
+		int32_t old_try_state = old_try_state_by_sorted_index[i];
+		if (old_try_state >= 0 && static_cast<size_t>(old_try_state) < state_remap.size()) {
+			state_remap[static_cast<size_t>(old_try_state)] = try_low_by_sorted_index[i];
+		}
+		for (size_t catch_index = 0; catch_index < old_catch_states_by_sorted_index[i].size(); ++catch_index) {
+			int32_t old_catch_state = old_catch_states_by_sorted_index[i][catch_index];
+			if (old_catch_state >= 0 && static_cast<size_t>(old_catch_state) < state_remap.size()) {
+				state_remap[static_cast<size_t>(old_catch_state)] = catch_states_by_sorted_index[i][catch_index];
+			}
+		}
+	}
+	for (size_t old_state = 0; old_state < state_remap.size(); ++old_state) {
+		if (state_remap[old_state] < 0) {
+			state_remap[old_state] = next_state++;
+		}
+	}
+
+	// Build layouts innermost-first for TryBlockMap emission.
+	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
 		TryStateLayout layout;
-		layout.try_low = assigned_try_low[i];
-		layout.try_high = layout.try_low;  // Initially just covers own state
+		layout.old_try_state = old_try_state_by_sorted_index[i];
+		layout.landing_state = landing_state_by_sorted_index[i];
+		layout.active_try_state = try_low_by_sorted_index[i];
+		layout.has_cleanup_landing = has_cleanup_landing_by_sorted_index[i];
+		layout.try_low = layout.has_cleanup_landing ? layout.landing_state : layout.active_try_state;
+		layout.try_high = layout.active_try_state;
 		layout.catch_high = layout.try_high;
 		layout.catches.reserve(sorted_try_blocks[i].catch_handlers.size());
 
-		for (const auto& handler : sorted_try_blocks[i].catch_handlers) {
-			int32_t catch_state = next_state++;
-			layout.catches.push_back(CatchStateBinding{&handler, catch_state});
+		for (size_t catch_index = 0; catch_index < sorted_try_blocks[i].catch_handlers.size(); ++catch_index) {
+			const auto& handler = sorted_try_blocks[i].catch_handlers[catch_index];
+			int32_t old_catch_state = old_catch_states_by_sorted_index[i][catch_index];
+			int32_t catch_state = catch_states_by_sorted_index[i][catch_index];
+			layout.catches.push_back(CatchStateBinding{&handler, old_catch_state, catch_state});
 			layout.catch_high = catch_state;
 		}
 
@@ -257,8 +357,9 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	{
 		// Debug: log state layout for each try block
 		for (size_t i = 0; i < try_state_layout.size(); i++) {
-			FLASH_LOG_FORMAT(Codegen, Debug, "  TryBlock[{}]: tryLow={}, tryHigh={}, catchHigh={}, offsets=[{},{}], catches={}",
-				i, try_state_layout[i].try_low, try_state_layout[i].try_high, try_state_layout[i].catch_high,
+			FLASH_LOG_FORMAT(Codegen, Debug, "  TryBlock[{}]: oldTryState={}, landingState={}, activeTryState={}, tryLow={}, tryHigh={}, catchHigh={}, offsets=[{},{}], catches={}",
+				i, try_state_layout[i].old_try_state, try_state_layout[i].landing_state, try_state_layout[i].active_try_state,
+				try_state_layout[i].try_low, try_state_layout[i].try_high, try_state_layout[i].catch_high,
 				sorted_try_blocks[i].try_start_offset, sorted_try_blocks[i].try_end_offset,
 				try_state_layout[i].catches.size());
 		}
@@ -276,13 +377,13 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	// maxState - state count used by FH3 state machine.
 	uint32_t max_state = static_cast<uint32_t>(next_state);
 	if (!unwind_map.empty() && unwind_map.size() > max_state) {
-		max_state = static_cast<uint32_t>(unwind_map.size());
+		max_state = static_cast<uint32_t>(std::max<size_t>(next_state, unwind_map.size()));
 	}
 
 	// FH3 expects a valid unwind map for the active state range.
 	// If IR-level unwind actions are missing, synthesize no-op entries.
 	uint32_t unwind_entry_count = !unwind_map.empty()
-		? static_cast<uint32_t>(unwind_map.size())
+		? static_cast<uint32_t>(std::max<size_t>(max_state, unwind_map.size()))
 		: max_state;
 	if (unwind_entry_count > max_state) {
 		max_state = unwind_entry_count;
@@ -341,24 +442,97 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	
 	// Build proper unwind map with state chaining for nested try/catch.
 	// For each state, determine toState: the state to unwind to (parent state).
-	// - try_low state → parent try's try_low, or -1 if top-level
-	// - catch states → the try_low of their owning try block
+	// - synthesized landing state → parent try's active state, or -1 if top-level
+	// - try_low state → landing state when present, otherwise parent try's active state
+	// - catch states → landing state when present, otherwise parent try's active state
 	std::vector<int32_t> computed_to_state(max_state, -1);
 	for (size_t i = 0; i < try_state_layout.size(); i++) {
 		const auto& layout = try_state_layout[i];
-		// Determine the parent's try_low for this block (or -1 if no parent)
-		int32_t parent_try_low = -1;
+		int32_t parent_active_try_state = -1;
 		if (parent_index[i] >= 0) {
-			parent_try_low = try_state_layout[parent_index[i]].try_low;
+			parent_active_try_state = try_state_layout[parent_index[i]].active_try_state;
 		}
-		// The try_low state unwinds to its parent
-		if (layout.try_low >= 0 && layout.try_low < static_cast<int32_t>(max_state)) {
-			computed_to_state[layout.try_low] = parent_try_low;
+		if (layout.landing_state >= 0 && layout.landing_state < static_cast<int32_t>(max_state)) {
+			computed_to_state[layout.landing_state] = parent_active_try_state;
 		}
-		// Each catch state unwinds to this try block's parent (same as try_low's toState)
+		int32_t cleanup_target_state = layout.has_cleanup_landing ? layout.landing_state : parent_active_try_state;
+		if (layout.active_try_state >= 0 && layout.active_try_state < static_cast<int32_t>(max_state)) {
+			computed_to_state[layout.active_try_state] = cleanup_target_state;
+		}
 		for (const auto& cb : layout.catches) {
 			if (cb.catch_state >= 0 && cb.catch_state < static_cast<int32_t>(max_state)) {
-				computed_to_state[cb.catch_state] = parent_try_low;
+				computed_to_state[cb.catch_state] = cleanup_target_state;
+			}
+		}
+	}
+
+	std::vector<UnwindMapEntryInfo> emitted_unwind_map;
+	emitted_unwind_map.resize(unwind_entry_count);
+	for (uint32_t i = 0; i < unwind_entry_count; ++i) {
+		emitted_unwind_map[i].to_state = i < computed_to_state.size() ? computed_to_state[i] : -1;
+	}
+
+	auto remap_old_state = [&](int32_t old_state) -> int32_t {
+		if (old_state < 0) {
+			return -1;
+		}
+		if (static_cast<size_t>(old_state) >= state_remap.size()) {
+			return -1;
+		}
+		return state_remap[static_cast<size_t>(old_state)];
+	};
+
+	if (!unwind_map.empty()) {
+		for (size_t old_state = 0; old_state < unwind_map.size(); ++old_state) {
+			int32_t new_state = remap_old_state(static_cast<int32_t>(old_state));
+			if (new_state < 0 || static_cast<uint32_t>(new_state) >= unwind_entry_count) {
+				continue;
+			}
+			emitted_unwind_map[static_cast<size_t>(new_state)].to_state = remap_old_state(unwind_map[old_state].to_state);
+			emitted_unwind_map[static_cast<size_t>(new_state)].action = unwind_map[old_state].action;
+		}
+
+		auto find_cleanup_tail_state = [&](int32_t start_state, int32_t parent_state) -> int32_t {
+			int32_t state = start_state;
+			std::vector<int32_t> visited;
+			while (state >= 0 && static_cast<size_t>(state) < unwind_map.size()) {
+				if (std::find(visited.begin(), visited.end(), state) != visited.end()) {
+					break;
+				}
+				visited.push_back(state);
+
+				int32_t next = unwind_map[static_cast<size_t>(state)].to_state;
+				if (next < 0 || next == parent_state) {
+					return state;
+				}
+				if (static_cast<size_t>(next) >= unwind_map.size() || unwind_map[static_cast<size_t>(next)].action.empty()) {
+					return state;
+				}
+				state = next;
+			}
+			return start_state;
+		};
+
+		for (size_t i = 0; i < try_state_layout.size(); ++i) {
+			const auto& layout = try_state_layout[i];
+			int32_t parent_old_try_state = -1;
+			if (parent_index[i] >= 0) {
+				parent_old_try_state = try_state_layout[parent_index[i]].old_try_state;
+			}
+
+			if (layout.has_cleanup_landing && layout.landing_state >= 0) {
+				int32_t cleanup_tail_old_state = find_cleanup_tail_state(layout.old_try_state, parent_old_try_state);
+				int32_t cleanup_tail_new_state = remap_old_state(cleanup_tail_old_state);
+				if (cleanup_tail_new_state >= 0 && static_cast<uint32_t>(cleanup_tail_new_state) < unwind_entry_count) {
+					emitted_unwind_map[static_cast<size_t>(cleanup_tail_new_state)].to_state = layout.landing_state;
+				}
+			}
+
+			int32_t catch_unwind_target = layout.has_cleanup_landing ? layout.landing_state : computed_to_state[layout.active_try_state];
+			for (const auto& catch_binding : layout.catches) {
+				if (catch_binding.catch_state >= 0 && static_cast<uint32_t>(catch_binding.catch_state) < unwind_entry_count) {
+					emitted_unwind_map[static_cast<size_t>(catch_binding.catch_state)].to_state = catch_unwind_target;
+				}
 			}
 		}
 	}
@@ -369,22 +543,13 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	//   DWORD action (RVA to cleanup/destructor function, or 0 for no action)
 	if (unwind_entry_count > 0) {
 		for (uint32_t i = 0; i < unwind_entry_count; ++i) {
-			const bool has_ir_entry = i < unwind_map.size();
-			// Use IR entry if available, otherwise use computed chain
-			int32_t to_state;
-			if (has_ir_entry) {
-				to_state = unwind_map[i].to_state;
-			} else if (i < computed_to_state.size()) {
-				to_state = computed_to_state[i];
-			} else {
-				to_state = -1;
-			}
-			appendLE_xdata(xdata, static_cast<uint32_t>(to_state));
+			appendLE_xdata(xdata, static_cast<uint32_t>(emitted_unwind_map[i].to_state));
 
 			// action - RVA to destructor/cleanup function
+			uint32_t action_field_offset = static_cast<uint32_t>(xdata.size());
 			uint32_t action_rva = 0;
-			if (has_ir_entry && !unwind_map[i].action.empty()) {
-				// action_rva will be patched via relocation when destructor support is added
+			if (!emitted_unwind_map[i].action.empty()) {
+				add_xdata_relocation(xdata_offset + action_field_offset, emitted_unwind_map[i].action);
 			}
 			appendLE_xdata(xdata, action_rva);
 		}
@@ -525,10 +690,10 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 			}
 			appendLE_xdata(xdata, static_cast<uint32_t>(catch_offset));
 			
-			// addressOfHandler - RVA of catch handler entry.
-			// Use a dedicated catch symbol to mirror MSVC's handler map relocation style.
-			uint32_t funclet_entry_offset = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
-			std::string catch_symbol_name = ensure_catch_symbol(mangled_name, funclet_entry_offset, handler_index);
+				// addressOfHandler - RVA of catch handler entry.
+				// Use a dedicated catch symbol to mirror MSVC's handler map relocation style.
+				uint32_t funclet_entry_offset = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+				std::string catch_symbol_name = ensure_catch_symbol(mangled_name, funclet_entry_offset, handler_index);
 			uint32_t address_of_handler_field_offset = static_cast<uint32_t>(xdata.size());
 			appendLE_xdata(xdata, uint32_t(0));
 			add_xdata_relocation(xdata_offset + address_of_handler_field_offset, catch_symbol_name);
@@ -561,13 +726,30 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	};
 
 	std::vector<IpStateEntry> ip_to_state_entries;
-	ip_to_state_entries.reserve(sorted_try_blocks.size() * 2 + 2);
+	ip_to_state_entries.reserve(sorted_try_blocks.size() * 4 + 2);
 	ip_to_state_entries.push_back({function_start, -1});
+		uint32_t first_cleanup_funclet_rva = function_start + function_size;
+		for (const auto& entry : unwind_map) {
+			if (entry.action.empty()) {
+				continue;
+			}
+			auto* action_symbol = coffi_.get_symbol(entry.action);
+			if (!action_symbol) {
+				continue;
+			}
+			first_cleanup_funclet_rva = std::min(first_cleanup_funclet_rva, action_symbol->get_value());
+		}
+		if (sorted_try_blocks.empty() && !unwind_map.empty()) {
+			ip_to_state_entries.push_back({function_start, 0});
+			if (first_cleanup_funclet_rva > function_start && first_cleanup_funclet_rva < function_start + function_size) {
+				ip_to_state_entries.push_back({first_cleanup_funclet_rva, -1});
+			}
+		}
 
 	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
 		const auto& tb = sorted_try_blocks[i];
 		const auto& layout = try_state_layout[i];
-		ip_to_state_entries.push_back({function_start + tb.try_start_offset, layout.try_low});
+		ip_to_state_entries.push_back({function_start + tb.try_start_offset, layout.active_try_state});
 		uint32_t try_end_ip = tb.try_end_offset;
 		if (try_end_ip < function_size) {
 			try_end_ip += 1;
@@ -576,21 +758,23 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 		// If so, transition to the parent's try_low state; otherwise transition to -1.
 		int32_t post_try_state = -1;
 		if (parent_index[i] >= 0) {
-			post_try_state = try_state_layout[parent_index[i]].try_low;
+			post_try_state = try_state_layout[parent_index[i]].active_try_state;
 		}
 		ip_to_state_entries.push_back({function_start + try_end_ip, post_try_state});
-		
-		// Add catch funclet state ranges
+
+			// MSVC FH3 also maps same-function catches in the parent FuncInfo's ip2state map.
+			// On Windows those catches are emitted as real funclets, so use the funclet end when
+			// available; the logical catch-body end can be too early or too late once fixup/return
+			// stubs are involved. After the catch completes, control resumes after the entire
+			// try/catch statement in the parent state, not in the handled try's own state.
 		for (const auto& catch_binding : layout.catches) {
 			const auto& handler = *catch_binding.handler;
-			uint32_t handler_start_rel = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
-			uint32_t handler_end_rel = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
-			
-				if (handler_start_rel < function_size && handler_end_rel > handler_start_rel) {
-				ip_to_state_entries.push_back({function_start + handler_start_rel, catch_binding.catch_state});
-				if (handler_end_rel <= function_size) {
-					ip_to_state_entries.push_back({function_start + handler_end_rel, -1});
-				}
+			if (handler.handler_offset != 0 && handler.handler_offset < function_size) {
+				ip_to_state_entries.push_back({function_start + handler.handler_offset, catch_binding.catch_state});
+			}
+				uint32_t catch_end_offset = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
+				if (catch_end_offset != 0 && catch_end_offset <= function_size) {
+					ip_to_state_entries.push_back({function_start + catch_end_offset, post_try_state});
 			}
 		}
 	}
@@ -716,6 +900,7 @@ void ObjectFileWriter::emit_exception_relocations(uint32_t xdata_offset, uint32_
 void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t function_size,
                          std::string_view mangled_name,
                          const std::vector<TryBlockInfo>& try_blocks,
+	                         const std::vector<UnwindMapEntryInfo>& unwind_map,
                          bool is_cpp, uint32_t xdata_offset,
                          const ObjectFileWriter::UnwindCodeResult& unwind_info,
                          uint32_t cpp_funcinfo_local_offset) {
@@ -740,12 +925,27 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 		return end;
 	};
 
+	auto add_cpp_funcinfo_relocation = [this](uint32_t record_xdata_offset, uint32_t funcinfo_rva_local_offset) {
+		auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+		auto* xdata_sym = coffi_.get_symbol(".xdata");
+		if (!xdata_sym) {
+			return;
+		}
+
+		COFFI::rel_entry_generic reloc;
+		reloc.virtual_address = record_xdata_offset + funcinfo_rva_local_offset;
+		reloc.symbol_table_index = xdata_sym->get_index();
+		reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+		xdata_sec->add_relocation_entry(&reloc);
+	};
+
 	// Build catch funclet ranges for C++ EH so parent ranges can avoid overlap.
 	struct RelativeRange {
 		uint32_t start;
 		uint32_t end;
 	};
 	std::vector<RelativeRange> catch_funclet_ranges;
+		std::vector<RelativeRange> cleanup_funclet_ranges;
 	std::vector<ObjectFileWriter::PendingPdataEntry> pending_pdata_entries;
 	if (is_cpp) {
 		for (const auto& tb : try_blocks) {
@@ -776,20 +976,66 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 			}
 		}
 		catch_funclet_ranges = std::move(merged_ranges);
+
+			std::vector<uint32_t> cleanup_starts;
+			for (const auto& entry : unwind_map) {
+				if (entry.action.empty()) {
+					continue;
+				}
+				auto* symbol = coffi_.get_symbol(entry.action);
+				if (!symbol) {
+					continue;
+				}
+				uint32_t start = symbol->get_value();
+				if (start < function_start || start >= function_start + function_size) {
+					continue;
+				}
+				cleanup_starts.push_back(start - function_start);
+			}
+
+			std::sort(cleanup_starts.begin(), cleanup_starts.end());
+			cleanup_starts.erase(std::unique(cleanup_starts.begin(), cleanup_starts.end()), cleanup_starts.end());
+			for (size_t i = 0; i < cleanup_starts.size(); ++i) {
+				uint32_t start = cleanup_starts[i];
+				uint32_t end = (i + 1 < cleanup_starts.size()) ? cleanup_starts[i + 1] : function_size;
+				if (end > start) {
+					cleanup_funclet_ranges.push_back({start, end});
+				}
+			}
 	}
 
 	// Emit parent PDATA ranges. For C++ EH, carve out catch funclet ranges to avoid overlap.
 	std::vector<RelativeRange> parent_ranges;
-	if (!is_cpp || catch_funclet_ranges.empty()) {
+		std::vector<RelativeRange> excluded_ranges = catch_funclet_ranges;
+		excluded_ranges.insert(excluded_ranges.end(), cleanup_funclet_ranges.begin(), cleanup_funclet_ranges.end());
+		if (!excluded_ranges.empty()) {
+			std::sort(excluded_ranges.begin(), excluded_ranges.end(), [](const RelativeRange& a, const RelativeRange& b) {
+				if (a.start != b.start) {
+					return a.start < b.start;
+				}
+				return a.end < b.end;
+			});
+			std::vector<RelativeRange> merged_excluded;
+			for (const auto& range : excluded_ranges) {
+				if (merged_excluded.empty() || range.start > merged_excluded.back().end) {
+					merged_excluded.push_back(range);
+				} else if (range.end > merged_excluded.back().end) {
+					merged_excluded.back().end = range.end;
+				}
+			}
+			excluded_ranges = std::move(merged_excluded);
+		}
+
+		if (!is_cpp || excluded_ranges.empty()) {
 		parent_ranges.push_back({0, function_size});
 	} else {
 		uint32_t cursor = 0;
-		for (const auto& catch_range : catch_funclet_ranges) {
-			if (cursor < catch_range.start) {
-				parent_ranges.push_back({cursor, catch_range.start});
+			for (const auto& excluded_range : excluded_ranges) {
+				if (cursor < excluded_range.start) {
+					parent_ranges.push_back({cursor, excluded_range.start});
 			}
-			if (catch_range.end > cursor) {
-				cursor = catch_range.end;
+				if (excluded_range.end > cursor) {
+					cursor = excluded_range.end;
 			}
 		}
 		if (cursor < function_size) {
@@ -807,6 +1053,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 	// to SizeOfProlog. If we reuse the parent's UNWIND_INFO (SizeOfProlog=11), the
 	// unwinder thinks the post-catch code is mid-prologue and applies zero unwind codes,
 	// which prevents proper stack unwinding and causes crashes.
+	const uint8_t post_catch_unwind_flags = try_blocks.empty() ? 0x02 : 0x03;
 	uint32_t post_catch_xdata_offset = 0;
 	bool has_post_catch_xdata = false;
 	for (size_t ri = 0; ri < parent_ranges.size(); ++ri) {
@@ -825,9 +1072,9 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 			// Post-catch parent ranges: need UNWIND_INFO with SizeOfProlog=0
 			if (!has_post_catch_xdata) {
 				// Create a new UNWIND_INFO: same unwind codes and frame register,
-				// but SizeOfProlog=0 and Flags=0 (no handler needed for post-catch code)
+				// but keep the same C++ handler/FuncInfo linkage with SizeOfProlog=0.
 				std::vector<char> post_catch_xdata = {
-					static_cast<char>(0x01),              // Version 1, Flags=0 (no handler)
+					static_cast<char>(0x01 | (post_catch_unwind_flags << 3)),
 					static_cast<char>(0x00),              // SizeOfProlog = 0
 					static_cast<char>(unwind_info.count_of_codes),    // Same count of unwind codes
 					static_cast<char>(unwind_info.frame_reg_and_offset) // Same frame register and offset
@@ -835,9 +1082,15 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 				for (auto b : unwind_info.codes) {
 					post_catch_xdata.push_back(static_cast<char>(b));
 				}
+				uint32_t post_catch_handler_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
+				appendLE_xdata(post_catch_xdata, uint32_t(0));
+				uint32_t post_catch_funcinfo_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
+				appendLE_xdata(post_catch_xdata, xdata_offset + cpp_funcinfo_local_offset);
 				auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 				post_catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 				add_data(post_catch_xdata, SectionType::XDATA);
+				add_xdata_relocation(post_catch_xdata_offset + post_catch_handler_rva_local, "__CxxFrameHandler3");
+				add_cpp_funcinfo_relocation(post_catch_xdata_offset, post_catch_funcinfo_rva_local);
 				has_post_catch_xdata = true;
 			}
 			pending_pdata_entries.push_back({
@@ -864,17 +1117,16 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 					continue;
 				}
 
-				// Catch funclet UNWIND_INFO with EHANDLER|UHANDLER flags,
-				// referencing __CxxFrameHandler3 and parent FuncInfo.
-				// Prologue layout (matching clang's catch funclet):
-				//   0: mov [rsp+10h], rdx  (5 bytes)  -> no unwind opcode (saves establisher)
-				//   5: push rbp            (1 byte)   -> UWOP_PUSH_NONVOL @ offset 6
-				//   6: sub rsp, 32         (4 bytes)  -> UWOP_ALLOC_SMALL @ offset 10, info=3
-				//  10: lea rbp, [rdx+N]    (7 bytes)  -> no unwind opcode
-				// Prolog size = 17 bytes, frame register = 0 (none)
+					// Catch funclet UNWIND_INFO with EHANDLER|UHANDLER flags,
+					// referencing __CxxFrameHandler3 and parent FuncInfo.
+					// MSVC counts only the unwind-relevant prefix as prologue here:
+					//   0: mov [rsp+10h], rdx  (5 bytes)  -> no unwind opcode (saves establisher)
+					//   5: push rbp            (1 byte)   -> UWOP_PUSH_NONVOL @ offset 6
+					//   6: sub rsp, 32         (4 bytes)  -> UWOP_ALLOC_SMALL @ offset 10, info=3
+					// The following LEA RBP,[RDX+disp] is not included in SizeOfProlog.
 				std::vector<char> catch_xdata = {
 					static_cast<char>(0x19), // Version=1, Flags=3 (EHANDLER | UHANDLER)
-					static_cast<char>(0x11), // SizeOfProlog = 17
+						static_cast<char>(0x0A), // SizeOfProlog = 10
 					static_cast<char>(0x02), // CountOfCodes = 2
 					static_cast<char>(0x00), // FrameRegister=0, FrameOffset=0
 					static_cast<char>(0x0A), // CodeOffset for UWOP_ALLOC_SMALL (after sub rsp)
@@ -906,18 +1158,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 
 				// Add relocations for handler and FuncInfo references
 				add_xdata_relocation(catch_xdata_offset + catch_handler_rva_local, "__CxxFrameHandler3");
-				{
-					// Relocation for FuncInfo pointer: point to .xdata section
-					auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-					auto* xdata_sym = coffi_.get_symbol(".xdata");
-					if (xdata_sym) {
-						COFFI::rel_entry_generic reloc;
-						reloc.virtual_address = catch_xdata_offset + catch_funcinfo_rva_local;
-						reloc.symbol_table_index = xdata_sym->get_index();
-						reloc.type = IMAGE_REL_AMD64_ADDR32NB;
-						xdata_sec->add_relocation_entry(&reloc);
-					}
-				}
+					add_cpp_funcinfo_relocation(catch_xdata_offset, catch_funcinfo_rva_local);
 
 				pending_pdata_entries.push_back({
 					function_start + handler_start_rel,
@@ -926,6 +1167,28 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 				});
 			}
 		}
+
+			for (const auto& cleanup_range : cleanup_funclet_ranges) {
+				std::vector<char> cleanup_xdata = {
+					static_cast<char>(0x01),
+					static_cast<char>(0x06),
+					static_cast<char>(0x02),
+					static_cast<char>(0x00),
+					static_cast<char>(0x06),
+					static_cast<char>(0x32),
+					static_cast<char>(0x02),
+					static_cast<char>(0x50)
+				};
+
+				auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+				uint32_t cleanup_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
+				add_data(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(cleanup_xdata.data()), cleanup_xdata.size()), SectionType::XDATA);
+				pending_pdata_entries.push_back({
+					function_start + cleanup_range.start,
+					function_start + cleanup_range.end,
+					cleanup_xdata_offset
+				});
+			}
 	}
 
 	std::sort(pending_pdata_entries.begin(), pending_pdata_entries.end(), [](const ObjectFileWriter::PendingPdataEntry& a, const ObjectFileWriter::PendingPdataEntry& b) {

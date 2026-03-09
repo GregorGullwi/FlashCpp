@@ -4,6 +4,13 @@
 
 void AstToIr::exitScope() {
 	if (!scope_stack_.empty()) {
+		// If try-cleanup capture is active and this is the target scope depth,
+		// record vars in LIFO order before emitting their destructors.
+		if (capture_try_cleanup_ && scope_stack_.size() == capture_try_cleanup_depth_) {
+			for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
+				captured_try_cleanup_vars_.push_back(*it);
+			}
+		}
 		// Generate destructor calls for all variables in this scope (in reverse order)
 		const auto& scope_vars = scope_stack_.back();
 		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
@@ -15,6 +22,42 @@ void AstToIr::exitScope() {
 		}
 		scope_stack_.pop_back();
 	}
+}
+
+
+
+void AstToIr::exitFunctionScope() {
+	if (scope_stack_.empty()) return;
+
+	// Capture vars in LIFO order for the cleanup LP, but only those with destructors
+	pending_function_cleanup_vars_.clear();
+	for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
+		pending_function_cleanup_vars_.push_back({
+			StringTable::getOrInternStringHandle(it->struct_name),
+			StringTable::getOrInternStringHandle(it->variable_name)
+		});
+	}
+
+	// Call normal exitScope to emit destructor IR instructions
+	exitScope();
+}
+
+
+
+void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
+	// Always emit FunctionCleanupLP when either:
+	// (a) There are function-scope local vars with destructors (the common case), OR
+	// (b) The function has typed catch handlers (function_has_typed_catch_ flag).
+	//     On ELF, ElfCatchNoMatch emits a forward reference to __elf_no_match_lp_<n>
+	//     that must be resolved by handleFunctionCleanupLP().  On Windows, the
+	//     ElfCatchNoMatch handler is a no-op, but emitting an extra FunctionCleanupLP
+	//     with empty cleanup_vars is also a no-op there (early return in the handler).
+	if (pending_function_cleanup_vars_.empty() && !function_has_typed_catch_) return;
+
+	FunctionCleanupLPOp cleanup_op;
+	cleanup_op.cleanup_vars = std::move(pending_function_cleanup_vars_);
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCleanupLP, std::move(cleanup_op), token));
+	function_has_typed_catch_ = false;
 }
 
 

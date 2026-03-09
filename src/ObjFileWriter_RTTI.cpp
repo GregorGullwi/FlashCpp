@@ -21,7 +21,8 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 
 	// Determine if this is SEH or C++ exception handling
 	bool is_seh = !seh_try_blocks.empty();
-	bool is_cpp = !try_blocks.empty();
+	bool is_cpp = !try_blocks.empty() || !unwind_map.empty();
+		bool has_cpp_dispatch = !try_blocks.empty();
 	uint32_t cpp_funcinfo_local_offset = 0;
 
 	if (is_seh && is_cpp) {
@@ -31,10 +32,14 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 
 	// Determine flags based on exception type
 	uint8_t unwind_flags = 0x00;
-	if (is_seh || is_cpp) {
-		// SEH needs both UNW_FLAG_EHANDLER (0x01) and UNW_FLAG_UHANDLER (0x02)
-		// For C++ EH with __CxxFrameHandler3, use both dispatch and unwind handler flags.
-		unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
+		if (is_seh) {
+			// SEH uses the handler during both dispatch and unwind.
+			unwind_flags = 0x03;  // UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER
+		} else if (is_cpp) {
+			// MSVC uses UHANDLER-only for C++ functions that only need cleanup/unwind
+			// actions, and EHANDLER|UHANDLER when the function has actual try/catch
+			// dispatch metadata.
+			unwind_flags = has_cpp_dispatch ? 0x03 : 0x02;
 	}
 
 	// Build unwind codes
@@ -79,7 +84,7 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 	}
 
 	// Build C++ FuncInfo and associated metadata
-	if (is_cpp && !try_blocks.empty()) {
+	if (is_cpp) {
 		build_cpp_exception_metadata(xdata, xdata_offset, function_start, function_size,
 		                             mangled_name, try_blocks, unwind_map,
 		                             effective_frame_size, stack_frame_size,
@@ -96,7 +101,7 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 	                           scope_relocs, cpp_xdata_rva_field_offsets, cpp_text_rva_field_offsets);
 
 	// Build and emit PDATA entries
-	build_pdata_entries(function_start, function_size, mangled_name, try_blocks,
+	build_pdata_entries(function_start, function_size, mangled_name, try_blocks, unwind_map,
 	                    is_cpp, xdata_offset, unwind_info, cpp_funcinfo_local_offset);
 }
 

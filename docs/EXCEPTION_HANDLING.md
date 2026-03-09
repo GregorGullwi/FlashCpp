@@ -20,19 +20,20 @@ Basic and intermediate exception handling works end-to-end:
 | Personality routine (`__gxx_personality_v0`) | ✅ | Linked from libstdc++ |
 | External typeinfo symbols (`_ZTIi`, `_ZTId`, …) | ✅ | Linked from libstdc++ |
 | `noexcept` specifier | ✅ | Basic support |
-| Nested try blocks | ❌ | Known crash (SIGABRT) |
-| Rethrowing (`throw;`) | ❌ | Not implemented |
-| Class-type exceptions with destructors | ❌ | Not implemented |
-| Stack unwinding with local destructors | ❌ | Cleanup actions not emitted |
+| Nested try blocks | ✅ | Fixed: LSDA multi-handler dispatch, proper selector type entries |
+| Rethrowing (`throw;`) | ✅ | Fixed: correct RSP alignment + full LSDA coverage |
+| Class-type exceptions with destructors | ✅ | Fixed (Linux): proper _ZTI/_ZTS typeinfo with vtable relocs; dtor arg to __cxa_throw |
+| Stack unwinding with local destructors | ✅ | Fixed (Linux): cleanup landing pads emitted for try-block-local vars (Phase 1) and function-scope vars (Phase 2) |
 
 ### Windows (COFF / MSVC ABI): ✅ Partial
 
 | Feature | Status | Notes |
 |---------|--------|-------|
 | `.pdata` / `.xdata` generation | ✅ | UNWIND_INFO, FuncInfo layout |
-| `_CxxThrowException` call generation | ✅ | ThrowInfo is NULL (type matching limited) |
+| `_CxxThrowException` call generation | ✅ | ThrowInfo metadata generated via `get_or_create_exception_throw_info` |
 | Catch funclets with establisher-frame model | ✅ | LEA RBP from RDX |
 | Catch continuation and return bridging | ✅ | Fixup stubs for catch-return flow |
+| Cross-function exception propagation | ✅ | Covered by the `test_eh_twofunc_*` Windows regression tests |
 | `__CxxFrameHandler3` compatibility | ⚠️ | Needs ThrowInfo for full type matching |
 | `__try`/`__except`/`__finally` (Win32 SEH) | ✅ | `__C_specific_handler` integration |
 
