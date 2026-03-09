@@ -68,10 +68,11 @@ struct EvalResult {
 	std::string error_message;
 	EvalErrorType error_type = EvalErrorType::None;
 	
-	// Array support for local arrays in constexpr functions
+		// Array support for local arrays in constexpr functions
 		bool is_array = false;
 		std::vector<int64_t> array_values;
 		const VariableDeclarationNode* callable_var_decl = nullptr;
+		const LambdaExpressionNode* callable_lambda = nullptr;
 		std::unordered_map<std::string_view, EvalResult> callable_bindings;
 
 	// Check if evaluation was successful
@@ -79,29 +80,33 @@ struct EvalResult {
 		return error_type == EvalErrorType::None;
 	}
 
-	// Convenience constructors
+		// Convenience constructors
 		static EvalResult from_bool(bool val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}};
 		}
 
 		static EvalResult from_int(long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}};
 		}
 
 		static EvalResult from_uint(unsigned long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}};
 		}
 
 		static EvalResult from_double(double val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}};
 		}
 
 		static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl, {}};
+			return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl, nullptr, {}};
+		}
+
+		static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
+			return EvalResult{0LL, "", EvalErrorType::None, false, {}, nullptr, &lambda, {}};
 		}
 
 		static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-			return EvalResult{false, msg, type, false, {}, nullptr, {}};
+			return EvalResult{false, msg, type, false, {}, nullptr, nullptr, {}};
 		}
 
 	// Convenience helpers for common operations
@@ -345,6 +350,10 @@ private:
 	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
 	static const FunctionDeclarationNode* resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
+		static EvalResult materialize_lambda_value(
+			const LambdaExpressionNode& lambda,
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 	// Extract ConstructorCallNode from an initializer, handling direct storage and
 	// ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
 	static const ConstructorCallNode* extract_constructor_call(const std::optional<ASTNode>& initializer);

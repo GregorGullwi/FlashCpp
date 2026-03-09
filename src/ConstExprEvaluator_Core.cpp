@@ -124,6 +124,11 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		return evaluate_function_call(std::get<FunctionCallNode>(expr), context);
 	}
 
+	// For LambdaExpressionNode (callable lambda values)
+	if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+		return materialize_lambda_value(std::get<LambdaExpressionNode>(expr), context);
+	}
+
 	// For QualifiedIdentifierNode (e.g., Template<T>::member)
 	if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 		return evaluate_qualified_identifier(std::get<QualifiedIdentifierNode>(expr), context);
@@ -1176,6 +1181,18 @@ const LambdaExpressionNode* Evaluator::extract_lambda_from_initializer(const std
 	}
 	
 	return nullptr;
+}
+
+EvalResult Evaluator::materialize_lambda_value(
+	const LambdaExpressionNode& lambda,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
+	EvalResult callable_result = EvalResult::from_lambda(lambda);
+	auto capture_result = evaluate_lambda_captures(lambda.captures(), callable_result.callable_bindings, context, outer_bindings);
+	if (!capture_result.success()) {
+		return capture_result;
+	}
+	return callable_result;
 }
 
 const ConstructorCallNode* Evaluator::extract_constructor_call(const std::optional<ASTNode>& initializer) {

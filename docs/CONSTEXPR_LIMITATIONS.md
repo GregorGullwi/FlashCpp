@@ -253,7 +253,7 @@ static_assert(f() == 42);  // ❌ Not currently supported
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
-Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), implicit `this` through default member captures in supported shapes, init-captures, multi-statement bodies, simple member reads / constexpr member calls through `this` / `*this` capture, straightforward mutable by-reference local updates, straightforward identifier-based by-reference init-capture alias updates, straightforward mutable shared-object updates through `[this]`, straightforward mutable copy-local updates through `[*this]`, straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object, and straightforward nested lambdas that capture enclosing lambda/object state in supported shapes. Capture support is still incomplete beyond those supported shapes.
+Basic constexpr lambdas work, including explicit captures, default local captures (`[=]`, `[&]`), implicit `this` through default member captures in supported shapes, init-captures, multi-statement bodies, simple member reads / constexpr member calls through `this` / `*this` capture, straightforward mutable by-reference local updates, straightforward identifier-based by-reference init-capture alias updates, straightforward mutable shared-object updates through `[this]`, straightforward mutable copy-local updates through `[*this]`, straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object, straightforward return of lambda closure objects from constexpr functions with repeated calls after local initialization, and straightforward nested lambdas that capture enclosing lambda/object state in supported shapes. Capture support is still incomplete beyond those supported shapes.
 
 **Still partial in constexpr lambda evaluation:**
 
@@ -368,7 +368,7 @@ Potential areas for enhancement (in order of complexity):
 ### Hard
 - ❌ Constructor body statement execution
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
-- ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond straightforward by-reference locals, straightforward identifier-based by-reference init-capture aliases, straightforward `[this]` / `[*this]` mutation behavior, straightforward repeated-call mutable closure-local state, and straightforward nested lambdas over enclosing state
+- ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond straightforward by-reference locals, straightforward identifier-based by-reference init-capture aliases, straightforward `[this]` / `[*this]` mutation behavior, straightforward repeated-call mutable closure-local state, straightforward returned closure-object state transfer, and straightforward nested lambdas over enclosing state
 - ❌ `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
@@ -380,7 +380,7 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested member access is okay in supported shapes** - prefer simple, directly initialized object graphs
 3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns
-5. **Use straightforward lambda captures** - explicit captures, straightforward local `&` captures, straightforward identifier-based `&name = other` init-captures, straightforward mutable by-value/init-capture local state, local/default member captures, simple `this` / `*this` member reads/calls, straightforward nested lambdas over enclosing captured/member state, and straightforward mutable `[this]` / `[*this]` updates work best
+5. **Use straightforward lambda captures** - explicit captures, straightforward local `&` captures, straightforward identifier-based `&name = other` init-captures, straightforward mutable by-value/init-capture local state, straightforward returned closure objects from constexpr helper functions, local/default member captures, simple `this` / `*this` member reads/calls, straightforward nested lambdas over enclosing captured/member state, and straightforward mutable `[this]` / `[*this]` updates work best
 6. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
 
 ### For Contributors

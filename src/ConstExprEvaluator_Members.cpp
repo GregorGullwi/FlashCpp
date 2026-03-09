@@ -88,7 +88,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	}
 
 	auto bound_callable = bindings.find(func_name);
-	if (bound_callable != bindings.end() && bound_callable->second.callable_var_decl) {
+	if (bound_callable != bindings.end() && (bound_callable->second.callable_var_decl || bound_callable->second.callable_lambda)) {
 		EvalResult* mutable_bound_callable = nullptr;
 		if (mutable_bindings) {
 			auto mutable_it = mutable_bindings->find(func_name);
@@ -96,7 +96,12 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 				mutable_bound_callable = &mutable_it->second;
 			}
 		}
-		return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+		if (bound_callable->second.callable_var_decl) {
+			return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+		}
+		return evaluate_lambda_call(*bound_callable->second.callable_lambda, func_call.arguments(), context, &bindings, mutable_bindings,
+			&bound_callable->second.callable_bindings,
+			mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 	}
 
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
@@ -183,7 +188,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 
 	if (const IdentifierNode* callable_id = extract_callable_identifier()) {
 		auto callable_it = bindings.find(callable_id->name());
-		if (callable_it != bindings.end() && callable_it->second.callable_var_decl) {
+		if (callable_it != bindings.end() && (callable_it->second.callable_var_decl || callable_it->second.callable_lambda)) {
 			EvalResult* mutable_bound_callable = nullptr;
 			if (mutable_bindings) {
 				auto mutable_it = mutable_bindings->find(callable_id->name());
@@ -191,7 +196,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 					mutable_bound_callable = &mutable_it->second;
 				}
 			}
-			return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+			if (callable_it->second.callable_var_decl) {
+				return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+			}
+			return evaluate_lambda_call(*callable_it->second.callable_lambda, member_func_call.arguments(), context, &bindings, mutable_bindings,
+				&callable_it->second.callable_bindings,
+				mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 		}
 	}
 
@@ -557,6 +567,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	}
 	
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+
+	if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+		return materialize_lambda_value(std::get<LambdaExpressionNode>(expr), context, &bindings);
+	}
 	
 	// Check if it's an identifier that matches a parameter
 	if (std::holds_alternative<IdentifierNode>(expr)) {
@@ -761,6 +775,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	}
 	
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+
+	if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+		return materialize_lambda_value(std::get<LambdaExpressionNode>(expr), context, &bindings);
+	}
 	
 	// Check if it's an identifier that matches a parameter
 	if (std::holds_alternative<IdentifierNode>(expr)) {
