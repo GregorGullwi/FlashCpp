@@ -887,14 +887,14 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	// For member function form: Number::operator+(const Number& other)
 	// Phase 1: Exact type match on the parameter's type_index (with self-referential resolution
 	// for template instantiations, per the logic above)
-	const StructMemberFunction* first_match = nullptr;
 	for (const auto& member_func : left_struct_info->member_functions) {
 		if (operator_kind == OverloadableOperator::Assign) {
 			if (!isAssignOperator(member_func.operator_kind)) continue;
 		} else {
 			if (member_func.operator_kind != operator_kind) continue;
 		}
-		if (!first_match) first_match = &member_func;
+		// Check if the single parameter type matches the right operand
+		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 		// Check if the single parameter type matches the right operand
 		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
