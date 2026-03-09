@@ -222,9 +222,6 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	if (func_name == "operator()") {
 		return std::nullopt;
 	}
-	if (!context.struct_info) {
-		return std::nullopt;
-	}
 
 	auto extract_object_identifier = [&]() -> const IdentifierNode* {
 		const ASTNode& object_expr = member_func_call.object();
@@ -241,18 +238,63 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	};
 
 	const IdentifierNode* object_identifier = extract_object_identifier();
-	if (!object_identifier || object_identifier->name() != "this") {
+	if (!object_identifier) {
 		return std::nullopt;
 	}
 
+	const StructTypeInfo* bound_struct_info = nullptr;
+	TypeIndex bound_type_index = 0;
+	std::unordered_map<std::string_view, EvalResult> member_bindings;
+	bool write_back_to_object_binding = false;
+	std::string_view object_name = object_identifier->name();
+
+	if (object_name == "this") {
+		if (!context.struct_info) {
+			return std::nullopt;
+		}
+		bound_struct_info = context.struct_info;
+		for (const auto& member : context.struct_info->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			auto binding_it = bindings.find(member_name);
+			if (binding_it != bindings.end()) {
+				member_bindings[member_name] = binding_it->second;
+			}
+		}
+	} else {
+		auto object_it = bindings.find(object_name);
+		if (object_it == bindings.end() || object_it->second.object_type_index == 0) {
+			return std::nullopt;
+		}
+		bound_type_index = object_it->second.object_type_index;
+		if (bound_type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid bound object type for constexpr member function call");
+		}
+		const TypeInfo& type_info = gTypeInfo[bound_type_index];
+		bound_struct_info = type_info.getStructInfo();
+		if (!bound_struct_info) {
+			return EvalResult::error("Bound constexpr object is not a struct");
+		}
+		member_bindings = object_it->second.object_member_bindings;
+		write_back_to_object_binding = true;
+	}
+
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-	auto member_function_match = find_current_struct_member_function_candidate(
-		func_name_handle,
-		member_func_call.arguments().size(),
-		context,
-		MemberFunctionLookupMode::LookupOnly,
-		false,
-		true);
+	auto member_function_match = object_name == "this"
+		? find_current_struct_member_function_candidate(
+			func_name_handle,
+			member_func_call.arguments().size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false,
+			true)
+		: find_member_function_candidate(
+			bound_struct_info,
+			func_name_handle,
+			member_func_call.arguments().size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false,
+			true);
 	if (member_function_match.ambiguous) {
 		return EvalResult::error("Ambiguous member function overload in constant expression");
 	}
@@ -268,15 +310,6 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	const auto& definition = actual_func->get_definition();
 	if (!definition.has_value()) {
 		return EvalResult::error("Constexpr member function has no body: " + std::string(func_name));
-	}
-
-	std::unordered_map<std::string_view, EvalResult> member_bindings;
-	for (const auto& member : context.struct_info->members) {
-		std::string_view member_name = StringTable::getStringView(member.getName());
-		auto binding_it = bindings.find(member_name);
-		if (binding_it != bindings.end()) {
-			member_bindings[member_name] = binding_it->second;
-		}
 	}
 
 	auto bind_result = bind_evaluated_arguments(
@@ -308,8 +341,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		for (const auto& arg : actual_func->outer_template_args()) {
 			context.template_args.push_back(toTemplateTypeArg(arg));
 		}
-	} else {
+	} else if (object_name == "this") {
 		try_load_current_struct_template_bindings(context);
+	} else {
+		load_template_bindings_from_type(&gTypeInfo[bound_type_index], context);
 	}
 
 	if (context.current_depth >= context.max_recursion_depth) {
@@ -317,6 +352,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return EvalResult::error("Constexpr recursion depth limit exceeded in bound member function call");
 	}
 
+	auto saved_struct_info = context.struct_info;
+	context.struct_info = bound_struct_info;
 	context.current_depth++;
 	auto result = evaluate_block_with_bindings(
 		definition.value(),
@@ -325,12 +362,20 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
 	context.current_depth--;
+	context.struct_info = saved_struct_info;
 	if (result.success() && mutable_bindings) {
-		for (const auto& member : context.struct_info->members) {
-			std::string_view member_name = StringTable::getStringView(member.getName());
-			auto member_it = member_bindings.find(member_name);
-			if (member_it != member_bindings.end()) {
-				(*mutable_bindings)[member_name] = member_it->second;
+		if (write_back_to_object_binding) {
+			auto object_it = mutable_bindings->find(object_name);
+			if (object_it != mutable_bindings->end()) {
+				object_it->second.object_member_bindings = member_bindings;
+			}
+		} else {
+			for (const auto& member : saved_struct_info->members) {
+				std::string_view member_name = StringTable::getStringView(member.getName());
+				auto member_it = member_bindings.find(member_name);
+				if (member_it != member_bindings.end()) {
+					(*mutable_bindings)[member_name] = member_it->second;
+				}
 			}
 		}
 	}

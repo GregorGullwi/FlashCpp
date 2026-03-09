@@ -74,6 +74,8 @@ struct EvalResult {
 		const VariableDeclarationNode* callable_var_decl = nullptr;
 		const LambdaExpressionNode* callable_lambda = nullptr;
 		std::unordered_map<std::string_view, EvalResult> callable_bindings;
+		TypeIndex object_type_index = 0;
+		std::unordered_map<std::string_view, EvalResult> object_member_bindings;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -82,31 +84,31 @@ struct EvalResult {
 
 		// Convenience constructors
 		static EvalResult from_bool(bool val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_int(long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_uint(unsigned long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_double(double val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}};
+			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl, nullptr, {}};
+			return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl, nullptr, {}, 0, {}};
 		}
 
 		static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, nullptr, &lambda, {}};
+			return EvalResult{0LL, "", EvalErrorType::None, false, {}, nullptr, &lambda, {}, 0, {}};
 		}
 
 		static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-			return EvalResult{false, msg, type, false, {}, nullptr, nullptr, {}};
+			return EvalResult{false, msg, type, false, {}, nullptr, nullptr, {}, 0, {}};
 		}
 
 	// Convenience helpers for common operations

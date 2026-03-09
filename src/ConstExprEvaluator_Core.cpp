@@ -1296,31 +1296,37 @@ EvalResult Evaluator::evaluate_lambda_captures(
 				// For now, this is a limitation - we'd need body analysis to support this
 				return EvalResult::error("Implicit capture [=] or [&] not supported in constexpr lambdas - use explicit captures");
 			
-			case CaptureKind::This:
-			case CaptureKind::CopyThis:
-					// [this] or [*this] - materialize the enclosing object's constexpr members.
-					if (!outer_bindings) {
-						return EvalResult::error("Capture of 'this' requires outer constexpr bindings");
-					}
-					if (!context.struct_info) {
-						return EvalResult::error("Capture of 'this' requires constexpr member function context");
-					}
+				case CaptureKind::This:
+				case CaptureKind::CopyThis:
+						// [this] or [*this] - materialize the enclosing object's constexpr members.
+						if (capture.kind() == CaptureKind::CopyThis && stored_capture_bindings && !context.struct_info) {
+							for (const auto& [member_name, member_value] : *stored_capture_bindings) {
+								bindings[member_name] = member_value;
+							}
+							break;
+						}
+						if (!outer_bindings) {
+							return EvalResult::error("Capture of 'this' requires outer constexpr bindings");
+						}
+						if (!context.struct_info) {
+							return EvalResult::error("Capture of 'this' requires constexpr member function context");
+						}
 
-					for (const auto& member : context.struct_info->members) {
-						std::string_view member_name = StringTable::getStringView(member.getName());
-						if (capture.kind() == CaptureKind::CopyThis && stored_capture_bindings) {
-							auto stored_it = stored_capture_bindings->find(member_name);
-							if (stored_it != stored_capture_bindings->end()) {
-								bindings[member_name] = stored_it->second;
-								continue;
+						for (const auto& member : context.struct_info->members) {
+							std::string_view member_name = StringTable::getStringView(member.getName());
+							if (capture.kind() == CaptureKind::CopyThis && stored_capture_bindings) {
+								auto stored_it = stored_capture_bindings->find(member_name);
+								if (stored_it != stored_capture_bindings->end()) {
+									bindings[member_name] = stored_it->second;
+									continue;
+								}
+							}
+							auto outer_it = outer_bindings->find(member_name);
+							if (outer_it != outer_bindings->end()) {
+								bindings[member_name] = outer_it->second;
 							}
 						}
-						auto outer_it = outer_bindings->find(member_name);
-						if (outer_it != outer_bindings->end()) {
-							bindings[member_name] = outer_it->second;
-						}
-					}
-					break;
+						break;
 		}
 	}
 	
@@ -1670,14 +1676,23 @@ EvalResult Evaluator::evaluate_lambda_call(
 					(*mutable_stored_capture_bindings)[capture_name] = binding_it->second;
 				}
 			}
-			if (captures_copy_this && context.struct_info) {
-				for (const auto& member : context.struct_info->members) {
-					std::string_view member_name = StringTable::getStringView(member.getName());
-					auto binding_it = bindings.find(member_name);
-					if (binding_it != bindings.end()) {
-						(*mutable_stored_capture_bindings)[member_name] = binding_it->second;
+				if (captures_copy_this) {
+					if (context.struct_info) {
+						for (const auto& member : context.struct_info->members) {
+							std::string_view member_name = StringTable::getStringView(member.getName());
+							auto binding_it = bindings.find(member_name);
+							if (binding_it != bindings.end()) {
+								(*mutable_stored_capture_bindings)[member_name] = binding_it->second;
+							}
+						}
+					} else {
+						for (auto& [member_name, member_value] : *mutable_stored_capture_bindings) {
+							auto binding_it = bindings.find(member_name);
+							if (binding_it != bindings.end()) {
+								member_value = binding_it->second;
+							}
+						}
 					}
-				}
 			}
 		}
 		if (result.success() && mutable_outer_bindings) {
@@ -2682,6 +2697,23 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			// Handle array initialization with InitializerListNode
 			if (init_expr.is<InitializerListNode>()) {
 				const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+					if (decl.type_node().is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+						if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+							type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+								EvalResult object_result = EvalResult::from_int(0);
+								object_result.object_type_index = type_spec.type_index();
+								auto bind_members_result = bind_members_from_initializer_list(struct_info, init_list, object_result.object_member_bindings, context);
+								if (!bind_members_result.success()) {
+									return bind_members_result;
+								}
+								bindings[var_name] = std::move(object_result);
+								return EvalResult::error("Statement executed (not a return)");
+							}
+						}
+					}
 				const auto& initializers = init_list.initializers();
 				
 				// Create array value - evaluate each element
