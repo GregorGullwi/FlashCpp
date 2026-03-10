@@ -10,6 +10,8 @@
 	StringHandle current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
+	Type current_function_return_type_ = Type::Void;
+	int current_function_return_size_in_bits_ = 0;
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)
 	int32_t current_function_this_offset_ = 0;  // Stack home offset of the implicit this parameter in member functions
@@ -156,7 +158,7 @@
 	int32_t catch_funclet_return_slot_offset_ = 0;  // Parent-frame spill slot used to preserve return value across catch funclet continuation setup.
 	int32_t catch_funclet_return_flag_slot_offset_ = 0;  // Parent-frame flag slot indicating continuation should return using saved catch return value.
 	uint32_t catch_funclet_return_label_counter_ = 0;  // Monotonic counter for synthetic catch return trampoline labels.
-	bool catch_funclet_terminated_by_return_ = false;  // True after a return statement emits a terminating catch-funclet return path.
+	bool catch_has_pending_parent_return_ = false;  // True after a catch return emits the parent-return continuation handoff.
 	StringHandle current_catch_continuation_label_;  // Current catch continuation label in parent function.
 	struct CatchReturnBridge {
 		int32_t return_slot_offset;

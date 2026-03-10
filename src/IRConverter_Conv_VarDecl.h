@@ -713,7 +713,7 @@
 		catch_funclet_return_slot_offset_ = 0;
 		catch_funclet_return_flag_slot_offset_ = 0;
 		catch_funclet_return_label_counter_ = 0;
-		catch_funclet_terminated_by_return_ = false;
+		catch_has_pending_parent_return_ = false;
 		current_catch_continuation_label_ = StringHandle();
 		catch_return_bridges_.clear();
 		catch_continuation_fixup_map_.clear();
@@ -1075,6 +1075,8 @@
 		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
+		current_function_return_type_ = func_decl.return_type;
+		current_function_return_size_in_bits_ = func_decl.return_size_in_bits;
 		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 		current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
 		current_function_this_offset_ = 0;
@@ -1220,7 +1222,7 @@
 							if (vt.vtable_symbol == vtable_symbol) {
 								if (member_func->vtable_index < static_cast<int>(vt.function_symbols.size())) {
 									vt.function_symbols[member_func->vtable_index] = mangled_name;
-									FLASH_LOG(Codegen, Debug, "  Added virtual function ", func_name, 
+									FLASH_LOG(Codegen, Debug, "  Added virtual function ", func_name,
 									          " at vtable index ", member_func->vtable_index);
 								}
 								break;
@@ -2613,40 +2615,29 @@
 
 		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (g_enable_exceptions && in_catch_funclet_) {
-				bool has_float_return = false;
-				bool has_return_value = false;
-				if (instruction.hasTypedPayload()) {
-					const auto& catch_return_op = instruction.getTypedPayload<ReturnOp>();
-					has_return_value = catch_return_op.return_value.has_value();
-					has_float_return = catch_return_op.return_type.has_value() &&
-						is_floating_point_type(catch_return_op.return_type.value());
-				}
-				int32_t catch_return_slot = 0;
-				if (!has_float_return && has_return_value) {
-					catch_return_slot = ensureCatchFuncletReturnSlot();
-					emitMovToFrame(X64Register::RAX, catch_return_slot, 64);
-				}
+				emitSavePendingCatchParentReturnValue();
 
 				flushAllDirtyRegisters();
+				catch_has_pending_parent_return_ = true;
 
 				int32_t catch_return_flag_slot = ensureCatchFuncletReturnFlagSlot();
 				emitMovImm32(X64Register::RCX, 1);
 				emitMovToFrame(X64Register::RCX, catch_return_flag_slot, 64);
 
 				if (current_catch_continuation_label_.isValid()) {
-						StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
-						textSectionData.push_back(0x48);
-						textSectionData.push_back(0x8D);
-						textSectionData.push_back(0x05);
-						uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
-						textSectionData.push_back(0x00);
-						textSectionData.push_back(0x00);
-						textSectionData.push_back(0x00);
-						textSectionData.push_back(0x00);
-						pending_branches_.push_back({fixup_handle, lea_patch});
-					} else {
-						emitXorRegReg(X64Register::RAX);
-					}
+					StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x8D);
+					textSectionData.push_back(0x05);
+					uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					pending_branches_.push_back({fixup_handle, lea_patch});
+				} else {
+					emitXorRegReg(X64Register::RAX);
+				}
 
 				emitAddRSP(32);
 				emitPopReg(X64Register::RBP);

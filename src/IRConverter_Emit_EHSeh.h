@@ -132,6 +132,53 @@
 			}
 		}
 
+	bool currentFunctionReturnsFloatingPointInXmm0() const {
+		return current_function_return_type_ != Type::Void &&
+			is_floating_point_type(current_function_return_type_) &&
+			!current_function_has_hidden_return_param_ &&
+			!current_function_returns_reference_;
+	}
+
+	int getCatchParentReturnSpillSizeBits() const {
+		if (currentFunctionReturnsFloatingPointInXmm0()) {
+			return current_function_return_size_in_bits_;
+		}
+
+		if (current_function_return_type_ == Type::Void ||
+			current_function_has_hidden_return_param_ ||
+			current_function_returns_reference_) {
+			return 64;
+		}
+
+		return current_function_return_size_in_bits_ <= 32 ? 32 : 64;
+	}
+
+	void emitSavePendingCatchParentReturnValue() {
+		int spill_size_bits = getCatchParentReturnSpillSizeBits();
+		int32_t catch_return_slot = ensureCatchFuncletReturnSlot();
+
+		if (currentFunctionReturnsFloatingPointInXmm0()) {
+			emitFloatMovToFrame(X64Register::XMM0, catch_return_slot, spill_size_bits == 32);
+			return;
+		}
+
+		emitMovToFrameBySize(X64Register::RAX, catch_return_slot, spill_size_bits);
+	}
+
+	void emitRestorePendingCatchParentReturnValue() {
+		if (catch_funclet_return_slot_offset_ == 0) {
+			return;
+		}
+
+		int spill_size_bits = getCatchParentReturnSpillSizeBits();
+		if (currentFunctionReturnsFloatingPointInXmm0()) {
+			emitFloatMovFromFrame(X64Register::XMM0, catch_funclet_return_slot_offset_, spill_size_bits == 32);
+			return;
+		}
+
+		emitMovFromFrameBySize(X64Register::RAX, catch_funclet_return_slot_offset_, spill_size_bits);
+	}
+
 	void handleCatchBegin(const IrInstruction& instruction) {
 		// Skip exception handling if disabled
 		if (!g_enable_exceptions) {
@@ -299,26 +346,26 @@
 			textSectionData.push_back(0x10);
 			emitPushReg(X64Register::RBP);
 			emitSubRSP(32);
-				// For frame-pointer based parent functions, rebuild the same frame pointer from
-				// the establisher frame (RDX) so the catch body can keep using normal RBP-relative
-				// local/catch-object offsets.
-				emitFuncletLeaRbpFromRdx(catch_funclet_lea_rbp_patches_);
+			// For frame-pointer based parent functions, rebuild the same frame pointer from
+			// the establisher frame (RDX) so the catch body can keep using normal RBP-relative
+			// local/catch-object offsets.
+			emitFuncletLeaRbpFromRdx(catch_funclet_lea_rbp_patches_);
 			in_catch_funclet_ = true;
-			catch_funclet_terminated_by_return_ = false;
+			catch_has_pending_parent_return_ = false;
 			current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
 
-					// Windows FH3 materializes the catch object into the dispCatchObj slot.
-					// For reference catches, that slot holds a pointer to the exception object,
-					// so later VariableDecl handling must load/dereference it instead of taking
-					// the address of the slot itself.
-					if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
-						int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
-						setReferenceInfo(stack_offset, catch_op.exception_type, 64, false, catch_op.exception_temp);
-					}
+			// Windows FH3 materializes the catch object into the dispCatchObj slot.
+			// For reference catches, that slot holds a pointer to the exception object,
+			// so later VariableDecl handling must load/dereference it instead of taking
+			// the address of the slot itself.
+			if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
+				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+				setReferenceInfo(stack_offset, catch_op.exception_type, 64, false, catch_op.exception_temp);
+			}
 
-					if (current_catch_handler_) {
-						current_catch_handler_->handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-					}
+			if (current_catch_handler_) {
+				current_catch_handler_->handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			}
 
 		}
 	}
@@ -327,16 +374,6 @@
 		// Skip exception handling if disabled
 		if (!g_enable_exceptions) {
 			return;
-		}
-		
-		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-			if (catch_funclet_terminated_by_return_) {
-				catch_funclet_terminated_by_return_ = false;
-				in_catch_funclet_ = false;
-				current_catch_continuation_label_ = StringHandle();
-				current_catch_handler_ = nullptr;
-				return;
-			}
 		}
 
 		// CatchEnd marks the end of a catch handler
@@ -463,9 +500,7 @@
 
 					emitXorRegReg(X64Register::RCX);
 					emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
-					if (catch_funclet_return_slot_offset_ != 0) {
-						emitMovFromFrame(X64Register::RAX, catch_funclet_return_slot_offset_);
-					}
+					emitRestorePendingCatchParentReturnValue();
 					textSectionData.push_back(0x48);
 					textSectionData.push_back(0x89);
 					textSectionData.push_back(0xEC);
@@ -491,7 +526,7 @@
 			}
 
 			in_catch_funclet_ = false;
-			catch_funclet_terminated_by_return_ = false;
+			catch_has_pending_parent_return_ = false;
 			current_catch_continuation_label_ = StringHandle();
 		}
 
