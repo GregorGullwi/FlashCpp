@@ -665,7 +665,7 @@
 		throw InternalError("Function call without typed payload - should not happen");
 	}
 
-		bool emitEhCopyConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg) {
+		bool emitEhCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false) {
 			if (type_index == 0 || type_index >= gTypeInfo.size()) {
 				return false;
 			}
@@ -676,12 +676,26 @@
 				return false;
 			}
 
-			const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
-			if (!copy_ctor || !copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			const StructMemberFunction* selected_ctor = nullptr;
+			if (prefer_move) {
+				const StructMemberFunction* move_ctor = struct_info->findMoveConstructor();
+				if (move_ctor && move_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+					selected_ctor = move_ctor;
+				}
+			}
+
+			if (!selected_ctor) {
+				const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
+				if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+					selected_ctor = copy_ctor;
+				}
+			}
+
+			if (!selected_ctor) {
 				return false;
 			}
 
-			const auto& ctor_node = copy_ctor->function_decl.as<ConstructorDeclarationNode>();
+			const auto& ctor_node = selected_ctor->function_decl.as<ConstructorDeclarationNode>();
 			if (ctor_node.parameter_nodes().empty() || !ctor_node.parameter_nodes()[0].is<DeclarationNode>()) {
 				return false;
 			}

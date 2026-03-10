@@ -231,7 +231,10 @@
 			throw_op.type_index = exception_type_index;
 			throw_op.exception_type = expr_type;  // Store the actual Type enum
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
-			throw_op.is_rvalue = true;  // Default to rvalue for now
+			throw_op.is_rvalue = !std::holds_alternative<StringHandle>(expr_operands[2]);
+			if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				throw_op.is_rvalue = !isTempVarLValue(std::get<TempVar>(expr_operands[2]));
+			}
 			
 			// Handle the value - it can be a TempVar, immediate int, or immediate float
 			// All these types are compatible with IrValue variant

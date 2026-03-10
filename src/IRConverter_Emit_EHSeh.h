@@ -559,7 +559,7 @@
 					source_value.size_in_bits = static_cast<int>(exception_size * 8);
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
-					exception_constructed = emitEhCopyConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value);
+					exception_constructed = emitEhCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
 				}
 
 				// Step 2: Copy/construct exception object in allocated memory
@@ -707,7 +707,7 @@
 					source_value.size_in_bits = static_cast<int>(exception_size * 8);
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
-					exception_constructed = emitEhCopyConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value);
+					exception_constructed = emitEhCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
 				}
 
 				// Copy/construct exception object to frame slot at [RBP+throw_slot_offset]

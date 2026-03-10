@@ -450,7 +450,7 @@
 				}
 
 				if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
-					if (emitEhCopyConstructorCall(init.type_index, dst_offset, false, init)) {
+						if (emitEhCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
 						return;
 					}
 				}
