@@ -711,6 +711,7 @@ struct FunctionDeclOp {
 	bool has_hidden_return_param = false;  // True if function uses hidden return parameter (struct return)
 	bool is_inline = false;  // True if function is inline or implicitly inline (e.g., defined in class body)
 	bool is_static_member = false;  // True if this is a static member function (no 'this' pointer)
+	bool is_noexcept = false;  // True if function is declared noexcept
 	StringHandle mangled_name;  // Pure StringHandle
 	std::vector<FunctionParam> parameters;
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)
@@ -805,6 +806,7 @@ struct VariableDeclOp {
 	unsigned long long custom_alignment = 0;
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	bool is_array = false;
+		bool use_copy_constructor = false;
 	// Array info (if is_array)
 	std::optional<Type> array_element_type;
 	std::optional<int> array_element_size;
@@ -931,7 +933,8 @@ struct CatchEndOp {
 
 // Function-level cleanup landing pad (ELF/Linux only)
 // Emitted after the function return; called by the unwinder during phase-2 exception propagation.
-// Calls each listed destructor (LIFO order), then calls _Unwind_Resume to continue unwinding.
+	// Calls each listed destructor (LIFO order), then either calls _Unwind_Resume or
+	// __cxa_call_terminate depending on whether the enclosing function is noexcept.
 struct FunctionCleanupLPOp {
 	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;  // {struct_name, var_name} LIFO order
 };

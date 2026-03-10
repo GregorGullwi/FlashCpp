@@ -332,7 +332,7 @@ std::pair<std::string, std::string> ObjectFileWriter::getMsvcTypeDescriptorInfo(
 	return {"??_R0" + mangled_type_name, mangled_type_name};
 }
 
-std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::string& type_name, size_t type_size, bool is_simple_type, std::string_view destructor_symbol) {
+std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::string& type_name, size_t type_size, bool is_simple_type, std::string_view destructor_symbol, const StructTypeInfo* thrown_struct_info) {
 	if (type_name.empty() || type_name == "void") {
 		return std::string();
 	}
@@ -352,72 +352,157 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 		return std::string();
 	}
 
-	auto [type_desc_symbol, type_runtime_name] = getMsvcTypeDescriptorInfo(type_name);
+	auto ensure_type_descriptor_symbol = [&](const std::string& catch_type_name) -> std::string {
+		auto [type_desc_symbol, type_runtime_name] = getMsvcTypeDescriptorInfo(catch_type_name);
 
-	auto* type_desc_sym = coffi_.get_symbol(type_desc_symbol);
-	if (!type_desc_sym) {
-		uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		auto* type_desc_sym = coffi_.get_symbol(type_desc_symbol);
+		if (!type_desc_sym) {
+			uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 
-		std::vector<char> type_desc_data;
-		type_desc_data.resize(POINTER_SIZE * 2, 0);
-		for (char c : type_runtime_name) type_desc_data.push_back(c);
-		type_desc_data.push_back(0);
+			std::vector<char> type_desc_data;
+			type_desc_data.resize(POINTER_SIZE * 2, 0);
+			for (char c : type_runtime_name) {
+				type_desc_data.push_back(c);
+			}
+			type_desc_data.push_back(0);
 
-		add_data(type_desc_data, SectionType::RDATA);
+			add_data(type_desc_data, SectionType::RDATA);
 
-		type_desc_sym = coffi_.add_symbol(type_desc_symbol);
-		type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		type_desc_sym->set_section_number(rdata_section->get_index() + 1);
-		type_desc_sym->set_value(type_desc_offset);
+			type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+			type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+			type_desc_sym->set_value(type_desc_offset);
 
-		// vftable pointer at offset 0 -> type_info::vftable
-		add_rdata_relocation(type_desc_offset, "??_7type_info@@6B@", IMAGE_REL_AMD64_ADDR64);
+			// vftable pointer at offset 0 -> type_info::vftable
+			add_rdata_relocation(type_desc_offset, "??_7type_info@@6B@", IMAGE_REL_AMD64_ADDR64);
+		}
+
+		return type_desc_symbol;
+	};
+
+	struct CatchableTypeEntry {
+		std::string catch_type_name;
+		uint32_t properties;
+		uint32_t mdisp;
+		int32_t pdisp;
+		int32_t vdisp;
+		uint32_t size_or_offset;
+	};
+
+	std::vector<CatchableTypeEntry> catchable_types;
+	const uint32_t throw_size = static_cast<uint32_t>(type_size == 0 ? 8 : type_size);
+	const uint32_t CT_IsSimpleType = 0x00000001u;
+	const uint32_t CT_HasVirtualBase = 0x00000004u;
+
+	auto add_catchable_type = [&](std::string_view catch_type_name, uint32_t properties, uint32_t mdisp, int32_t pdisp, int32_t vdisp, uint32_t size_or_offset) {
+		for (const auto& existing : catchable_types) {
+			if (existing.catch_type_name == catch_type_name && existing.mdisp == mdisp && existing.pdisp == pdisp && existing.vdisp == vdisp) {
+				return;
+			}
+		}
+
+		catchable_types.push_back({
+			std::string(catch_type_name),
+			properties,
+			mdisp,
+			pdisp,
+			vdisp,
+			size_or_offset,
+		});
+	};
+
+	uint32_t thrown_properties = is_simple_type ? CT_IsSimpleType : 0;
+	if (thrown_struct_info && !thrown_struct_info->virtual_bases.empty()) {
+		thrown_properties |= CT_HasVirtualBase;
+	}
+	add_catchable_type(type_name, thrown_properties, 0, -1, 0, throw_size);
+
+	if (thrown_struct_info && !is_simple_type) {
+			std::set<std::pair<const StructTypeInfo*, uint32_t>> visited_public_base_paths;
+			std::function<void(const StructTypeInfo*, uint32_t)> collect_public_bases = [&](const StructTypeInfo* current_struct_info, uint32_t current_offset) {
+			if (!current_struct_info) {
+				return;
+			}
+
+				if (!visited_public_base_paths.insert({current_struct_info, current_offset}).second) {
+					return;
+				}
+
+			for (const auto& base : current_struct_info->base_classes) {
+				if (base.is_deferred || base.access != AccessSpecifier::Public || base.type_index >= gTypeInfo.size()) {
+					continue;
+				}
+
+				const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+				if (!base_struct_info) {
+					continue;
+				}
+
+				uint32_t base_offset = current_offset + static_cast<uint32_t>(base.offset);
+				uint32_t base_properties = base.is_virtual || !base_struct_info->virtual_bases.empty() ? CT_HasVirtualBase : 0;
+				uint32_t base_size = static_cast<uint32_t>(base_struct_info->total_size == 0 ? throw_size : base_struct_info->total_size);
+
+					add_catchable_type(StringTable::getStringView(base_type_info.name()), base_properties, base_offset, -1, 0, base_size);
+
+					// Transitive catches through deeply nested virtual bases need their own
+					// CatchableType entries as well. Recurse through both virtual and
+					// non-virtual public bases, while guarding against repeated paths.
+					collect_public_bases(base_struct_info, base_offset);
+			}
+		};
+
+		collect_public_bases(thrown_struct_info, 0);
 	}
 
 	const std::string mangled_type_name = mangleTypeName(type_name);
-	const std::string catchable_type_symbol = "$flash$ct$" + mangled_type_name;
 	const std::string catchable_array_symbol = "$flash$cta$" + mangled_type_name;
 	const std::string throw_info_symbol = "$flash$ti$" + mangled_type_name;
+	std::vector<std::string> catchable_type_symbols;
+	catchable_type_symbols.reserve(catchable_types.size());
 
-	auto* catchable_type_sym = coffi_.get_symbol(catchable_type_symbol);
-	if (!catchable_type_sym) {
-		uint32_t catchable_type_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-		uint32_t throw_size = static_cast<uint32_t>(type_size == 0 ? 8 : type_size);
+	for (size_t i = 0; i < catchable_types.size(); ++i) {
+		const auto& catchable_type = catchable_types[i];
+		const std::string catchable_type_symbol = "$flash$ct$" + mangled_type_name + "$" + std::to_string(i);
+		catchable_type_symbols.push_back(catchable_type_symbol);
 
-		std::vector<char> catchable_type_data;
-		catchable_type_data.reserve(28);
-		auto append_u32 = [&catchable_type_data](uint32_t v) {
-			catchable_type_data.push_back(static_cast<char>(v & 0xFF));
-			catchable_type_data.push_back(static_cast<char>((v >> 8) & 0xFF));
-			catchable_type_data.push_back(static_cast<char>((v >> 16) & 0xFF));
-			catchable_type_data.push_back(static_cast<char>((v >> 24) & 0xFF));
-		};
+		auto* catchable_type_sym = coffi_.get_symbol(catchable_type_symbol);
+		if (!catchable_type_sym) {
+			const std::string type_desc_symbol = ensure_type_descriptor_symbol(catchable_type.catch_type_name);
+			uint32_t catchable_type_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 
-		append_u32(is_simple_type ? 1 : 0);  // properties (1 = CT_IsSimpleType for scalars)
-		append_u32(0);              // pType (relocated)
-		append_u32(0);              // thisDisplacement.mdisp
-		append_u32(0xFFFFFFFFu);    // thisDisplacement.pdisp
-		append_u32(0);              // thisDisplacement.vdisp
-		append_u32(throw_size);     // sizeOrOffset
-		append_u32(0);              // copyFunction
+			std::vector<char> catchable_type_data;
+			catchable_type_data.reserve(28);
+			ObjectFileCommon::appendLE(catchable_type_data, catchable_type.properties);
+			ObjectFileCommon::appendLE(catchable_type_data, uint32_t(0));
+			ObjectFileCommon::appendLE(catchable_type_data, catchable_type.mdisp);
+			ObjectFileCommon::appendLE(catchable_type_data, static_cast<uint32_t>(catchable_type.pdisp));
+			ObjectFileCommon::appendLE(catchable_type_data, static_cast<uint32_t>(catchable_type.vdisp));
+			ObjectFileCommon::appendLE(catchable_type_data, catchable_type.size_or_offset);
+			ObjectFileCommon::appendLE(catchable_type_data, uint32_t(0));
 
-		add_data(catchable_type_data, SectionType::RDATA);
+			add_data(catchable_type_data, SectionType::RDATA);
 
-		catchable_type_sym = coffi_.add_symbol(catchable_type_symbol);
-		catchable_type_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		catchable_type_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-		catchable_type_sym->set_section_number(rdata_section->get_index() + 1);
-		catchable_type_sym->set_value(catchable_type_offset);
+			catchable_type_sym = coffi_.add_symbol(catchable_type_symbol);
+			catchable_type_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			catchable_type_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+			catchable_type_sym->set_section_number(rdata_section->get_index() + 1);
+			catchable_type_sym->set_value(catchable_type_offset);
 
-		add_rdata_relocation(catchable_type_offset + 4, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
+			add_rdata_relocation(catchable_type_offset + 4, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
+		}
 	}
 
 	auto* catchable_array_sym = coffi_.get_symbol(catchable_array_symbol);
 	if (!catchable_array_sym) {
 		uint32_t catchable_array_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-		std::vector<char> catchable_array_data(0x0C, 0);
-		catchable_array_data[0] = 1; // nCatchableTypes
+		std::vector<char> catchable_array_data;
+		catchable_array_data.reserve(4 + catchable_type_symbols.size() * 4);
+		ObjectFileCommon::appendLE(catchable_array_data, static_cast<uint32_t>(catchable_type_symbols.size()));
+		for (size_t i = 0; i < catchable_type_symbols.size(); ++i) {
+			ObjectFileCommon::appendLE(catchable_array_data, uint32_t(0));
+		}
 		add_data(catchable_array_data, SectionType::RDATA);
 
 		catchable_array_sym = coffi_.add_symbol(catchable_array_symbol);
@@ -426,7 +511,9 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 		catchable_array_sym->set_section_number(rdata_section->get_index() + 1);
 		catchable_array_sym->set_value(catchable_array_offset);
 
-		add_rdata_relocation(catchable_array_offset + 4, catchable_type_symbol, IMAGE_REL_AMD64_ADDR32NB);
+		for (size_t i = 0; i < catchable_type_symbols.size(); ++i) {
+			add_rdata_relocation(catchable_array_offset + 4 + static_cast<uint32_t>(i * 4), catchable_type_symbols[i], IMAGE_REL_AMD64_ADDR32NB);
+		}
 	}
 
 	auto* throw_info_sym = coffi_.get_symbol(throw_info_symbol);

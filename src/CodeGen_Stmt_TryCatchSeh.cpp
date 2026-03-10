@@ -124,6 +124,7 @@
 					TypedValue init_value;
 					init_value.type = type_node.type();
 					init_value.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					init_value.type_index = type_index;
 					init_value.value = exception_temp;
 					if (type_node.is_rvalue_reference()) {
 						init_value.ref_qualifier = ReferenceQualifier::RValueReference;
@@ -131,6 +132,9 @@
 						init_value.ref_qualifier = ReferenceQualifier::LValueReference;
 					}
 					decl_op.initializer = init_value;
+					decl_op.use_copy_constructor = !type_node.is_reference() &&
+					                               type_node.type() == Type::Struct &&
+					                               type_index != 0;
 					
 					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					decl_op.is_array = false;
@@ -227,12 +231,17 @@
 			throw_op.type_index = exception_type_index;
 			throw_op.exception_type = expr_type;  // Store the actual Type enum
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
-			throw_op.is_rvalue = true;  // Default to rvalue for now
+			throw_op.is_rvalue = !std::holds_alternative<StringHandle>(expr_operands[2]);
+			if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				throw_op.is_rvalue = !isTempVarLValue(std::get<TempVar>(expr_operands[2]));
+			}
 			
 			// Handle the value - it can be a TempVar, immediate int, or immediate float
 			// All these types are compatible with IrValue variant
 			if (std::holds_alternative<TempVar>(expr_operands[2])) {
 				throw_op.exception_value = std::get<TempVar>(expr_operands[2]);
+			} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				throw_op.exception_value = std::get<StringHandle>(expr_operands[2]);
 			} else if (std::holds_alternative<unsigned long long>(expr_operands[2])) {
 				throw_op.exception_value = std::get<unsigned long long>(expr_operands[2]);
 			} else if (std::holds_alternative<double>(expr_operands[2])) {

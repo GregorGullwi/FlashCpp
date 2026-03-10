@@ -665,6 +665,103 @@
 		throw InternalError("Function call without typed payload - should not happen");
 	}
 
+		bool emitEhCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false) {
+			if (type_index == 0 || type_index >= gTypeInfo.size()) {
+				return false;
+			}
+
+			const TypeInfo& type_info = gTypeInfo[type_index];
+			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (!struct_info) {
+				return false;
+			}
+
+			const StructMemberFunction* selected_ctor = nullptr;
+			if (prefer_move) {
+				const StructMemberFunction* move_ctor = struct_info->findMoveConstructor();
+				if (move_ctor && move_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+					selected_ctor = move_ctor;
+				}
+			}
+
+			if (!selected_ctor) {
+				const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
+				if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+					selected_ctor = copy_ctor;
+				}
+			}
+
+			if (!selected_ctor) {
+				return false;
+			}
+
+			const auto& ctor_node = selected_ctor->function_decl.as<ConstructorDeclarationNode>();
+			if (ctor_node.parameter_nodes().empty() || !ctor_node.parameter_nodes()[0].is<DeclarationNode>()) {
+				return false;
+			}
+
+			flushAllDirtyRegisters();
+
+			X64Register this_reg = getIntParamReg<TWriterClass>(0);
+			if (object_is_pointer) {
+				emitMovFromFrame(this_reg, object_offset);
+			} else {
+				emitLeaFromFrame(this_reg, object_offset);
+			}
+
+			X64Register source_reg = getIntParamReg<TWriterClass>(1);
+			if (std::holds_alternative<TempVar>(source_arg.value)) {
+				TempVar source_temp = std::get<TempVar>(source_arg.value);
+				int source_storage_bits = getTempVarMetadata(source_temp).is_address ? 64 : source_arg.size_in_bits;
+				int32_t source_offset = getStackOffsetFromTempVar(source_temp, source_storage_bits);
+				auto source_ref_info = getReferenceInfo(source_temp, source_offset);
+				if (source_ref_info.has_value()) {
+					emitMovFromFrame(source_reg, source_offset);
+				} else {
+					emitLeaFromFrame(source_reg, source_offset);
+				}
+			} else if (std::holds_alternative<StringHandle>(source_arg.value)) {
+				StringHandle source_name = std::get<StringHandle>(source_arg.value);
+				const VariableInfo* source_info = findVariableInfo(source_name);
+				if (!source_info) {
+					throw InternalError("EH copy construction: source variable not found: " + std::string(StringTable::getStringView(source_name)));
+				}
+				if (reference_stack_info_.find(source_info->offset) != reference_stack_info_.end()) {
+					emitMovFromFrame(source_reg, source_info->offset);
+				} else {
+					emitLeaFromFrame(source_reg, source_info->offset);
+				}
+			} else {
+				return false;
+			}
+
+			std::vector<TypeSpecifierNode> parameter_types;
+			parameter_types.push_back(ctor_node.parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+
+			std::string struct_name = std::string(StringTable::getStringView(type_info.name()));
+			std::string function_name;
+			std::string class_name;
+			size_t last_colon_pos = struct_name.rfind("::");
+			if (last_colon_pos != std::string::npos) {
+				function_name = struct_name.substr(last_colon_pos + 2);
+				class_name = struct_name;
+			} else {
+				function_name = struct_name;
+				class_name = struct_name;
+			}
+
+			TypeSpecifierNode void_return(Type::Void, 0, 0);
+			ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
+			sig.class_name = class_name;
+
+			std::string ctor_mangled = std::string(writer.generateMangledName(function_name, sig));
+			emitCall(ctor_mangled);
+
+			regAlloc.invalidateCallerSavedRegisters();
+			regAlloc.reset();
+			return true;
+		}
+
 	void handleConstructorCall(const IrInstruction& instruction) {
 		// Constructor call format: ConstructorCallOp {struct_name, object, arguments}
 		const ConstructorCallOp& ctor_op = instruction.getTypedPayload<ConstructorCallOp>();

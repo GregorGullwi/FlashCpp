@@ -1272,6 +1272,10 @@
 	
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
+		current_function_reserved_catch_ref_temp_size_ = 0;
+		current_function_reserved_catch_ref_temps_.clear();
+		current_function_reserved_catch_obj_padding_size_ = 0;
+		current_function_reserved_catch_return_slot_size_ = 0;
 
 		auto it = function_spans.find(func_name);
 		if (it == function_spans.end()) {
@@ -1289,16 +1293,16 @@
 		// Clear temp_var_sizes for this function
 		temp_var_sizes_.clear();
 
-			// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
-			// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
-			// destructible locals that require unwind actions even without a local catch.
-			// Plain DestructorCall only describes normal in-function scope cleanup and must
-			// not force the EH-style prologue on its own, otherwise the emitted prologue can
-			// diverge from the writer-side unwind-code selection.
+		// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
+		// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
+		// destructible locals that require unwind actions even without a local catch.
+		// Plain DestructorCall only describes normal in-function scope cleanup and must
+		// not force the EH-style prologue on its own, otherwise the emitted prologue can
+		// diverge from the writer-side unwind-code selection.
 		current_function_has_cpp_eh_ = false;
 		for (const auto& instruction : it->second) {
-				if (instruction.getOpcode() == IrOpcode::TryBegin ||
-				    instruction.getOpcode() == IrOpcode::FunctionCleanupLP) {
+			if (instruction.getOpcode() == IrOpcode::TryBegin ||
+			    instruction.getOpcode() == IrOpcode::FunctionCleanupLP) {
 				current_function_has_cpp_eh_ = true;
 				break;
 			}
@@ -1311,6 +1315,15 @@
 			// Look for TempVar operands in the instruction
 			func_stack_space.shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall
 			                                                  && instruction.getOpcode() != IrOpcode::ConstructorCall));
+
+			// Pre-reserve the catch funclet return slot on Windows: the funclet needs
+			// a fixed-size slot (16 bytes) above the normal locals so that
+			// ensureCatchFuncletReturnSlot does not have to spill below existing locals.
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				if (instruction.getOpcode() == IrOpcode::CatchBegin) {
+					current_function_reserved_catch_return_slot_size_ = 16;
+				}
+			}
 			
 			// Track outgoing call argument space for function calls AND constructor calls.
 			// Both place overflow arguments at RSP-relative offsets, so we must pre-allocate
@@ -1440,6 +1453,44 @@
 				// For typed payload instructions, try common payload types
 				if (instruction.hasTypedPayload()) {
 					try {
+						if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+							if (const CatchBeginOp* catch_op = std::any_cast<CatchBeginOp>(&instruction.getTypedPayload())) {
+								if (catch_op->exception_temp.var_number != 0) {
+									StringHandle catch_temp_handle = StringTable::getOrInternStringHandle(catch_op->exception_temp.name());
+
+									if (catch_op->is_reference() || catch_op->is_rvalue_reference()) {
+										bool already_reserved = false;
+										for (StringHandle existing : current_function_reserved_catch_ref_temps_) {
+											if (existing == catch_temp_handle) {
+												already_reserved = true;
+												break;
+											}
+										}
+										if (!already_reserved) {
+											current_function_reserved_catch_ref_temps_.push_back(catch_temp_handle);
+											current_function_reserved_catch_ref_temp_size_ += 8;
+										}
+										temp_var_sizes_[catch_temp_handle] = 64;
+										handled_by_typed_payload = true;
+									} else {
+										int catch_size_bits = 0;
+										if (catch_op->type_index != 0 && catch_op->type_index < gTypeInfo.size()) {
+											catch_size_bits = gTypeInfo[catch_op->type_index].type_size_;
+										} else {
+											catch_size_bits = get_type_size_bits(catch_op->exception_type);
+										}
+										if (catch_size_bits > 0) {
+											if (current_function_reserved_catch_obj_padding_size_ == 0) {
+												current_function_reserved_catch_obj_padding_size_ = 8;
+											}
+											temp_var_sizes_[catch_temp_handle] = catch_size_bits;
+											handled_by_typed_payload = true;
+										}
+									}
+								}
+							}
+						}
+
 						// Try BinaryOp (arithmetic, comparisons, logic)
 						if (const BinaryOp* bin_op = std::any_cast<BinaryOp>(&instruction.getTypedPayload())) {
 							if (std::holds_alternative<TempVar>(bin_op->result)) {
@@ -1575,6 +1626,18 @@
 			var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});
 		}
 
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (current_function_reserved_catch_ref_temp_size_ != 0) {
+				stack_offset -= static_cast<int_fast32_t>(current_function_reserved_catch_ref_temp_size_);
+			}
+			if (current_function_reserved_catch_obj_padding_size_ != 0) {
+				stack_offset -= static_cast<int_fast32_t>(current_function_reserved_catch_obj_padding_size_);
+			}
+			if (current_function_reserved_catch_return_slot_size_ != 0) {
+				stack_offset -= static_cast<int_fast32_t>(current_function_reserved_catch_return_slot_size_);
+			}
+		}
+
 		// Calculate space needed for TempVars
 		// Each TempVar uses 8 bytes (64-bit alignment)
 		// Calculate space for temp vars using actual sizes, not just count * 8
@@ -1624,26 +1687,37 @@
 	// - Extends scope_stack_space if the offset exceeds current tracked allocation
 	// - Registers the TempVar in variables for consistent subsequent lookups
 	int32_t getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits = 64) {
+			StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
+			auto size_it = temp_var_sizes_.find(lookup_handle);
+			int actual_size_in_bits = size_in_bits;
+			if (size_it != temp_var_sizes_.end() && size_it->second > size_in_bits) {
+				actual_size_in_bits = size_it->second;  // Use pre-calculated size if larger
+			}
+
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
-			StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
-			auto& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(lookup_handle);
-			if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
-				int existing_offset = it->second.offset;
+			auto* current_scope = &variable_scopes.back();
+			for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
+				auto existing_it = scope_it->variables.find(lookup_handle);
+				if (existing_it == scope_it->variables.end() || existing_it->second.offset == INT_MIN) {
+					continue;
+				}
+
+				int existing_offset = existing_it->second.offset;
+				current_scope->variables[lookup_handle].offset = existing_offset;
 				
 				// Check if we need to extend the allocation for a larger size
 				// This can happen when a TempVar is first allocated with default size,
 				// then later used for a large struct (e.g., constructor call result)
-				int size_in_bytes = (size_in_bits + 7) / 8;
+					int size_in_bytes = (actual_size_in_bits + 7) / 8;
 				size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
 				
 				int32_t end_offset = existing_offset - size_in_bytes;
-				if (end_offset < variable_scopes.back().scope_stack_space) {
+				if (end_offset < current_scope->scope_stack_space) {
 					FLASH_LOG_FORMAT(Codegen, Debug,
 						"Extending scope_stack_space from {} to {} for pre-allocated {} (offset={}, size={})",
-						variable_scopes.back().scope_stack_space, end_offset, tempVar.name(), existing_offset, size_in_bytes);
-					variable_scopes.back().scope_stack_space = end_offset;
+						current_scope->scope_stack_space, end_offset, tempVar.name(), existing_offset, size_in_bytes);
+					current_scope->scope_stack_space = end_offset;
 				}
 				
 				FLASH_LOG_FORMAT(Codegen, Debug,
@@ -1656,7 +1730,8 @@
 			// allocated named variable (tracked in handleVariableDecl)
 			// This handles the duplicate entry problem where named variables get both a name entry
 			// and a TempVar entry
-			if (it != variable_scopes.back().variables.end() && it->second.offset == INT_MIN) {
+			auto it = current_scope->variables.find(lookup_handle);
+			if (it != current_scope->variables.end() && it->second.offset == INT_MIN) {
 				if (last_allocated_variable_name_.isValid() && last_allocated_variable_offset_ != 0) {
 					// Use the last allocated variable's offset for this TempVar
 					// Update the TempVar entry so future lookups are O(1)
@@ -1670,12 +1745,7 @@
 		// Each TempVar gets size_in_bits bytes (rounded up to 8-byte alignment)
 		// Check temp_var_sizes_ for pre-calculated size (from calculateFunctionStackSpace)
 		// This ensures large struct returns are allocated with correct size from the start
-		StringHandle temp_var_handle = StringTable::getOrInternStringHandle(tempVar.name());
-		auto size_it = temp_var_sizes_.find(temp_var_handle);
-		int actual_size_in_bits = size_in_bits;
-		if (size_it != temp_var_sizes_.end() && size_it->second > size_in_bits) {
-			actual_size_in_bits = size_it->second;  // Use pre-calculated size if larger
-		}
+			StringHandle temp_var_handle = lookup_handle;
 		
 		int size_in_bytes = (actual_size_in_bits + 7) / 8;  // Round up to nearest byte
 		size_in_bytes = (size_in_bytes + 7) & ~7;    // Round up to 8-byte alignment

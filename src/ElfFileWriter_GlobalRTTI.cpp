@@ -1,6 +1,51 @@
 // ElfFileWriter_GlobalRTTI.cpp - Out-of-line method definitions for ElfFileWriter
 // Part of ElfFileWriter class (unity build)
 
+namespace {
+	/// Collect all unique virtual-base TypeIndex values reachable from \p si
+	/// (depth-first, left-to-right).  Adds to \p out; \p visited prevents cycles.
+	void collectReachableVBases(const StructTypeInfo* si,
+	                            std::vector<TypeIndex>& out,
+	                            std::set<TypeIndex>& seen_vb,
+	                            std::set<const StructTypeInfo*>& visited) {
+		if (!si || !visited.insert(si).second) return;
+		for (const auto& b : si->base_classes) {
+			if (b.is_virtual && seen_vb.insert(b.type_index).second) {
+				out.push_back(b.type_index);
+			}
+			if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
+				const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
+				collectReachableVBases(bsi, out, seen_vb, visited);
+			}
+		}
+	}
+
+	/// Recursively find the offset of a virtual base \p target_tidx from the
+	/// most-derived object starting at \p si + \p base_off.
+	/// Returns true and sets \p result if found.
+	bool findVBaseOffset(const StructTypeInfo* si, TypeIndex target_tidx,
+	                     size_t base_off, size_t& result,
+	                     std::set<const StructTypeInfo*>& visited) {
+		if (!si || !visited.insert(si).second) return false;
+		for (const auto& b : si->base_classes) {
+			if (b.type_index == target_tidx && b.is_virtual) {
+				result = base_off + b.offset;
+				return true;
+			}
+		}
+		// Recurse into all bases (both virtual and non-virtual) to locate deep vbases.
+		// The visited set prevents infinite loops.
+		for (const auto& b : si->base_classes) {
+			if (b.type_index < gTypeInfo.size()) {
+				const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
+				if (findVBaseOffset(bsi, target_tidx, base_off + b.offset, result, visited))
+					return true;
+			}
+		}
+		return false;
+	}
+}
+
 void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
                               bool is_initialized, std::span<const char> init_data) {
 	if (g_enable_debug_output) {
@@ -133,8 +178,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 	std::string typeinfo_symbol(builder.commit());
 
 	// Check if we've already created this symbol
-	static std::set<std::string> created_class_typeinfos;
-	if (created_class_typeinfos.find(typeinfo_symbol) != created_class_typeinfos.end()) {
+	if (created_class_typeinfos_.find(typeinfo_symbol) != created_class_typeinfos_.end()) {
 		return typeinfo_symbol;
 	}
 
@@ -212,11 +256,286 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 	auto name_sym_idx = getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
 	rela_acc->add_entry(ti_offset + 8, name_sym_idx,   ELFIO::R_X86_64_64, 0);
 
-	created_class_typeinfos.insert(typeinfo_symbol);
+	created_class_typeinfos_.insert(typeinfo_symbol);
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "Created class typeinfo '{}' for class '{}' with ZTS '{}'",
 	                 typeinfo_symbol, class_name, typename_symbol);
 
+	return typeinfo_symbol;
+}
+
+/**
+ * @brief Get or create type_info symbol for a class type with inheritance hierarchy support.
+ *
+ * Emits the correct Itanium C++ ABI type_info based on the class's bases:
+ *   - No bases          → __class_type_info    (16 bytes)
+ *   - Single non-virt.  → __si_class_type_info (24 bytes)
+ *   - Multiple / virtual → __vmi_class_type_info (variable)
+ *
+ * Falls back to the flat __class_type_info overload when struct_info is null.
+ */
+std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* struct_info) {
+	if (!struct_info) {
+		return {};
+	}
+
+	std::string_view class_name = StringTable::getStringView(struct_info->getName());
+
+	// Build _ZTI symbol name
+	StringBuilder builder;
+	builder.append("_ZTI").append(class_name.length()).append(class_name);
+	std::string typeinfo_symbol(builder.commit());
+
+	// Reuse the same cache as the flat overload so delegation for classes without bases
+	// cannot re-emit _ZTS/_ZTI symbols on a subsequent hierarchical lookup.
+	if (created_class_typeinfos_.find(typeinfo_symbol) != created_class_typeinfos_.end()) {
+		return typeinfo_symbol;
+	}
+
+	const auto& base_classes = struct_info->base_classes;
+
+	// Choose hierarchy variant
+	if (base_classes.empty()) {
+		// Delegate to the flat overload (no inheritance)
+		return get_or_create_class_typeinfo(class_name);
+	}
+
+	// Recursively ensure base class type_infos exist first
+	for (const auto& base : base_classes) {
+		if (base.type_index < gTypeInfo.size()) {
+			const TypeInfo& base_ti = gTypeInfo[base.type_index];
+			const StructTypeInfo* base_si = base_ti.getStructInfo();
+			if (base_si) {
+				get_or_create_class_typeinfo(base_si);
+			}
+		}
+	}
+
+	// Build _ZTS (type name string) in .rodata
+	std::string typename_symbol = "_ZTS" + std::to_string(class_name.length()) + std::string(class_name);
+	std::string type_name_str   = std::to_string(class_name.length()) + std::string(class_name);
+
+	auto* rodata = getSectionByName(".rodata");
+	if (!rodata) throw std::runtime_error(".rodata section not found");
+
+	uint32_t name_offset = rodata->get_size();
+	rodata->append_data(type_name_str.c_str(), type_name_str.size() + 1);
+
+	getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+	                  rodata->get_index(), name_offset, type_name_str.size() + 1);
+
+	// Ensure .data.rel.ro and its relocation section exist
+	auto* data_rel_ro = getSectionByName(".data.rel.ro");
+	if (!data_rel_ro) {
+		data_rel_ro = elf_writer_.sections.add(".data.rel.ro");
+		data_rel_ro->set_type(ELFIO::SHT_PROGBITS);
+		data_rel_ro->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
+		data_rel_ro->set_addr_align(8);
+		section_name_cache_[".data.rel.ro"] = data_rel_ro;
+	}
+
+	ELFIO::relocation_section_accessor* rela_acc = getRelocationAccessor(".rela.data.rel.ro");
+	if (!rela_acc) {
+		auto* rela_sec = elf_writer_.sections.add(".rela.data.rel.ro");
+		rela_sec->set_type(ELFIO::SHT_RELA);
+		rela_sec->set_flags(ELFIO::SHF_INFO_LINK);
+		rela_sec->set_info(data_rel_ro->get_index());
+		rela_sec->set_link(symtab_section_->get_index());
+		rela_sec->set_addr_align(8);
+		rela_sec->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+		rela_accessors_[".rela.data.rel.ro"] =
+			std::make_unique<ELFIO::relocation_section_accessor>(elf_writer_, rela_sec);
+		rela_acc = rela_accessors_[".rela.data.rel.ro"].get();
+	}
+
+	bool single_non_virtual = (base_classes.size() == 1 && !base_classes[0].is_virtual);
+
+	if (single_non_virtual) {
+		// ------------------------------------------------------------------
+		// __si_class_type_info: 24 bytes
+		//   [0]  vtable ptr  → _ZTVN10__cxxabiv120__si_class_type_infoE + 16
+		//   [8]  name ptr    → _ZTS<classname>
+		//   [16] base ptr    → _ZTI<base_classname>
+		// ------------------------------------------------------------------
+		const char zeros[24] = {};
+		uint32_t ti_offset = data_rel_ro->get_size();
+		data_rel_ro->append_data(zeros, 24);
+
+		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+		                  data_rel_ro->get_index(), ti_offset, 24);
+
+		// Reloc 1: vtable
+		auto vtbl_sym = getOrCreateSymbol(
+			"_ZTVN10__cxxabiv120__si_class_type_infoE", ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+		rela_acc->add_entry(ti_offset,      vtbl_sym, ELFIO::R_X86_64_64, 16);
+
+		// Reloc 2: name
+		auto name_sym = getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+		rela_acc->add_entry(ti_offset + 8,  name_sym, ELFIO::R_X86_64_64, 0);
+
+		// Reloc 3: base type_info
+		const auto& base = base_classes[0];
+		std::string base_zti;
+		if (base.type_index < gTypeInfo.size()) {
+			const TypeInfo& base_ti = gTypeInfo[base.type_index];
+			const StructTypeInfo* base_si = base_ti.getStructInfo();
+			if (base_si) {
+				std::string_view base_name = StringTable::getStringView(base_si->getName());
+				StringBuilder b2;
+				b2.append("_ZTI").append(base_name.length()).append(base_name);
+				base_zti = std::string(b2.commit());
+			}
+		}
+		if (!base_zti.empty()) {
+			auto base_sym = getOrCreateSymbol(base_zti, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+			rela_acc->add_entry(ti_offset + 16, base_sym, ELFIO::R_X86_64_64, 0);
+		}
+
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"Created SI class typeinfo '{}' for '{}' (single base)",
+			typeinfo_symbol, class_name);
+	} else {
+		// ------------------------------------------------------------------
+		// __vmi_class_type_info: 24 + N*16 bytes
+		//   [0]   vtable ptr → _ZTVN10__cxxabiv121__vmi_class_type_infoE + 16
+		//   [8]   name ptr   → _ZTS<classname>
+		//   [16]  flags      (uint32) — filled inline
+		//   [20]  base_count (uint32) — filled inline
+		//   [24 + i*16] base_type ptr  → _ZTI<base_i>
+		//   [32 + i*16] offset_flags   (int64) — filled inline
+		// ------------------------------------------------------------------
+		uint32_t n_bases  = static_cast<uint32_t>(base_classes.size());
+		uint32_t ti_size  = 24 + n_bases * 16;
+		std::vector<char> zeros(ti_size, 0);
+
+		// Fill in inline (non-pointer) fields
+		// Itanium ABI flags for __vmi_class_type_info:
+		//   bit 0 (__non_diamond_repeat_mask = 0x1): class has a base appearing more than once
+		//                                            (but not in a diamond pattern, i.e. virtual bases)
+		//   bit 1 (__diamond_shaped_mask = 0x2):     class has a diamond-shaped inheritance graph
+		//                                            (multiple paths to the same virtual base)
+		//
+		// IMPORTANT: setting __diamond_shaped_mask (0x2) incorrectly for non-diamond classes
+		// causes the personality routine to attempt virtual-base-table traversal, which crashes
+		// because non-virtual multiple-inheritance classes have no VTT.
+		// Only set flags when the corresponding pattern genuinely exists.
+		uint32_t flags = 0;
+		bool has_virtual = false;
+		for (const auto& base : base_classes) {
+			if (base.is_virtual) {
+				has_virtual = true;
+			}
+		}
+		// __non_diamond_repeat_mask: set only when there are virtual bases
+		// (which may repeat in the hierarchy)
+		if (has_virtual) flags |= 0x1;
+
+		// __diamond_shaped_mask (0x2): set when two or more bases share a common
+		// virtual base ancestor (diamond inheritance).  Detect by collecting all
+		// transitive virtual-base TypeIndex values reachable from each direct base
+		// and checking for overlap.
+		{
+			std::set<TypeIndex> global_vbases;
+			bool diamond = false;
+			for (const auto& base : base_classes) {
+				if (base.type_index >= gTypeInfo.size()) continue;
+				const auto* bsi = gTypeInfo[base.type_index].getStructInfo();
+				std::vector<TypeIndex> branch_vbases;
+				std::set<TypeIndex> branch_seen;
+				std::set<const StructTypeInfo*> branch_visited;
+				collectReachableVBases(bsi, branch_vbases, branch_seen, branch_visited);
+				for (auto vb : branch_vbases) {
+					if (!global_vbases.insert(vb).second) {
+						diamond = true;
+					}
+				}
+			}
+			if (diamond) flags |= 0x2;
+		}
+
+		std::memcpy(zeros.data() + 16, &flags,   sizeof(uint32_t));
+		std::memcpy(zeros.data() + 20, &n_bases, sizeof(uint32_t));
+
+		// Collect all unique virtual bases reachable from this class (depth-first,
+		// left-to-right, same order as the vtable prefix). This is needed to compute
+		// the correct vtable-relative offset for virtual base entries.
+		std::vector<TypeIndex> vbase_order;
+		{
+			std::set<TypeIndex> seen_vb;
+			std::set<const StructTypeInfo*> visited;
+			collectReachableVBases(struct_info, vbase_order, seen_vb, visited);
+		}
+
+		// offset_flags for each base (inline: no relocation needed)
+		for (uint32_t i = 0; i < n_bases; ++i) {
+			const auto& base = base_classes[i];
+			// offset_flags = (offset_bytes << 8) | public_mask | virtual_mask
+			// public_mask = 0x2, virtual_mask = 0x1
+			uint64_t public_bit  = (base.access == AccessSpecifier::Public) ? 0x2ULL : 0ULL;
+			uint64_t virtual_bit = base.is_virtual ? 0x1ULL : 0ULL;
+
+			int64_t offset_value;
+			if (base.is_virtual) {
+				// For virtual bases, the Itanium ABI stores the byte offset from the
+				// vptr to the vtable slot that holds the actual vbase offset at runtime.
+				// Vtable layout: [...vbase_offsets..., offset_to_top, RTTI, func_ptrs]
+				// The vptr points to func_ptrs[0].  vtable[-1] = RTTI, [-2] = offset_to_top,
+				// [-3] = first vbase_offset, [-4] = second, etc.
+				// So the offset for vbase at index k is -(3 + k) * 8.
+				auto it = std::find(vbase_order.begin(), vbase_order.end(), base.type_index);
+				size_t vbase_idx = (it != vbase_order.end())
+					? static_cast<size_t>(std::distance(vbase_order.begin(), it))
+					: 0;
+				offset_value = -static_cast<int64_t>((3 + vbase_idx) * 8);
+			} else {
+				offset_value = static_cast<int64_t>(base.offset);
+			}
+
+			uint64_t offset_flags = (static_cast<uint64_t>(offset_value) << 8) | public_bit | virtual_bit;
+			std::memcpy(zeros.data() + 32 + i * 16, &offset_flags, sizeof(uint64_t));
+		}
+
+		uint32_t ti_offset = data_rel_ro->get_size();
+		data_rel_ro->append_data(zeros.data(), ti_size);
+
+		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+		                  data_rel_ro->get_index(), ti_offset, ti_size);
+
+		// Reloc 1: vtable
+		auto vtbl_sym = getOrCreateSymbol(
+			"_ZTVN10__cxxabiv121__vmi_class_type_infoE", ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+		rela_acc->add_entry(ti_offset, vtbl_sym, ELFIO::R_X86_64_64, 16);
+
+		// Reloc 2: name
+		auto name_sym = getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+		rela_acc->add_entry(ti_offset + 8, name_sym, ELFIO::R_X86_64_64, 0);
+
+		// Reloc per base: base_type pointer
+		for (uint32_t i = 0; i < n_bases; ++i) {
+			const auto& base = base_classes[i];
+			std::string base_zti;
+			if (base.type_index < gTypeInfo.size()) {
+				const TypeInfo& base_ti = gTypeInfo[base.type_index];
+				const StructTypeInfo* base_si = base_ti.getStructInfo();
+				if (base_si) {
+					std::string_view base_name = StringTable::getStringView(base_si->getName());
+					StringBuilder b2;
+					b2.append("_ZTI").append(base_name.length()).append(base_name);
+					base_zti = std::string(b2.commit());
+				}
+			}
+			if (!base_zti.empty()) {
+				auto base_sym = getOrCreateSymbol(base_zti, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+				rela_acc->add_entry(ti_offset + 24 + i * 16, base_sym, ELFIO::R_X86_64_64, 0);
+			}
+		}
+
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"Created VMI class typeinfo '{}' for '{}' ({} bases)",
+			typeinfo_symbol, class_name, n_bases);
+	}
+
+	created_class_typeinfos_.insert(typeinfo_symbol);
 	return typeinfo_symbol;
 }
 
@@ -240,14 +559,12 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		throw std::runtime_error(".rodata section not found");
 	}
 	
-	uint32_t vtable_offset = rodata->get_size();
-	
 	// Itanium C++ ABI vtable structure:
 	// - Offset to top (8 bytes) - always 0 for simple cases
 	// - RTTI pointer (8 bytes) - pointer to typeinfo structure
 	// - Function pointers (8 bytes each)
 	
-	// First, emit typeinfo if available
+	// First, emit typeinfo if available (goes into .rodata BEFORE the vtable)
 	std::string typeinfo_symbol;
 	if (rtti_info && rtti_info->itanium_type_info) {
 		// Generate typeinfo symbol name: _ZTI + mangled class name
@@ -273,6 +590,10 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		}
 	}
 	
+	// Capture vtable_offset AFTER typeinfo emission, since add_typeinfo also
+	// appends to .rodata and would shift the vtable position.
+	uint32_t vtable_offset = rodata->get_size();
+	
 	char vtable_data_buf[8192]; // Stack-based buffer for vtable (reasonable max size)
 	size_t vtable_data_size = 0;
 	
@@ -283,6 +604,61 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		std::memcpy(vtable_data_buf + vtable_data_size, data, size);
 		vtable_data_size += size;
 	};
+
+	// Collect unique virtual bases for this class (depth-first, left-to-right)
+	// so we can emit vbase offset entries in the vtable prefix.
+	struct VBaseEntry { size_t offset_from_derived; };
+	std::vector<VBaseEntry> vbase_entries;
+	{
+		// Find the StructTypeInfo for this class by scanning gTypeInfo
+		const StructTypeInfo* this_struct = nullptr;
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
+		for (size_t ti = 0; ti < gTypeInfo.size(); ++ti) {
+			const StructTypeInfo* si = gTypeInfo[ti].getStructInfo();
+			if (si && si->getName() == class_name_handle) {
+				this_struct = si;
+				break;
+			}
+		}
+		if (this_struct) {
+			// Collect all unique virtual base TypeIndexes reachable from this class.
+			std::vector<TypeIndex> vbase_type_indices;
+			{
+				std::set<TypeIndex> seen;
+				std::set<const StructTypeInfo*> visited;
+				collectReachableVBases(this_struct, vbase_type_indices, seen, visited);
+			}
+
+			// Now find each vbase's offset in THIS class (the most-derived).
+			// Virtual bases are shared: their actual offset is stored in the
+			// most-derived class's base_classes list or transitively through
+			// non-virtual parents.
+			for (TypeIndex vb_tidx : vbase_type_indices) {
+				size_t offset = 0;
+				std::set<const StructTypeInfo*> visited;
+				findVBaseOffset(this_struct, vb_tidx, 0, offset, visited);
+				vbase_entries.push_back({offset});
+			}
+		}
+	}
+	size_t n_vbase_entries = vbase_entries.size();
+
+	FLASH_LOG_FORMAT(Codegen, Debug, "  vtable '{}': {} vbase entries in prefix",
+	                 vtable_symbol, n_vbase_entries);
+	for (size_t i = 0; i < n_vbase_entries; ++i) {
+		FLASH_LOG_FORMAT(Codegen, Debug, "    vbase[{}] offset_from_derived={}",
+		                 i, vbase_entries[i].offset_from_derived);
+	}
+
+	// Emit vbase offset entries (before offset_to_top).
+	// Itanium ABI vtable layout for classes with virtual bases:
+	//   [vbase_offset[n-1]] [vbase_offset[n-2]] ... [vbase_offset[0]] [offset_to_top] [RTTI] [func_ptrs...]
+	// The vptr points to func_ptrs[0].
+	// vbase_offset[i] is at vtable[-(3+i)] i.e. -(3+i)*8 bytes from the vptr.
+	for (size_t i = n_vbase_entries; i > 0; --i) {
+		int64_t vbase_off = static_cast<int64_t>(vbase_entries[i - 1].offset_from_derived);
+		append_bytes(&vbase_off, 8);
+	}
 	
 	// Offset to top (8 bytes, value = 0)
 	uint64_t offset_to_top = 0;
@@ -301,10 +677,13 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// Add vtable data to .rodata
 	rodata->append_data(vtable_data_buf, vtable_data_size);
 	
-	// Add vtable symbol pointing to the function pointer array (skip offset-to-top and RTTI)
-	uint32_t symbol_offset = vtable_offset + 16;  // Skip offset-to-top (8) and RTTI (8)
+	// Header size = vbase prefix + offset_to_top + RTTI
+	uint32_t header_size = static_cast<uint32_t>(n_vbase_entries * 8 + 16);
+	
+	// Add vtable symbol pointing to the function pointer array (skip prefix, offset-to-top, and RTTI)
+	uint32_t symbol_offset = vtable_offset + header_size;
 	getOrCreateSymbol(vtable_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
-	                  rodata->get_index(), symbol_offset, vtable_data_size - 16);
+	                  rodata->get_index(), symbol_offset, vtable_data_size - header_size);
 	
 	// Add relocations for each function pointer
 	[[maybe_unused]] auto* rela_rodata = getOrCreateRelocationSection(".rodata");
@@ -313,7 +692,8 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// Add relocation for RTTI pointer if typeinfo was emitted
 	if (!typeinfo_symbol.empty()) {
 		auto typeinfo_symbol_idx = getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL);
-		uint32_t rtti_reloc_offset = vtable_offset + 8;  // Offset to top is first 8 bytes
+		// RTTI pointer is at vtable_offset + vbase_prefix_size + offset_to_top_size
+		uint32_t rtti_reloc_offset = vtable_offset + static_cast<uint32_t>(n_vbase_entries * 8) + 8;
 		rela_accessor->add_entry(rtti_reloc_offset, typeinfo_symbol_idx, ELFIO::R_X86_64_64, 0);
 		
 		FLASH_LOG_FORMAT(Codegen, Debug, "  Added relocation for typeinfo {} at offset {}", 
@@ -325,7 +705,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		auto func_symbol_idx = getOrCreateSymbol(function_symbols[i], ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
 		
 		// Add relocation for this function pointer
-		uint32_t reloc_offset = vtable_offset + 16 + (i * 8);  // Skip header + i*8 for function pointer
+		uint32_t reloc_offset = vtable_offset + header_size + static_cast<uint32_t>(i * 8);
 		rela_accessor->add_entry(reloc_offset, func_symbol_idx, ELFIO::R_X86_64_64, 0);
 		
 		FLASH_LOG_FORMAT(Codegen, Debug, "  Added relocation for function {} at offset {}", 

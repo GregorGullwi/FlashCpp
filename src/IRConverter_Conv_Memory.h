@@ -1698,46 +1698,92 @@
 
 				emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 			
-			// Patch the SUB RSP immediate at prologue offset + 3
-			if (current_function_prologue_offset_ > 0) {
-				uint32_t patch_offset = current_function_prologue_offset_ + 3;
-				const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<uint32_t>(total_stack));
-				for (int i = 0; i < 4; i++) {
-					textSectionData[patch_offset + i] = bytes[i];
+				// Windows EH (MSVC ABI): the establisher-frame size is capped at 15*16=240 bytes
+				// (maximum SET_FPREG offset encodable in unwind codes).  Anything above that goes
+				// into a second SUB RSP patched via eh_prologue_extra_sub_rsp_offset_.
+				// ELF (SysV ABI): no such cap — the traditional push/mov-rbp/sub-rsp prologue
+				// accommodates any frame size in the single SUB RSP, so always use total_stack.
+				uint32_t eh_effective_frame_size;
+				uint32_t eh_extra_stack_size;
+				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+					eh_effective_frame_size = static_cast<uint32_t>(total_stack);
+					eh_extra_stack_size = 0;
+				} else {
+					eh_effective_frame_size = current_function_has_cpp_eh_
+						? static_cast<uint32_t>(std::min<uint32_t>(static_cast<uint32_t>(total_stack / 16), 15u) * 16)
+						: static_cast<uint32_t>(total_stack);
+					eh_extra_stack_size = current_function_has_cpp_eh_
+						? static_cast<uint32_t>(total_stack) - eh_effective_frame_size
+						: 0;
 				}
-			}
 
-			// Patch catch continuation LEA RBP instructions (reuses sub_rsp_patches for LEA)
-			for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
-				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
-				for (int i = 0; i < 4; i++) {
-					textSectionData[fixup_patch_offset + i] = bytes[i];
+				// Patch the main prologue SUB RSP immediate.
+				if (current_function_prologue_offset_ > 0) {
+					uint32_t patch_offset = current_function_prologue_offset_ + 3;
+					uint32_t prologue_stack = current_function_has_cpp_eh_ ? eh_effective_frame_size : static_cast<uint32_t>(total_stack);
+					const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(prologue_stack);
+					for (int i = 0; i < 4; i++) {
+						textSectionData[patch_offset + i] = bytes[i];
+					}
 				}
-			}
-			catch_continuation_sub_rsp_patches_.clear();
 
-			// Patch C++ EH prologue LEA RBP, [RSP + total_stack]
-			if (eh_prologue_lea_rbp_offset_ > 0) {
-				uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
-				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
-				for (int i = 0; i < 4; i++) {
-					textSectionData[lea_patch_offset + i] = bytes[i];
+				// Patch the optional post-frame SUB RSP in the EH prologue.
+				if (eh_prologue_extra_sub_rsp_offset_ > 0) {
+					if (eh_extra_stack_size > 0) {
+						uint32_t patch_offset = eh_prologue_extra_sub_rsp_offset_ + 3;
+						const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(eh_extra_stack_size);
+						for (int i = 0; i < 4; i++) {
+							textSectionData[patch_offset + i] = bytes[i];
+						}
+					} else {
+						static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
+						for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
+							textSectionData[eh_prologue_extra_sub_rsp_offset_ + i] = kSevenByteNop[i];
+						}
+					}
 				}
-			}
 
-			// Patch catch funclet LEA RBP, [RDX + total_stack] instructions
-			for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
-				uint32_t lea_patch_offset = funclet_lea_offset + 3;
-				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
-				for (int i = 0; i < 4; i++) {
-					textSectionData[lea_patch_offset + i] = bytes[i];
+				for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
+					uint32_t insn_offset = fixup_patch_offset - 3;
+					// _JumpToContinuation resumes with RSP already restored to the function's
+					// fully allocated stack depth. Re-applying eh_extra_stack_size here would
+					// double-adjust RSP before re-entering the parent frame continuation.
+					static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
+					for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
+						textSectionData[insn_offset + i] = kSevenByteNop[i];
+					}
 				}
-			}
-			catch_funclet_lea_rbp_patches_.clear();
+				catch_continuation_sub_rsp_patches_.clear();
+
+				for (auto fixup_patch_offset : catch_continuation_lea_rbp_patches_) {
+					const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+					for (int i = 0; i < 4; i++) {
+						textSectionData[fixup_patch_offset + i] = bytes[i];
+					}
+				}
+				catch_continuation_lea_rbp_patches_.clear();
+
+				if (eh_prologue_lea_rbp_offset_ > 0) {
+					uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
+					const auto bytes = std::bit_cast<std::array<char, 4>>(eh_effective_frame_size);
+					for (int i = 0; i < 4; i++) {
+						textSectionData[lea_patch_offset + i] = bytes[i];
+					}
+				}
+
+				uint32_t funclet_parent_rbp_disp = eh_effective_frame_size;
+				for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
+					uint32_t lea_patch_offset = funclet_lea_offset + 3;
+					const auto bytes = std::bit_cast<std::array<char, 4>>(funclet_parent_rbp_disp);
+					for (int i = 0; i < 4; i++) {
+						textSectionData[lea_patch_offset + i] = bytes[i];
+					}
+				}
+				catch_funclet_lea_rbp_patches_.clear();
 
 				for (auto funclet_lea_offset : cleanup_funclet_lea_rbp_patches_) {
 					uint32_t lea_patch_offset = funclet_lea_offset + 3;
-					const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+					const auto bytes = std::bit_cast<std::array<char, 4>>(funclet_parent_rbp_disp);
 					for (int i = 0; i < 4; i++) {
 						textSectionData[lea_patch_offset + i] = bytes[i];
 					}
@@ -1746,7 +1792,10 @@
 
 				auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 				auto seh_try_blocks = convertSehInfoToWriterFormat();
-			
+
+			// noexcept enforcement: inject terminate LP if needed (ELF only)
+			injectNoexceptTerminateLPIfNeeded();
+
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length

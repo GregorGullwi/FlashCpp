@@ -46,11 +46,104 @@
 		}
 	}
 
+		void materializeCatchObjectFromRax(const CatchBeginOp& catch_op) {
+			if (catch_op.exception_temp.var_number == 0) {
+				return;
+			}
+
+			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+
+			if (g_enable_debug_output) {
+				std::cerr << "[DEBUG][Codegen] CatchBegin: is_ref=" << catch_op.is_reference()
+				          << " is_rvalue_ref=" << catch_op.is_rvalue_reference()
+				          << " type_index=" << catch_op.type_index
+				          << " stack_offset=" << stack_offset << std::endl;
+			}
+
+			if (catch_op.is_reference() || catch_op.is_rvalue_reference()) {
+				if (g_enable_debug_output) {
+					std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
+				}
+				emitMovToFrame(X64Register::RAX, stack_offset, 64);
+				setReferenceInfo(stack_offset, catch_op.exception_type,
+				                 64,
+				                 catch_op.is_rvalue_reference(),
+				                 catch_op.exception_temp);
+				return;
+			}
+
+			int type_size_bits = 0;
+			bool is_builtin = false;
+			switch (catch_op.exception_type) {
+				case Type::Bool:
+				case Type::Char:
+				case Type::UnsignedChar:
+				case Type::Short:
+				case Type::UnsignedShort:
+				case Type::Int:
+				case Type::UnsignedInt:
+				case Type::Long:
+				case Type::UnsignedLong:
+				case Type::LongLong:
+				case Type::UnsignedLongLong:
+				case Type::Float:
+				case Type::Double:
+				case Type::LongDouble:
+				case Type::FunctionPointer:
+				case Type::MemberFunctionPointer:
+				case Type::MemberObjectPointer:
+				case Type::Nullptr:
+					is_builtin = true;
+					break;
+				default:
+					is_builtin = false;
+					break;
+			}
+
+			if (is_builtin) {
+				type_size_bits = get_type_size_bits(catch_op.exception_type);
+			} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
+				type_size_bits = type_info.type_size_;
+			}
+			size_t type_size = type_size_bits / 8;
+
+			if (g_enable_debug_output) {
+				std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exception_type)
+				          << " type_size_bits=" << type_size_bits
+				          << " type_size=" << type_size << std::endl;
+			}
+
+			if (is_builtin && type_size <= 8 && type_size > 0) {
+				if (g_enable_debug_output) {
+					std::cerr << "[DEBUG][Codegen] CatchBegin: dereferencing exception value" << std::endl;
+				}
+				emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
+				emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
+			} else {
+				if (g_enable_debug_output) {
+					std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (struct/large type)" << std::endl;
+				}
+				emitMovToFrame(X64Register::RAX, stack_offset, 64);
+				setReferenceInfo(stack_offset, catch_op.exception_type,
+				                 type_size_bits > 0 ? type_size_bits : 64,
+				                 false,
+				                 catch_op.exception_temp);
+			}
+		}
+
 	void handleCatchBegin(const IrInstruction& instruction) {
 		// Skip exception handling if disabled
 		if (!g_enable_exceptions) {
 			return;
 		}
+
+			// A catch handler is a fresh control-flow entry (landing pad / funclet entry).
+			// Runtime register contents here do not correspond to whatever compile-time path
+			// happened to be emitted immediately before the handler in the linear text stream.
+			// Drop all register-to-stack assumptions so the catch body reloads values from
+			// memory instead of reusing stale mappings from earlier code.
+			regAlloc.reset();
 		
 		// CatchBegin marks the start of a catch handler
 		// Record this catch handler in the most recent try block
@@ -82,7 +175,18 @@
 			// var_number == 0 indicates catch(...) which has no exception variable,
 			// or an unnamed catch parameter like catch(int) without a variable name.
 			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
-				handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+					int catch_storage_bits = 64;
+					if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
+						if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
+							catch_storage_bits = gTypeInfo[catch_op.type_index].type_size_;
+						} else {
+							int builtin_size = get_type_size_bits(catch_op.exception_type);
+							if (builtin_size > 0) {
+								catch_storage_bits = builtin_size;
+							}
+						}
+					}
+					handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, catch_storage_bits);
 			} else {
 				handler.catch_obj_stack_offset = 0;
 			}
@@ -91,8 +195,8 @@
 			current_catch_handler_ = &try_block.catch_handlers.back();
 		}
 		
-		// Platform-specific landing pad code generation
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Platform-specific landing pad code generation
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			inside_catch_handler_ = true;
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
 			// For ELF, handler_offset is the LSDA landing pad address.
@@ -175,109 +279,9 @@
 			}
 			emitCall("__cxa_begin_catch");
 			
-			// Result in RAX is pointer to the actual exception object
-			// Store it to the catch variable's stack location
-			if (catch_op.exception_temp.var_number != 0) {
-				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
-				
-				if (g_enable_debug_output) {
-					std::cerr << "[DEBUG][Codegen] CatchBegin: is_ref=" << catch_op.is_reference()
-					          << " is_rvalue_ref=" << catch_op.is_rvalue_reference()
-					          << " type_index=" << catch_op.type_index
-					          << " stack_offset=" << stack_offset << std::endl;
-				}
-				
-				// For POD types, dereference and copy the value
-				// For references, store the pointer itself
-				if (catch_op.is_reference() || catch_op.is_rvalue_reference()) {
-					// Store the pointer (RAX) directly (64-bit pointer)
-					if (g_enable_debug_output) {
-						std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
-					}
-					emitMovToFrame(X64Register::RAX, stack_offset, 64);
-					// Mark the slot as holding a reference pointer so that the
-					// subsequent VariableDecl reference-initialization uses MOV
-					// (load the stored pointer) rather than LEA (take address).
-					setReferenceInfo(stack_offset, catch_op.exception_type,
-					                 64,  // The slot holds a 64-bit pointer
-					                 catch_op.is_rvalue_reference(),
-					                 catch_op.exception_temp);
-				} else {
-					// Non-reference catch: __cxa_begin_catch returns a pointer to the
-					// exception object. Store the pointer and mark the slot as a
-					// reference so VarDecl's struct-copy path dereferences it when
-					// initializing the catch variable (e.g., `catch (MyEx e)`).
-					// For built-in scalar types, dereference directly here since
-					// VarDecl does not use setReferenceInfo for small PODs.
-					int type_size_bits = 0;
-					bool is_builtin = false;
-					switch (catch_op.exception_type) {
-						case Type::Bool:
-						case Type::Char:
-						case Type::UnsignedChar:
-						case Type::Short:
-						case Type::UnsignedShort:
-						case Type::Int:
-						case Type::UnsignedInt:
-						case Type::Long:
-						case Type::UnsignedLong:
-						case Type::LongLong:
-						case Type::UnsignedLongLong:
-						case Type::Float:
-						case Type::Double:
-						case Type::LongDouble:
-						case Type::FunctionPointer:
-						case Type::MemberFunctionPointer:
-						case Type::MemberObjectPointer:
-						case Type::Nullptr:
-							is_builtin = true;
-							break;
-						default:
-							is_builtin = false;
-							break;
-					}
-					
-					if (is_builtin) {
-						type_size_bits = get_type_size_bits(catch_op.exception_type);
-					} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
-						type_size_bits = type_info.type_size_;
-					}
-					size_t type_size = type_size_bits / 8;
-
-					if (g_enable_debug_output) {
-						std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exception_type)
-						          << " type_size_bits=" << type_size_bits
-						          << " type_size=" << type_size << std::endl;
-					}
-
-					if (is_builtin && type_size <= 8 && type_size > 0) {
-						// Small scalar POD: dereference directly and store value
-						if (g_enable_debug_output) {
-							std::cerr << "[DEBUG][Codegen] CatchBegin: dereferencing exception value" << std::endl;
-						}
-						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
-						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
-					} else {
-						// Struct or large type: store the pointer and let VarDecl
-						// dereference it via the reference_stack_info_ mechanism.
-						if (g_enable_debug_output) {
-							std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (struct/large type)" << std::endl;
-						}
-						emitMovToFrame(X64Register::RAX, stack_offset, 64);
-						// Mark this slot so VarDecl's struct-copy path dereferences it.
-						// type_size_bits may be 0 if the type was not found in gTypeInfo
-						// (e.g., a forward-declared type). Using 64 as a fallback is safe
-						// because this field in ReferenceInfo is used as a hint to select
-						// between MOV and LEA — it does not control the actual copy size
-						// (that comes from the VarDecl initializer's own size_in_bits).
-						setReferenceInfo(stack_offset, catch_op.exception_type,
-						                 type_size_bits > 0 ? type_size_bits : 64,
-						                 false,
-						                 catch_op.exception_temp);
-					}
-				}
-			}
+				// Result in RAX is pointer to the actual exception object.
+				// Materialize it explicitly so catch variable handling stays uniform.
+				materializeCatchObjectFromRax(catch_op);
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
@@ -303,14 +307,14 @@
 			catch_funclet_terminated_by_return_ = false;
 			current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
 
-				// Windows FH3 materializes the catch object into the dispCatchObj slot.
-				// For reference catches, that slot holds a pointer to the exception object,
-				// so later VariableDecl handling must load/dereference it instead of taking
-				// the address of the slot itself.
-				if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
-					int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
-					setReferenceInfo(stack_offset, catch_op.exception_type, 64, false, catch_op.exception_temp);
-				}
+					// Windows FH3 materializes the catch object into the dispCatchObj slot.
+					// For reference catches, that slot holds a pointer to the exception object,
+					// so later VariableDecl handling must load/dereference it instead of taking
+					// the address of the slot itself.
+					if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
+						int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+						setReferenceInfo(stack_offset, catch_op.exception_type, 64, false, catch_op.exception_temp);
+					}
 
 					if (current_catch_handler_) {
 						current_catch_handler_->handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
@@ -355,32 +359,48 @@
 			// After the funclet ret, emit a fixup stub for the catch continuation path.
 			flushAllDirtyRegisters();
 
-			StringHandle continuation_handle;
-			StringHandle fixup_handle;
-			bool has_continuation = false;
+				StringHandle continuation_handle;
+				StringHandle fixup_handle;
+				bool has_continuation = false;
 
-			if (instruction.hasTypedPayload()) {
-				const auto& catch_end_op = instruction.getTypedPayload<CatchEndOp>();
-				continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
-				has_continuation = true;
+				if (instruction.hasTypedPayload()) {
+					const auto& catch_end_op = instruction.getTypedPayload<CatchEndOp>();
+					continuation_handle = StringTable::getOrInternStringHandle(catch_end_op.continuation_label);
+					has_continuation = true;
+					fixup_handle = getOrCreateCatchContinuationFixupLabel(continuation_handle);
 
-				// Create a unique fixup label for the catch continuation entry point.
-				std::string fixup_name = "__catch_fixup_" + std::to_string(textSectionData.size());
-				fixup_handle = StringTable::getOrInternStringHandle(fixup_name);
+					// Multiple catch handlers in the same try block can share one continuation
+					// fixup stub. Reserve both return spill slots before emitting the first stub
+					// so a later handler with `return` cannot reuse a stub that omitted the
+					// return-flag / return-value path.
+					ensureCatchFuncletReturnSlot();
+					ensureCatchFuncletReturnFlagSlot();
 
-				// LEA RAX, [fixup_label] — return fixup entry address to the CRT
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x8D);
-				textSectionData.push_back(0x05);
-				uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				pending_branches_.push_back({fixup_handle, lea_patch});
-			} else {
-				emitXorRegReg(X64Register::RAX);
-			}
+					// Normal catch fallthrough must not inherit a stale catch-return flag.
+					// The flag is only meaningful when a return statement inside the catch body
+					// explicitly sets it and terminates the funclet early. If we reach CatchEnd,
+					// we know the catch is continuing normally, so clear the flag now before
+					// returning the continuation address to the CRT.
+					emitXorRegReg(X64Register::RCX);
+					emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+
+					// LEA RAX, [fixup_label] — return fixup entry address to the CRT
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x8D);
+					textSectionData.push_back(0x05);
+					uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					pending_branches_.push_back({fixup_handle, lea_patch});
+				} else {
+					if (catch_funclet_return_flag_slot_offset_ != 0) {
+						emitXorRegReg(X64Register::RCX);
+						emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+					}
+					emitXorRegReg(X64Register::RAX);
+				}
 
 			// Funclet epilogue
 			emitAddRSP(32);
@@ -397,21 +417,68 @@
 			// the establisher frame = RSP_after_prologue = S-8-N.
 			// After _JumpToContinuation: RSP = S-8-N (fully allocated frame).
 			// We just need to restore RBP (corrupted by CRT) and jump to normal code.
-			if (has_continuation) {
+			if (has_continuation && label_positions_.find(fixup_handle) == label_positions_.end()) {
 				// Define the fixup label position
 				label_positions_[fixup_handle] = static_cast<uint32_t>(textSectionData.size());
 
-				// LEA RBP, [RSP + total_stack] — restore frame pointer
+					// Reserve 7 bytes for a placeholder instruction sequence.
+					// _JumpToContinuation already resumes with RSP at the function's fully
+					// allocated stack depth, so the continuation fixup must NOT apply the
+					// post-frame extra stack allocation a second time.
+					// We keep the 7-byte footprint so later patching can uniformly replace it
+					// with a NOP bundle without disturbing label-relative layout.
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x81); // SUB imm32
+				textSectionData.push_back(0xEC); // RSP
+				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+
+				// LEA RBP, [RSP + total_stack] — restore frame pointer after the extra
+				// allocation (if any) has been reinstated.
 				// Encoding: 48 8D AC 24 XX XX XX XX (patched at function end with total_stack)
-				catch_continuation_sub_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()) + 4);
 				textSectionData.push_back(0x48); // REX.W
 				textSectionData.push_back(0x8D); // LEA
 				textSectionData.push_back(0xAC); // ModR/M: mod=10, reg=101(RBP), r/m=100(SIB)
 				textSectionData.push_back(0x24); // SIB: base=RSP, index=none
+				catch_continuation_lea_rbp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
 				textSectionData.push_back(0x00); // disp32 placeholder
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
+
+				if (catch_funclet_return_flag_slot_offset_ != 0) {
+					emitMovFromFrameBySize(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+					emitTestRegReg(X64Register::RCX);
+
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x84);
+					uint32_t skip_return_patch = static_cast<uint32_t>(textSectionData.size());
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+
+					emitXorRegReg(X64Register::RCX);
+					emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+					if (catch_funclet_return_slot_offset_ != 0) {
+						emitMovFromFrame(X64Register::RAX, catch_funclet_return_slot_offset_);
+					}
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x89);
+					textSectionData.push_back(0xEC);
+					textSectionData.push_back(0x5D);
+					textSectionData.push_back(0xC3);
+
+					uint32_t skip_return_target = static_cast<uint32_t>(textSectionData.size());
+					int32_t skip_rel = static_cast<int32_t>(skip_return_target) - static_cast<int32_t>(skip_return_patch + 4);
+					textSectionData[skip_return_patch + 0] = static_cast<uint8_t>(skip_rel & 0xFF);
+					textSectionData[skip_return_patch + 1] = static_cast<uint8_t>((skip_rel >> 8) & 0xFF);
+					textSectionData[skip_return_patch + 2] = static_cast<uint8_t>((skip_rel >> 16) & 0xFF);
+					textSectionData[skip_return_patch + 3] = static_cast<uint8_t>((skip_rel >> 24) & 0xFF);
+				}
 
 				// jmp continuation_label  (E9 xx xx xx xx) — join normal code path
 				textSectionData.push_back(0xE9);
@@ -455,8 +522,14 @@
 		// Round exception size up to 8-byte alignment
 		size_t aligned_exception_size = (exception_size + 7) & ~7;
 		
-		// Platform-specific exception handling
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			const StructTypeInfo* thrown_exception_struct_info = nullptr;
+			if (throw_op.type_index < gTypeInfo.size()) {
+				const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
+				thrown_exception_struct_info = thrown_type_info.getStructInfo();
+			}
+
+			// Platform-specific exception handling
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
 			// Two-step process:
 			// 1. Call __cxa_allocate_exception(size_t thrown_size) -> returns void*
@@ -476,8 +549,21 @@
 			// Save it to R15 (callee-saved register)
 			emitMovRegReg(X64Register::R15, X64Register::RAX);
 			
-			// Step 2: Copy exception object to allocated memory
-			if (exception_size <= 8) {
+				bool exception_constructed = false;
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0) {
+					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
+					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
+
+					TypedValue source_value;
+					source_value.type = throw_op.exception_type;
+					source_value.size_in_bits = static_cast<int>(exception_size * 8);
+					source_value.type_index = throw_op.type_index;
+					source_value.value = throw_op.exception_value;
+					exception_constructed = emitEhCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
+				}
+
+				// Step 2: Copy/construct exception object in allocated memory
+				if (!exception_constructed && exception_size <= 8) {
 				// Small object: load value into RCX and store to [R15]
 				// Use IrValue variant to handle TempVar, integer literal, or float literal
 				if (std::holds_alternative<double>(throw_op.exception_value)) {
@@ -504,6 +590,14 @@
 					} else {
 						emitMovImm64(X64Register::RCX, 0);
 					}
+					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
+						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
+						const VariableInfo* source_info = findVariableInfo(source_name);
+						if (source_info) {
+							emitMovFromFrameBySize(X64Register::RCX, source_info->offset, static_cast<int>(exception_size * 8));
+						} else {
+							emitMovImm64(X64Register::RCX, 0);
+						}
 				} else {
 					// StringHandle is not a valid exception value type - IrValue includes it for
 					// other contexts (like variable names), but throw expressions only use TempVar
@@ -512,7 +606,7 @@
 				}
 				// Store exception value to allocated memory [R15 + 0]
 				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::R15, 0, static_cast<int>(exception_size));
-			} else {
+				} else if (!exception_constructed) {
 				// Large object: memory-to-memory copy (must be TempVar)
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					TempVar temp = std::get<TempVar>(throw_op.exception_value);
@@ -522,6 +616,14 @@
 					} else {
 						emitXorRegReg(X64Register::RSI);
 					}
+					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
+						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
+						const VariableInfo* source_info = findVariableInfo(source_name);
+						if (source_info) {
+							emitLeaFromFrame(X64Register::RSI, source_info->offset);
+						} else {
+							emitXorRegReg(X64Register::RSI);
+						}
 				} else {
 					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 					emitXorRegReg(X64Register::RSI);
@@ -533,7 +635,7 @@
 				// Copy: rep movsb
 				emitRepMovsb();
 			}
-			
+
 			// Step 3: Call __cxa_throw(thrown_object, tinfo, destructor)
 			// RDI = thrown_object (from __cxa_allocate_exception, now in R15)
 			emitMovRegReg(X64Register::RDI, X64Register::R15);
@@ -542,14 +644,10 @@
 			std::string typeinfo_symbol;
 			Type exception_type = throw_op.exception_type;
 			
-			// Check if it's a built-in type or user-defined type
-			if (exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
-				// User-defined class type - look up struct info from type_index
-				const TypeInfo& type_info = gTypeInfo[throw_op.type_index];
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (struct_info) {
-					typeinfo_symbol = writer.get_or_create_class_typeinfo(StringTable::getStringView(struct_info->getName()));
-				}
+				// Check if it's a built-in type or user-defined type
+				if (thrown_exception_struct_info) {
+					// Use hierarchy-aware overload so derived exceptions get __si/__vmi typeinfo
+					typeinfo_symbol = writer.get_or_create_class_typeinfo(thrown_exception_struct_info);
 			} else if (exception_type != Type::Void) {
 				// Built-in type (int, float, etc.) - use the Type enum directly
 				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
@@ -567,12 +665,8 @@
 			// pass the complete-object destructor so __cxa_end_catch can call it when
 			// the exception object's refcount reaches zero).
 			std::string destructor_symbol;
-			if (exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
-				const TypeInfo& ti_ref = gTypeInfo[throw_op.type_index];
-				const StructTypeInfo* si = ti_ref.getStructInfo();
-				if (si) {
-					destructor_symbol = buildDestructorMangledName(*si);
-				}
+				if (thrown_exception_struct_info) {
+					destructor_symbol = buildDestructorMangledName(*thrown_exception_struct_info);
 			}
 			if (!destructor_symbol.empty()) {
 				emitLeaRipRelativeWithRelocation(X64Register::RDX, destructor_symbol);
@@ -606,8 +700,18 @@
 				}
 			}
 
-			// Copy exception object to frame slot at [RBP+throw_slot_offset]
-			if (exception_size <= 8) {
+				bool exception_constructed = false;
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0) {
+					TypedValue source_value;
+					source_value.type = throw_op.exception_type;
+					source_value.size_in_bits = static_cast<int>(exception_size * 8);
+					source_value.type_index = throw_op.type_index;
+					source_value.value = throw_op.exception_value;
+					exception_constructed = emitEhCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
+				}
+
+				// Copy/construct exception object to frame slot at [RBP+throw_slot_offset]
+				if (!exception_constructed && exception_size <= 8) {
 				// Small object: load into RAX and store
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					TempVar temp = std::get<TempVar>(throw_op.exception_value);
@@ -617,6 +721,14 @@
 					} else {
 						emitMovImm64(X64Register::RAX, 0);
 					}
+					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
+						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
+						const VariableInfo* source_info = findVariableInfo(source_name);
+						if (source_info) {
+							emitMovFromFrameBySize(X64Register::RAX, source_info->offset, static_cast<int>(exception_size * 8));
+						} else {
+							emitMovImm64(X64Register::RAX, 0);
+						}
 				} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
 					emitMovImm64(X64Register::RAX, std::get<unsigned long long>(throw_op.exception_value));
 				} else if (std::holds_alternative<double>(throw_op.exception_value)) {
@@ -634,7 +746,7 @@
 					emitMovImm64(X64Register::RAX, 0);
 				}
 				emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
-			} else {
+				} else if (!exception_constructed) {
 				// Large object: use memory-to-memory copy (must be TempVar)
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					TempVar temp = std::get<TempVar>(throw_op.exception_value);
@@ -644,6 +756,14 @@
 					} else {
 						emitXorRegReg(X64Register::RSI);
 					}
+					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
+						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
+						const VariableInfo* source_info = findVariableInfo(source_name);
+						if (source_info) {
+							emitLeaFromFrame(X64Register::RSI, source_info->offset);
+						} else {
+							emitXorRegReg(X64Register::RSI);
+						}
 				} else {
 					emitXorRegReg(X64Register::RSI);
 				}
@@ -652,27 +772,26 @@
 				emitRepMovsb();
 			}
 
-			// Set up arguments for _CxxThrowException
-			// RCX (first argument) = pointer to exception object on the frame
-			emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
-			// RDX (second argument) = pointer to _ThrowInfo metadata
+				// Set up arguments for _CxxThrowException
+				// RCX (first argument) = pointer to exception object on the frame
+				emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
+				// RDX (second argument) = pointer to _ThrowInfo metadata
 				std::string throw_type_name;
 				std::string throw_destructor_symbol;
-			if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
-					const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
-					throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
-					if (const StructTypeInfo* thrown_struct_info = thrown_type_info.getStructInfo()) {
+					const StructTypeInfo* thrown_struct_info = thrown_exception_struct_info;
+					if (thrown_struct_info && throw_op.type_index < gTypeInfo.size()) {
+						const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
+						throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
 						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
-					}
-			} else {
-				throw_type_name = std::string(getTypeName(throw_op.exception_type));
-			}
+				} else {
+					throw_type_name = std::string(getTypeName(throw_op.exception_type));
+				}
 
-			std::string throw_info_symbol;
-			if (!throw_type_name.empty() && throw_type_name != "void") {
-				bool is_simple_type = (throw_op.exception_type != Type::Struct);
-					throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type, throw_destructor_symbol);
-			}
+				std::string throw_info_symbol;
+				if (!throw_type_name.empty() && throw_type_name != "void") {
+						bool is_simple_type = (thrown_struct_info == nullptr);
+					throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type, throw_destructor_symbol, thrown_struct_info);
+				}
 
 			if (!throw_info_symbol.empty()) {
 				emitLeaRipRelativeWithRelocation(X64Register::RDX, throw_info_symbol);
@@ -731,9 +850,10 @@
 	// Funclet prologue helper: LEA RBP, [RDX + disp32] with deferred patch
 	// ============================================================================
 
-	// Emits REX.W LEA RBP, [RDX+disp32] with a zero placeholder and records the
-	// instruction offset so it can be patched later with the parent function's
-	// total_stack value.  Used by both catch funclet and cleanup funclet prologues.
+		// Emits REX.W LEA RBP, [RDX+disp32] with a zero placeholder and records the
+		// instruction offset so it can be patched later with the effective EH frame
+		// size used by catch/cleanup funclets. Used by both catch funclet and cleanup
+		// funclet prologues.
 	void emitFuncletLeaRbpFromRdx(std::vector<uint32_t>& patch_list) {
 		// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
 		patch_list.push_back(static_cast<uint32_t>(textSectionData.size()));
@@ -935,7 +1055,8 @@
 	// ============================================================================
 		// ELF-only: "no catch matched" marker — emitted before handlers_end_label.
 		// Generates code that loads the saved exception pointer and jumps to the
-		// function's cleanup LP (which calls local dtors then _Unwind_Resume).
+		// function's cleanup LP (which calls local dtors, then either resumes
+		// unwinding or terminates for noexcept functions).
 		// The LSDA is also patched (via has_cleanup) so the personality enters this
 		// landing pad during phase-2 when no typed catch handler matches.
 		// ============================================================================
@@ -962,13 +1083,13 @@
 		}
 
 		// ============================================================================
-	// Phase 2: Function-level cleanup landing pad (ELF/Linux only)
-	// ============================================================================
+		// Phase 2: Function-level cleanup landing pad (ELF/Linux only)
+		// ============================================================================
 
-	void handleFunctionCleanupLP(const IrInstruction& instruction) {
-		if (!g_enable_exceptions) return;
+		void handleFunctionCleanupLP(const IrInstruction& instruction) {
+			if (!g_enable_exceptions) return;
 
-		const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
+			const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
 
 			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 				if (!op.cleanup_vars.empty()) {
@@ -985,34 +1106,38 @@
 			}
 
 			if (op.cleanup_vars.empty()) {
-				// No local dtors — just call _Unwind_Resume with the exception pointer in RAX.
+				if (current_function_is_noexcept_) {
+					current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+				}
+
+				// No local dtors — tail directly to the appropriate exception-escape helper.
 				// MOV RDI, RAX  (RAX = _Unwind_Exception* set by either path above)
 				emitMovRegReg(X64Register::RDI, X64Register::RAX);
-				emitCall("_Unwind_Resume");
+				emitCall(current_function_is_noexcept_ ? "__cxa_call_terminate" : "_Unwind_Resume");
 				return;
 			}
 
-		// Record the offset of this cleanup landing pad within the function
-		current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			// Record the offset of this cleanup landing pad within the function
+			current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
-		// Flush any dirty virtual registers before the LP code
-		flushAllDirtyRegisters();
+			// Flush any dirty virtual registers before the LP code
+			flushAllDirtyRegisters();
 
-		// Allocate a frame slot to save the _Unwind_Exception* arriving in RAX
-		int32_t exc_save_offset = allocateElfTempStackSlot(8);
+			// Allocate a frame slot to save the _Unwind_Exception* arriving in RAX
+			int32_t exc_save_offset = allocateElfTempStackSlot(8);
 
-		// Save _Unwind_Exception* (RAX) to frame slot
-		emitMovToFrame(X64Register::RAX, exc_save_offset, 64);
+			// Save _Unwind_Exception* (RAX) to frame slot
+			emitMovToFrame(X64Register::RAX, exc_save_offset, 64);
 
-		// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
-		for (const auto& cv : op.cleanup_vars) {
-			emitInlineDestructorCall(cv);
+			// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
+			for (const auto& cv : op.cleanup_vars) {
+				emitInlineDestructorCall(cv);
+			}
+
+			// Load saved exception ptr into RDI (first arg on Linux) and continue exception escape.
+			emitMovFromFrameBySize(X64Register::RDI, exc_save_offset, 64);
+			emitCall(current_function_is_noexcept_ ? "__cxa_call_terminate" : "_Unwind_Resume");
 		}
-
-		// Load saved exception ptr into RDI (first arg on Linux) and call _Unwind_Resume
-		emitMovFromFrameBySize(X64Register::RDI, exc_save_offset, 64);
-		emitCall("_Unwind_Resume");
-	}
 
 	// ============================================================================
 	// Windows SEH (Structured Exception Handling) Handlers

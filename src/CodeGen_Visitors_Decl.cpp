@@ -191,6 +191,26 @@
 		func_decl_op.linkage = node.linkage();
 		func_decl_op.is_variadic = node.is_variadic();
 		func_decl_op.is_static_member = node.is_static();
+		// Evaluate the noexcept specifier properly:
+		// bare `noexcept` → true; `noexcept(false)` → false; `noexcept(true)` → true.
+		// For explicit `noexcept(expr)`, evaluate the stored constant-expression AST and
+		// fall back conservatively to "potentially throwing" if evaluation fails.
+		// Leave implicit/synthesized special members on their existing parser-computed
+		// noexcept bit until the constexpr evaluator supports every synthesized form.
+		{
+			bool is_truly_noexcept = node.is_noexcept();
+			if (is_truly_noexcept && node.has_noexcept_expression() && !node.is_implicit()) {
+				ConstExpr::EvaluationContext ctx(symbol_table);
+				if (global_symbol_table_) {
+					ctx.global_symbols = global_symbol_table_;
+				}
+				ctx.parser = parser_;
+
+				auto eval_result = ConstExpr::Evaluator::evaluate(*node.noexcept_expression(), ctx);
+				is_truly_noexcept = eval_result.success() && eval_result.as_bool();
+			}
+			func_decl_op.is_noexcept = is_truly_noexcept;
+		}
 		
 		// Member functions defined inside the class body are implicitly inline (C++ standard)
 		// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
