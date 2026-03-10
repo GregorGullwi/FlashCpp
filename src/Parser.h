@@ -885,7 +885,13 @@ public:  // Public methods for template instantiation
 		const ASTNode& node,
 		const InlineVector<ASTNode, 4>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args
-	);private:  // Resume private methods
+		);
+
+		// Helper to extract type from an expression for overload resolution.
+		// Public so codegen/constexpr consumers can reuse the parser's type deduction.
+		std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
+
+	private:  // Resume private methods
 		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
 		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
 		void substituteFunctionCallExtras(
@@ -933,6 +939,7 @@ public:  // Public methods for template instantiation
         bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;  // Check if two types are compatible
         std::string type_to_string(const TypeSpecifierNode& type) const;  // Convert type to string for error messages
         // Note: Use global ::get_type_size_bits() from AstNodeTypes.h for type sizes
+		int getStructTypeSizeBits(TypeIndex type_index) const;
         
         // Helper functions for std::initializer_list support
         // Check if a type is std::initializer_list<T>, returns element type index if so
@@ -1090,9 +1097,6 @@ public:  // Public methods for template instantiation
         std::string buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const;
         int get_operator_precedence(const std::string_view& op);
         std::optional<size_t> parse_alignas_specifier();  // Parse alignas(n) and return alignment value
-
-        // Helper to extract type from an expression for overload resolution
-        std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
 
         // Check if an identifier name is a template parameter in current scope
         bool is_template_parameter(std::string_view name) const;

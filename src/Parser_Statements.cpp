@@ -1402,7 +1402,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
 				Type::Struct, type_index, 
-				static_cast<unsigned char>(struct_info.total_size * 8),
+					getStructTypeSizeBits(type_index),
 				brace_token
 			);
 			
@@ -1417,176 +1417,263 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return ParseResult::error("Could not determine initializer_list element type", brace_token);
 	}
 
-	// Check if this struct has constructors and no data members (or not enough for aggregate init)
-	// In this case, we should use constructor initialization rather than aggregate initialization
-	// This handles patterns like: inline constexpr nullopt_t nullopt { nullopt_t::_Construct::_Token };
-	if (struct_info.members.empty()) {
-		// No data members - must use constructor initialization
-		// Parse all the brace elements first
-		std::vector<ASTNode> elements;
-		Token brace_token = current_token_;  // Save location for error reporting
+		// If the type has user-declared constructors, brace-init must perform constructor
+		// overload resolution rather than falling through to aggregate initialization.
+		// Also keep the old member-less special case: those cannot be aggregate-initialized
+		// meaningfully and must use constructor initialization too.
+		// This handles patterns like:
+		//   inline constexpr nullopt_t nullopt { nullopt_t::_Construct::_Token };
+		//   Widget w{42};  // when Widget has a user-declared constructor
+		if (struct_info.members.empty() || struct_info.hasUserDefinedConstructor()) {
+			// Must use constructor initialization here.
+			// Parse all the brace elements first
+			std::vector<ASTNode> elements;
+			Token brace_token = current_token_;  // Save location for error reporting
 		
-		while (true) {
-			// Check if we've reached the end of the initializer list
-			if (peek() == "}"_tok) {
-				break;
-			}
-			
-			// Parse the initializer expression
-			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
-			if (init_expr_result.is_error()) {
-				return init_expr_result;
-			}
-			
-			if (init_expr_result.node().has_value()) {
-				elements.push_back(*init_expr_result.node());
-			} else {
-				return ParseResult::error("Expected initializer expression", current_token_);
-			}
-			
-			// Check for comma or end of list
-			if (peek() == ","_tok) {
-				advance(); // consume the comma
-				
-				// Allow trailing comma before '}'
+			while (true) {
+				// Check if we've reached the end of the initializer list
 				if (peek() == "}"_tok) {
 					break;
 				}
-			} else {
-				// No comma, so we should be at the end
-				break;
-			}
-		}
-		
-		if (!consume("}"_tok)) {
-			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
-		}
-		
-		// Check if there's a constructor that matches the argument count and types
-		bool found_matching_ctor = false;
-		auto ctor_candidates = struct_info.getConstructorsByParameterCount(elements.size(), false);
-		for (const auto* member_func : ctor_candidates) {
-			if (!member_func || !member_func->function_decl.has_value()) continue;
 			
-			// Get parameters from constructor
-			const std::vector<ASTNode>* params = nullptr;
-			if (member_func->function_decl.is<ConstructorDeclarationNode>()) {
-				params = &member_func->function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
-			} else if (member_func->function_decl.is<FunctionDeclarationNode>()) {
-				params = &member_func->function_decl.as<FunctionDeclarationNode>().parameter_nodes();
-			}
-			
-			if (!params || params->size() != elements.size()) {
-				continue;
-			}
-			
-			// Match parameter types with argument types
-			bool types_match = true;
-			for (size_t i = 0; i < params->size() && types_match; ++i) {
-				const ASTNode& param_node = (*params)[i];
-				const ASTNode& arg_node = elements[i];
-				
-				// Get parameter type
-				const TypeSpecifierNode* param_type = nullptr;
-				if (param_node.is<VariableDeclarationNode>()) {
-					const VariableDeclarationNode& var = param_node.as<VariableDeclarationNode>();
-					if (var.declaration().type_node().is<TypeSpecifierNode>()) {
-						param_type = &var.declaration().type_node().as<TypeSpecifierNode>();
-					}
-				} else if (param_node.is<DeclarationNode>()) {
-					const DeclarationNode& decl = param_node.as<DeclarationNode>();
-					if (decl.type_node().is<TypeSpecifierNode>()) {
-						param_type = &decl.type_node().as<TypeSpecifierNode>();
-					}
+				// Parse the initializer expression
+				ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+				if (init_expr_result.is_error()) {
+					return init_expr_result;
 				}
+			
+				if (init_expr_result.node().has_value()) {
+					elements.push_back(*init_expr_result.node());
+				} else {
+					return ParseResult::error("Expected initializer expression", current_token_);
+				}
+			
+				// Check for comma or end of list
+				if (peek() == ","_tok) {
+					advance(); // consume the comma
 				
-				if (!param_type) {
-					// Can't determine parameter type - skip type checking for this param
+					// Allow trailing comma before '}'
+					if (peek() == "}"_tok) {
+						break;
+					}
+				} else {
+					// No comma, so we should be at the end
+					break;
+				}
+			}
+		
+			if (!consume("}"_tok)) {
+				return ParseResult::error("Expected '}' to close brace initializer", current_token_);
+			}
+
+			auto make_constructor_call = [&](std::vector<ASTNode>& parsed_elements) -> ParseResult {
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(
+					Type::Struct, type_index,
+					getStructTypeSizeBits(type_index),
+					brace_token
+				);
+
+				ChunkedVector<ASTNode> ctor_args;
+				for (auto& elem : parsed_elements) {
+					ctor_args.push_back(std::move(elem));
+				}
+
+				return ParseResult::success(
+					emplace_node<ExpressionNode>(
+						ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)
+					)
+				);
+			};
+
+			if (struct_info.hasUserDefinedConstructor()) {
+				std::vector<TypeSpecifierNode> arg_types;
+				arg_types.reserve(elements.size());
+				for (const auto& element : elements) {
+					auto arg_type_opt = get_expression_type(element);
+					if (!arg_type_opt.has_value()) {
+						arg_types.clear();
+						break;
+					}
+
+					TypeSpecifierNode arg_type = *arg_type_opt;
+					adjust_argument_type_for_overload_resolution(element, arg_type);
+					arg_types.push_back(std::move(arg_type));
+				}
+
+				if (arg_types.size() == elements.size()) {
+					auto resolution = resolve_constructor_overload(struct_info, arg_types, false);
+					if (resolution.has_match) {
+						return make_constructor_call(elements);
+					}
+					if (resolution.is_ambiguous) {
+						return ParseResult::error("Ambiguous constructor for brace initialization", brace_token);
+					}
+					return ParseResult::error("No matching constructor for brace initialization", brace_token);
+				}
+
+				auto ctor_candidates = struct_info.getConstructorsByParameterCount(elements.size(), false);
+				if (!ctor_candidates.empty()) {
+					return make_constructor_call(elements);
+				}
+
+				return ParseResult::error("No matching constructor for brace initialization", brace_token);
+			}
+
+			// Check if there's a constructor that matches the argument count and types
+			bool found_matching_ctor = false;
+			auto ctor_candidates = struct_info.getConstructorsByParameterCount(elements.size(), false);
+			for (const auto* member_func : ctor_candidates) {
+				if (!member_func || !member_func->function_decl.has_value()) continue;
+
+				// Get parameters from constructor
+				const std::vector<ASTNode>* params = nullptr;
+				if (member_func->function_decl.is<ConstructorDeclarationNode>()) {
+					params = &member_func->function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
+				} else if (member_func->function_decl.is<FunctionDeclarationNode>()) {
+					params = &member_func->function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+				}
+
+				if (!params || params->size() != elements.size()) {
 					continue;
 				}
-				
-				// Get argument type
-				auto arg_type_opt = get_expression_type(arg_node);
-				if (!arg_type_opt.has_value()) {
-					// Can't determine argument type - skip type checking for this param
-					// This handles dependent expressions and complex cases
-					continue;
-				}
-				
-				const TypeSpecifierNode& arg_type = *arg_type_opt;
-				
-				// Compare types (allowing for implicit conversions in some cases)
-				// For enum class types, we need exact match (no implicit conversions)
-				if (param_type->type() == Type::Enum && arg_type.type() == Type::Enum) {
-					// Enum types must match exactly by type_index
-					if (param_type->type_index() != arg_type.type_index()) {
+
+				// Match parameter types with argument types
+				bool types_match = true;
+				for (size_t i = 0; i < params->size() && types_match; ++i) {
+					const ASTNode& param_node = (*params)[i];
+					const ASTNode& arg_node = elements[i];
+
+					// Get parameter type
+					const TypeSpecifierNode* param_type = nullptr;
+					if (param_node.is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var = param_node.as<VariableDeclarationNode>();
+						if (var.declaration().type_node().is<TypeSpecifierNode>()) {
+							param_type = &var.declaration().type_node().as<TypeSpecifierNode>();
+						}
+					} else if (param_node.is<DeclarationNode>()) {
+						const DeclarationNode& decl = param_node.as<DeclarationNode>();
+						if (decl.type_node().is<TypeSpecifierNode>()) {
+							param_type = &decl.type_node().as<TypeSpecifierNode>();
+						}
+					}
+
+					if (!param_type) {
+						// Can't determine parameter type - skip type checking for this param
+						continue;
+					}
+
+					// Get argument type
+					auto arg_type_opt = get_expression_type(arg_node);
+					if (!arg_type_opt.has_value()) {
+						// Can't determine argument type - skip type checking for this param
+						// This handles dependent expressions and complex cases
+						continue;
+					}
+
+					const TypeSpecifierNode& arg_type = *arg_type_opt;
+
+					// Compare types (allowing for implicit conversions in some cases)
+					// For enum class types, we need exact match (no implicit conversions)
+					if (param_type->type() == Type::Enum && arg_type.type() == Type::Enum) {
+						// Enum types must match exactly by type_index
+						if (param_type->type_index() != arg_type.type_index()) {
+							types_match = false;
+						}
+					} else if (param_type->type() != arg_type.type()) {
+						// Different base types - check for compatible integer/enum types
+						// Allow enum -> int conversions for scoped enums passed as their underlying type
+						bool compatible = false;
+						if (arg_type.type() == Type::Enum &&
+							(param_type->type() == Type::Int || param_type->type() == Type::UnsignedInt ||
+							 param_type->type() == Type::Long || param_type->type() == Type::UnsignedLong)) {
+							// Enum to integer conversion (for scoped enum underlying type)
+							compatible = true;
+						}
+						if (!compatible) {
+							types_match = false;
+						}
+					} else if (param_type->type() == Type::UserDefined || param_type->type() == Type::Struct) {
+						// For user-defined/struct types, check type_index
+						if (param_type->type_index() != arg_type.type_index()) {
+							types_match = false;
+						}
+					}
+
+					// Check pointer depth - must match exactly
+					if (types_match && param_type->pointer_depth() != arg_type.pointer_depth()) {
 						types_match = false;
 					}
-				} else if (param_type->type() != arg_type.type()) {
-					// Different base types - check for compatible integer/enum types
-					// Allow enum -> int conversions for scoped enums passed as their underlying type
-					bool compatible = false;
-					if (arg_type.type() == Type::Enum && 
-					    (param_type->type() == Type::Int || param_type->type() == Type::UnsignedInt ||
-					     param_type->type() == Type::Long || param_type->type() == Type::UnsignedLong)) {
-						// Enum to integer conversion (for scoped enum underlying type)
-						compatible = true;
-					}
-					if (!compatible) {
-						types_match = false;
-					}
-				} else if (param_type->type() == Type::UserDefined || param_type->type() == Type::Struct) {
-					// For user-defined/struct types, check type_index
-					if (param_type->type_index() != arg_type.type_index()) {
+
+					// Check reference qualifiers - must match exactly
+					if (types_match && param_type->is_reference() != arg_type.is_reference()) {
 						types_match = false;
 					}
 				}
-				
-				// Check pointer depth - must match exactly
-				if (types_match && param_type->pointer_depth() != arg_type.pointer_depth()) {
-					types_match = false;
+
+				if (types_match) {
+					found_matching_ctor = true;
+					break;
 				}
-				
-				// Check reference qualifiers - must match exactly
-				if (types_match && param_type->is_reference() != arg_type.is_reference()) {
-					types_match = false;
 				}
+
+			if (found_matching_ctor) {
+				return make_constructor_call(elements);
 			}
-			
-			if (types_match) {
-				found_matching_ctor = true;
-				break;
-			}
-		}
-		
-		if (found_matching_ctor) {
-			// Create a ConstructorCallNode
-			auto type_spec_node = emplace_node<TypeSpecifierNode>(
-				Type::Struct, type_index, 
-				static_cast<unsigned char>(struct_info.total_size * 8),
-				brace_token
-			);
-			
-			ChunkedVector<ASTNode> ctor_args;
-			for (auto& elem : elements) {
-				ctor_args.push_back(std::move(elem));
-			}
-			
-			return ParseResult::success(
-				emplace_node<ExpressionNode>(
-					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)
-				)
-			);
-		}
-		
-		// No matching constructor and no members - this is an error
-		return ParseResult::error("No matching constructor for brace initialization", brace_token);
+
+			// No matching constructor and no members - this is an error
+			return ParseResult::error("No matching constructor for brace initialization", brace_token);
 	}
 
 	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;
 	bool has_designated = false;  // Track if we've seen any designated initializers
 	std::unordered_set<std::string_view> used_members;  // Track which members have been initialized
+
+		auto parse_nested_member_brace_initializer = [&](const StructMember& target_member) -> ParseResult {
+			TypeSpecifierNode member_type_spec;
+			bool have_member_type_spec = false;
+
+			if (target_member.type_index > 0 && target_member.type_index < gTypeInfo.size()) {
+				const TypeInfo& member_type_info = gTypeInfo[target_member.type_index];
+				if (target_member.type == Type::Struct || target_member.type == Type::UserDefined) {
+					member_type_spec = TypeSpecifierNode(
+						member_type_info.type_,
+						target_member.type_index,
+						member_type_info.type_size_ * 8,
+						Token()
+					);
+				} else {
+					member_type_spec = TypeSpecifierNode(
+						target_member.type,
+						TypeQualifier::None,
+						member_type_info.type_size_ * 8,
+						Token()
+					);
+					member_type_spec.set_type_index(target_member.type_index);
+				}
+				have_member_type_spec = true;
+			} else if (target_member.type != Type::Invalid) {
+				member_type_spec = TypeSpecifierNode(
+					target_member.type,
+					TypeQualifier::None,
+					get_type_size_bits(target_member.type),
+					Token()
+				);
+				have_member_type_spec = true;
+			}
+
+			if (!have_member_type_spec) {
+				FLASH_LOG(Parser, Warning, "Could not determine member type for nested brace initializer, falling back to expression parsing");
+				return parse_expression(2, ExpressionContext::Normal);
+			}
+
+			if (target_member.is_array) {
+				member_type_spec.set_array_dimensions(target_member.array_dimensions);
+			}
+
+			FLASH_LOG(Parser, Debug, "Parsing nested brace initializer with member type spec");
+			return parse_brace_initializer(member_type_spec);
+		};
 
 	while (true) {
 		// Check if we've reached the end of the initializer list
@@ -1638,18 +1725,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			ParseResult init_expr_result;
 			if (peek() == "{"_tok) {
 				FLASH_LOG(Parser, Debug, "Detected nested brace initializer for member: ", member_name);
-				// Create a type specifier for the member's type to properly parse the nested brace initializer
-				if (target_member && target_member->type_index > 0 && target_member->type_index < gTypeInfo.size()) {
-					const TypeInfo& member_type_info = gTypeInfo[target_member->type_index];
-					auto [member_type_node, member_type_ref] = emplace_node_ref<TypeSpecifierNode>(
-						member_type_info.type_, target_member->type_index, member_type_info.type_size_ * 8, Token()
-					);
-					FLASH_LOG(Parser, Debug, "Parsing nested brace initializer with type index: ", target_member->type_index);
-					init_expr_result = parse_brace_initializer(member_type_ref);
-				} else {
-					FLASH_LOG(Parser, Warning, "Could not determine member type for nested brace initializer, falling back to expression parsing");
-					init_expr_result = parse_expression(2, ExpressionContext::Normal);
-				}
+					init_expr_result = parse_nested_member_brace_initializer(*target_member);
 			} else {
 				// Parse the initializer expression with precedence > comma operator (precedence 1)
 				// This prevents comma from being treated as an operator in initializer lists
@@ -1736,18 +1812,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			ParseResult init_expr_result;
 			if (peek() == "{"_tok) {
 				FLASH_LOG(Parser, Debug, "Detected nested brace initializer for positional member at index: ", member_index);
-				// Create a type specifier for the member's type to properly parse the nested brace initializer
-				if (target_member.type_index > 0 && target_member.type_index < gTypeInfo.size()) {
-					const TypeInfo& member_type_info = gTypeInfo[target_member.type_index];
-					auto [member_type_node, member_type_ref] = emplace_node_ref<TypeSpecifierNode>(
-						member_type_info.type_, target_member.type_index, member_type_info.type_size_ * 8, Token()
-					);
-					FLASH_LOG(Parser, Debug, "Parsing nested brace initializer with type index: ", target_member.type_index);
-					init_expr_result = parse_brace_initializer(member_type_ref);
-				} else {
-					FLASH_LOG(Parser, Warning, "Could not determine member type for nested brace initializer, falling back to expression parsing");
-					init_expr_result = parse_expression(2, ExpressionContext::Normal);
-				}
+					init_expr_result = parse_nested_member_brace_initializer(target_member);
 			} else {
 				// Parse the initializer expression with precedence > comma operator (precedence 1)
 				// This prevents comma from being treated as an operator in initializer lists

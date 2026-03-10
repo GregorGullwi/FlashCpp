@@ -68,48 +68,55 @@ struct EvalResult {
 	std::string error_message;
 	EvalErrorType error_type = EvalErrorType::None;
 	
-		// Array support for local arrays in constexpr functions
-		bool is_array = false;
-		std::vector<int64_t> array_values;
-		const VariableDeclarationNode* callable_var_decl = nullptr;
-		const LambdaExpressionNode* callable_lambda = nullptr;
-		std::unordered_map<std::string_view, EvalResult> callable_bindings;
-		TypeIndex object_type_index = 0;
-		std::unordered_map<std::string_view, EvalResult> object_member_bindings;
+	// Array support for local arrays in constexpr functions
+	bool is_array = false;
+	std::vector<EvalResult> array_elements;
+	std::vector<int64_t> array_values;
+	const VariableDeclarationNode* callable_var_decl = nullptr;
+	const LambdaExpressionNode* callable_lambda = nullptr;
+	std::unordered_map<std::string_view, EvalResult> callable_bindings;
+	std::optional<TypeSpecifierNode> exact_type;
+	TypeIndex object_type_index = 0;
+	std::unordered_map<std::string_view, EvalResult> object_member_bindings;
 
 	// Check if evaluation was successful
 	bool success() const {
 		return error_type == EvalErrorType::None;
 	}
 
-		// Convenience constructors
-		static EvalResult from_bool(bool val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	// Convenience constructors
+	static EvalResult from_bool(bool val) {
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_int(long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	static EvalResult from_int(long long val) {
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_uint(unsigned long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	static EvalResult from_uint(unsigned long long val) {
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_double(double val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	static EvalResult from_double(double val) {
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, &var_decl, nullptr, {}, 0, {}};
-		}
+	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, nullptr, &lambda, {}, 0, {}};
-		}
+	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, 0, {}};
+	}
 
-		static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-			return EvalResult{false, msg, type, false, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
+
+	EvalResult& set_exact_type(const TypeSpecifierNode& type) {
+		exact_type = type;
+		return *this;
+	}
 
 	// Convenience helpers for common operations
 	bool as_bool() const {
@@ -197,6 +204,7 @@ struct EvaluationContext {
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
+		std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
 
 	// Template parameter names and arguments for evaluating template-dependent expressions
 	// (e.g., sizeof(T) inside a template member function)
@@ -255,34 +263,57 @@ public:
 		EvaluationContext& context);
 	// Shared helper: bind struct members from an InitializerListNode (aggregate init)
 	// and apply default member initializers for any members not covered by the list.
-	static EvalResult bind_members_from_initializer_list(
-		const StructTypeInfo* struct_info,
-		const InitializerListNode& init_list,
-		std::unordered_map<std::string_view, EvalResult>& bindings,
-		EvaluationContext& context);
-	static EvalResult bind_members_from_constructor_initializers(
-		const StructTypeInfo* struct_info,
-		const ConstructorDeclarationNode& ctor_decl,
-		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
-		std::unordered_map<std::string_view, EvalResult>& member_bindings,
-		EvaluationContext& context,
-		bool ignore_default_initializer_errors);
-	static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
-		const StructTypeInfo* struct_info,
-		const ConstructorDeclarationNode& ctor_decl,
-		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
-		std::string_view member_name,
-		EvaluationContext& context);
-	static EvalResult evaluate_member_array_subscript(
-		const MemberAccessNode& member_access,
-		size_t index,
-		EvaluationContext& context);
-	static EvalResult evaluate_variable_array_subscript(
-		const IdentifierNode& identifier,
-		size_t index,
-		EvaluationContext& context);
-	static bool isArithmeticType(Type type);
-	static bool isFundamentalType(Type type);
+		static EvalResult materialize_aggregate_object_value(
+			const StructTypeInfo* struct_info,
+			TypeIndex type_index,
+			const InitializerListNode& init_list,
+			EvaluationContext& context);
+		static EvalResult materialize_constructor_object_value(
+			const ConstructorCallNode& ctor_call,
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
+			bool ignore_default_initializer_errors = false);
+		static EvalResult materialize_array_value(
+			Type element_type,
+			TypeIndex element_type_index,
+			const InitializerListNode& init_list,
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
+		static EvalResult bind_members_from_initializer_list(
+			const StructTypeInfo* struct_info,
+			const InitializerListNode& init_list,
+			std::unordered_map<std::string_view, EvalResult>& bindings,
+			EvaluationContext& context);
+		static EvalResult bind_members_from_constructor_initializers(
+			const StructTypeInfo* struct_info,
+			const ConstructorDeclarationNode& ctor_decl,
+			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+			std::unordered_map<std::string_view, EvalResult>& member_bindings,
+			EvaluationContext& context,
+			bool ignore_default_initializer_errors);
+		static EvalResult materialize_members_from_constructor(
+			const StructTypeInfo* struct_info,
+			const ConstructorDeclarationNode& ctor_decl,
+			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+			std::unordered_map<std::string_view, EvalResult>& member_bindings,
+			EvaluationContext& context,
+			bool ignore_default_initializer_errors);
+		static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
+			const StructTypeInfo* struct_info,
+			const ConstructorDeclarationNode& ctor_decl,
+			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+			std::string_view member_name,
+			EvaluationContext& context);
+		static EvalResult evaluate_member_array_subscript(
+			const MemberAccessNode& member_access,
+			size_t index,
+			EvaluationContext& context);
+		static EvalResult evaluate_variable_array_subscript(
+			const IdentifierNode& identifier,
+			size_t index,
+			EvaluationContext& context);
+		static bool isArithmeticType(Type type);
+		static bool isFundamentalType(Type type);
 
 	// Helper struct to hold a ConstructorCallNode reference and its type info
 	struct StructObjectInfo {
@@ -308,16 +339,17 @@ private:
 		const StructTypeInfo* owner_struct = nullptr;
 	};
 
-	struct ResolvedCurrentStructStaticInitializer {
-		const std::optional<ASTNode>* initializer = nullptr;
-		bool found = false;
-	};
+		struct ResolvedCurrentStructStaticInitializer {
+			const std::optional<ASTNode>* initializer = nullptr;
+			bool found = false;
+		};
 
-	struct ResolvedConstexprMemberSource {
-		std::optional<ASTNode> initializer;
-		const StructMember* member_info = nullptr;
-		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
-	};
+		struct ResolvedConstexprMemberSource {
+			std::optional<ASTNode> initializer;
+			std::optional<EvalResult> value;
+			const StructMember* member_info = nullptr;
+			std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
+		};
 
 	struct ResolvedMemberFunctionCandidate {
 		const FunctionDeclarationNode* function = nullptr;
@@ -345,7 +377,7 @@ private:
 	static EvalResult evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
-	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
+	static EvalResult evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
 	static bool is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context);
@@ -459,6 +491,24 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 			EvaluationContext& context,
 			std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
+		struct ResolvedBoundEvalResult {
+			const EvalResult* value = nullptr;
+			std::optional<EvalResult> owned_value;
+			std::optional<EvalResult> error;
+		};
+		static ResolvedBoundEvalResult resolve_bound_eval_result(
+			const ASTNode& bound_expr,
+			const std::unordered_map<std::string_view, EvalResult>& bindings,
+			EvaluationContext& context,
+			bool treat_this_as_unbound = false);
+		static std::optional<EvalResult> try_evaluate_bound_member_access(
+			const ExpressionNode& expr,
+			const std::unordered_map<std::string_view, EvalResult>& bindings,
+			EvaluationContext& context);
+		static std::optional<EvalResult> try_evaluate_bound_array_subscript(
+			const ExpressionNode& expr,
+			const std::unordered_map<std::string_view, EvalResult>& bindings,
+			EvaluationContext& context);
 		static std::optional<EvalResult> try_evaluate_bound_member_function_call(
 			const ExpressionNode& expr,
 			const std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -508,9 +558,11 @@ private:
 		EvaluationContext& context,
 		std::string_view usage_name,
 		ResolvedConstexprObject& resolved_object);
-	static const ConstructorDeclarationNode* find_matching_constructor_by_parameter_count(
+		static const ConstructorDeclarationNode* find_matching_constructor(
 		const StructTypeInfo* struct_info,
-		size_t parameter_count);
+			const ChunkedVector<ASTNode>& arguments,
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 
 	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);

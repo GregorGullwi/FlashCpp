@@ -577,14 +577,46 @@
 								if (ctor_type_index < gTypeInfo.size()) {
 									const StructTypeInfo* ctor_struct_info = gTypeInfo[ctor_type_index].getStructInfo();
 									if (ctor_struct_info) {
-										// Find matching constructor
 										const ConstructorDeclarationNode* matching_ctor = nullptr;
-										for (const auto& mf : ctor_struct_info->member_functions) {
-											if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
-											const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-											if (ctor.parameter_nodes().size() == ctor_call.arguments().size()) {
-												matching_ctor = &ctor;
-												break;
+										if (parser_) {
+											std::vector<TypeSpecifierNode> arg_types;
+											arg_types.reserve(ctor_call.arguments().size());
+											for (const auto& arg : ctor_call.arguments()) {
+												auto arg_type_opt = parser_->get_expression_type(arg);
+												if (!arg_type_opt.has_value()) {
+													arg_types.clear();
+													break;
+												}
+												TypeSpecifierNode arg_type = *arg_type_opt;
+												adjust_argument_type_for_overload_resolution(arg, arg_type);
+												arg_types.push_back(std::move(arg_type));
+											}
+											if (arg_types.size() == ctor_call.arguments().size()) {
+												auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
+												if (resolution.is_ambiguous) {
+													throw CompileError("Ambiguous constructor call");
+												}
+												matching_ctor = resolution.selected_overload;
+											}
+										}
+										if (!matching_ctor) {
+											for (const auto& mf : ctor_struct_info->member_functions) {
+												if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
+												const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+												const auto& params = ctor.parameter_nodes();
+												if (ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
+													const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+													if (param_type_node.is<TypeSpecifierNode>()) {
+														const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+														if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
+															continue;
+														}
+													}
+												}
+												if (params.size() == ctor_call.arguments().size()) {
+													matching_ctor = &ctor;
+													break;
+												}
 											}
 										}
 										if (matching_ctor) {

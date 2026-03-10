@@ -1,16 +1,111 @@
 #include "ConstExprEvaluator.h"
+#include "OverloadResolution.h"
 #include <limits>
 
 namespace ConstExpr {
-const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_parameter_count(
+namespace {
+std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value) {
+	if (value.exact_type.has_value()) {
+		return value.exact_type;
+	}
+
+	if (value.object_type_index != TypeIndex{0} && value.object_type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[value.object_type_index];
+		return TypeSpecifierNode(type_info.type_, value.object_type_index, type_info.type_size_);
+	}
+
+	if (std::holds_alternative<bool>(value.value)) {
+		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+	}
+	if (std::holds_alternative<long long>(value.value)) {
+		return TypeSpecifierNode(Type::LongLong, TypeQualifier::None, 64);
+	}
+	if (std::holds_alternative<unsigned long long>(value.value)) {
+		return TypeSpecifierNode(Type::UnsignedLongLong, TypeQualifier::None, 64);
+	}
+	if (std::holds_alternative<double>(value.value)) {
+		return TypeSpecifierNode(Type::Double, TypeQualifier::None, 64);
+	}
+
+	return std::nullopt;
+}
+}
+
+const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 	const StructTypeInfo* struct_info,
-	size_t parameter_count) {
+	const ChunkedVector<ASTNode>& arguments,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	if (!struct_info) {
 		return nullptr;
 	}
 
-	auto ctor_candidates = struct_info->getConstructorsByParameterCount(parameter_count, false);
+	auto ctor_candidates = struct_info->getConstructorsByParameterCount(arguments.size(), false);
 	if (ctor_candidates.empty()) {
+		return nullptr;
+	}
+
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(arguments.size());
+	bool has_all_arg_types = true;
+	for (const auto& argument : arguments) {
+		std::optional<TypeSpecifierNode> arg_type_opt;
+		if (context.parser) {
+			arg_type_opt = context.parser->get_expression_type(argument);
+		}
+
+		if (!arg_type_opt.has_value() && argument.is<ExpressionNode>()) {
+			const ExpressionNode& expr = argument.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr)) {
+				const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
+				if (context.local_bindings) {
+					auto local_it = context.local_bindings->find(identifier.name());
+					if (local_it != context.local_bindings->end()) {
+						arg_type_opt = try_get_type_from_eval_result(local_it->second);
+					}
+				}
+				if (!arg_type_opt.has_value() && outer_bindings) {
+					auto outer_it = outer_bindings->find(identifier.name());
+					if (outer_it != outer_bindings->end()) {
+						arg_type_opt = try_get_type_from_eval_result(outer_it->second);
+					}
+				}
+			}
+		}
+
+		if (!arg_type_opt.has_value()) {
+			has_all_arg_types = false;
+			break;
+		}
+
+		TypeSpecifierNode arg_type = *arg_type_opt;
+		adjust_argument_type_for_overload_resolution(argument, arg_type);
+		arg_types.push_back(std::move(arg_type));
+	}
+
+	if (has_all_arg_types && arg_types.size() == arguments.size()) {
+		auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
+		if (resolution.has_match) {
+			return resolution.selected_overload;
+		}
+		if (resolution.is_ambiguous) {
+			return nullptr;
+		}
+		if (ctor_candidates.size() == 1 && ctor_candidates[0] && ctor_candidates[0]->function_decl.is<ConstructorDeclarationNode>()) {
+			const auto& only_ctor = ctor_candidates[0]->function_decl.as<ConstructorDeclarationNode>();
+			const auto& params = only_ctor.parameter_nodes();
+			bool is_implicit_copy_or_move = false;
+			if (only_ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
+				const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+				if (param_type_node.is<TypeSpecifierNode>()) {
+					const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+					is_implicit_copy_or_move = (param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type());
+				}
+			}
+			if (!is_implicit_copy_or_move) {
+				return &only_ctor;
+			}
+		}
 		return nullptr;
 	}
 
@@ -75,6 +170,50 @@ std::optional<ASTNode> Evaluator::lookup_function_symbol(
 	return symbols.lookup(fallback_name);
 }
 
+namespace {
+	const EvalResult* findLocalBinding(std::string_view name, EvaluationContext& context) {
+		if (!context.local_bindings) {
+			return nullptr;
+		}
+
+		auto it = context.local_bindings->find(name);
+		return it == context.local_bindings->end() ? nullptr : &it->second;
+	}
+
+	EvalResult* findMutableLocalBinding(std::string_view name, EvaluationContext& context) {
+		if (!context.local_bindings) {
+			return nullptr;
+		}
+
+		auto it = context.local_bindings->find(name);
+		return it == context.local_bindings->end() ? nullptr : &it->second;
+	}
+
+	const EvalResult* findBindingValue(
+		std::string_view name,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		if (const EvalResult* local = findLocalBinding(name, context)) {
+			return local;
+		}
+
+		auto it = bindings.find(name);
+		return it == bindings.end() ? nullptr : &it->second;
+	}
+
+	EvalResult* findMutableBindingValue(
+		std::string_view name,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		if (EvalResult* local = findMutableLocalBinding(name, context)) {
+			return local;
+		}
+
+		auto it = bindings.find(name);
+		return it == bindings.end() ? nullptr : &it->second;
+	}
+}
+
 EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	const FunctionCallNode& func_call,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -87,20 +226,17 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		return EvalResult::error("Cannot evaluate function call: no symbol table provided");
 	}
 
-	auto bound_callable = bindings.find(func_name);
-	if (bound_callable != bindings.end() && (bound_callable->second.callable_var_decl || bound_callable->second.callable_lambda)) {
+	const EvalResult* bound_callable = findBindingValue(func_name, bindings, context);
+	if (bound_callable && (bound_callable->callable_var_decl || bound_callable->callable_lambda)) {
 		EvalResult* mutable_bound_callable = nullptr;
 		if (mutable_bindings) {
-			auto mutable_it = mutable_bindings->find(func_name);
-			if (mutable_it != mutable_bindings->end()) {
-				mutable_bound_callable = &mutable_it->second;
-			}
+			mutable_bound_callable = findMutableBindingValue(func_name, *mutable_bindings, context);
 		}
-		if (bound_callable->second.callable_var_decl) {
-			return evaluate_callable_object(*bound_callable->second.callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+		if (bound_callable->callable_var_decl) {
+			return evaluate_callable_object(*bound_callable->callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
 		}
-		return evaluate_lambda_call(*bound_callable->second.callable_lambda, func_call.arguments(), context, &bindings, mutable_bindings,
-			&bound_callable->second.callable_bindings,
+		return evaluate_lambda_call(*bound_callable->callable_lambda, func_call.arguments(), context, &bindings, mutable_bindings,
+			&bound_callable->callable_bindings,
 			mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 	}
 
@@ -187,25 +323,137 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	}
 
 	if (const IdentifierNode* callable_id = extract_callable_identifier()) {
-		auto callable_it = bindings.find(callable_id->name());
-		if (callable_it != bindings.end() && (callable_it->second.callable_var_decl || callable_it->second.callable_lambda)) {
+		const EvalResult* callable_value = findBindingValue(callable_id->name(), bindings, context);
+		if (callable_value && (callable_value->callable_var_decl || callable_value->callable_lambda)) {
 			EvalResult* mutable_bound_callable = nullptr;
 			if (mutable_bindings) {
-				auto mutable_it = mutable_bindings->find(callable_id->name());
-				if (mutable_it != mutable_bindings->end()) {
-					mutable_bound_callable = &mutable_it->second;
-				}
+				mutable_bound_callable = findMutableBindingValue(callable_id->name(), *mutable_bindings, context);
 			}
-			if (callable_it->second.callable_var_decl) {
-				return evaluate_callable_object(*callable_it->second.callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+			if (callable_value->callable_var_decl) {
+				return evaluate_callable_object(*callable_value->callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
 			}
-			return evaluate_lambda_call(*callable_it->second.callable_lambda, member_func_call.arguments(), context, &bindings, mutable_bindings,
-				&callable_it->second.callable_bindings,
+			return evaluate_lambda_call(*callable_value->callable_lambda, member_func_call.arguments(), context, &bindings, mutable_bindings,
+				&callable_value->callable_bindings,
 				mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 		}
 	}
 
 	return std::nullopt;
+}
+
+Evaluator::ResolvedBoundEvalResult Evaluator::resolve_bound_eval_result(
+	const ASTNode& bound_expr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	bool treat_this_as_unbound) {
+	ResolvedBoundEvalResult resolved;
+
+	if (bound_expr.is<IdentifierNode>()) {
+		std::string_view bound_name = bound_expr.as<IdentifierNode>().name();
+		if (treat_this_as_unbound && bound_name == "this") {
+			return resolved;
+		}
+
+		const EvalResult* bound_value = findBindingValue(bound_name, bindings, context);
+		if (!bound_value) {
+			return resolved;
+		}
+
+		resolved.value = bound_value;
+		return resolved;
+	}
+
+	if (bound_expr.is<ExpressionNode>()) {
+		const ExpressionNode& bound_expr_node = bound_expr.as<ExpressionNode>();
+		if (treat_this_as_unbound &&
+			std::holds_alternative<IdentifierNode>(bound_expr_node) &&
+			std::get<IdentifierNode>(bound_expr_node).name() == "this") {
+			return resolved;
+		}
+
+		resolved.owned_value = evaluate_expression_with_bindings_const(bound_expr, bindings, context);
+		if (!resolved.owned_value->success()) {
+			resolved.error = resolved.owned_value;
+			return resolved;
+		}
+
+		resolved.value = &resolved.owned_value.value();
+	}
+
+	return resolved;
+}
+
+std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
+	const ExpressionNode& expr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	if (!std::holds_alternative<MemberAccessNode>(expr)) {
+		return std::nullopt;
+	}
+
+	const auto& member_access = std::get<MemberAccessNode>(expr);
+	const ASTNode& object_expr = member_access.object();
+	ResolvedBoundEvalResult resolved_object = resolve_bound_eval_result(object_expr, bindings, context, true);
+	if (resolved_object.error.has_value()) {
+		return resolved_object.error.value();
+	}
+
+	const EvalResult* object_result = resolved_object.value;
+	if (!object_result || object_result->object_type_index == 0) {
+		return std::nullopt;
+	}
+
+	auto member_it = object_result->object_member_bindings.find(member_access.member_name());
+	if (member_it == object_result->object_member_bindings.end()) {
+		return std::nullopt;
+	}
+
+	return member_it->second;
+}
+
+std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
+	const ExpressionNode& expr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	if (!std::holds_alternative<ArraySubscriptNode>(expr)) {
+		return std::nullopt;
+	}
+
+	const auto& subscript = std::get<ArraySubscriptNode>(expr);
+	auto index_result = evaluate_expression_with_bindings_const(subscript.index_expr(), bindings, context);
+	if (!index_result.success()) {
+		return index_result;
+	}
+
+	long long index = index_result.as_int();
+	if (index < 0) {
+		return EvalResult::error("Negative array index in constant expression");
+	}
+
+	const ASTNode& array_expr = subscript.array_expr();
+	ResolvedBoundEvalResult resolved_array = resolve_bound_eval_result(array_expr, bindings, context);
+	if (resolved_array.error.has_value()) {
+		return resolved_array.error.value();
+	}
+
+	const EvalResult* array_result = resolved_array.value;
+	if (!array_result) {
+		return std::nullopt;
+	}
+	if (!array_result->is_array) {
+		return EvalResult::error("Subscript on non-array variable in constant expression");
+	}
+	if (!array_result->array_elements.empty()) {
+		if (static_cast<size_t>(index) >= array_result->array_elements.size()) {
+			return EvalResult::error("Array index out of bounds in constant expression");
+		}
+		return array_result->array_elements[static_cast<size_t>(index)];
+	}
+	if (static_cast<size_t>(index) >= array_result->array_values.size()) {
+		return EvalResult::error("Array index out of bounds in constant expression");
+	}
+
+	return EvalResult::from_int(array_result->array_values[static_cast<size_t>(index)]);
 }
 
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
@@ -623,44 +871,29 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
-			auto it = bindings.find(id.name());
-			if (it != bindings.end()) return it->second;
+			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
+				return *bound_value;
+			}
 			// fall through to existing logic as safety net
 		}
 
 		std::string_view name = id.name();
 
 		// Check if it's a bound parameter
-		auto it = bindings.find(name);
-		if (it != bindings.end()) {
-			return it->second;  // Return the bound value
+		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
+			return *bound_value;  // Return the bound value
 		}
 		
 		// Not a parameter, evaluate normally
 		return evaluate_identifier(id, context);
 	}
 
-		if (std::holds_alternative<MemberAccessNode>(expr)) {
-			const auto& member_access = std::get<MemberAccessNode>(expr);
-			const ASTNode& object_expr = member_access.object();
-			const IdentifierNode* object_identifier = nullptr;
-			if (object_expr.is<IdentifierNode>()) {
-				object_identifier = &object_expr.as<IdentifierNode>();
-			} else if (object_expr.is<ExpressionNode>()) {
-				const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(object_expr_node)) {
-					object_identifier = &std::get<IdentifierNode>(object_expr_node);
-				}
-			}
-			if (object_identifier && object_identifier->name() != "this") {
-				auto object_it = bindings.find(object_identifier->name());
-				if (object_it != bindings.end() && object_it->second.object_type_index != 0) {
-					auto member_it = object_it->second.object_member_bindings.find(member_access.member_name());
-					if (member_it != object_it->second.object_member_bindings.end()) {
-						return member_it->second;
-					}
-				}
-			}
+		if (auto member_result = try_evaluate_bound_member_access(expr, bindings, context)) {
+			return *member_result;
+		}
+
+		if (auto array_result = try_evaluate_bound_array_subscript(expr, bindings, context)) {
+			return *array_result;
 		}
 	
 	// For binary operators, recursively evaluate with bindings
@@ -680,6 +913,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				//   1. Plain identifier:     x = ...
 				//   2. this->member access:  this->x = ...
 				std::string_view var_name;
+					bool assign_to_member_binding = false;
 				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 					var_name = std::get<IdentifierNode>(lhs_expr).name();
 				} else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
@@ -690,6 +924,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						if (std::holds_alternative<IdentifierNode>(obj_expr) &&
 						    std::get<IdentifierNode>(obj_expr).name() == "this") {
 							var_name = ma.member_name();
+								assign_to_member_binding = true;
 						}
 					}
 				}
@@ -698,18 +933,31 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					// Evaluate the right-hand side
 					auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 					if (!rhs_result.success()) return rhs_result;
+
+						EvalResult* target_binding = nullptr;
+						if (assign_to_member_binding) {
+							auto member_it = bindings.find(var_name);
+							if (member_it != bindings.end()) {
+								target_binding = &member_it->second;
+							}
+						} else {
+							target_binding = findMutableBindingValue(var_name, bindings, context);
+						}
 					
 					// Perform the assignment
 					if (op == "=") {
-						bindings[var_name] = rhs_result;
+							if (target_binding) {
+								*target_binding = rhs_result;
+							} else {
+								bindings[var_name] = rhs_result;
+							}
 						return rhs_result;
 					} else {
 						// Compound assignment - get current value first
-						auto it = bindings.find(var_name);
-						if (it == bindings.end()) {
+							if (!target_binding) {
 							return EvalResult::error("Variable not found for compound assignment: " + std::string(var_name));
 						}
-						EvalResult current = it->second;
+							EvalResult current = *target_binding;
 						
 						// Apply the operation
 						EvalResult new_value;
@@ -726,7 +974,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						}
 						
 						if (!new_value.success()) return new_value;
-						bindings[var_name] = new_value;
+							*target_binding = new_value;
 						return new_value;
 					}
 				}
@@ -759,11 +1007,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					std::string_view var_name = id.name();
 					
 					// Get current value
-					auto it = bindings.find(var_name);
-					if (it == bindings.end()) {
+						EvalResult* target_binding = findMutableBindingValue(var_name, bindings, context);
+						if (!target_binding) {
 						return EvalResult::error("Variable not found for increment/decrement: " + std::string(var_name));
 					}
-					EvalResult current = it->second;
+						EvalResult current = *target_binding;
 					
 					// Calculate new value
 					EvalResult one = EvalResult::from_int(1);
@@ -775,7 +1023,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 					
 					if (!new_value.success()) return new_value;
-					bindings[var_name] = new_value;
+						*target_binding = new_value;
 					
 					// Return old value for postfix, new value for prefix
 					if (unary_op.is_prefix()) {
@@ -854,44 +1102,25 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
-			auto it = bindings.find(id.name());
-			if (it != bindings.end()) return it->second;
+			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
+				return *bound_value;
+			}
 			// fall through to existing logic as safety net
 		}
 
 		std::string_view name = id.name();
 
 		// Check if it's a bound parameter
-		auto it = bindings.find(name);
-		if (it != bindings.end()) {
-			return it->second;  // Return the bound value
+		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
+			return *bound_value;  // Return the bound value
 		}
 		
 		// Not a parameter, evaluate normally
 		return evaluate_identifier(id, context);
 	}
 
-		if (std::holds_alternative<MemberAccessNode>(expr)) {
-			const auto& member_access = std::get<MemberAccessNode>(expr);
-			const ASTNode& object_expr = member_access.object();
-			const IdentifierNode* object_identifier = nullptr;
-			if (object_expr.is<IdentifierNode>()) {
-				object_identifier = &object_expr.as<IdentifierNode>();
-			} else if (object_expr.is<ExpressionNode>()) {
-				const ExpressionNode& object_expr_node = object_expr.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(object_expr_node)) {
-					object_identifier = &std::get<IdentifierNode>(object_expr_node);
-				}
-			}
-			if (object_identifier && object_identifier->name() != "this") {
-				auto object_it = bindings.find(object_identifier->name());
-				if (object_it != bindings.end() && object_it->second.object_type_index != 0) {
-					auto member_it = object_it->second.object_member_bindings.find(member_access.member_name());
-					if (member_it != object_it->second.object_member_bindings.end()) {
-						return member_it->second;
-					}
-				}
-			}
+		if (auto member_result = try_evaluate_bound_member_access(expr, bindings, context)) {
+			return *member_result;
 		}
 	
 	// For binary operators, recursively evaluate with bindings
@@ -960,43 +1189,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 		// Fall through to normal evaluation for non-this member access
 	}
 	
-	// For array subscript (e.g., arr[i] where arr is a parameter)
-	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
-		const auto& subscript = std::get<ArraySubscriptNode>(expr);
-		
-		// Evaluate the index
-		auto index_result = evaluate_expression_with_bindings_const(subscript.index_expr(), bindings, context);
-		if (!index_result.success()) {
-			return index_result;
-		}
-		
-		long long index = index_result.as_int();
-		if (index < 0) {
-			return EvalResult::error("Negative array index in constant expression");
-		}
-		
-		// Get the array expression
-		const ASTNode& array_expr = subscript.array_expr();
-		if (array_expr.is<ExpressionNode>()) {
-			const ExpressionNode& array_expr_node = array_expr.as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(array_expr_node)) {
-				std::string_view var_name = std::get<IdentifierNode>(array_expr_node).name();
-				
-				// Check if it's in bindings (parameter array)
-				auto it = bindings.find(var_name);
-				if (it != bindings.end()) {
-					const EvalResult& array_result = it->second;
-					if (array_result.is_array) {
-						if (static_cast<size_t>(index) >= array_result.array_values.size()) {
-							return EvalResult::error("Array index out of bounds in constant expression");
-						}
-						return EvalResult::from_int(array_result.array_values[static_cast<size_t>(index)]);
-					}
-					return EvalResult::error("Subscript on non-array variable in constant expression");
-				}
-				// Fall through to normal variable lookup
-			}
-		}
+		if (auto array_result = try_evaluate_bound_array_subscript(expr, bindings, context)) {
+			return *array_result;
 	}
 	
 	// For literals and other expressions without parameters, evaluate normally
@@ -1722,6 +1916,10 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		return *member_error;
 	}
 
+	if (resolved_member.value.has_value()) {
+		return resolved_member.value.value();
+	}
+
 	if (!resolved_member.initializer.has_value()) {
 		return EvalResult::error("Internal error: unresolved member source in member access");
 	}
@@ -1849,25 +2047,27 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const auto& ctor_args = ctor_call.arguments();
-	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr " + std::string(usage_name));
 	}
 
-	const ASTNode* member_initializer = nullptr;
+	const StructMember* member_info = find_member_info(struct_info);
+	if (!member_info) {
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in " + std::string(usage_name));
+	}
+	resolved_member.member_info = member_info;
+
+	bool initializer_uses_ctor_bindings = false;
 	for (const auto& mem_init : matching_ctor->member_initializers()) {
 		if (mem_init.member_name == member_name) {
-			member_initializer = &mem_init.initializer_expr;
+			resolved_member.initializer = mem_init.initializer_expr;
+			initializer_uses_ctor_bindings = true;
 			break;
 		}
 	}
-
-	if (auto resolve_error = resolve_explicit_member(struct_info, member_initializer)) {
-		return resolve_error;
-	}
-
-	if (member_initializer == nullptr) {
-		return std::nullopt;
+	if (!resolved_member.initializer.has_value() && member_info->default_initializer.has_value()) {
+		resolved_member.initializer = member_info->default_initializer.value();
 	}
 
 	const auto& params = matching_ctor->parameter_nodes();
@@ -1881,6 +2081,27 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		true);
 	if (!bind_result.success()) {
 		return bind_result;
+	}
+
+	std::unordered_map<std::string_view, EvalResult> member_bindings;
+	auto materialize_result = materialize_members_from_constructor(
+		struct_info,
+		*matching_ctor,
+		resolved_member.evaluation_bindings,
+		member_bindings,
+		context,
+		true);
+	if (!materialize_result.success()) {
+		return materialize_result;
+	}
+
+	auto member_it = member_bindings.find(member_name);
+	if (member_it == member_bindings.end()) {
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in " + std::string(usage_name) + " and has no default value");
+	}
+	resolved_member.value = member_it->second;
+	if (!initializer_uses_ctor_bindings) {
+		resolved_member.evaluation_bindings.clear();
 	}
 
 	return std::nullopt;
@@ -2019,7 +2240,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		return *resolve_error;
 	}
 
-	if (!intermediate_member_source.initializer.has_value() || !intermediate_member_source.member_info) {
+	if ((!intermediate_member_source.initializer.has_value() && !intermediate_member_source.value.has_value()) || !intermediate_member_source.member_info) {
 		return EvalResult::error("Internal error: unresolved intermediate member source in nested member access");
 	}
 
@@ -2033,6 +2254,17 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		? nullptr
 		: &intermediate_member_source.evaluation_bindings;
 
+	if (intermediate_member_source.value.has_value()) {
+		const EvalResult& intermediate_value = intermediate_member_source.value.value();
+		auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
+		if (final_member_it != intermediate_value.object_member_bindings.end()) {
+			return final_member_it->second;
+		}
+		if (!intermediate_member_source.initializer.has_value()) {
+			return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
+		}
+	}
+
 	if (intermediate_member_source.initializer->is<InitializerListNode>() ||
 		extract_constructor_call(intermediate_member_source.initializer)) {
 		ResolvedConstexprMemberSource final_member_source;
@@ -2045,6 +2277,10 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			final_member_source,
 			intermediate_bindings)) {
 			return *final_error;
+		}
+
+		if (final_member_source.value.has_value()) {
+			return final_member_source.value.value();
 		}
 
 		if (!final_member_source.initializer.has_value()) {
@@ -2274,8 +2510,8 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 				break;
 			}
 		}
-		if (!matching_ctor) {
-			matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+			if (!matching_ctor) {
+				matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
 		}
 		if (!matching_ctor) {
 			return EvalResult::error("No matching constructor found for constexpr array element");
@@ -2727,6 +2963,166 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 
 // Shared helper: bind struct members from an InitializerListNode (aggregate init)
 // and apply default member initializers for any members not covered by the list.
+EvalResult Evaluator::materialize_aggregate_object_value(
+	const StructTypeInfo* struct_info,
+	TypeIndex type_index,
+	const InitializerListNode& init_list,
+	EvaluationContext& context) {
+	if (!struct_info) {
+		return EvalResult::error("Aggregate object is not a struct");
+	}
+
+	EvalResult object_result = EvalResult::from_int(0);
+	object_result.object_type_index = type_index;
+	auto bind_members_result = bind_members_from_initializer_list(struct_info, init_list, object_result.object_member_bindings, context);
+	if (!bind_members_result.success()) {
+		return bind_members_result;
+	}
+	return object_result;
+}
+
+EvalResult Evaluator::materialize_constructor_object_value(
+	const ConstructorCallNode& ctor_call,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	bool ignore_default_initializer_errors) {
+	const ASTNode& type_node = ctor_call.type_node();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("Constructor call without valid type specifier");
+	}
+
+	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+		return EvalResult::error("Constructor call is not a struct/class type");
+	}
+
+	TypeIndex type_index = type_spec.type_index();
+	if (type_index == TypeIndex{0} || type_index >= gTypeInfo.size()) {
+		return EvalResult::error("Constructor call has invalid struct/class type");
+	}
+
+	const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+	if (!struct_info) {
+		return EvalResult::error("Constructor call type is not a struct/class");
+	}
+
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_call.arguments(), context, outer_bindings);
+	if (!matching_ctor) {
+		return EvalResult::error("No matching constructor found for constexpr object");
+	}
+
+	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+	auto bind_result = bind_evaluated_arguments(
+		matching_ctor->parameter_nodes(),
+		ctor_call.arguments(),
+		ctor_param_bindings,
+		context,
+		"Invalid parameter node in constexpr constructor object materialization",
+		outer_bindings,
+		true);
+	if (!bind_result.success()) {
+		return bind_result;
+	}
+
+	EvalResult object_result = EvalResult::from_int(0);
+	object_result.object_type_index = type_index;
+	auto materialize_result = materialize_members_from_constructor(
+		struct_info,
+		*matching_ctor,
+		ctor_param_bindings,
+		object_result.object_member_bindings,
+		context,
+		ignore_default_initializer_errors);
+	if (!materialize_result.success()) {
+		return materialize_result;
+	}
+
+	return object_result;
+}
+
+EvalResult Evaluator::materialize_array_value(
+	Type element_type,
+	TypeIndex element_type_index,
+	const InitializerListNode& init_list,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	std::vector<EvalResult> array_elements;
+	array_elements.reserve(init_list.initializers().size());
+	std::vector<int64_t> array_values;
+	bool all_scalar_elements = true;
+
+	for (const auto& element : init_list.initializers()) {
+		EvalResult element_result;
+		if (element.is<InitializerListNode>() &&
+			(element_type == Type::Struct || element_type == Type::UserDefined) &&
+			element_type_index > 0 && element_type_index < gTypeInfo.size()) {
+			if (const StructTypeInfo* element_struct_info = gTypeInfo[element_type_index].getStructInfo()) {
+				element_result = materialize_aggregate_object_value(
+					element_struct_info,
+					element_type_index,
+					element.as<InitializerListNode>(),
+					context);
+			} else {
+				element_result = EvalResult::error("Array element type is not a struct");
+			}
+		} else if (bindings) {
+			element_result = evaluate_expression_with_bindings_const(element, *bindings, context);
+		} else {
+			element_result = evaluate(element, context);
+		}
+
+		if (!element_result.success()) {
+			return element_result;
+		}
+
+		if (element_result.object_type_index != 0 || element_result.is_array ||
+			element_result.callable_var_decl != nullptr || element_result.callable_lambda != nullptr) {
+			all_scalar_elements = false;
+		} else {
+			array_values.push_back(element_result.as_int());
+		}
+
+		array_elements.push_back(std::move(element_result));
+	}
+
+	EvalResult array_result;
+	array_result.error_type = EvalErrorType::None;
+	array_result.is_array = true;
+	array_result.array_elements = std::move(array_elements);
+	if (all_scalar_elements) {
+		array_result.array_values = std::move(array_values);
+	}
+	return array_result;
+}
+
+namespace {
+EvalResult materialize_member_initializer_value(
+	const StructMember& member_info,
+	const ASTNode& initializer,
+	EvaluationContext& context) {
+	if (initializer.is<InitializerListNode>()) {
+		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
+
+		if (member_info.is_array) {
+			return Evaluator::materialize_array_value(member_info.type, member_info.type_index, init_list, context);
+		}
+
+		if ((member_info.type == Type::Struct || member_info.type == Type::UserDefined) &&
+			member_info.type_index > 0 && member_info.type_index < gTypeInfo.size()) {
+			if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info.type_index].getStructInfo()) {
+				return Evaluator::materialize_aggregate_object_value(
+					member_struct_info,
+					member_info.type_index,
+					init_list,
+					context);
+			}
+		}
+	}
+
+	return Evaluator::evaluate(initializer, context);
+}
+}
+
 EvalResult Evaluator::bind_members_from_initializer_list(
 	const StructTypeInfo* struct_info,
 	const InitializerListNode& init_list,
@@ -2735,14 +3131,26 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	// Bind members covered by the initializer list.
 	for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
 		std::string_view mname;
+		const StructMember* member_info = nullptr;
 		if (init_list.is_designated(mi)) {
 			// Designated initializer: use the member name from the designator
 			mname = StringTable::getStringView(init_list.member_name(mi));
+			member_info = struct_info->findMember(mname);
 		} else {
 			// Positional initializer: use the struct member at this index
 			mname = StringTable::getStringView(struct_info->members[mi].getName());
+			member_info = &struct_info->members[mi];
 		}
-		auto val = evaluate(init_list.initializers()[mi], context);
+
+		const ASTNode& initializer = init_list.initializers()[mi];
+			if (member_info) {
+				auto val = materialize_member_initializer_value(*member_info, initializer, context);
+				if (!val.success()) return val;
+				bindings[mname] = std::move(val);
+				continue;
+		}
+
+		auto val = evaluate(initializer, context);
 		if (!val.success()) return val;
 		bindings[mname] = val;
 	}
@@ -2751,7 +3159,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 		const auto& member = struct_info->members[mi];
 		std::string_view mname = StringTable::getStringView(member.getName());
 		if (bindings.find(mname) == bindings.end() && member.default_initializer.has_value()) {
-			auto default_result = evaluate(member.default_initializer.value(), context);
+			auto default_result = materialize_member_initializer_value(member, member.default_initializer.value(), context);
 			if (!default_result.success()) return default_result;
 			bindings[mname] = default_result;
 		}
@@ -2794,23 +3202,80 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 	return EvalResult::from_bool(true);
 }
 
+EvalResult Evaluator::materialize_members_from_constructor(
+	const StructTypeInfo* struct_info,
+	const ConstructorDeclarationNode& ctor_decl,
+	std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
+	std::unordered_map<std::string_view, EvalResult>& member_bindings,
+	EvaluationContext& context,
+	bool ignore_default_initializer_errors) {
+	auto member_bind_result = bind_members_from_constructor_initializers(
+		struct_info,
+		ctor_decl,
+		ctor_param_bindings,
+		member_bindings,
+		context,
+		ignore_default_initializer_errors);
+	if (!member_bind_result.success()) {
+		return member_bind_result;
+	}
+
+	const auto& ctor_definition = ctor_decl.get_definition();
+	if (!ctor_definition.has_value() || !ctor_definition->is<BlockNode>()) {
+		return EvalResult::from_bool(true);
+	}
+
+	std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = member_bindings;
+	std::unordered_map<std::string_view, EvalResult> ctor_local_bindings = ctor_param_bindings;
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &ctor_local_bindings;
+
+	const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
+	for (const auto& ctor_stmt : ctor_body.get_statements()) {
+		auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
+		if (stmt_result.success()) {
+			context.local_bindings = saved_local_bindings;
+			break;
+		}
+		if (stmt_result.error_message != "Statement executed (not a return)") {
+			context.local_bindings = saved_local_bindings;
+			return stmt_result;
+		}
+	}
+	context.local_bindings = saved_local_bindings;
+
+	for (const auto& member : struct_info->members) {
+		std::string_view member_name = StringTable::getStringView(member.getName());
+		auto it = ctor_body_bindings.find(member_name);
+		if (it != ctor_body_bindings.end()) {
+			member_bindings[member_name] = it->second;
+		}
+	}
+
+	return EvalResult::from_bool(true);
+}
+
 std::optional<EvalResult> Evaluator::try_evaluate_member_from_constructor_initializers(
 	const StructTypeInfo* struct_info,
 	const ConstructorDeclarationNode& ctor_decl,
 	std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
 	std::string_view member_name,
 	EvaluationContext& context) {
-	for (const auto& mem_init : ctor_decl.member_initializers()) {
-		if (mem_init.member_name == member_name) {
-			return evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-		}
+	std::unordered_map<std::string_view, EvalResult> member_bindings;
+	auto materialize_result = materialize_members_from_constructor(
+		struct_info,
+		ctor_decl,
+		ctor_param_bindings,
+		member_bindings,
+		context,
+		true);
+	if (!materialize_result.success()) {
+		return materialize_result;
 	}
 
-	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-	for (const auto& member : struct_info->members) {
-		if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
-			return evaluate(member.default_initializer.value(), context);
-		}
+	auto member_it = member_bindings.find(member_name);
+	if (member_it != member_bindings.end()) {
+		return member_it->second;
 	}
 
 	return std::nullopt;
@@ -2912,7 +3377,7 @@ EvalResult Evaluator::extract_object_members(
 	const auto& ctor_args = ctor_call.arguments();
 	
 	// Find the matching constructor
-	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
 	
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr object");
@@ -2933,7 +3398,7 @@ EvalResult Evaluator::extract_object_members(
 		return bind_result;
 	}
 	
-	auto member_bind_result = bind_members_from_constructor_initializers(
+	auto member_bind_result = materialize_members_from_constructor(
 		struct_info,
 		*matching_ctor,
 		ctor_param_bindings,
@@ -3018,6 +3483,23 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 				context,
 				resolved_member)) {
 				return *resolve_error;
+			}
+
+			if (resolved_member.value.has_value()) {
+				const EvalResult& resolved_value = resolved_member.value.value();
+				if (!resolved_value.is_array) {
+					return EvalResult::error("Array member is not initialized with an array value");
+				}
+				if (!resolved_value.array_elements.empty()) {
+					if (index >= resolved_value.array_elements.size()) {
+						return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(resolved_value.array_elements.size()) + ")");
+					}
+					return resolved_value.array_elements[index];
+				}
+				if (index >= resolved_value.array_values.size()) {
+					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(resolved_value.array_values.size()) + ")");
+				}
+				return EvalResult::from_int(resolved_value.array_values[index]);
 			}
 
 			if (!resolved_member.initializer.has_value()) {

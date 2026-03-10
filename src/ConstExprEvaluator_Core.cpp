@@ -8,6 +8,49 @@ namespace {
 	bool isStatementExecutedWithoutReturn(const EvalResult& result) {
 		return !result.success() && result.error_message == kStatementExecutedWithoutReturn;
 	}
+
+	bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
+		return type_spec.type() != Type::Auto;
+	}
+
+	void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec) {
+		if (should_preserve_exact_type(type_spec)) {
+			result.set_exact_type(type_spec);
+		}
+	}
+
+	void maybe_set_exact_type_from_declaration(EvalResult& result, const DeclarationNode& decl) {
+		if (decl.is_array() || !decl.type_node().is<TypeSpecifierNode>()) {
+			return;
+		}
+
+		maybe_set_exact_type(result, decl.type_node().as<TypeSpecifierNode>());
+	}
+
+	void maybe_set_exact_type_from_initializer(EvalResult& result, const ASTNode& initializer, EvaluationContext& context) {
+		if (!context.parser) {
+			return;
+		}
+
+		auto init_type = context.parser->get_expression_type(initializer);
+		if (init_type.has_value()) {
+			maybe_set_exact_type(result, *init_type);
+		}
+	}
+
+	void maybe_set_binding_result_exact_type(EvalResult& result, const DeclarationNode& decl, const ASTNode* initializer, EvaluationContext& context) {
+		if (!decl.is_array() && decl.type_node().is<TypeSpecifierNode>()) {
+			const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+			if (should_preserve_exact_type(type_spec)) {
+				result.set_exact_type(type_spec);
+				return;
+			}
+		}
+
+		if (initializer) {
+			maybe_set_exact_type_from_initializer(result, *initializer, context);
+		}
+	}
 }
 
 // Main evaluation entry point
@@ -33,7 +76,9 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 
 	// Check what type of expression it is
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		return EvalResult::from_bool(std::get<BoolLiteralNode>(expr).value());
+		EvalResult result = EvalResult::from_bool(std::get<BoolLiteralNode>(expr).value());
+		result.set_exact_type(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
+		return result;
 	}
 
 	if (std::holds_alternative<NumericLiteralNode>(expr)) {
@@ -180,13 +225,20 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 // Internal evaluation methods for different node types
 EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal) {
 	const auto& value = literal.value();
+	const TypeSpecifierNode literal_type(literal.type(), literal.qualifier(), literal.sizeInBits());
 
 	if (std::holds_alternative<unsigned long long>(value)) {
 		unsigned long long val = std::get<unsigned long long>(value);
-		return EvalResult::from_uint(val);
+		EvalResult result = is_unsigned_integer_type(literal.type())
+			? EvalResult::from_uint(val)
+			: EvalResult::from_int(static_cast<long long>(val));
+		result.set_exact_type(literal_type);
+		return result;
 	} else if (std::holds_alternative<double>(value)) {
 		double val = std::get<double>(value);
-		return EvalResult::from_double(val);
+		EvalResult result = EvalResult::from_double(val);
+		result.set_exact_type(literal_type);
+		return result;
 	}
 
 	return EvalResult::error("Unknown numeric literal type");
@@ -917,23 +969,39 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		// This allows the constructor call to be used for template argument deduction
 		switch (type_spec.type()) {
 			case Type::Bool:
-				return EvalResult::from_bool(false);
+				{
+					EvalResult result = EvalResult::from_bool(false);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case Type::Char:
 			case Type::Short:
 			case Type::Int:
 			case Type::Long:
 			case Type::LongLong:
-				return EvalResult::from_int(0);
+				{
+					EvalResult result = EvalResult::from_int(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case Type::UnsignedChar:
 			case Type::UnsignedShort:
 			case Type::UnsignedInt:
 			case Type::UnsignedLong:
 			case Type::UnsignedLongLong:
-				return EvalResult::from_int(0);
+				{
+					EvalResult result = EvalResult::from_uint(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case Type::Float:
 			case Type::Double:
 			case Type::LongDouble:
-				return EvalResult::from_double(0.0);
+				{
+					EvalResult result = EvalResult::from_double(0.0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case Type::Struct:
 			case Type::UserDefined:
 				// For struct types, return a success result with value 0
@@ -949,7 +1017,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		return EvalResult::error("Constructor call must have 0 or 1 arguments for constant evaluation");
 	}
 	
-	return evaluate_expr_node(type_spec.type(), args[0], context, "Unsupported type in constructor call for constant evaluation");
+	return evaluate_expr_node(type_spec, args[0], context, "Unsupported type in constructor call for constant evaluation");
 }
 
 EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context) {
@@ -964,26 +1032,34 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	
 	// Evaluate the expression being cast
-	return evaluate_expr_node(type_spec.type(), cast_node.expr(), context, "Unsupported type in static_cast for constant evaluation");
+	return evaluate_expr_node(type_spec, cast_node.expr(), context, "Unsupported type in static_cast for constant evaluation");
 }
 
-EvalResult Evaluator::evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr) {
+EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr) {
 	auto expr_result = evaluate(expr, context);
 	if (!expr_result.success()) {
 		return expr_result;
 	}
 	
 	// Perform the type conversion
-	switch (target_type) {
+	switch (target_type.type()) {
 		case Type::Bool:
-			return EvalResult::from_bool(expr_result.as_bool());
+		{
+			EvalResult result = EvalResult::from_bool(expr_result.as_bool());
+			result.set_exact_type(target_type);
+			return result;
+		}
 		
 		case Type::Char:
 		case Type::Short:
 		case Type::Int:
 		case Type::Long:
 		case Type::LongLong:
-			return EvalResult::from_int(expr_result.as_int());
+		{
+			EvalResult result = EvalResult::from_int(expr_result.as_int());
+			result.set_exact_type(target_type);
+			return result;
+		}
 		
 		case Type::UnsignedChar:
 		case Type::UnsignedShort:
@@ -991,12 +1067,20 @@ EvalResult Evaluator::evaluate_expr_node(Type target_type, const ASTNode& expr, 
 		case Type::UnsignedLong:
 		case Type::UnsignedLongLong:
 			// For unsigned types, convert to unsigned
-			return EvalResult::from_uint(static_cast<unsigned long long>(expr_result.as_int()));
+		{
+			EvalResult result = EvalResult::from_uint(static_cast<unsigned long long>(expr_result.as_int()));
+			result.set_exact_type(target_type);
+			return result;
+		}
 		
 		case Type::Float:
 		case Type::Double:
 		case Type::LongDouble:
-			return EvalResult::from_double(expr_result.as_double());
+		{
+			EvalResult result = EvalResult::from_double(expr_result.as_double());
+			result.set_exact_type(target_type);
+			return result;
+		}
 		
 		default:
 			return EvalResult::error(invalidTypeErrorStr);
@@ -1090,7 +1174,9 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 					if (enum_info) {
 						const Enumerator* e = enum_info->findEnumerator(name_handle);
 						if (e) {
-							return EvalResult(static_cast<int64_t>(e->value));
+							EvalResult result = EvalResult::from_int(static_cast<long long>(e->value));
+							result.set_exact_type(type_spec);
+							return result;
 						}
 					}
 				}
@@ -1121,28 +1207,27 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	// Check if the initializer is an InitializerListNode (for arrays)
 	if (initializer->is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-		const auto& initializers = init_list.initializers();
-		
-		// Evaluate each element
-		std::vector<int64_t> array_values;
-		for (const auto& elem : initializers) {
-			auto elem_result = evaluate(elem, context);
-			if (!elem_result.success()) {
-				return elem_result;
+		if (var_decl.declaration().is_array()) {
+			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+				return materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context);
 			}
-			array_values.push_back(elem_result.as_int());
+
+			// Preserve the older generic array materialization for declarations whose
+			// array element type is not represented as a TypeSpecifierNode (for example,
+			// decltype()-spelled or still-dependent array element types).
+			return materialize_array_value(Type::Auto, 0, init_list, context);
 		}
-		
-		// Return as an array result
-		EvalResult array_result;
-		array_result.error_type = EvalErrorType::None;
-		array_result.is_array = true;
-		array_result.array_values = std::move(array_values);
-		return array_result;
 	}
 
 	// Recursively evaluate the initializer
-	return evaluate(initializer.value(), context);
+	EvalResult result = evaluate(initializer.value(), context);
+	if (!result.success()) {
+		return result;
+	}
+
+	maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
+	return result;
 }
 
 EvalResult Evaluator::evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context) {
@@ -1396,10 +1481,10 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
 		}
 
-		// Build object member bindings from constructor/member initializers.
+		// Build object member bindings from the full constructor materialization path.
 		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
 		const auto& ctor_args = ctor_call.arguments();
-		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+			const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context, outer_bindings);
 		if (!matching_ctor) {
 			return EvalResult::error("No matching constructor found for callable object");
 		}
@@ -1418,7 +1503,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			return ctor_bind_result;
 		}
 
-		auto member_bind_result = bind_members_from_constructor_initializers(
+		auto member_bind_result = materialize_members_from_constructor(
 			struct_info,
 			*matching_ctor,
 			ctor_param_bindings,
@@ -1427,45 +1512,6 @@ EvalResult Evaluator::evaluate_callable_object(
 			false);
 		if (!member_bind_result.success()) {
 			return member_bind_result;
-		}
-
-		// Evaluate constructor body statements (e.g., member assignments like `m_val = x;`).
-		// The member initializer list is processed above; this handles the constructor body
-		// which may contain additional assignments or logic that modifies member state.
-		const auto& ctor_definition = matching_ctor->get_definition();
-		if (ctor_definition.has_value() && ctor_definition->is<BlockNode>()) {
-			const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
-			const auto& ctor_statements = ctor_body.get_statements();
-
-			// Merge constructor parameter bindings into evaluation_bindings so
-			// that body statements like `m_val = x;` can resolve parameter names.
-			// Parameters shadow members with the same name (correct C++ semantics).
-			std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = evaluation_bindings;
-			for (const auto& [name, val] : ctor_param_bindings) {
-				ctor_body_bindings[name] = val;
-			}
-
-			for (const auto& ctor_stmt : ctor_statements) {
-				auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
-				if (stmt_result.success()) {
-					// A return statement in a constructor body is unusual but valid
-					// (e.g., early return in constexpr constructor). Stop processing.
-					break;
-				}
-				if (!stmt_result.success() && stmt_result.error_message != "Statement executed (not a return)") {
-					return stmt_result;
-				}
-			}
-
-			// Copy back any member bindings that were modified by the constructor body.
-			// We only copy names that correspond to struct members (not constructor params).
-			for (const auto& member : struct_info->members) {
-				std::string_view member_name = StringTable::getStringView(member.getName());
-				auto it = ctor_body_bindings.find(member_name);
-				if (it != ctor_body_bindings.end()) {
-					evaluation_bindings[member_name] = it->second;
-				}
-			}
 		}
 
 		const auto& parameters = call_operator->parameter_nodes();
@@ -2582,6 +2628,7 @@ EvalResult Evaluator::bind_evaluated_arguments(
 		}
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		maybe_set_exact_type_from_declaration(arg_result, param_decl);
 		bindings[param_decl.identifier_token().value()] = arg_result;
 	}
 
@@ -2604,7 +2651,9 @@ EvalResult Evaluator::bind_pre_evaluated_arguments(
 		}
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-		bindings[param_decl.identifier_token().value()] = evaluated_arguments[i];
+		EvalResult arg_result = evaluated_arguments[i];
+		maybe_set_exact_type_from_declaration(arg_result, param_decl);
+		bindings[param_decl.identifier_token().value()] = std::move(arg_result);
 	}
 
 	return EvalResult::from_bool(true);
@@ -2673,84 +2722,121 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	
 	// Handle variable declarations
 	if (stmt_node.is<VariableDeclarationNode>()) {
-		const VariableDeclarationNode& var_decl = stmt_node.as<VariableDeclarationNode>();
-		const DeclarationNode& decl = var_decl.declaration_node().as<DeclarationNode>();
-		std::string_view var_name = decl.identifier_token().value();
-		
-		// Evaluate the initializer if present
-		if (var_decl.initializer().has_value()) {
-			const ASTNode& init_expr = var_decl.initializer().value();
+			const VariableDeclarationNode& var_decl = stmt_node.as<VariableDeclarationNode>();
+			const DeclarationNode& decl = var_decl.declaration_node().as<DeclarationNode>();
+			std::string_view var_name = decl.identifier_token().value();
+			auto& declaration_bindings = context.local_bindings ? *context.local_bindings : bindings;
 
-			if (extract_lambda_from_initializer(var_decl.initializer())) {
+			// Evaluate the initializer if present
+			if (var_decl.initializer().has_value()) {
+				const ASTNode& init_expr = var_decl.initializer().value();
+
+				if (extract_lambda_from_initializer(var_decl.initializer())) {
 					EvalResult callable_result = EvalResult::from_callable(var_decl);
 					const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
 					if (lambda) {
-						auto capture_result = evaluate_lambda_captures(lambda->captures(), callable_result.callable_bindings, context, &bindings);
+						std::unordered_map<std::string_view, EvalResult> merged_outer_bindings;
+						const std::unordered_map<std::string_view, EvalResult>* capture_bindings = &bindings;
+						if (context.local_bindings) {
+							merged_outer_bindings = bindings;
+							for (const auto& [name, value] : *context.local_bindings) {
+								merged_outer_bindings[name] = value;
+							}
+							capture_bindings = &merged_outer_bindings;
+						}
+						auto capture_result = evaluate_lambda_captures(lambda->captures(), callable_result.callable_bindings, context, capture_bindings);
 						if (!capture_result.success()) {
 							return capture_result;
 						}
 					}
-					bindings[var_name] = std::move(callable_result);
-				return EvalResult::error("Statement executed (not a return)");
-			}
-			
-			// Handle array initialization with InitializerListNode
-			if (init_expr.is<InitializerListNode>()) {
-				const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+					declaration_bindings[var_name] = std::move(callable_result);
+					return EvalResult::error("Statement executed (not a return)");
+				}
+
+				// Handle InitializerListNode initializers that the parser preserves for arrays
+				// and aggregate/object brace-init. Scalar brace-init (e.g. int x{5} / int x = {5})
+				// is normalized by parse_brace_initializer() into the contained expression and
+				// should not reach this branch as an InitializerListNode.
+				if (init_expr.is<InitializerListNode>()) {
+					const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+					if (decl.is_array()) {
+						if (decl.type_node().is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+							auto array_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, &bindings);
+							if (!array_result.success()) {
+								return array_result;
+							}
+							declaration_bindings[var_name] = std::move(array_result);
+							return EvalResult::error("Statement executed (not a return)");
+						}
+
+						auto array_result = materialize_array_value(Type::Auto, 0, init_list, context, &bindings);
+						if (!array_result.success()) {
+							return array_result;
+						}
+						declaration_bindings[var_name] = std::move(array_result);
+						return EvalResult::error("Statement executed (not a return)");
+					}
+
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 						if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
 							type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-								EvalResult object_result = EvalResult::from_int(0);
-								object_result.object_type_index = type_spec.type_index();
-								auto bind_members_result = bind_members_from_initializer_list(struct_info, init_list, object_result.object_member_bindings, context);
-								if (!bind_members_result.success()) {
-									return bind_members_result;
+								auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context);
+								if (!object_result.success()) {
+									return object_result;
 								}
-								bindings[var_name] = std::move(object_result);
+								maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
+								declaration_bindings[var_name] = std::move(object_result);
 								return EvalResult::error("Statement executed (not a return)");
 							}
 						}
 					}
-				const auto& initializers = init_list.initializers();
-				
-				// Create array value - evaluate each element
-				std::vector<int64_t> array_values;
-				for (size_t i = 0; i < initializers.size(); i++) {
-					auto elem_result = evaluate_expression_with_bindings(initializers[i], bindings, context);
-					if (!elem_result.success()) {
-						return elem_result;
-					}
-					array_values.push_back(elem_result.as_int());
 				}
-				
-				// Store as an array binding
-				EvalResult array_result;
-				array_result.error_type = EvalErrorType::None;
-				array_result.is_array = true;
-				array_result.array_values = std::move(array_values);
-				bindings[var_name] = array_result;
-				
-				// Return a sentinel indicating statement executed successfully
+
+				const ConstructorCallNode* ctor_call = nullptr;
+				if (init_expr.is<ConstructorCallNode>()) {
+					ctor_call = &init_expr.as<ConstructorCallNode>();
+				} else if (init_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr = init_expr.as<ExpressionNode>();
+					if (std::holds_alternative<ConstructorCallNode>(expr)) {
+						ctor_call = &std::get<ConstructorCallNode>(expr);
+					}
+				}
+
+				if (ctor_call && decl.type_node().is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+					if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+						auto object_result = materialize_constructor_object_value(*ctor_call, context, &bindings);
+						if (!object_result.success()) {
+							return object_result;
+						}
+						maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
+						declaration_bindings[var_name] = std::move(object_result);
+						return EvalResult::error("Statement executed (not a return)");
+					}
+				}
+
+				// Regular expression initializer
+				auto init_result = evaluate_expression_with_bindings(init_expr, bindings, context);
+				if (!init_result.success()) {
+					return init_result;
+				}
+
+				maybe_set_binding_result_exact_type(init_result, decl, &init_expr, context);
+
+				// Add to bindings
+				declaration_bindings[var_name] = init_result;
 				return EvalResult::error("Statement executed (not a return)");
 			}
-			
-			// Regular expression initializer
-			auto init_result = evaluate_expression_with_bindings(init_expr, bindings, context);
-			if (!init_result.success()) {
-				return init_result;
-			}
-			
-			// Add to bindings
-			bindings[var_name] = init_result;
-			return EvalResult::error("Statement executed (not a return)");
-		}
-		
-		// Uninitialized variable - set to 0
-		bindings[var_name] = EvalResult::from_int(0);
-		return EvalResult::error("Statement executed (not a return)");
+
+			// Uninitialized variable - set to 0
+				EvalResult default_result = EvalResult::from_int(0);
+				maybe_set_binding_result_exact_type(default_result, decl, nullptr, context);
+				declaration_bindings[var_name] = std::move(default_result);
+				return EvalResult::error("Statement executed (not a return)");
 	}
 	
 	// Handle for loops (C++14 constexpr)

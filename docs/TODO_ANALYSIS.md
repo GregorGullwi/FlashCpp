@@ -61,6 +61,29 @@
 - **Members.cpp:1302** ✅ Fixed — `evaluate_nested_member_access` now handles aggregate-initialized base structs. Previously, `constexpr Outer o = {{20}, 22}; constexpr int r = o.inner.val + o.extra;` failed. Now handles nested `InitializerListNode` members recursively. Test: `test_constexpr_nested_aggregate_member_ret42.cpp`.
 - **CodeGen_Stmt_Decl.cpp:203** ✅ Fixed — Global struct aggregate initialization with nested struct members (e.g., `Line l = {{1,2},{3,4}}`) now correctly fills bytes for nested members using a recursive `fillStructData` lambda. Test: `test_nested_struct_global_init_ret10.cpp`.
 
+### Additional constexpr progress since the original analysis
+
+- ✅ local constexpr object member reads through locals, including nested reads like `obj.inner.value` and member-array reads like `obj.data[0]`
+- ✅ inferred-size local arrays in constexpr functions, including aggregate-array element member reads like `items[0].value`
+- ✅ regression coverage confirming already-supported local aggregate-array nested/member-array compositions and loop-driven reads like `sum += arr[i]` / `sum += items[i].value`
+- ✅ shared constructor-backed object materialization across constexpr paths, so constructor-built object state is reused consistently for member access, member-function/callable evaluation, and object extraction
+- ✅ brace-init now prefers constructor calls for types with user-declared constructors instead of silently falling back to aggregate/member-wise initialization
+- ✅ straightforward constexpr constructor-body expression assignments and simple member-to-member dependencies, e.g. `value = input + 2;` and `y = x + 2;`
+- ✅ doc update in `docs/CONSTEXPR_LIMITATIONS.md` clarifying that simple constructor-body member assignments are supported, while more complex constructor-body execution remains a harder follow-up area
+- **Additional regression tests added so far**:
+  - `test_constexpr_local_object_nested_member_access_ret0.cpp`
+  - `test_constexpr_local_object_array_member_access_ret0.cpp`
+  - `test_constexpr_local_unsized_array_ret0.cpp`
+  - `test_constexpr_local_unsized_aggregate_array_member_access_ret0.cpp`
+  - `test_constexpr_local_aggregate_array_nested_member_access_ret0.cpp`
+  - `test_constexpr_local_aggregate_array_member_array_access_ret0.cpp`
+  - `test_constexpr_local_array_for_loop_sum_ret0.cpp`
+  - `test_constexpr_local_aggregate_array_for_loop_member_sum_ret0.cpp`
+  - `test_constexpr_constructor_body_member_assignment_ret0.cpp`
+  - `test_constexpr_constructor_body_multiple_member_assignments_ret0.cpp`
+  - `test_constexpr_constructor_body_expression_assignment_ret0.cpp`
+  - `test_constexpr_constructor_body_member_dependency_ret0.cpp`
+
 ---
 
 ## 9. Overload Resolution ✅ Fixed
@@ -188,7 +211,7 @@ This fixes the concrete failure mode behind the item: array arguments decaying t
 
 ## Known issues encountered during implementation (updated 2026-03-05)
 
-- Constexpr array-member extraction falls back to an error (instead of an ambiguity diagnostic) when multiple same-arity constructors are viable.
+- Constexpr array-member extraction still falls back to an error (instead of an ambiguity diagnostic) when multiple same-arity constructors are viable. The larger brace-init-vs-constructor selection bug for user-declared constructors is fixed, but same-arity ambiguity remains a follow-up.
 - `constinit` on brace-initialized callable objects (e.g., `constexpr Add add{}; constinit int x = add(1,2);`) ✅ Fixed – `evaluate_callable_object` now handles `InitializerListNode` initializers. `evaluate_member_function_call` delegates `operator()` calls to `evaluate_callable_object`. Tests: `test_constinit_callable_ret42.cpp`, `test_constinit_callable_ctor_ret42.cpp`.
 - `ConstructorCallNode` wrapped in `ExpressionNode` not recognised in constexpr evaluator ✅ Fixed – added `extract_constructor_call()` helper that unwraps both direct and `ExpressionNode`-wrapped `ConstructorCallNode`s.
 - Constexpr `evaluate_callable_object()` rejects ambiguous same-arity `operator()` overloads rather than resolving by type.
