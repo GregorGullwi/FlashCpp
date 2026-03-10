@@ -808,6 +808,29 @@ struct OperatorOverloadResult {
 	}
 };
 
+// Helper: resolve a struct parameter type_index for self-referential template parameters.
+// When a template struct Foo<T> is instantiated as Foo<int>, the member function
+// operator+=(const Foo& other) stores the parameter as the uninstantiated Foo
+// (whose struct_info has total_size==0). We resolve it to the concrete instantiated
+// left_type_index so that type matching works correctly.
+// This mirrors the AstToIr::resolveSelfReferentialType logic used in codegen.
+inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_type_index) {
+	const size_t type_info_size = gTypeInfo.size();
+	if (param_idx == 0 || param_idx >= type_info_size || left_type_index >= type_info_size) return param_idx;
+	const auto& param_ti = gTypeInfo[param_idx];
+	if (!param_ti.struct_info_ || param_ti.struct_info_->total_size != 0) return param_idx;
+	// param refers to an uninstantiated template (total_size==0); check name family
+	auto template_base_name = StringTable::getStringView(param_ti.name());
+	auto instantiated_name = StringTable::getStringView(gTypeInfo[left_type_index].name());
+	// Strip template hash suffix from the instantiated name: "Name$hash" -> "Name"
+	auto base_name = instantiated_name;
+	auto dollar_pos = base_name.find('$');
+	if (dollar_pos != std::string_view::npos) {
+		base_name = base_name.substr(0, dollar_pos);
+	}
+	return (template_base_name == base_name) ? left_type_index : param_idx;
+}
+
 // Find operator overload in a struct type
 // Returns the member function that overloads the given operator, or nullptr if not found
 inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_index, OverloadableOperator operator_kind) {
@@ -860,29 +883,6 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 		return OperatorOverloadResult::no_overload();
 	}
 	
-	// Helper: resolve a struct parameter type_index for self-referential template parameters.
-	// When a template struct Foo<T> is instantiated as Foo<int>, the member function
-	// operator+=(const Foo& other) stores the parameter as the uninstantiated Foo
-	// (whose struct_info has total_size==0). We resolve it to the concrete instantiated
-	// left_type_index so that type matching works correctly.
-	// This mirrors the AstToIr::resolveSelfReferentialType logic used in codegen.
-	const size_t type_info_size = gTypeInfo.size();
-	auto resolveSelfRefParamIndex = [&](TypeIndex param_idx) -> TypeIndex {
-		if (param_idx == 0 || param_idx >= type_info_size || left_type_index >= type_info_size) return param_idx;
-		const auto& param_ti = gTypeInfo[param_idx];
-		if (!param_ti.struct_info_ || param_ti.struct_info_->total_size != 0) return param_idx;
-		// param refers to an uninstantiated template (total_size==0); check name family
-		auto template_base_name = StringTable::getStringView(param_ti.name());
-		auto instantiated_name = StringTable::getStringView(gTypeInfo[left_type_index].name());
-		// Strip template hash suffix from the instantiated name: "Name$hash" -> "Name"
-		auto base_name = instantiated_name;
-		auto dollar_pos = base_name.find('$');
-		if (dollar_pos != std::string_view::npos) {
-			base_name = base_name.substr(0, dollar_pos);
-		}
-		return (template_base_name == base_name) ? left_type_index : param_idx;
-	};
-
 	// Search for the operator overload in member functions
 	// For member function form: Number::operator+(const Number& other)
 	// Phase 1: Exact type match on the parameter's type_index (with self-referential resolution
@@ -907,7 +907,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 					// For primitive types, match by base Type enum (type_index is always 0).
 					bool type_matches = false;
 					if (param_spec.type() == Type::Struct || param_spec.type() == Type::Enum) {
-						TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index());
+						TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index(), left_type_index);
 						type_matches = (resolved_param_idx == right_type_index);
 					} else if (right_type != Type::Void) {
 						// Caller provided the actual Type — compare base types
@@ -968,24 +968,6 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 	const size_t type_info_size = gTypeInfo.size();
 
-	// Helper: resolve self-referential template parameter types.
-	// Mirrors AstToIr::resolveSelfReferentialType — when a template struct Foo<T>
-	// is instantiated as Foo<int>, member operator parameters still reference the
-	// uninstantiated Foo (total_size==0). Resolve to the concrete left_type_index.
-	auto resolveSelfRefParamIndex = [&](TypeIndex param_idx) -> TypeIndex {
-		if (param_idx == 0 || param_idx >= type_info_size || left_type_index >= type_info_size) return param_idx;
-		const auto& param_ti = gTypeInfo[param_idx];
-		if (!param_ti.struct_info_ || param_ti.struct_info_->total_size != 0) return param_idx;
-		auto template_base_name = StringTable::getStringView(param_ti.name());
-		auto instantiated_name = StringTable::getStringView(gTypeInfo[left_type_index].name());
-		auto base_name = instantiated_name;
-		auto dollar_pos = base_name.find('$');
-		if (dollar_pos != std::string_view::npos) {
-			base_name = base_name.substr(0, dollar_pos);
-		}
-		return (template_base_name == base_name) ? left_type_index : param_idx;
-	};
-
 	// Helper: rank a single operand against a parameter type.
 	// For struct/enum types, identity is determined by type_index.
 	// For primitive types, uses can_convert_type(Type, Type) for standard rankings.
@@ -996,7 +978,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 		// Resolve self-referential template parameter types
 		if (param_type == Type::Struct || param_type == Type::Enum) {
-			param_idx = resolveSelfRefParamIndex(param_idx);
+			param_idx = resolveSelfRefParamIndex(param_idx, left_type_index);
 		}
 
 		// Struct/Enum parameter: identity by type_index
