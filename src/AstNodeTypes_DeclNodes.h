@@ -509,12 +509,12 @@ struct StructTypeInfo {
 	// Find move constructor (takes Type&& parameter)
 	const StructMemberFunction* findMoveConstructor() const;
 
-		// Find the preferred same-type constructor for initialization.
-		// For xvalue/prvalue sources, prefer move and fall back to copy.
-		// For lvalue sources, use copy only. Implicit constructors can participate.
-		const StructMemberFunction* findPreferredSameTypeConstructor(
-			bool prefer_move,
-			bool include_implicit = true) const;
+	// Find the preferred same-type constructor for initialization.
+	// For xvalue/prvalue sources, prefer move and fall back to copy.
+	// For lvalue sources, use copy only. Implicit constructors can participate.
+	const StructMemberFunction* findPreferredSameTypeConstructor(
+		bool prefer_move,
+		bool include_implicit = true) const;
 
 	// Collect constructor candidates matching argument count.
 	InlineVector<const StructMemberFunction*, 4> getConstructorsByParameterCount(
