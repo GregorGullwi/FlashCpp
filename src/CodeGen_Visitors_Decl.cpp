@@ -1544,6 +1544,7 @@
 							// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 							assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 							ctor_op.base_class_offset = static_cast<int>(base.offset);
+							ctor_op.source_base_class_offset = static_cast<int>(base.offset);
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 							TypedValue other_arg;

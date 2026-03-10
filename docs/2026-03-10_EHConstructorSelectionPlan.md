@@ -1,326 +1,119 @@
-# EH Constructor Selection Reuse Plan (Forward-Looking)
+# EH constructor-selection design note
 
-This note is a **separate-PR plan** for tightening exception-handling object materialization without overfitting to one regression. The codebase is moving, so the goal is to define a stable split between **generic constructor-selection semantics** and **EH-local orchestration**, then land the refactor in small, reviewable slices.
+This note documents the constructor-selection slice that is already landed on this branch for exception-handling object materialization.
 
-## Why this should be a separate PR
+It also records the final backend-lowering rule that fell out of the debugging: backend address-vs-inline-object decisions must use current-function indirect-stack state, not global/frontend `TempVar` metadata.
 
-- The recent EH fixes were intentionally narrow and are already validated.
-- The next step touches behavior that is broader than one EH bug:
-  - implicit copy/move constructors
-  - raw-copy fallback legality
-  - same-type copy vs move constructor selection
-  - consistency between throw-side materialization and catch-by-value binding
-- The safest approach is to keep the current bugfix commits isolated and do the broader semantic cleanup as a follow-up PR.
+## Why this change was needed
 
-## Current state
+The original EH copy/move construction path had two related problems:
 
-### 2026-03-10 local progress note
+- it selected same-type constructors through the explicit-only `findCopyConstructor()` / `findMoveConstructor()` helpers,
+- and several by-address lowering paths still depended on fragile pointer/reference metadata handling.
 
-This plan is now partially underway in a **safe EH-focused slice**, and the original local implicit-copy regression has now been resolved.
+That was enough to miss valid implicit copy/move constructors in EH paths, and it also exposed a broader backend issue where `AddressOfMember`-produced pointer temps could be treated as though they were the address of the spill slot rather than the stored source address.
 
-Landed locally so far:
+The practical regression that forced this work was `tests/test_eh_implicit_copy_ctor_ret0.cpp`, but the investigation showed the bug was not EH-only: the same address-handling problem also affected ordinary nested member copy initialization.
 
-- added `StructTypeInfo::findPreferredSameTypeConstructor(prefer_move, include_implicit=true)`
-- switched EH same-type construction lookup away from the explicit-only `findCopyConstructor()` / `findMoveConstructor()` pair
-- taught constructor-call lowering to consult `getReferenceInfo(temp, offset)` for `TempVar` by-address arguments
-- updated implicit copy/move constructor body synthesis to emit nested member constructor calls for struct subobjects when a same-type ctor exists
-- fixed `AddressOfMember` pointer-temp tracking so nested member copy-constructor calls load the stored source address instead of taking the address of the spill slot itself
-- tightened several backend load/store paths to respect `holds_address_only`, so plain pointer temps are no longer mis-treated as dereference-through references
+## Landed API surface
 
-What this clarified:
+The central policy helper is now:
 
-- throw-side EH construction is now taking the constructor path
-- catch-by-value initialization is now also taking the constructor path
-- the original `test_eh_implicit_copy_ctor_ret0.cpp` regression was not EH-only; it reproduced in ordinary nested member copy-initialization too
-- the remaining bug was in backend address handling for `AddressOfMember`-produced pointer temps during by-address constructor argument lowering
-
-Current validated state:
-
-- `tests/test_eh_implicit_copy_ctor_ret0.cpp` now passes
-- focused non-EH nested-copy probes now pass
-- nearby EH tests like `test_eh_catch_float_return_ret0.cpp` and `test_exceptions_catch_funclets_ret0.cpp` still pass
-- a broader full-suite run still shows additional nearby EH/reference failures (virtual-base/reference catches and `test_eh_struct_throw_ret0.cpp`) that are outside this specific regression fix and should be handled as follow-up work
-
-That means the next step should still stay disciplined:
-
-- keep this work scoped to special-member selection / lowering when possible
-- document newly exposed adjacent EH bugs separately if we continue past this slice
-- avoid entangling this track with parser/mangling/template-finalization work
-
-### EH-local object materialization paths
-
-- `src/IRConverter_Emit_EHSeh.h`
-  - throw-side exception object creation on ELF
-  - throw-side exception object creation on COFF/MSVC-style EH
-  - `materializeCatchObjectFromRax(const CatchBeginOp&)` for Itanium/ELF catch entry materialization
-- `src/ObjFileWriter_EH.cpp`
-  - Windows handler metadata emission (`dispCatchObj`, catch flags, etc.)
-
-### Current constructor/copy hooks already reused by EH
-
-- `src/IRConverter_Conv_Calls.h`
-  - `emitEhCopyOrMoveConstructorCall(...)`
-- `src/IRConverter_Conv_VarDecl.h`
-  - catch-by-value local binding currently reaches the helper through `op.use_copy_constructor`
-
-### Existing generic compiler functionality we should reuse better
-
+- `src/AstNodeTypes_DeclNodes.h`
 - `src/AstNodeTypes.cpp`
-  - `StructTypeInfo::getConstructorsByParameterCount(...)`
-  - `StructTypeInfo::findCopyConstructor()`
-  - `StructTypeInfo::findMoveConstructor()`
-- `src/CodeGen_Stmt_Decl.cpp`
-  - generic declaration/copy-initialization behavior and constructor-selection policy
-- `src/CodeGen_MemberAccess.cpp`
-  - existing trivial/trivially-copyable checks (if EH needs raw-copy gating)
 
-## Main problem to solve
+`StructTypeInfo::findPreferredSameTypeConstructor(bool prefer_move, bool include_implicit = true) const`
 
-The EH path currently has a constructor-selection helper, but it is still too EH-specific and too narrow:
+Its behavior is:
 
-- it looks up only explicit copy/move constructors through `findCopyConstructor()` / `findMoveConstructor()`
-- those helpers currently skip implicit constructors
-- EH still has raw-copy fallback logic inline in the throw paths
-- the fallback boundary is not clearly expressed as a shared semantic rule
+- for xvalue/prvalue-style same-type sources, prefer a move constructor,
+- if move is preferred but unavailable, fall back to copy,
+- for lvalue sources, use copy only,
+- allow implicit constructors to participate by default,
+- respect deleted-copy / deleted-move state before selecting a candidate.
 
-This creates a risk that EH drifts away from normal object initialization semantics.
+This keeps the same-type constructor policy in one place instead of re-encoding it in EH lowering.
 
-## Recommended architectural split
+## Where the helper is used
 
-### Layer A: Generic special-member selection
+### EH copy / move materialization
 
-This layer should answer:
+`src/IRConverter_Conv_Calls.h` now uses `findPreferredSameTypeConstructor(...)` inside:
 
-- for a same-type source object, should initialization use move ctor, copy ctor, or no ctor?
-- should implicit constructors participate?
-- if no suitable ctor is found, is raw copy even legal?
+- `emitSameTypeCopyOrMoveConstructorCall(...)`
 
-This layer should be reusable outside EH.
+That helper still has an EH-oriented name, but the selection policy it uses is no longer EH-private.
 
-### Layer B: Generic lowering helper for same-type object construction
+### Generic constructor-call resolution for same-type arguments
 
-This layer should answer:
+The same file also uses the helper while resolving constructor calls whose single argument is a reference/pointer-like same-type source. That keeps ordinary same-type constructor matching aligned with the EH path.
 
-- given a selected constructor and a source object, how do we emit the call?
-- how do we materialize `this` and the source argument from a `TypedValue` / stack object / variable name?
+### Implicit copy/move constructor body synthesis
 
-This layer can stay in IR/lowering code, but it should not be EH-named if it is shared.
+`src/CodeGen_Visitors_Decl.cpp` now consults `findPreferredSameTypeConstructor(...)` when synthesizing implicit copy/move constructor bodies for struct members. If a struct subobject has a same-type constructor path, the generated body emits a nested constructor call instead of falling back to blind member copying.
 
-### Layer C: EH-local orchestration
+## Indirect-storage / address-handling piece
 
-This layer should remain EH-specific:
+The constructor-selection helper alone was not enough. The bug only fully disappeared once by-address lowering stopped confusing:
 
-- `__cxa_allocate_exception` / `__cxa_throw`
-- Windows throw record setup / throw-info wiring
-- catch funclet / landing-pad orchestration
-- ABI-specific catch-object pointer handling
+- true reference-like storage, and
+- address-only pointer temps such as `AddressOfMember` results.
 
-EH should decide **when** an exception object or catch object must be materialized, but should not own the core copy-vs-move-vs-raw-copy policy.
+The important current behavior is:
 
-## Proposed refactor boundaries
+- EH tempvar source materialization in `emitSameTypeCopyOrMoveConstructorCall(...)` uses `getIndirectStackInfo(...)` on the **current function's** stack slot instead of relying on stale global `TempVar` metadata,
+- generic constructor-call lowering uses `getReferenceInfo(temp, offset)` when deciding whether a by-address argument should load the stored pointer with `MOV` or compute an address with `LEA`,
+- generic struct local initialization in `src/IRConverter_Conv_VarDecl.h` also uses current-function indirect-stack state when deciding whether a `TempVar` initializer is inline storage or a pointer to storage,
+- the indirect-storage cleanup also routed `AddressOf` and `AddressOfMember` through shared address-only registration helpers so plain pointer temps are no longer implicitly dereferenced by accident.
 
-## Track 1: Extract a shared same-type constructor-selection helper
+That split is what makes nested-member copy construction behave correctly again.
 
-### Objective
+## What this change fixes
 
-Create one reusable helper that selects the correct special-member constructor for same-type initialization, including implicit constructors.
+This landed slice fixes the following class of problems:
 
-### Candidate location
+- EH throw-side same-type construction can use implicit copy/move constructors,
+- catch-by-value construction can use the same same-type constructor policy,
+- implicit copy/move constructor synthesis for nested struct members no longer loses observable constructor behavior,
+- `AddressOfMember` pointer temps are no longer mis-lowered as if the spill slot itself were the source object,
+- caller-side large-struct return-slot initialization no longer misclassifies inline object storage as an indirect pointer source.
 
-- preferred: `StructTypeInfo` helper(s) in `src/AstNodeTypes.cpp` / declaration in `src/AstNodeTypes_DeclNodes.h`
-- acceptable alternative: a small semantic utility near codegen/lowering if it needs `TypedValue`-specific policy inputs
+## What this change does not attempt
 
-### Desired behavior
+This branch does **not** try to solve all constructor-selection questions at once.
 
-- for lvalue source:
-  - prefer copy constructor
-- for xvalue/prvalue source:
-  - prefer move constructor
-  - fall back to copy constructor when move is unavailable
-- include implicit constructors, not just user-written ones
-- reject deleted/unusable constructors if the metadata already exposes that state
-- return enough information for the caller to decide whether raw-copy fallback is legal
+Still intentionally out of scope:
 
-### Notes
+- renaming `emitSameTypeCopyOrMoveConstructorCall(...)` into a fully generic helper,
+- a full raw-copy legality audit for all same-type object construction paths,
+- broader constructor-overload-resolution redesign.
 
-`getConstructorsByParameterCount(1, false)` is already closer to what EH needs than the current explicit-only `findCopyConstructor()` / `findMoveConstructor()` pair.
+## Validation and coverage
 
-## Track 2: Replace EH-only constructor emission helper with a generic lowering helper
+The key regression for this slice is:
 
-### Objective
+- `tests/test_eh_implicit_copy_ctor_ret0.cpp`
 
-Rename/rework `emitEhCopyOrMoveConstructorCall(...)` into a generic same-type construction helper.
+Related nearby coverage that should stay green with this change includes:
 
-### Current file
+- `tests/test_eh_copy_ctor_ret0.cpp`
+- `tests/test_eh_move_ctor_ret0.cpp`
+- `tests/test_eh_struct_throw_ret0.cpp`
+- `tests/test_eh_catch_float_return_ret0.cpp`
+- `tests/test_exceptions_catch_funclets_ret0.cpp`
+- `tests/test_implicit_copy_ctor_inheritance_ret0.cpp`
+- `tests/test_rvo_very_large_struct_ret0.cpp`
 
-- `src/IRConverter_Conv_Calls.h`
+In addition, the nested-member path is grounded by the implicit constructor synthesis in `src/CodeGen_Visitors_Decl.cpp`, which now reuses the same same-type constructor selection helper instead of duplicating the old explicit-only policy.
 
-### Desired outcome
+At the time of writing, these changes also pass `./tests/run_all_tests.ps1` on this branch.
 
-The helper should:
+## Remaining follow-up worth doing later
 
-- take a selected constructor policy/result rather than rediscovering policy ad hoc
-- emit the constructor call for:
-  - destination stack object
-  - destination pointer-to-object
-- accept source objects that currently appear in these paths:
-  - `TempVar`
-  - named variable (`StringHandle`)
-- stay reusable by:
-  - EH throw-side materialization
-  - EH catch-by-value local binding
-  - any future same-type copy/move-init lowering path
+Once the separate Windows reference-catch bug work is moved to its own branch, the next cleanup here should be modest and mechanical:
 
-### Non-goal
+1. rename the EH-named constructor emission helper into a generic same-type construction helper,
+2. finish auditing raw-copy fallback legality so the policy is explicit rather than scattered,
+3. keep normal declaration/copy-init lowering and EH materialization on the same constructor-selection rules.
 
-- do **not** make this helper responsible for ABI-specific EH runtime calls
-
-## Track 3: Unify raw-copy fallback policy
-
-### Objective
-
-Remove open-coded EH fallback decisions where possible and make raw copy contingent on a shared legality rule.
-
-### Desired rule
-
-- if a non-trivial same-type construction path requires a special member, do not silently raw-copy
-- raw copy is acceptable only where the type is trivially copyable / otherwise semantically safe according to existing compiler rules
-
-### Candidate reuse
-
-- audit and possibly lift existing triviality helpers from `src/CodeGen_MemberAccess.cpp`
-- if those helpers are too codegen-local, create a small shared trait helper instead of duplicating logic in EH
-
-## Track 4: Apply the shared logic across all EH object paths
-
-### Throw-side paths
-
-- `src/IRConverter_Emit_EHSeh.h`
-  - ELF exception object materialization
-  - COFF exception object materialization
-
-These two paths should share the same:
-
-- special-member selection rule
-- move-vs-copy preference
-- raw-copy fallback gate
-
-### Catch-side paths
-
-- `materializeCatchObjectFromRax(...)` should stay focused on ABI-specific catch entry storage/pointer handling
-- catch-by-value local binding should continue to flow through generic variable/object initialization where possible
-- if any catch path currently bypasses generic struct initialization, bring it back under the same shared helper
-
-### Explicitly unchanged EH-local code
-
-- personality/landing-pad dispatch
-- funclet setup
-- `__cxa_begin_catch` / `__cxa_end_catch`
-- handler metadata emission in `src/ObjFileWriter_EH.cpp`
-
-## File-by-file plan
-
-### `src/AstNodeTypes_DeclNodes.h` / `src/AstNodeTypes.cpp`
-
-- add a helper for inclusive special-member discovery (implicit + explicit)
-- keep current explicit-only helpers if other callers still rely on that exact behavior
-- prefer adding a new API instead of silently changing existing semantics unless all callers are audited
-
-### `src/IRConverter_Conv_Calls.h`
-
-- replace EH-named constructor emission helper with a generic same-type construction helper
-- keep source-address materialization logic centralized here rather than duplicating it in EH
-
-### `src/IRConverter_Conv_VarDecl.h`
-
-- route `op.use_copy_constructor` through the shared helper/result
-- verify catch-by-value locals still use the same path after the refactor
-
-### `src/IRConverter_Emit_EHSeh.h`
-
-- remove local constructor-selection policy from throw-side paths
-- use the shared helper/result in both ELF and COFF emission branches
-- keep only EH runtime/orchestration logic in this file
-
-### `src/CodeGen_Stmt_Decl.cpp`
-
-- audit for possible reuse, but keep this PR conservative
-- only refactor normal declaration code if the extraction is truly no-behavior-change and reduces duplication immediately
-
-### `src/CodeGen_MemberAccess.cpp`
-
-- audit existing triviality helpers for reuse as the raw-copy legality gate
-- if extraction would be noisy, defer that part and document the boundary clearly in the PR
-
-## Behavior matrix the PR should satisfy
-
-- `throw obj;` where `obj` is an lvalue class object
-  - copy ctor path
-- `throw static_cast<T&&>(obj);`
-  - move ctor preferred, copy fallback if needed
-- `throw T(...);`
-  - move/copy behavior consistent with current value-category policy used by EH
-- `catch (T value)`
-  - by-value binding uses constructor semantics, not blind raw copy
-- `catch (T&)` / `catch (const T&)` / `catch (T&&)`
-  - no accidental by-value materialization
-- trivial POD-ish types
-  - still allowed to use raw-copy paths where legal
-
-## Test plan for the follow-up PR
-
-### EH-focused regressions
-
-- explicit copy ctor on throw + catch by value
-- explicit move ctor on xvalue throw
-- implicit copy ctor with observable nested-member copy side effect
-- implicit move ctor if current parser/type synthesis supports it reliably
-- trivial raw-copy struct case
-- catch-by-reference / catch-by-rvalue-reference cases near the same area
-
-### Failure-boundary tests
-
-- deleted copy or move constructor, if representable today
-- type that should not be raw-copied but currently might be
-
-### Validation commands
-
-- targeted EH tests first
-- nearby copy/move construction tests outside EH if touched
-- `./build_flashcpp.bat`
-- `./tests/run_all_tests.ps1`
-
-## Non-goals
-
-- no redesign of parser EH syntax handling
-- no landing-pad/personality redesign
-- no Windows metadata format redesign
-- no broad constructor-overload-resolution rewrite beyond what EH needs to share safely
-
-## Review strategy
-
-The PR should be staged so the reviewer can answer three questions independently:
-
-1. Is the new shared constructor-selection API correct?
-2. Does EH now use that API consistently across throw and catch materialization paths?
-3. Are raw-copy fallbacks now limited to semantically safe cases?
-
-## Suggested implementation order
-
-1. Add shared special-member selection API.
-2. Add focused implicit-copy EH regression(s) to lock the target behavior.
-3. Convert the generic lowering helper in `IRConverter_Conv_Calls.h`.
-4. Switch EH throw-side ELF and COFF paths to the shared helper.
-5. Re-audit catch-by-value binding paths.
-6. Tighten raw-copy fallback gating.
-7. Run focused EH regressions, then full suite.
-
-## Exit criteria
-
-This follow-up is done when:
-
-- EH no longer has its own private copy-vs-move constructor-selection policy
-- implicit special members participate correctly where EH needs them
-- raw-copy fallback is clearly gated by shared legality rules
-- both major throw-side backends and catch-by-value binding follow the same semantic policy
-- targeted EH regressions and the full test suite pass
+That follow-up should remain a cleanup pass so the review surface stays small.

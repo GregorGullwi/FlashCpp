@@ -213,17 +213,16 @@
 				const TypedValue& init = op.initializer.value();
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-					int temp_storage_bits = getTempVarMetadata(temp_var).is_address ? 64 : init.size_in_bits;
-					int src_offset = getStackOffsetFromTempVar(temp_var, temp_storage_bits);
+					int src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
 					FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset, 
 					          " init.type=", static_cast<int>(init.type), 
 					          " init.size_in_bits=", init.size_in_bits);
 					// Check if source is itself a pointer/reference - if so, load the value
 					// Otherwise, take the address
-					auto src_ref_it = reference_stack_info_.find(src_offset);
-					if (src_ref_it != reference_stack_info_.end()) {
+					auto src_ref_info = getReferenceInfo(temp_var, src_offset);
+					if (src_ref_info.has_value()) {
 						// Source is a reference - copy the pointer value
-						FLASH_LOG(Codegen, Debug, "Source is in reference_stack_info, using MOV");
+						FLASH_LOG(Codegen, Debug, "Source uses indirect storage, using MOV");
 						emitMovFromFrame(pointer_reg, src_offset);
 					} else {
 						// Check if it's a 64-bit value (likely a pointer)
@@ -251,8 +250,8 @@
 					if (src_it != current_scope.variables.end()) {
 						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", StringTable::getStringView(rvalue_var_name_handle), "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
 						// Check if source is a reference
-						auto src_ref_it = reference_stack_info_.find(src_it->second.offset);
-						if (src_ref_it != reference_stack_info_.end()) {
+						auto src_ref_info = getIndirectStackInfo(src_it->second.offset);
+						if (src_ref_info.has_value()) {
 							// Source is a reference - copy the pointer value
 							FLASH_LOG(Codegen, Debug, "Using MOV (source is reference)");
 							emitMovFromFrame(pointer_reg, src_it->second.offset);
@@ -412,12 +411,23 @@
 				bool src_is_pointer = false;  // Track if source is a pointer to the actual data
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-					int temp_storage_bits = getTempVarMetadata(temp_var).is_address ? 64 : init.size_in_bits;
-					src_offset = getStackOffsetFromTempVar(temp_var, temp_storage_bits);
-					// Check if this temp_var is a reference/pointer to the actual struct
-					// For RVO struct returns, temp_var holds the address of the constructed struct
-					auto ref_it = reference_stack_info_.find(src_offset);
-					if (ref_it != reference_stack_info_.end()) {
+						src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
+						// Backend lowering must use current-function indirect-storage state here.
+						// Frontend TempVar metadata can describe a different function by the time
+						// we lower this VariableDecl, which can misclassify inline struct storage
+						// (such as large return-slot results) as an indirect pointer source.
+						auto ref_info = getIndirectStackInfo(src_offset);
+						if (!ref_info.has_value() && init.size_in_bits != 64) {
+							int32_t pointer_src_offset = getStackOffsetFromTempVar(temp_var, 64);
+							if (pointer_src_offset != src_offset) {
+								auto pointer_ref_info = getIndirectStackInfo(pointer_src_offset);
+								if (pointer_ref_info.has_value()) {
+									src_offset = pointer_src_offset;
+									ref_info = pointer_ref_info;
+								}
+							}
+						}
+						if (ref_info.has_value()) {
 						// This is a reference - need to dereference it
 						src_is_pointer = true;
 					}
@@ -447,10 +457,15 @@
 						regAlloc.release(addr_reg);
 						return;  // Early return - we've handled this case
 					}
+
+						auto src_ref_info = getIndirectStackInfo(src_offset);
+						if (src_ref_info.has_value()) {
+							src_is_pointer = true;
+						}
 				}
 
-					if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
-						if (emitEhCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
+						if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
+							if (emitSameTypeCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
 							return;
 						}
 					}
@@ -806,6 +821,11 @@
 		
 		// Finalize previous function before starting new one
 		if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
+				// Branch fixups and local labels are function-scoped. Patch and clear them now
+				// before finalizing the previous function so later functions cannot reuse or
+				// overwrite label state from this one.
+				finalizeFunctionBranches();
+
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);

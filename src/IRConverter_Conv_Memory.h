@@ -1654,7 +1654,7 @@
 		// Patch all pending branches before finalizing
 		// Skip patching if the last function was error-skipped (branches may reference unresolved labels)
 		if (!skip_previous_function_finalization_) {
-			patchBranches();
+				finalizeFunctionBranches();
 		} else {
 			pending_branches_.clear();
 			label_positions_.clear();

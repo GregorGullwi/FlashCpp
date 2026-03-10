@@ -14,6 +14,40 @@
 		return 0;
 	}
 
+		bool emitLoadAddressLikeArgument(X64Register target_reg, const TypedValue& arg, int32_t address_adjustment = 0) {
+			if (std::holds_alternative<StringHandle>(arg.value)) {
+				StringHandle var_handle = std::get<StringHandle>(arg.value);
+				int32_t var_offset = variable_scopes.back().variables[var_handle].offset;
+				auto ref_info = getIndirectStackInfo(var_offset);
+				if (ref_info.has_value()) {
+					emitMovFromFrame(target_reg, var_offset);
+					if (address_adjustment != 0) {
+						emitAddRegImm32(textSectionData, target_reg, address_adjustment);
+					}
+				} else {
+					emitLeaFromFrame(target_reg, var_offset + address_adjustment);
+				}
+				return true;
+			}
+
+			if (std::holds_alternative<TempVar>(arg.value)) {
+				TempVar temp_var = std::get<TempVar>(arg.value);
+				int32_t var_offset = getStackOffsetFromTempVar(temp_var);
+				auto ref_info = getReferenceInfo(temp_var, var_offset);
+				if (ref_info.has_value()) {
+					emitMovFromFrame(target_reg, var_offset);
+					if (address_adjustment != 0) {
+						emitAddRegImm32(textSectionData, target_reg, address_adjustment);
+					}
+				} else {
+					emitLeaFromFrame(target_reg, var_offset + address_adjustment);
+				}
+				return true;
+			}
+
+			return false;
+		}
+
 	/// Emit code to store both 8-byte halves of a two-register struct to
 	/// consecutive RSP-relative stack slots (used when the struct overflows
 	/// the register file).
@@ -168,26 +202,8 @@
 					if (stack_pass_address) {
 						// Store address of the argument on the stack
 						X64Register temp_reg = allocateRegisterWithSpilling();
-						if (std::holds_alternative<StringHandle>(arg.value)) {
-							StringHandle var_handle = std::get<StringHandle>(arg.value);
-							int var_offset = variable_scopes.back().variables[var_handle].offset;
-							auto ref_it = reference_stack_info_.find(var_offset);
-							if (ref_it != reference_stack_info_.end()) {
-								// Already holds a pointer (e.g., reference variable) - load it
-								emitMovFromFrame(temp_reg, var_offset);
-							} else {
-								// Take address of the variable
-								emitLeaFromFrame(temp_reg, var_offset);
-							}
-						} else if (std::holds_alternative<TempVar>(arg.value)) {
-							const auto& temp_var = std::get<TempVar>(arg.value);
-							int var_offset = getStackOffsetFromTempVar(temp_var);
-							auto ref_it = reference_stack_info_.find(var_offset);
-							if (ref_it != reference_stack_info_.end()) {
-								emitMovFromFrame(temp_reg, var_offset);
-							} else {
-								emitLeaFromFrame(temp_reg, var_offset);
-							}
+						if (!emitLoadAddressLikeArgument(temp_reg, arg)) {
+							throw InternalError("Stack call argument marked pass-by-address is not addressable");
 						}
 						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 						regAlloc.release(temp_reg);
@@ -345,21 +361,10 @@
 					should_pass_address = true;
 				}
 				
-				if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
-					// Load ADDRESS of object using LEA or MOV depending on whether it's a reference
-					StringHandle object_name_handle = std::get<StringHandle>(arg.value);
-					int object_offset = variable_scopes.back().variables[object_name_handle].offset;
-					
-					// Check if this variable is itself a reference (e.g., rvalue reference variable)
-					// If so, it already holds a pointer, so load it with MOV instead of LEA
-					auto ref_it = reference_stack_info_.find(object_offset);
-					if (ref_it != reference_stack_info_.end()) {
-						// Variable is a reference - it already holds a pointer, load it
-						emitMovFromFrame(target_reg, object_offset);
-					} else {
-						// Variable is not a reference - take its address with LEA
-						emitLEAFromFrame(textSectionData, target_reg, object_offset);
-					}
+					if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
+						if (!emitLoadAddressLikeArgument(target_reg, arg)) {
+							throw InternalError("Register call argument marked pass-by-address is not addressable");
+						}
 					continue;
 				}
 				
@@ -372,27 +377,9 @@
 				
 				// Handle TempVar arguments that should pass an address (e.g., constructor calls passed to rvalue reference params)
 				if (should_pass_address && std::holds_alternative<TempVar>(arg.value)) {
-					// When should_pass_address is true, the TempVar can be either:
-					// 1. An object value that needs its address taken (like Widget(42)) - use LEA
-					// 2. A pointer value from AddressOf or cast (like result of (Widget&&)w1) - use MOV
-					//
-					// To distinguish:
-					// - Case 2: The TempVar was written by AddressOf/cast and holds a pointer
-					// - Case 1: The TempVar holds the actual object
-					//
-					// Since we can't easily tell from the IR alone, use a simple heuristic:
-					// Check reference_stack_info_ to see if this variable is marked as holding a reference/pointer
-					const auto& temp_var = std::get<TempVar>(arg.value);
-					int var_offset = getStackOffsetFromTempVar(temp_var);
-					
-					auto ref_it = reference_stack_info_.find(var_offset);
-					if (ref_it != reference_stack_info_.end()) {
-						// Variable is marked as holding a pointer/reference - load it with MOV
-						emitMovFromFrame(target_reg, var_offset);
-					} else {
-						// Variable holds an object value - take its address with LEA
-						emitLeaFromFrame(target_reg, var_offset);
-					}
+						if (!emitLoadAddressLikeArgument(target_reg, arg)) {
+							throw InternalError("Register call TempVar marked pass-by-address is not addressable");
+						}
 					continue;
 				}
 				
@@ -665,7 +652,7 @@
 		throw InternalError("Function call without typed payload - should not happen");
 	}
 
-		bool emitEhCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false) {
+			bool emitSameTypeCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false) {
 			if (type_index == 0 || type_index >= gTypeInfo.size()) {
 				return false;
 			}
@@ -699,9 +686,22 @@
 			X64Register source_reg = getIntParamReg<TWriterClass>(1);
 			if (std::holds_alternative<TempVar>(source_arg.value)) {
 				TempVar source_temp = std::get<TempVar>(source_arg.value);
-				int source_storage_bits = getTempVarMetadata(source_temp).is_address ? 64 : source_arg.size_in_bits;
-				int32_t source_offset = getStackOffsetFromTempVar(source_temp, source_storage_bits);
-				auto source_ref_info = getReferenceInfo(source_temp, source_offset);
+				// Backend lowering must not rely on GlobalTempVarMetadataStorage here because that
+				// metadata is populated during IR generation and later reused across multiple
+				// functions. Use only current-function stack-side indirect-storage info.
+				int32_t source_offset = getStackOffsetFromTempVar(source_temp, source_arg.size_in_bits);
+				auto source_ref_info = getIndirectStackInfo(source_offset);
+				if (!source_ref_info.has_value() && source_arg.size_in_bits != 64) {
+					int32_t pointer_source_offset = getStackOffsetFromTempVar(source_temp, 64);
+					if (pointer_source_offset != source_offset) {
+						auto pointer_ref_info = getIndirectStackInfo(pointer_source_offset);
+						if (pointer_ref_info.has_value()) {
+							source_offset = pointer_source_offset;
+							source_ref_info = pointer_ref_info;
+						}
+					}
+				}
+
 				if (source_ref_info.has_value()) {
 					emitMovFromFrame(source_reg, source_offset);
 				} else {
@@ -713,10 +713,8 @@
 				if (!source_info) {
 					throw InternalError("EH copy construction: source variable not found: " + std::string(StringTable::getStringView(source_name)));
 				}
-				if (reference_stack_info_.find(source_info->offset) != reference_stack_info_.end()) {
-					emitMovFromFrame(source_reg, source_info->offset);
-				} else {
-					emitLeaFromFrame(source_reg, source_info->offset);
+					if (!emitLoadAddressLikeArgument(source_reg, source_arg)) {
+						throw InternalError("Same-type constructor source variable is not addressable");
 				}
 			} else {
 				return false;
@@ -1086,6 +1084,7 @@
 				const TypedValue& arg = ctor_op.arguments[i];
 				bool is_float_arg = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference();
 				bool is_two_reg_sysv = isTwoRegisterStruct(arg, false /* non-variadic */);
+				const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
 				bool goes_on_stack = false;
 				if (is_float_arg) {
@@ -1135,23 +1134,8 @@
 						// Match handleFunctionCall: references and ABI-required by-address
 						// struct arguments must spill their address, not their value.
 						X64Register temp_reg = allocateRegisterWithSpilling();
-						if (std::holds_alternative<StringHandle>(arg.value)) {
-							int var_offset = variable_scopes.back().variables[std::get<StringHandle>(arg.value)].offset;
-							auto ref_it = reference_stack_info_.find(var_offset);
-							if (ref_it != reference_stack_info_.end()) {
-								emitMovFromFrame(temp_reg, var_offset);
-							} else {
-								emitLeaFromFrame(temp_reg, var_offset);
-							}
-						} else if (std::holds_alternative<TempVar>(arg.value)) {
-							TempVar arg_temp = std::get<TempVar>(arg.value);
-							int var_offset = getStackOffsetFromTempVar(arg_temp);
-							auto ref_info = getReferenceInfo(arg_temp, var_offset);
-							if (ref_info.has_value()) {
-								emitMovFromFrame(temp_reg, var_offset);
-							} else {
-								emitLeaFromFrame(temp_reg, var_offset);
-							}
+							if (!emitLoadAddressLikeArgument(temp_reg, arg, source_base_adjustment)) {
+								throw InternalError("Stack constructor argument marked pass-by-address is not addressable");
 						}
 						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 						regAlloc.release(temp_reg);
@@ -1182,6 +1166,7 @@
 			TypeIndex arg_type_index = arg.type_index;
 			const IrValue& paramValue = arg.value;
 			bool arg_is_reference = arg.is_reference();  // Check if marked as reference
+				const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
 			// Check if this is a floating-point parameter
 			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double) && !arg_is_reference;
@@ -1249,26 +1234,16 @@
 					bool should_pass_address = is_reference_param || shouldPassStructByAddress(arg, is_two_reg_sysv);
 
 					if (should_pass_address && std::holds_alternative<StringHandle>(paramValue)) {
-						StringHandle obj_name_handle = std::get<StringHandle>(paramValue);
-						int obj_off = variable_scopes.back().variables[obj_name_handle].offset;
-						auto ref_it = reference_stack_info_.find(obj_off);
-						if (ref_it != reference_stack_info_.end()) {
-							emitMovFromFrame(target_reg, obj_off);
-						} else {
-							emitLeaFromFrame(target_reg, obj_off);
-						}
+							if (!emitLoadAddressLikeArgument(target_reg, arg, source_base_adjustment)) {
+								throw InternalError("Register constructor argument marked pass-by-address is not addressable");
+							}
 						continue;
 					}
 
 					if (should_pass_address && std::holds_alternative<TempVar>(paramValue)) {
-						TempVar param_temp = std::get<TempVar>(paramValue);
-						int param_offset = getStackOffsetFromTempVar(param_temp);
-						auto ref_info = getReferenceInfo(param_temp, param_offset);
-						if (ref_info.has_value()) {
-							emitMovFromFrame(target_reg, param_offset);
-						} else {
-							emitLeaFromFrame(target_reg, param_offset);
-						}
+							if (!emitLoadAddressLikeArgument(target_reg, arg, source_base_adjustment)) {
+								throw InternalError("Register constructor TempVar argument marked pass-by-address is not addressable");
+							}
 						continue;
 					}
 
