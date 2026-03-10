@@ -240,8 +240,8 @@
 			// All these types are compatible with IrValue variant
 			if (std::holds_alternative<TempVar>(expr_operands[2])) {
 				throw_op.exception_value = std::get<TempVar>(expr_operands[2]);
-				} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
-					throw_op.exception_value = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				throw_op.exception_value = std::get<StringHandle>(expr_operands[2]);
 			} else if (std::holds_alternative<unsigned long long>(expr_operands[2])) {
 				throw_op.exception_value = std::get<unsigned long long>(expr_operands[2]);
 			} else if (std::holds_alternative<double>(expr_operands[2])) {

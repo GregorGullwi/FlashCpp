@@ -174,13 +174,13 @@
 		// Store mapping from variable name to offset for reference lookups
 		variable_name_to_offset_[var_name_str] = var_it->second.offset;
 
-			// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
-			// of this slot was a reference, stale metadata would cause later by-value variables
-			// at the same offset to be treated as pointers. Clear that before handling any
-			// non-reference declaration that reuses the slot.
-			if (!is_reference) {
-				reference_stack_info_.erase(var_it->second.offset);
-			}
+		// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
+		// of this slot was a reference, stale metadata would cause later by-value variables
+		// at the same offset to be treated as pointers. Clear that before handling any
+		// non-reference declaration that reuses the slot.
+		if (!is_reference) {
+			reference_stack_info_.erase(var_it->second.offset);
+		}
 
 		// REMOVED: Flawed TempVar linking heuristic
 		// Track the most recently allocated named variable for TempVar linking
@@ -2651,6 +2651,8 @@
 				emitAddRSP(32);
 				emitPopReg(X64Register::RBP);
 				textSectionData.push_back(0xC3);
+				catch_funclet_terminated_by_return_ = true;
+				in_catch_funclet_ = false;
 				return;
 			}
 		}

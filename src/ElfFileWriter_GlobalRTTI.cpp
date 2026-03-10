@@ -2,11 +2,6 @@
 // Part of ElfFileWriter class (unity build)
 
 namespace {
-	std::set<std::string>& getCreatedClassTypeinfoSymbols() {
-		static std::set<std::string> created_class_typeinfos;
-		return created_class_typeinfos;
-	}
-
 	/// Collect all unique virtual-base TypeIndex values reachable from \p si
 	/// (depth-first, left-to-right).  Adds to \p out; \p visited prevents cycles.
 	void collectReachableVBases(const StructTypeInfo* si,
@@ -38,9 +33,10 @@ namespace {
 				return true;
 			}
 		}
-		// Recurse into non-virtual bases
+		// Recurse into all bases (both virtual and non-virtual) to locate deep vbases.
+		// The visited set prevents infinite loops.
 		for (const auto& b : si->base_classes) {
-			if (!b.is_virtual && b.type_index < gTypeInfo.size()) {
+			if (b.type_index < gTypeInfo.size()) {
 				const auto* bsi = gTypeInfo[b.type_index].getStructInfo();
 				if (findVBaseOffset(bsi, target_tidx, base_off + b.offset, result, visited))
 					return true;
@@ -182,8 +178,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 	std::string typeinfo_symbol(builder.commit());
 
 	// Check if we've already created this symbol
-	auto& created_class_typeinfos = getCreatedClassTypeinfoSymbols();
-	if (created_class_typeinfos.find(typeinfo_symbol) != created_class_typeinfos.end()) {
+	if (created_class_typeinfos_.find(typeinfo_symbol) != created_class_typeinfos_.end()) {
 		return typeinfo_symbol;
 	}
 
@@ -261,7 +256,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 	auto name_sym_idx = getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
 	rela_acc->add_entry(ti_offset + 8, name_sym_idx,   ELFIO::R_X86_64_64, 0);
 
-	created_class_typeinfos.insert(typeinfo_symbol);
+	created_class_typeinfos_.insert(typeinfo_symbol);
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "Created class typeinfo '{}' for class '{}' with ZTS '{}'",
 	                 typeinfo_symbol, class_name, typename_symbol);
@@ -291,11 +286,9 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 	builder.append("_ZTI").append(class_name.length()).append(class_name);
 	std::string typeinfo_symbol(builder.commit());
 
-	// Intentional static lifetime: typeinfo symbols are emitted once per compilation unit.
 	// Reuse the same cache as the flat overload so delegation for classes without bases
 	// cannot re-emit _ZTS/_ZTI symbols on a subsequent hierarchical lookup.
-	auto& created_class_typeinfos = getCreatedClassTypeinfoSymbols();
-	if (created_class_typeinfos.find(typeinfo_symbol) != created_class_typeinfos.end()) {
+	if (created_class_typeinfos_.find(typeinfo_symbol) != created_class_typeinfos_.end()) {
 		return typeinfo_symbol;
 	}
 
@@ -542,7 +535,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 			typeinfo_symbol, class_name, n_bases);
 	}
 
-	created_class_typeinfos.insert(typeinfo_symbol);
+	created_class_typeinfos_.insert(typeinfo_symbol);
 	return typeinfo_symbol;
 }
 

@@ -447,6 +447,7 @@ private:
 	std::unordered_set<std::string> added_exception_functions_;
 	std::unordered_map<std::string, ELFIO::Elf_Word, ObjectFileCommon::StringViewHash, std::equal_to<>> symbol_index_cache_;
 	bool symbol_index_cache_dirty_ = true;
+	std::set<std::string> created_class_typeinfos_;  // tracks emitted _ZTI symbols within this ElfFileWriter instance
 
 	// DWARF4 debug info data
 	struct DebugLineEntry {

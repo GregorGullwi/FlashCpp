@@ -1306,11 +1306,6 @@
 				current_function_has_cpp_eh_ = true;
 				break;
 			}
-			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-				if (instruction.getOpcode() == IrOpcode::CatchBegin) {
-					current_function_reserved_catch_return_slot_size_ = 16;
-				}
-			}
 		}
 
 		// Track maximum outgoing call argument space needed
@@ -1320,6 +1315,15 @@
 			// Look for TempVar operands in the instruction
 			func_stack_space.shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall
 			                                                  && instruction.getOpcode() != IrOpcode::ConstructorCall));
+
+			// Pre-reserve the catch funclet return slot on Windows: the funclet needs
+			// a fixed-size slot (16 bytes) above the normal locals so that
+			// ensureCatchFuncletReturnSlot does not have to spill below existing locals.
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				if (instruction.getOpcode() == IrOpcode::CatchBegin) {
+					current_function_reserved_catch_return_slot_size_ = 16;
+				}
+			}
 			
 			// Track outgoing call argument space for function calls AND constructor calls.
 			// Both place overflow arguments at RSP-relative offsets, so we must pre-allocate
