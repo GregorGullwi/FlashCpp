@@ -2651,8 +2651,6 @@
 				emitAddRSP(32);
 				emitPopReg(X64Register::RBP);
 				textSectionData.push_back(0xC3);
-				catch_funclet_terminated_by_return_ = true;
-				in_catch_funclet_ = false;
 				return;
 			}
 		}
