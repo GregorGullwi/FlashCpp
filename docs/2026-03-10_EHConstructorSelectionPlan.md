@@ -14,6 +14,31 @@ This note is a **separate-PR plan** for tightening exception-handling object mat
 
 ## Current state
 
+### 2026-03-10 local progress note
+
+This plan is now partially underway in a **safe EH-focused slice**, but the original local regression is still not fully resolved.
+
+Landed locally so far:
+
+- added `StructTypeInfo::findPreferredSameTypeConstructor(prefer_move, include_implicit=true)`
+- switched EH same-type construction lookup away from the explicit-only `findCopyConstructor()` / `findMoveConstructor()` pair
+- taught constructor-call lowering to consult `getReferenceInfo(temp, offset)` for `TempVar` by-address arguments
+- updated implicit copy/move constructor body synthesis to emit nested member constructor calls for struct subobjects when a same-type ctor exists
+
+What this clarified:
+
+- throw-side EH construction is now taking the constructor path
+- catch-by-value initialization is now also taking the constructor path
+- but the observed value checks in the local `test_eh_implicit_copy_ctor_ret0.cpp` scenario still fail
+
+So the remaining blocker now appears to be **broader than constructor selection alone**. Current evidence points at an adjacent copied-object observation/materialization issue (for example member/global value reads or nearby non-EH copy-initialization behavior), not just EH constructor choice.
+
+That means the next step should stay disciplined:
+
+- keep this work scoped to special-member selection / lowering when possible
+- document the newly exposed broader bug separately if we continue past the safe slice
+- avoid entangling this track with parser/mangling/template-finalization work
+
 ### EH-local object materialization paths
 
 - `src/IRConverter_Emit_EHSeh.h`

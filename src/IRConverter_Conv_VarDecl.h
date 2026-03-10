@@ -449,11 +449,11 @@
 					}
 				}
 
-				if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
+					if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
 						if (emitEhCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
-						return;
+							return;
+						}
 					}
-				}
 
 				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
 					// Source value is already in a register (e.g., from function return or arithmetic)

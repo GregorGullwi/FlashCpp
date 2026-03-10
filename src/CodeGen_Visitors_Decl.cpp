@@ -1564,6 +1564,49 @@
 
 						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
+							if (member.type == Type::Struct && member.type_index != 0 && member.type_index < gTypeInfo.size()) {
+								const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+								const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
+								if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
+									TempVar member_source_addr = var_counter.next();
+									AddressOfMemberOp addr_member_op;
+									addr_member_op.result = member_source_addr;
+									addr_member_op.base_object = StringTable::getOrInternStringHandle("other"sv);
+									addr_member_op.member_offset = static_cast<int>(member.offset);
+									addr_member_op.member_type = member.type;
+									addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
+									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
+
+									setTempVarMetadata(member_source_addr, TempVarMetadata::makeReference(
+										member.type,
+										static_cast<int>(member.size * 8),
+										is_move_constructor
+									));
+
+									ConstructorCallOp ctor_op;
+									ctor_op.struct_name = member_type_info.name();
+									ctor_op.object = StringTable::getOrInternStringHandle("this");
+									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
+									ctor_op.base_class_offset = static_cast<int>(member.offset);
+
+									TypedValue other_arg;
+									other_arg.type = Type::Struct;
+									other_arg.size_in_bits = static_cast<int>(member.size * 8);
+									other_arg.value = member_source_addr;
+									other_arg.type_index = member.type_index;
+									if (is_copy_constructor) {
+										other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+										other_arg.cv_qualifier = CVQualifier::Const;
+									} else {
+										other_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+									}
+									ctor_op.arguments.push_back(std::move(other_arg));
+
+									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+									continue;
+								}
+							}
+
 							// First, load the member from 'other'
 							TempVar member_value = var_counter.next();
 							MemberLoadOp member_load;

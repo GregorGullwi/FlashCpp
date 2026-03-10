@@ -676,20 +676,7 @@
 				return false;
 			}
 
-			const StructMemberFunction* selected_ctor = nullptr;
-			if (prefer_move) {
-				const StructMemberFunction* move_ctor = struct_info->findMoveConstructor();
-				if (move_ctor && move_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-					selected_ctor = move_ctor;
-				}
-			}
-
-			if (!selected_ctor) {
-				const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
-				if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-					selected_ctor = copy_ctor;
-				}
-			}
+			const StructMemberFunction* selected_ctor = struct_info->findPreferredSameTypeConstructor(prefer_move);
 
 			if (!selected_ctor) {
 				return false;
@@ -897,28 +884,29 @@
 		if (struct_type_it != gTypesByName.end()) {
 			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 			if (struct_info) {
-				// FIRST: If we have exactly one parameter that's a reference to the same struct type,
-				// prefer the copy constructor over other single-parameter constructors
-				if (num_params == 1 && !ctor_op.arguments.empty()) {
-					const TypedValue& arg = ctor_op.arguments[0];
-					bool arg_is_same_struct = (arg.type == Type::Struct && 
-					                           arg.type_index == struct_type_it->second->type_index_);
-					bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == 64);
-					
-					if (arg_is_same_struct && arg_is_ref_or_pointer) {
-						// Try to find copy constructor
-						const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
-						if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-							actual_ctor = &copy_ctor->function_decl.as<ConstructorDeclarationNode>();
-							FLASH_LOG_FORMAT(Codegen, Debug,
-								"Constructor call for {}: matched copy constructor",
-								struct_name);
+					// FIRST: If we have exactly one parameter that's a reference to the same struct type,
+					// prefer the corresponding same-type copy/move constructor over other single-parameter constructors.
+					if (num_params == 1 && !ctor_op.arguments.empty()) {
+						const TypedValue& arg = ctor_op.arguments[0];
+						bool arg_is_same_struct = (arg.type == Type::Struct &&
+							arg.type_index == struct_type_it->second->type_index_);
+						bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == 64);
+
+						if (arg_is_same_struct && arg_is_ref_or_pointer) {
+							bool prefer_move_ctor = arg.ref_qualifier == ReferenceQualifier::RValueReference;
+							const StructMemberFunction* same_type_ctor = struct_info->findPreferredSameTypeConstructor(prefer_move_ctor);
+							if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+								actual_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Constructor call for {}: matched same-type {} constructor",
+									struct_name,
+									prefer_move_ctor ? "move" : "copy");
+							}
 						}
 					}
-				}
-				
-				// SECOND: If no copy constructor matched, look for other constructors with matching parameter count
-				if (!actual_ctor) {
+
+					// SECOND: If no same-type constructor matched, look for other constructors with matching parameter count.
+					if (!actual_ctor) {
 						std::vector<TypeSpecifierNode> arg_types;
 						arg_types.reserve(num_params);
 						for (const auto& arg : ctor_op.arguments) {
@@ -947,12 +935,12 @@
 									const auto& params = ctor_node.parameter_nodes();
 
 									if (ctor_node.is_implicit() && params.size() == 1 && num_params == 1 &&
-									    params[0].is<DeclarationNode>()) {
+										params[0].is<DeclarationNode>()) {
 										const auto& param_type = params[0].as<DeclarationNode>().type_node();
 										if (param_type.is<TypeSpecifierNode>()) {
 											const auto& pts = param_type.as<TypeSpecifierNode>();
 											if ((pts.is_reference() || pts.is_rvalue_reference()) &&
-											    (pts.type() == Type::Struct || pts.type() == Type::UserDefined)) {
+												(pts.type() == Type::Struct || pts.type() == Type::UserDefined)) {
 												const TypedValue& arg = ctor_op.arguments[0];
 												if (arg.type != Type::Struct || arg.type_index != struct_type_it->second->type_index_) {
 													continue;
@@ -1156,9 +1144,10 @@
 								emitLeaFromFrame(temp_reg, var_offset);
 							}
 						} else if (std::holds_alternative<TempVar>(arg.value)) {
-							int var_offset = getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
-							auto ref_it = reference_stack_info_.find(var_offset);
-							if (ref_it != reference_stack_info_.end()) {
+							TempVar arg_temp = std::get<TempVar>(arg.value);
+							int var_offset = getStackOffsetFromTempVar(arg_temp);
+							auto ref_info = getReferenceInfo(arg_temp, var_offset);
+							if (ref_info.has_value()) {
 								emitMovFromFrame(temp_reg, var_offset);
 							} else {
 								emitLeaFromFrame(temp_reg, var_offset);
@@ -1272,9 +1261,10 @@
 					}
 
 					if (should_pass_address && std::holds_alternative<TempVar>(paramValue)) {
-						int param_offset = getStackOffsetFromTempVar(std::get<TempVar>(paramValue));
-						auto ref_it = reference_stack_info_.find(param_offset);
-						if (ref_it != reference_stack_info_.end()) {
+						TempVar param_temp = std::get<TempVar>(paramValue);
+						int param_offset = getStackOffsetFromTempVar(param_temp);
+						auto ref_info = getReferenceInfo(param_temp, param_offset);
+						if (ref_info.has_value()) {
 							emitMovFromFrame(target_reg, param_offset);
 						} else {
 							emitLeaFromFrame(target_reg, param_offset);
