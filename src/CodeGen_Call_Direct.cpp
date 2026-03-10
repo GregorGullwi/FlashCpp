@@ -1199,7 +1199,23 @@
 				}
 			}
 			if (param_type_spec) {
-				applyTypeNodeMetadata(arg, *param_type_spec);
+				// For regular call arguments, only apply metadata that the argument
+				// evaluation couldn't know (pointer_depth, cv_qualifier, ref_qualifier).
+				// Do NOT overwrite type/size_in_bits — the argument's evaluated type
+				// must be preserved so the backend emits the correct-width MOV.
+				// (e.g., a short arg must stay 16-bit even if the param is int;
+				// the backend handles the implicit promotion.)
+				// applyTypeNodeMetadata is still used for default arguments where the
+				// parameter type IS the correct type.
+				arg.pointer_depth = static_cast<int>(param_type_spec->pointer_depth());
+				arg.cv_qualifier = param_type_spec->cv_qualifier();
+				if (param_type_spec->is_rvalue_reference()) {
+					arg.ref_qualifier = ReferenceQualifier::RValueReference;
+				} else if (param_type_spec->is_reference()) {
+					arg.ref_qualifier = ReferenceQualifier::LValueReference;
+				} else {
+					arg.ref_qualifier = ReferenceQualifier::None;
+				}
 			}
 			
 			call_op.args.push_back(arg);
