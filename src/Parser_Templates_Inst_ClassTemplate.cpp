@@ -5855,7 +5855,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_function_context_stack_.push_back({
 						instantiated_name,
 						struct_type_info.type_index_,
-						const_cast<StructDeclarationNode*>(&class_decl),
+						&instantiated_struct_ref,
 						nullptr
 					});
 					register_member_functions_in_scope(&instantiated_struct_ref, struct_type_info.type_index_);
@@ -5937,7 +5937,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_function_context_stack_.push_back({
 						instantiated_name,
 						struct_type_info.type_index_,
-						const_cast<StructDeclarationNode*>(&instantiated_struct_ref),
+						&instantiated_struct_ref,
 						nullptr
 					});
 					register_member_functions_in_scope(&instantiated_struct_ref, struct_type_info.type_index_);
