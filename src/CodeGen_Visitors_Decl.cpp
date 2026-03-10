@@ -1578,12 +1578,6 @@
 									addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 
-									setTempVarMetadata(member_source_addr, TempVarMetadata::makeReference(
-										member.type,
-										static_cast<int>(member.size * 8),
-										is_move_constructor
-									));
-
 									ConstructorCallOp ctor_op;
 									ctor_op.struct_name = member_type_info.name();
 									ctor_op.object = StringTable::getOrInternStringHandle("this");
