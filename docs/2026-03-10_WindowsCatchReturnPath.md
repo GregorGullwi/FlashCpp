@@ -135,4 +135,4 @@ At the time of writing, this path and the surrounding EH fixes pass `./tests/run
 
 This note is only about the catch-return path.
 
-It does **not** try to document every other EH change on the branch. The constructor-selection and indirect-storage fixes that landed alongside it are covered in `docs/2026-03-10_EHConstructorSelectionPlan.md`.
+It does **not** try to document every other EH change on the branch. The constructor-selection and indirect-storage fixes that landed alongside it are reflected in the code and regression tests.
