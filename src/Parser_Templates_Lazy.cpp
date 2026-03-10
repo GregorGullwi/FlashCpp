@@ -437,20 +437,15 @@ if (param_decl.has_default_value()) {
 		struct_parsing_context_stack_.pop_back();
 	}
 
-	// Copy function properties
-	new_func_ref.set_is_constexpr(func_decl.is_constexpr());
-	new_func_ref.set_is_consteval(func_decl.is_consteval());
-	new_func_ref.set_is_constinit(func_decl.is_constinit());
-	new_func_ref.set_noexcept(func_decl.is_noexcept());
-	new_func_ref.set_is_variadic(func_decl.is_variadic());
-	new_func_ref.set_is_static(func_decl.is_static());
-	new_func_ref.set_linkage(func_decl.linkage());
-	new_func_ref.set_calling_convention(func_decl.calling_convention());
+	copy_function_properties(new_func_ref, func_decl);
 
-	// Compute and set the proper mangled name for code generation
-	// This is essential so that FunctionCallNode can carry the correct mangled name
-	// and codegen can resolve the correct function for each template instantiation
-	compute_and_set_mangled_name(new_func_ref);
+	if (new_func_ref.get_definition().has_value()) {
+		finalize_function_after_definition(new_func_ref);
+	} else {
+		// This is essential so that FunctionCallNode can carry the correct mangled name
+		// and codegen can resolve the correct function for each template instantiation
+		compute_and_set_mangled_name(new_func_ref);
+	}
 
 	StringBuilder qualified_name_builder;
 	qualified_name_builder.append(StringTable::getStringView(lazy_info.instantiated_class_name))

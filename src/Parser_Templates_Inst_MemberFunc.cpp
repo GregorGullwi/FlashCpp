@@ -158,6 +158,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					FLASH_LOG(Templates, Error, "Failed to parse specialization body: ", body_result.error_message());
 				} else {
 					spec_func.set_definition(*body_result.node());
+					finalize_function_after_definition(spec_func, true);
 					FLASH_LOG(Templates, Debug, "Successfully parsed specialization body");
 					
 					// Add the specialization to ast_nodes_ so it gets code generated

@@ -1,15 +1,15 @@
 # Auto Return Mangling Follow-Up Plan
 
 **Date**: 2026-03-10
-**Status**: In progress — parser-side finalization refactor started, validation still pending
+**Status**: In progress — parser-side finalization refactor landed, focused validation green, full-suite validation running
 
 ## Current status
 
-The targeted `Type::Auto` mangling `InternalError(...)` checks were reverted in `src/NameMangling.h`
-to restore the previous best-effort fallback behavior.
+The parser-side finalization refactor is now in place and the temporary `Type::Auto -> int`
+name-mangling fallback has been removed again from `src/NameMangling.h`.
 
-That revert is a workaround only. The real bug is that unresolved `auto` return types can still
-reach mangling in some parser/template-instantiation paths.
+At this point, unresolved `auto` reaching mangling is treated as a hard compiler bug rather than
+being papered over with a best-effort symbol.
 
 ## Progress update (current branch)
 
@@ -28,15 +28,21 @@ Completed so far:
 - switched defaulted non-template member functions to create the synthetic body first and finalize afterwards
 - switched template instantiation paths to reuse centralized property copying and only mangle after finalization when a body is already present
 - updated the `operator<=>` codegen fallback site to pass a resolved temporary return-type node into `generateMangledNameForCall(...)` instead of the original unresolved `auto` node
+- fixed ADL hidden-friend lookup for the global namespace so delayed friend definitions can resolve to the finalized declaration before codegen/mangling
 - added targeted regression tests:
   - `tests/test_auto_member_delayed_ret42.cpp`
   - `tests/test_friend_auto_delayed_ret42.cpp`
+- removed the temporary `Type::Auto` mangling fallback from both MSVC and Itanium manglers after the ordering fixes were in place
+- validated focused regressions successfully:
+  - `test_friend_auto_delayed_ret42.cpp`
+  - `test_auto_member_delayed_ret42.cpp`
+  - `test_spaceship_template_ret127.cpp`
+  - `test_adl_hidden_friend_ret0.cpp`
 
 Still remaining before this plan is done:
 
-- finish auditing all template-class body-attachment paths so every `set_definition(...)` site follows the same finalize-then-mangle invariant
-- build and run focused regression coverage, then broader test coverage
-- once validation is green, remove the temporary `Type::Auto` mangling fallback from `src/NameMangling.h`
+- finish the long full-suite validation run and confirm final exit status
+- do one last audit pass for any remaining non-finalized mangling entry points if the full suite exposes one
 
 ## Root cause summary
 
@@ -71,7 +77,7 @@ In `src/Parser_Decl_StructEnum.cpp:1980-2008`:
 - `compute_and_set_mangled_name(member_func_ref);` runs **before** `set_definition(block_node)`
 - no `deduce_and_update_auto_return_type(...)` call is made there
 
-### 3. Defaulted template member functions can retain `Type::Auto` through instantiation
+### 3. Defaulted template member functions could retain `Type::Auto` through instantiation
 
 In `src/Parser_Templates_Class.cpp:3466-3482`:
 
@@ -85,17 +91,18 @@ In `src/Parser_Templates_Inst_MemberFunc.cpp:321-381`:
 - for functions without a stored template body position, mangling happens immediately via
   `compute_and_set_mangled_name(new_func_ref);`
 
-This is the most likely root cause for historical failures like
-`test_spaceship_template_ret127.cpp`.
+This was a root cause for failures like `test_spaceship_template_ret127.cpp` and is now covered by
+the parser-side finalization changes plus targeted regression runs.
 
-### 4. Codegen still has a secondary unresolved-return hazard
+### 4. Codegen had a secondary unresolved-return hazard
 
 In `src/CodeGen_Expr_Operators.cpp:1237-1263`:
 
 - codegen locally treats defaulted `operator<=>` with `Type::Auto` as `Type::Int`
 - but still passes the original `return_type_node` into `generateMangledNameForCall(...)`
 
-So even when codegen has a fallback operational type, mangling can still see unresolved `auto`.
+That call site now passes a resolved temporary type node, so codegen no longer reintroduces the
+unresolved-return problem on that path.
 
 ## Follow-up implementation plan
 
@@ -134,7 +141,8 @@ By the time mangling runs:
 - defaulted/template `operator<=>` declarations should already have a concrete return type
 - codegen should not need to guess a return type just to emit a call
 
-At that point, the temporary best-effort `Type::Auto -> int` mangling fallback can be removed safely.
+That end state is now intended to be enforced directly: unresolved `Type::Auto` reaching mangling
+throws instead of silently degrading to `int`.
 
 ## Suggested regression coverage
 

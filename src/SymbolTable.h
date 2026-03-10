@@ -554,7 +554,7 @@ public:
 		std::unordered_set<NamespaceHandle> visited;
 
 		auto search_ns = [&](NamespaceHandle ns) {
-			if (!ns.isValid() || ns.isGlobal() || !visited.insert(ns).second) return;
+			if (!ns.isValid() || !visited.insert(ns).second) return;
 			auto candidates = lookup_qualified_all(ns, func_name);
 			result.insert(result.end(), candidates.begin(), candidates.end());
 		};
