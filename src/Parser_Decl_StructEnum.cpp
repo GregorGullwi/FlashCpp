@@ -1330,11 +1330,18 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				return type_and_name_result;
 			}
 			
-			// Check if this is a static member function (has '(')
-			// Pass false for add_to_struct_info: the finalization loop below will register it
-			if (parse_static_member_function(type_and_name_result, is_static_constexpr,
-			                                   qualified_struct_name, struct_ref, struct_info.get(),
-			                                   current_access, current_template_param_names_, false)) {
+				// Check if this is a static member function (has '(')
+				// Pass false for add_to_struct_info: the finalization loop below will register it
+				if (parse_static_member_function(
+					type_and_name_result,
+					is_static_constexpr,
+					qualified_struct_name,
+					struct_ref,
+					struct_info.get(),
+					current_access,
+					current_template_param_names_,
+					/*add_to_struct_info=*/false,
+					/*add_to_ast_nodes=*/false)) {
 				// Function was handled (or error occurred)
 				if (type_and_name_result.is_error()) {
 					return type_and_name_result;

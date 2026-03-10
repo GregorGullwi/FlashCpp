@@ -1080,7 +1080,8 @@ public:  // Public methods for template instantiation
             StructTypeInfo* struct_info,
             AccessSpecifier current_access,
             const InlineVector<StringHandle, 4>& current_template_param_names,
-            bool add_to_struct_info = true  // false when finalization loop will register the function
+            bool add_to_struct_info,
+            bool add_to_ast_nodes
         );
         
         // Helper to parse entire static member block (data or function) - reduces code duplication
@@ -1090,7 +1091,8 @@ public:  // Public methods for template instantiation
             StructTypeInfo* struct_info,
             AccessSpecifier current_access,
             const InlineVector<StringHandle, 4>& current_template_param_names,
-            bool use_struct_type_info = false  // If true, use struct_type_info.getStructInfo() for data members
+            bool use_struct_type_info,
+            bool add_functions_to_ast_nodes
         );
         
         Linkage parse_declspec_attributes();          // Parse Microsoft __declspec(...) and return linkage

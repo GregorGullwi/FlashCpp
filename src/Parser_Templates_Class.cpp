@@ -1523,9 +1523,14 @@ ParseResult Parser::parse_template_declaration() {
 						// Handle static members: static const int size = 10;
 						advance(); // consume "static"
 						
-						auto static_result = parse_static_member_block(instantiated_name, struct_ref, 
-						                                                 struct_info.get(), current_access, 
-						                                                 current_template_param_names_, /*use_struct_type_info=*/false);
+						auto static_result = parse_static_member_block(
+							instantiated_name,
+							struct_ref,
+							struct_info.get(),
+							current_access,
+							current_template_param_names_,
+							/*use_struct_type_info=*/false,
+							/*add_functions_to_ast_nodes=*/true);
 						if (static_result.is_error()) {
 							return static_result;
 						}
@@ -2922,9 +2927,14 @@ ParseResult Parser::parse_template_declaration() {
 						// Handle static members: static const int size = 10;
 						advance(); // consume "static"
 						
-						auto static_result = parse_static_member_block(instantiated_name, struct_ref, 
-						                                                 struct_info.get(), current_access, 
-						                                                 current_template_param_names_, /*use_struct_type_info=*/false);
+						auto static_result = parse_static_member_block(
+							instantiated_name,
+							struct_ref,
+							struct_info.get(),
+							current_access,
+							current_template_param_names_,
+							/*use_struct_type_info=*/false,
+							/*add_functions_to_ast_nodes=*/false);
 						if (static_result.is_error()) {
 							return static_result;
 						}

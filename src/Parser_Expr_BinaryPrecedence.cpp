@@ -1050,7 +1050,8 @@ bool Parser::parse_static_member_function(
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
 	const InlineVector<StringHandle, 4>& current_template_param_names,
-	bool add_to_struct_info
+	bool add_to_struct_info,
+	bool add_to_ast_nodes
 ) {
 	// Check if this is a function (has '(')
 	if (peek() != "("_tok) {
@@ -1212,6 +1213,10 @@ bool Parser::parse_static_member_function(
 		registered.is_noexcept = member_func_node.as<FunctionDeclarationNode>().is_noexcept();
 	}
 
+	if (add_to_ast_nodes) {
+		ast_nodes_.push_back(member_func_node);
+	}
+
 	return true;  // Successfully handled as a function
 }
 
@@ -1222,7 +1227,8 @@ ParseResult Parser::parse_static_member_block(
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
 	const InlineVector<StringHandle, 4>& current_template_param_names,
-	bool use_struct_type_info
+	bool use_struct_type_info,
+	bool add_functions_to_ast_nodes
 ) {
 	// consume "static" already done by caller
 	
@@ -1252,9 +1258,16 @@ ParseResult Parser::parse_static_member_block(
 	}
 
 	// Check if this is a static member function (has '(')
-	if (parse_static_member_function(type_and_name, is_static_constexpr,
-	                                   struct_name_handle, struct_ref, struct_info,
-	                                   current_access, current_template_param_names)) {
+	if (parse_static_member_function(
+		type_and_name,
+		is_static_constexpr,
+		struct_name_handle,
+		struct_ref,
+		struct_info,
+		current_access,
+		current_template_param_names,
+		/*add_to_struct_info=*/true,
+		/*add_to_ast_nodes=*/add_functions_to_ast_nodes)) {
 		// Function was handled (or error occurred)
 		if (type_and_name.is_error()) {
 			return type_and_name;
