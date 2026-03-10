@@ -158,6 +158,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					FLASH_LOG(Templates, Error, "Failed to parse specialization body: ", body_result.error_message());
 				} else {
 					spec_func.set_definition(*body_result.node());
+					finalize_function_after_definition(spec_func, true);
 					FLASH_LOG(Templates, Debug, "Successfully parsed specialization body");
 					
 					// Add the specialization to ast_nodes_ so it gets code generated
@@ -375,10 +376,18 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
+	copy_function_properties(new_func_ref, func_decl);
+	auto orig_body = func_decl.get_definition();
+
 	// Check if the template has a body position stored
 	if (!func_decl.has_template_body_position()) {
-		// No body to parse - compute mangled name for proper linking and symbol resolution
-		compute_and_set_mangled_name(new_func_ref);
+		if (orig_body.has_value()) {
+				new_func_ref.set_definition(
+					substituteTemplateParameters(*orig_body, template_params, template_args));
+			finalize_function_after_definition(new_func_ref);
+		} else {
+			compute_and_set_mangled_name(new_func_ref);
+		}
 		ast_nodes_.push_back(new_func_node);
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
 		return new_func_node;
@@ -518,8 +527,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Update the saved position to include this new node so it doesn't get erased
 	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
 
-	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
-	compute_and_set_mangled_name(new_func_ref);
+	if (new_func_ref.get_definition().has_value()) {
+		finalize_function_after_definition(new_func_ref);
+	} else {
+		compute_and_set_mangled_name(new_func_ref);
+	}
 	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);

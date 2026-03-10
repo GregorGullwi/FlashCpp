@@ -1243,6 +1243,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								return_type = Type::Int;
 								return_size = 32;
 							}
+
+							TypeSpecifierNode resolved_return_type_node = return_type_node;
+							if (resolved_return_type_node.type() != return_type) {
+								resolved_return_type_node = TypeSpecifierNode(return_type, TypeQualifier::None, return_size, return_type_node.token());
+							}
 							
 							// Generate mangled name for the operator<=> call
 							std::vector<TypeSpecifierNode> param_types;
@@ -1257,7 +1262,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							
 							std::string_view mangled_name = generateMangledNameForCall(
 								"operator<=>",
-								return_type_node,
+								resolved_return_type_node,
 								param_types,
 								false, // not variadic
 								StringTable::getStringView(type_info.name())

@@ -1629,8 +1629,26 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const ASTNode& object_node = member_access.object();
 		std::string_view member_name = member_access.member_name();
 		
-		// Get the type of the object
-		auto object_type_opt = get_expression_type(object_node);
+		// Get the type of the object. Implicit member accesses are represented as
+		// this->member, but `this` itself is not inserted into the symbol table.
+		// Handle that case directly from the active member-function context.
+		std::optional<TypeSpecifierNode> object_type_opt;
+		if (object_node.is<ExpressionNode>()) {
+			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(object_expr)) {
+				const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
+				if (object_ident.name() == "this" && !member_function_context_stack_.empty()) {
+					const auto& member_ctx = member_function_context_stack_.back();
+					if (member_ctx.struct_type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index];
+						object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
+					}
+				}
+			}
+		}
+		if (!object_type_opt.has_value()) {
+			object_type_opt = get_expression_type(object_node);
+		}
 		if (!object_type_opt.has_value()) {
 			return std::nullopt;
 		}

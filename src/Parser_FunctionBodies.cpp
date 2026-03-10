@@ -367,11 +367,7 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 			delayed.dtor_node->set_definition(*block_result.node());
 		} else if (delayed.func_node) {
 			delayed.func_node->set_definition(*block_result.node());
-			// Deduce auto return types from function body (only if return type is auto)
-			TypeSpecifierNode return_type = delayed.func_node->decl_node().type_node().as<TypeSpecifierNode>();
-			if (return_type.type() == Type::Auto) {
-				deduce_and_update_auto_return_type(*delayed.func_node);
-			}
+			finalize_function_after_definition(*delayed.func_node, true);
 		}
 	}
 	
@@ -475,20 +471,79 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 	return SignatureValidationResult::success();
 }
 
+void Parser::copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src)
+{
+	dest.set_namespace_handle(src.namespace_handle());
+	dest.set_is_constexpr(src.is_constexpr());
+	dest.set_is_consteval(src.is_consteval());
+	dest.set_is_constinit(src.is_constinit());
+	dest.set_noexcept(src.is_noexcept());
+	if (src.has_noexcept_expression()) {
+		dest.set_noexcept_expression(*src.noexcept_expression());
+	}
+	dest.set_is_variadic(src.is_variadic());
+	dest.set_is_deleted(src.is_deleted());
+	dest.set_is_static(src.is_static());
+	dest.set_is_implicit(src.is_implicit());
+	dest.set_inline_always(src.is_inline_always());
+	dest.set_linkage(src.linkage());
+	dest.set_calling_convention(src.calling_convention());
+}
+
+ASTNode Parser::create_defaulted_member_function_body(const FunctionDeclarationNode& func_node)
+{
+	auto [block_node, block_ref] = create_node_ref(BlockNode());
+	const DeclarationNode& decl_node = func_node.decl_node();
+
+	if (decl_node.identifier_token().value() == "operator<=>") {
+		Token zero_token(Token::Type::Literal, "0"sv,
+			decl_node.identifier_token().line(),
+			decl_node.identifier_token().column(),
+			decl_node.identifier_token().file_index());
+		auto zero_expr = emplace_node<ExpressionNode>(
+			NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+		auto return_stmt = emplace_node<ReturnStatementNode>(
+			std::optional<ASTNode>(zero_expr), zero_token);
+		block_ref.add_statement_node(return_stmt);
+	}
+
+	return block_node;
+}
+
+void Parser::finalize_function_signature_after_definition(FunctionDeclarationNode& func_node)
+{
+	deduce_and_update_auto_return_type(func_node);
+}
+
+void Parser::finalize_function_after_definition(FunctionDeclarationNode& func_node, bool force_recompute_mangled_name)
+{
+	finalize_function_signature_after_definition(func_node);
+	compute_and_set_mangled_name(func_node, force_recompute_mangled_name);
+}
+
 // Phase 6 (mangling): Generate and set mangled name on a FunctionDeclarationNode
 // This should be called after all function properties are set (parameters, variadic flag, etc.)
 // Note: The mangled name is stored as a string_view pointing to ChunkedStringAllocator storage
 // which remains valid for the lifetime of the compilation.
-void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
+void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bool force_recompute)
 {
 	// Skip if already has a mangled name
-	if (func_node.has_mangled_name()) {
+	if (!force_recompute && func_node.has_mangled_name()) {
 		return;
+	}
+
+	const DeclarationNode& decl_node = func_node.decl_node();
+	if (decl_node.type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		if (return_type.type() == Type::Auto && !func_node.get_definition().has_value()) {
+			// A declaration-only function with placeholder return type cannot be mangled yet.
+			// Wait until a definition/body is attached and the signature is finalized.
+			return;
+		}
 	}
 	
 	// C linkage functions don't get mangled - just use the function name as-is
 	if (func_node.linkage() == Linkage::C) {
-		const DeclarationNode& decl_node = func_node.decl_node();
 		std::string_view func_name = decl_node.identifier_token().value();
 		func_node.set_mangled_name(func_name);
 		return;

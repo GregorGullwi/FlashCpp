@@ -620,8 +620,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	
 		// existing_func_ref is already defined earlier after validation
 		if (body_result.node().has_value()) {
-			// Generate mangled name before setting definition (Phase 6 mangling)
-			compute_and_set_mangled_name(existing_func_ref);
 			if (!existing_func_ref.set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Function '", class_name.view(), "::", function_name_token.value(), 
 						  "' already has a definition");
@@ -632,8 +630,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// Update parameter nodes to use definition's parameter names
 			// C++ allows declaration and definition to have different parameter names
 			existing_func_ref.update_parameter_nodes_from_definition(func_ref.parameter_nodes());
-			// Deduce auto return types from function body
-			deduce_and_update_auto_return_type(existing_func_ref);
+			finalize_function_after_definition(existing_func_ref, true);
 		}
 
 		member_function_context_stack_.pop_back();
@@ -881,11 +878,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
 					FunctionDeclarationNode& final_func_decl = node->as<FunctionDeclarationNode>();
-					// Generate mangled name before finalizing (Phase 6 mangling)
-					compute_and_set_mangled_name(final_func_decl);
 					final_func_decl.set_definition(*block);
-					// Deduce auto return types from function body
-					deduce_and_update_auto_return_type(final_func_decl);
+					finalize_function_after_definition(final_func_decl);
 					return saved_position.success(*node);
 				}
 			}

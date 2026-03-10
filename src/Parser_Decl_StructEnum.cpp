@@ -1332,9 +1332,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			// Check if this is a static member function (has '(')
 			// Pass false for add_to_struct_info: the finalization loop below will register it
-			if (parse_static_member_function(type_and_name_result, is_static_constexpr,
-			                                   qualified_struct_name, struct_ref, struct_info.get(),
-			                                   current_access, current_template_param_names_, false)) {
+			if (parse_static_member_function(
+				type_and_name_result,
+				is_static_constexpr,
+				qualified_struct_name,
+				struct_ref,
+				struct_info.get(),
+				current_access,
+				current_template_param_names_,
+				/*add_to_struct_info=*/false,
+				/*add_to_ast_nodes=*/false)) {
 				// Function was handled (or error occurred)
 				if (type_and_name_result.is_error()) {
 					return type_and_name_result;
@@ -1987,25 +1994,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Mark as implicit (same behavior as compiler-generated)
 				member_func_ref.set_is_implicit(true);
 
-				// Create a simple block for the function body
-				auto [block_node, block_ref] = create_node_ref(BlockNode());
-
-				// Special-case defaulted spaceship operator: emit a safe return value
-				if (decl_node.identifier_token().value() == "operator<=>") {
-					Token zero_token(Token::Type::Literal, "0"sv,
-						decl_node.identifier_token().line(),
-						decl_node.identifier_token().column(),
-						decl_node.identifier_token().file_index());
-					auto zero_expr = emplace_node<ExpressionNode>(
-						NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
-					auto return_stmt = emplace_node<ReturnStatementNode>(
-						std::optional<ASTNode>(zero_expr), zero_token);
-					block_ref.add_statement_node(return_stmt);
-				}
-
-				// Generate mangled name before setting definition (Phase 6 mangling)
-				compute_and_set_mangled_name(member_func_ref);
+				ASTNode block_node = create_defaulted_member_function_body(member_func_ref);
 				member_func_ref.set_definition(block_node);
+				finalize_function_after_definition(member_func_ref);
 			}
 			
 			// Handle deleted functions: skip adding to struct (they cannot be called)
@@ -2962,9 +2953,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Create an empty block for the operator= body
 		auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
-		// Generate mangled name before setting definition (Phase 6 mangling)
-		compute_and_set_mangled_name(func_ref);
 		func_ref.set_definition(op_block_node);
+		finalize_function_after_definition(func_ref);
 
 		// Mark this as an implicit operator=
 		func_ref.set_is_implicit(true);
@@ -3077,9 +3067,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Create an empty block for the operator= body
 		auto [move_op_block_node, move_op_block_ref] = create_node_ref(BlockNode());
-		// Generate mangled name before setting definition (Phase 6 mangling)
-		compute_and_set_mangled_name(move_func_ref);
 		move_func_ref.set_definition(move_op_block_node);
+		finalize_function_after_definition(move_func_ref);
 
 		// Mark this as an implicit operator=
 		move_func_ref.set_is_implicit(true);
@@ -3216,9 +3205,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Add return statement to block
 			op_block_ref.add_statement_node(return_stmt);
 			
-			// Generate mangled name before setting definition (Phase 6 mangling)
-			compute_and_set_mangled_name(func_ref);
 			func_ref.set_definition(op_block_node);
+			finalize_function_after_definition(func_ref);
 			// Mark as implicit to allow codegen to handle synthesized comparisons safely
 			func_ref.set_is_implicit(true);
 			
@@ -4092,9 +4080,6 @@ ParseResult Parser::parse_friend_declaration()
 				func_ref.add_parameter_node(param);
 			}
 			func_ref.set_is_variadic(param_list.is_variadic);
-
-			// Compute and set the mangled name so the call site uses the right symbol
-			compute_and_set_mangled_name(func_ref);
 
 			// Save body position and skip the body; it will be parsed in the second pass
 			SaveHandle body_start = save_token_position();

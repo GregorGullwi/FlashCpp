@@ -986,6 +986,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			for (const auto& param : orig_func.parameter_nodes()) {
 				new_func.add_parameter_node(param);
 			}
+			copy_function_properties(new_func, orig_func);
 			if (orig_func.get_definition().has_value()) {
 				new_func.set_definition(*orig_func.get_definition());
 			}
@@ -1002,8 +1003,11 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				mem_func.is_final
 			);
 			
-			// Compute and set mangled name for the new function (includes namespace recovery)
-			compute_and_set_mangled_name(new_func);
+			if (new_func.get_definition().has_value()) {
+				finalize_function_after_definition(new_func);
+			} else {
+				compute_and_set_mangled_name(new_func);
+			}
 			
 			// Add to AST for code generation
 			ast_nodes_.push_back(new_func_node);
