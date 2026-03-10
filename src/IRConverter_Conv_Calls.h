@@ -754,7 +754,7 @@
 			ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 			sig.class_name = class_name;
 
-			std::string ctor_mangled = writer.generateMangledName(function_name, sig);
+			std::string ctor_mangled = std::string(writer.generateMangledName(function_name, sig));
 			emitCall(ctor_mangled);
 
 			regAlloc.invalidateCallerSavedRegisters();
