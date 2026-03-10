@@ -644,8 +644,8 @@ public:
 			}
 		}
 
-		// Fallback: return the first overload
-		return overloads[0];
+		// No viable overload found — return nullopt (ambiguous or no-match is ill-formed)
+		return std::nullopt;
 	}
 
 	std::optional<SymbolScopeHandle> get_scope_handle(std::string_view identifier) const {

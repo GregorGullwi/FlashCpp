@@ -863,11 +863,120 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			};
 			
 			if (overloadable_binary_ops.count(op) > 0 && lhs_type_index > 0) {
-				// Check for operator overload
-				auto overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, stringToOverloadableOperator(op));
+				// Check for operator overload (member function or free function)
+				SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
+				auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
+					lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table, rhsType);
 				
-				if (overload_result.has_overload) {
-					// Found an overload! Generate a member function call instead of built-in operation
+				if (overload_result.has_overload && overload_result.is_free_function) {
+					// Found a free-function operator overload: operator+(LHSType, RHSType)
+					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving free-function operator{} overload", op);
+					
+					const FunctionDeclarationNode& func_decl = *overload_result.free_function_overload;
+					TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+					
+					// Get parameter types for mangling
+					std::vector<TypeSpecifierNode> param_types;
+					for (const auto& param_node : func_decl.parameter_nodes()) {
+						if (param_node.is<DeclarationNode>()) {
+							param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+						}
+					}
+					
+					// Get namespace path for mangling
+					std::vector<std::string_view> namespace_path;
+					if (global_symbol_table_) {
+						auto ns_handle_opt = global_symbol_table_->find_namespace_of_function(func_decl);
+						if (ns_handle_opt.has_value()) {
+							NamespaceHandle nh = *ns_handle_opt;
+							while (nh.isValid() && !nh.isGlobal()) {
+								const NamespaceEntry& entry = gNamespaceRegistry.getEntry(nh);
+								namespace_path.insert(namespace_path.begin(), StringTable::getStringView(entry.name));
+								nh = gNamespaceRegistry.getParent(nh);
+							}
+						}
+					}
+					
+					StringBuilder op_name_sb;
+					op_name_sb.append("operator").append(op);
+					std::string_view operator_func_name = op_name_sb.commit();
+					auto mangled_name = NameMangling::generateMangledName(
+						operator_func_name,
+						return_type,
+						param_types,
+						false, // not variadic
+						"",    // no struct (free function)
+						namespace_path,
+						Linkage::CPlusPlus
+					);
+					
+					TempVar result_var = var_counter.next();
+					CallOp call_op;
+					call_op.result = result_var;
+					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+					call_op.is_member_function = false;
+					call_op.return_type = return_type.type();
+					call_op.return_type_index = return_type.type_index();
+					int actual_return_size = static_cast<int>(return_type.size_in_bits());
+					if (actual_return_size == 0 && return_type.type() == Type::Struct && return_type.type_index() > 0) {
+						if (return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
+							actual_return_size = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
+						}
+					}
+					call_op.return_size_in_bits = actual_return_size;
+					
+					bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64());
+					if (needs_hidden_return) {
+						call_op.return_slot = result_var;
+					}
+					
+					// Helper: take address of operand for reference parameters
+					auto passOperandArg = [&](const std::vector<IrOperand>& operands, Type opType, int opSize, std::string_view role, CallOp& cop) -> bool {
+						std::variant<StringHandle, TempVar> val;
+						if (std::holds_alternative<StringHandle>(operands[2])) {
+							val = std::get<StringHandle>(operands[2]);
+						} else if (std::holds_alternative<TempVar>(operands[2])) {
+							val = std::get<TempVar>(operands[2]);
+						} else {
+							FLASH_LOG_FORMAT(Codegen, Error, "Cannot take address of free-function operator {}", role);
+							return false;
+						}
+						TempVar addr = var_counter.next();
+						AddressOfOp addr_op;
+						addr_op.result = addr;
+						addr_op.operand.type = opType;
+						addr_op.operand.size_in_bits = opSize;
+						addr_op.operand.pointer_depth = 0;
+						std::visit([&addr_op](auto&& v) { addr_op.operand.value = v; }, val);
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
+						TypedValue arg;
+						arg.type = opType;
+						arg.size_in_bits = 64;  // reference is always a pointer (64-bit)
+						arg.value = addr;
+						cop.args.push_back(arg);
+						return true;
+					};
+					
+					// Pass LHS as first argument
+					if (!param_types.empty() && param_types[0].is_reference()) {
+						if (!passOperandArg(lhsIrOperands, lhsType, lhsSize, "LHS", call_op)) return {};
+					} else {
+						call_op.args.push_back(toTypedValue(lhsIrOperands));
+					}
+					
+					// Pass RHS as second argument
+					if (param_types.size() >= 2 && param_types[1].is_reference()) {
+						if (!passOperandArg(rhsIrOperands, rhsType, rhsSize, "RHS", call_op)) return {};
+					} else {
+						call_op.args.push_back(toTypedValue(rhsIrOperands));
+					}
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
+					return {return_type.type(), actual_return_size, result_var, return_type.type_index()};
+				}
+				
+				else if (overload_result.has_overload) {
+					// Found a member operator overload! Generate a member function call
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving binary operator{} overload for type index {}", 
 					op, lhs_type_index);
 					

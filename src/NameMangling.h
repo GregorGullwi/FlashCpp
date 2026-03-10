@@ -4,6 +4,7 @@
 #include "IRTypes.h"
 #include "ChunkedString.h"
 #include "TemplateRegistry.h"
+#include "CompileError.h"
 
 // =============================================================================
 // Name Mangling Utilities - Unified Architecture
@@ -171,20 +172,57 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		case Type::Double: output += 'N'; break;  // double
 		case Type::LongDouble: output += 'O'; break;  // long double
 		case Type::Struct:
-		case Type::UserDefined: {
-			// Struct/class types use format: V<name>@@ or U<name>@@ (V for class, U for struct, but we use V)
+		case Type::UserDefined:
+		case Type::Enum: {
+			// Struct/class types use format: V<name>@@ (V for class/struct)
+			// Enum types use format: W4<name>@@
 			// Get the type name from the global type registry
 			if (type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-				output += 'V';
+				if (type_node.type() == Type::Enum) {
+					output += "W4";
+				} else {
+					output += 'V';
+				}
 				output += StringTable::getStringView(type_info.name());
 				output += "@@";
 			} else {
-				output += 'H';  // Fallback to int if type not found
+				throw CompileError("MSVC name mangling: unknown struct/enum type index — cannot generate valid symbol");
 			}
 			break;
 		}
-		default: output += 'H'; break;  // Default to int for unknown types
+		case Type::FunctionPointer: {
+			// MSVC function pointer: P6A<return><params>@Z
+			output += "P6A";
+			if (type_node.has_function_signature()) {
+				const auto& sig = type_node.function_signature();
+				// Use explicit constructor (not default + set_type) to prevent uninitialized
+				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
+				TypeSpecifierNode ret_spec(sig.return_type, TypeQualifier::None, 0);
+				appendTypeCode(output, ret_spec);
+				if (sig.parameter_types.empty()) {
+					output += 'X';  // void parameter list
+				} else {
+					for (Type pt : sig.parameter_types) {
+						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);  // explicit ctor: see above
+						appendTypeCode(output, param_spec);
+					}
+				}
+			} else {
+				throw InternalError("MSVC name mangling: FunctionPointer type missing function signature — cannot generate valid symbol");
+			}
+			output += "@Z";
+			break;
+		}
+		case Type::Nullptr:
+			// nullptr_t — encode as void pointer best-effort
+			output += "$$T";
+			break;
+		case Type::Auto:
+			// 'auto' should not appear in a mangled symbol — treat as int for best-effort
+			output += 'H';
+			break;
+		default: throw CompileError("MSVC name mangling: unknown type — cannot generate valid symbol");
 	}
 }
 
@@ -276,9 +314,10 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		case Type::Double:     output += 'd'; break;
 		case Type::LongDouble: output += 'e'; break;
 		case Type::Struct:
-		case Type::UserDefined: {
-			// For structs/classes, use the struct name
-			// For nested classes, we need to split the name into components
+		case Type::UserDefined:
+		case Type::Enum: {
+			// For structs/classes/enums, use the type name
+			// For nested types, we need to split the name into components
 			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
 			if (type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
@@ -318,15 +357,44 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 					}
 				}
 			} else {
-				// Unknown struct type, use 'v' for void as fallback
-				output += 'v';
+				throw CompileError("Itanium name mangling: unknown struct/enum type index — cannot generate valid symbol");
 			}
 			break;
 		}
-		default:
-			// Unknown type, use 'i' for int as fallback
+		case Type::FunctionPointer: {
+			// Itanium ABI: function pointer is encoded as PF<return-type><param-types>E
+			output += "PF";
+			if (type_node.has_function_signature()) {
+				const auto& sig = type_node.function_signature();
+				// Use explicit constructor (not default + set_type) to prevent uninitialized
+				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
+				TypeSpecifierNode ret_spec(sig.return_type, TypeQualifier::None, 0);
+				appendItaniumTypeCode(output, ret_spec);
+				// Encode parameter types
+				if (sig.parameter_types.empty()) {
+					output += 'v';  // void parameter list
+				} else {
+					for (Type pt : sig.parameter_types) {
+						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);  // explicit ctor: see above
+						appendItaniumTypeCode(output, param_spec);
+					}
+				}
+			} else {
+				throw InternalError("Itanium name mangling: FunctionPointer type missing function signature — cannot generate valid symbol");
+			}
+			output += 'E';
+			break;
+		}
+		case Type::Nullptr:
+			// nullptr_t is encoded as 'Dn' in Itanium ABI
+			output += "Dn";
+			break;
+		case Type::Auto:
+			// 'auto' should not appear in a mangled symbol — treat as int for best-effort
 			output += 'i';
 			break;
+		default:
+			throw CompileError("Itanium name mangling: unknown type — cannot generate valid symbol");
 	}
 }
 
@@ -551,19 +619,20 @@ inline void appendItaniumTypeTemplateArgs(
 				case Type::Double:     output += 'd'; break;
 				case Type::LongDouble: output += 'e'; break;
 				case Type::Struct:
-				case Type::UserDefined: {
-					// For structs/classes, use the struct name from gTypeInfo
+				case Type::UserDefined:
+				case Type::Enum: {
+					// For structs/classes/enums, use the type name from gTypeInfo
 					if (arg.type_index < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[arg.type_index];
 						auto struct_name = StringTable::getStringView(type_info.name());
 						output += std::to_string(struct_name.size());
 						output += struct_name;
 					} else {
-						output += 'v';  // fallback to void
+						throw CompileError("Itanium name mangling: unknown struct/enum type index in template args — cannot generate valid symbol");
 					}
 					break;
 				}
-				default: output += 'v'; break;  // Unknown type, use void
+				default: throw CompileError("Itanium name mangling: unknown type in template args — cannot generate valid symbol");
 			}
 		}
 	}
