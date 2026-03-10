@@ -1069,7 +1069,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	op_name_sb.append("operator").append(operator_symbol);
 	std::string_view op_func_name = op_name_sb.commit();
 	auto overloads = symbol_table.lookup_all(op_func_name);
-	auto overloads = symbol_table.lookup_all(op_func_name);
+
 	for (const auto& overload : overloads) {
 		if (!overload.is<FunctionDeclarationNode>()) continue;
 		const auto& func_decl = overload.as<FunctionDeclarationNode>();
