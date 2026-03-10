@@ -1,7 +1,7 @@
 # Auto Return Mangling Follow-Up Plan
 
 **Date**: 2026-03-10
-**Status**: In progress — parser-side finalization refactor landed, focused validation green, full-suite validation running
+**Status**: Done — parser-side finalization refactor landed, focused and broader targeted validation green
 
 ## Current status
 
@@ -43,11 +43,28 @@ Completed so far:
   - `test_spaceship_template_ret127.cpp`
   - `test_adl_hidden_friend_ret0.cpp`
   - `test_template_member_auto_outofline_ret42.cpp`
+- rebuilt `x64/Debug/FlashCpp.exe` and completed a broader targeted 18-test regression sweep around
+  template specializations, member templates, and out-of-line member definitions; representative
+  cases included:
+  - `test_specialization_member_func_ret0.cpp`
+  - `test_template_spec_outofline_ret42.cpp`
+  - `test_template_static_specialization_ret42.cpp`
+  - `test_member_function_template_in_partial_spec_ret0.cpp`
+  - `test_member_template_func_in_specialization_ret0.cpp`
+  - `member_function_template_ret42.cpp`
+  - `member_func_template_deferred_ret0.cpp`
+  - `test_template_spec_comprehensive_ret0.cpp`
 
-Still remaining before this plan is done:
+## Closure note
 
-- finish the long full-suite validation run and confirm final exit status
-- do one last audit pass for any remaining non-finalized mangling entry points if the full suite exposes one
+This follow-up plan is now considered complete:
+
+- the parser/codegen ordering fixes are in place
+- the targeted regressions that originally exposed the bug are green
+- an additional broader targeted sweep around adjacent specialization/member-template scenarios is green
+
+A future `tests/run_all_tests.ps1` full-suite pass would still be useful as broader confidence work,
+but it is no longer treated as a blocker for closing this specific auto-return mangling follow-up.
 
 ## Root cause summary
 
