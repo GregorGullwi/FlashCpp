@@ -473,7 +473,7 @@
 					} else {
 						// Check if this is a reference - if so, we need to dereference it
 						auto ref_it = reference_stack_info_.find(lhs_var_id->second.offset);
-						if (ref_it != reference_stack_info_.end()) {
+						if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only) {
 							// This is a reference - load the pointer first, then dereference
 							ctx.result_physical_reg = allocateRegisterWithSpilling();
 							// Load the pointer into the register
@@ -481,6 +481,10 @@
 							// Now dereference: load from [register + 0]
 							int value_size_bytes = ref_it->second.value_size_bits / 8;
 							emitMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0, value_size_bytes);
+						} else if (ref_it != reference_stack_info_.end()) {
+							// This holds an address value directly (e.g. addressof) - load it as-is
+							ctx.result_physical_reg = allocateRegisterWithSpilling();
+							emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
 						} else if (lhs_var_id->second.is_array) {
 							// Source is an array - use LEA to get its address (array-to-pointer decay)
 							ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -681,22 +685,31 @@
 					} else {
 						// Check if this is a reference - if so, we need to dereference it
 						auto ref_it = reference_stack_info_.find(rhs_var_id->second.offset);
-						if (ref_it != reference_stack_info_.end()) {
+						if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only) {
 							// This is a reference - load the pointer first, then dereference
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-							
+
 							// If RHS register conflicts with result register, we need to handle it
 							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
 								// Allocate a NEW register for RHS, excluding the LHS register
 								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 							}
-							
+
 							// Load the pointer into the register
 							emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
 							// Now dereference: load from [register + 0]
 							int value_size_bytes = ref_it->second.value_size_bits / 8;
 							emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
+						} else if (ref_it != reference_stack_info_.end()) {
+							// This holds an address value directly (e.g. addressof) - load it as-is
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+
+							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
+							}
+
+							emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
 						} else {
 							// Not a reference, load normally
 							// For integers, use regular MOV
@@ -764,23 +777,32 @@
 						}
 					}
 					
-					if (ref_it != reference_stack_info_.end()) {
-						// This is a reference - load the pointer first, then dereference
-						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						
-						// If RHS register conflicts with result register, we need to handle it
-						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
-						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-							// Allocate a NEW register for RHS, excluding the LHS register
-							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
-						}
-						
-						// Load the pointer into the register
-						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
-						// Now dereference: load from [register + 0]
-						int value_size_bytes = ref_it->second.value_size_bits / 8;
-						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
-					} else {
+						if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only) {
+							// This is a reference - load the pointer first, then dereference
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+
+							// If RHS register conflicts with result register, we need to handle it
+							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+								// Allocate a NEW register for RHS, excluding the LHS register
+								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
+							}
+
+							// Load the pointer into the register
+							emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
+							// Now dereference: load from [register + 0]
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
+						} else if (ref_it != reference_stack_info_.end()) {
+							// This holds an address value directly (e.g. addressof) - load it as-is
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+
+							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
+							}
+
+								emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
+						} else {
 						// Not a reference, load normally with correct size
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 						
@@ -1001,7 +1023,7 @@
 
 			// Check if this is a reference - if so, we need to store through the pointer
 			auto ref_it = reference_stack_info_.find(final_result_offset);
-			if (ref_it != reference_stack_info_.end()) {
+			if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only) {
 				// This is a reference - load the pointer, then store the value through it
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				// Load the pointer into the register
@@ -1037,7 +1059,7 @@
 			
 			// Check if this is a reference - if so, we need to store through the pointer
 			auto ref_it = reference_stack_info_.find(res_stack_var_addr);
-			if (ref_it != reference_stack_info_.end()) {
+			if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only) {
 				// This is a reference - load the pointer, then store the value through it
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				// Load the pointer into the register
@@ -1560,6 +1582,12 @@
 						else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
 							temp_var_sizes_[StringTable::getOrInternStringHandle(addr_of_op->result.name())] = 64; // Pointer is always 64-bit
+							handled_by_typed_payload = true;
+						}
+						// Try AddressOfMemberOp (for taking address of struct members)
+						else if (const AddressOfMemberOp* addr_member_op = std::any_cast<AddressOfMemberOp>(&instruction.getTypedPayload())) {
+							// Phase 5: Convert temp var name to StringHandle
+							temp_var_sizes_[StringTable::getOrInternStringHandle(addr_member_op->result.name())] = 64; // Pointer is always 64-bit
 							handled_by_typed_payload = true;
 						}
 						// Try GlobalLoadOp (for loading global variables)

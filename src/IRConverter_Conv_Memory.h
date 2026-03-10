@@ -904,11 +904,22 @@
 			SizedRegister{target_reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 		);
+
+		// NOTE: Like AddressOfOp, AddressOfMember produces a plain pointer value.
+		// Record that the stack slot already holds an address so later consumers
+		// (notably by-address constructor-call lowering) load it with MOV instead
+		// of taking the address of the spill slot with LEA.
+		reference_stack_info_[result_offset] = ReferenceInfo{
+			.value_type = op.member_type,
+			.value_size_bits = op.member_size_in_bits,
+			.is_rvalue_reference = false,
+			.holds_address_only = true
+		};
 		
 		// Release the register since the address has been stored to memory
 		regAlloc.release(target_reg);
 		
-		// DO NOT mark as reference - this is a plain pointer value for use in arithmetic
+		// DO NOT treat as a true C++ reference - this is a plain pointer value.
 	}
 
 	void handleComputeAddress(const IrInstruction& instruction) {
