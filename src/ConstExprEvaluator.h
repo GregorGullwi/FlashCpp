@@ -552,9 +552,11 @@ private:
 		EvaluationContext& context,
 		std::string_view usage_name,
 		ResolvedConstexprObject& resolved_object);
-	static const ConstructorDeclarationNode* find_matching_constructor_by_parameter_count(
+		static const ConstructorDeclarationNode* find_matching_constructor(
 		const StructTypeInfo* struct_info,
-		size_t parameter_count);
+			const ChunkedVector<ASTNode>& arguments,
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 
 	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);

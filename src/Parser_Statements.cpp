@@ -1486,6 +1486,31 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			};
 
 			if (struct_info.hasUserDefinedConstructor()) {
+				std::vector<TypeSpecifierNode> arg_types;
+				arg_types.reserve(elements.size());
+				for (const auto& element : elements) {
+					auto arg_type_opt = get_expression_type(element);
+					if (!arg_type_opt.has_value()) {
+						arg_types.clear();
+						break;
+					}
+
+					TypeSpecifierNode arg_type = *arg_type_opt;
+					adjust_argument_type_for_overload_resolution(element, arg_type);
+					arg_types.push_back(std::move(arg_type));
+				}
+
+				if (arg_types.size() == elements.size()) {
+					auto resolution = resolve_constructor_overload(struct_info, arg_types, false);
+					if (resolution.has_match) {
+						return make_constructor_call(elements);
+					}
+					if (resolution.is_ambiguous) {
+						return ParseResult::error("Ambiguous constructor for brace initialization", brace_token);
+					}
+					return ParseResult::error("No matching constructor for brace initialization", brace_token);
+				}
+
 				auto ctor_candidates = struct_info.getConstructorsByParameterCount(elements.size(), false);
 				if (!ctor_candidates.empty()) {
 					return make_constructor_call(elements);

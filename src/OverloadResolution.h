@@ -453,6 +453,183 @@ struct OverloadResolutionResult {
 	}
 };
 
+struct ConstructorOverloadResolutionResult {
+	const ConstructorDeclarationNode* selected_overload = nullptr;
+	bool is_ambiguous = false;
+	bool has_match = false;
+
+	ConstructorOverloadResolutionResult() = default;
+	explicit ConstructorOverloadResolutionResult(const ConstructorDeclarationNode* overload)
+		: selected_overload(overload), is_ambiguous(false), has_match(overload != nullptr) {}
+
+	static ConstructorOverloadResolutionResult ambiguous() {
+		ConstructorOverloadResolutionResult result;
+		result.is_ambiguous = true;
+		return result;
+	}
+
+	static ConstructorOverloadResolutionResult no_match() {
+		return ConstructorOverloadResolutionResult();
+	}
+};
+
+inline bool is_lvalue_expression_for_overload_resolution(const ASTNode& arg_node) {
+	if (!arg_node.is<ExpressionNode>()) {
+		return false;
+	}
+
+	const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+	return std::visit([](const auto& inner) -> bool {
+		using T = std::decay_t<decltype(inner)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			return true;
+		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+			return true;
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			return true;
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+			return true;
+		} else {
+			return false;
+		}
+	}, arg_expr);
+}
+
+inline void adjust_argument_type_for_overload_resolution(const ASTNode& arg_node, TypeSpecifierNode& arg_type) {
+	if (is_lvalue_expression_for_overload_resolution(arg_node)) {
+		arg_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	}
+}
+
+inline size_t countMinRequiredArgs(const ConstructorDeclarationNode& ctor) {
+	const auto& params = ctor.parameter_nodes();
+	size_t min_required = params.size();
+	size_t i = params.size();
+
+	while (i > 0) {
+		if (!params[i - 1].is<DeclarationNode>()) {
+			break;
+		}
+		const auto& param_decl = params[i - 1].as<DeclarationNode>();
+		if (!param_decl.has_default_value()) {
+			break;
+		}
+		min_required--;
+		--i;
+	}
+
+	return min_required;
+}
+
+inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+	const StructTypeInfo& struct_info,
+	const std::vector<TypeSpecifierNode>& argument_types,
+	bool skip_implicit = false)
+{
+	const ConstructorDeclarationNode* best_match = nullptr;
+	std::vector<ConversionRank> best_ranks;
+	int num_best_matches = 0;
+	std::vector<const ConstructorDeclarationNode*> tied_candidates;
+
+	for (const auto& member_func : struct_info.member_functions) {
+		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+		if (skip_implicit && ctor_decl.is_implicit()) {
+			continue;
+		}
+
+		const auto& parameters = ctor_decl.parameter_nodes();
+		size_t min_required = countMinRequiredArgs(ctor_decl);
+		if (argument_types.size() < min_required || argument_types.size() > parameters.size()) {
+			continue;
+		}
+
+		if (ctor_decl.is_implicit() && parameters.size() == 1 && argument_types.size() == 1 &&
+			parameters[0].is<DeclarationNode>()) {
+			const auto& param_type_node = parameters[0].as<DeclarationNode>().type_node();
+			if (param_type_node.is<TypeSpecifierNode>()) {
+				const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+				if ((param_type.is_reference() || param_type.is_rvalue_reference()) &&
+					is_struct_type(param_type.type()) && struct_info.own_type_index_.has_value()) {
+					const TypeSpecifierNode& arg_type = argument_types[0];
+					Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
+					bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
+						arg_type.type_index() == *struct_info.own_type_index_;
+					if (!is_same_struct_type) {
+						continue;
+					}
+				}
+			}
+		}
+
+		std::vector<ConversionRank> conversion_ranks;
+		bool all_convertible = true;
+		for (size_t i = 0; i < argument_types.size(); ++i) {
+			if (!parameters[i].is<DeclarationNode>() || !parameters[i].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
+				all_convertible = false;
+				break;
+			}
+
+			const auto& param_type = parameters[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			auto conversion = can_convert_type(argument_types[i], param_type);
+			if (!conversion.is_valid) {
+				all_convertible = false;
+				break;
+			}
+			conversion_ranks.push_back(conversion.rank);
+		}
+
+		if (!all_convertible) {
+			continue;
+		}
+
+		if (!best_match) {
+			best_match = &ctor_decl;
+			best_ranks = conversion_ranks;
+			num_best_matches = 1;
+			tied_candidates.clear();
+			tied_candidates.push_back(&ctor_decl);
+			continue;
+		}
+
+		bool this_is_better = false;
+		bool this_is_worse = false;
+		for (size_t i = 0; i < conversion_ranks.size(); ++i) {
+			if (conversion_ranks[i] < best_ranks[i]) {
+				this_is_better = true;
+			} else if (conversion_ranks[i] > best_ranks[i]) {
+				this_is_worse = true;
+			}
+		}
+
+		if (this_is_better && !this_is_worse) {
+			best_match = &ctor_decl;
+			best_ranks = conversion_ranks;
+			num_best_matches = 1;
+			tied_candidates.clear();
+			tied_candidates.push_back(&ctor_decl);
+		} else if (!this_is_better && !this_is_worse) {
+			num_best_matches++;
+			tied_candidates.push_back(&ctor_decl);
+		}
+	}
+
+	if (!best_match) {
+		return ConstructorOverloadResolutionResult::no_match();
+	}
+
+	if (num_best_matches > 1) {
+		return ConstructorOverloadResolutionResult::ambiguous();
+	}
+
+	return ConstructorOverloadResolutionResult(best_match);
+}
+
 // countMinRequiredArgs is defined in SymbolTable.h (included above)
 
 // Perform overload resolution for a function call

@@ -326,12 +326,46 @@
 					if (si && !ctor_call.arguments().empty()) {
 						// Find matching constructor
 						const ConstructorDeclarationNode* matching_ctor = nullptr;
-						for (const auto& mf : si->member_functions) {
-							if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
-							const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-							if (ctor.parameter_nodes().size() == ctor_call.arguments().size()) {
-								matching_ctor = &ctor;
-								break;
+						if (parser_) {
+							std::vector<TypeSpecifierNode> arg_types;
+							arg_types.reserve(ctor_call.arguments().size());
+							for (const auto& arg : ctor_call.arguments()) {
+								auto arg_type_opt = parser_->get_expression_type(arg);
+								if (!arg_type_opt.has_value()) {
+									arg_types.clear();
+									break;
+								}
+								TypeSpecifierNode arg_type = *arg_type_opt;
+								adjust_argument_type_for_overload_resolution(arg, arg_type);
+								arg_types.push_back(std::move(arg_type));
+							}
+							if (arg_types.size() == ctor_call.arguments().size()) {
+								auto resolution = resolve_constructor_overload(*si, arg_types, false);
+								if (resolution.is_ambiguous) {
+									throw CompileError("Ambiguous constructor call");
+								}
+								matching_ctor = resolution.selected_overload;
+							}
+						}
+
+						if (!matching_ctor) {
+							for (const auto& mf : si->member_functions) {
+								if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
+								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+								const auto& params = ctor.parameter_nodes();
+								if (ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
+									const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+									if (param_type_node.is<TypeSpecifierNode>()) {
+										const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+										if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
+											continue;
+										}
+									}
+								}
+								if (params.size() == ctor_call.arguments().size()) {
+									matching_ctor = &ctor;
+									break;
+								}
 							}
 						}
 						if (matching_ctor) {
@@ -1583,32 +1617,62 @@
 								
 								// If we didn't find a copy constructor, use general matching
 								if (!matching_ctor) {
-									for (const auto& func : type_info.struct_info_->member_functions) {
-										if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-											const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-											const auto& params = ctor_node.parameter_nodes();
-											
-											// Match constructor with same number of parameters or with default parameters
-											if (params.size() == num_args) {
-												matching_ctor = &ctor_node;
-												break;
-											} else if (params.size() > num_args) {
-												// Check if remaining params have defaults
-												bool all_have_defaults = true;
-												for (size_t i = num_args; i < params.size(); ++i) {
-													if (!params[i].is<DeclarationNode>() || 
-													!params[i].as<DeclarationNode>().has_default_value()) {
-														all_have_defaults = false;
-														break;
+										if (parser_) {
+											std::vector<TypeSpecifierNode> arg_types;
+											arg_types.reserve(num_args);
+											direct_ctor->arguments().visit([&](ASTNode arg) {
+												auto arg_type_opt = parser_->get_expression_type(arg);
+												if (!arg_type_opt.has_value()) {
+													arg_types.clear();
+													return;
+												}
+												TypeSpecifierNode arg_type = *arg_type_opt;
+												adjust_argument_type_for_overload_resolution(arg, arg_type);
+												arg_types.push_back(std::move(arg_type));
+											});
+
+											if (arg_types.size() == num_args) {
+												auto resolution = resolve_constructor_overload(*type_info.struct_info_, arg_types, false);
+												if (resolution.is_ambiguous) {
+													throw CompileError("Ambiguous constructor call");
+												}
+												matching_ctor = resolution.selected_overload;
+											}
+										}
+
+										if (!matching_ctor) {
+											for (const auto& func : type_info.struct_info_->member_functions) {
+												if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+													const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+													const auto& params = ctor_node.parameter_nodes();
+												if (ctor_node.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
+													const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+													if (param_type_node.is<TypeSpecifierNode>()) {
+														const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+														if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
+															continue;
+														}
 													}
 												}
-												if (all_have_defaults) {
-													matching_ctor = &ctor_node;
-													break;
+													if (params.size() == num_args) {
+														matching_ctor = &ctor_node;
+														break;
+													} else if (params.size() > num_args) {
+														bool all_have_defaults = true;
+														for (size_t i = num_args; i < params.size(); ++i) {
+															if (!params[i].is<DeclarationNode>() || !params[i].as<DeclarationNode>().has_default_value()) {
+																all_have_defaults = false;
+																break;
+															}
+														}
+														if (all_have_defaults) {
+															matching_ctor = &ctor_node;
+															break;
+														}
+													}
 												}
 											}
 										}
-									}
 								}
 							}
 

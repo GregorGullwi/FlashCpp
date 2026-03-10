@@ -1392,7 +1392,7 @@ EvalResult Evaluator::evaluate_callable_object(
 		// Build object member bindings from the full constructor materialization path.
 		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
 		const auto& ctor_args = ctor_call.arguments();
-		const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+			const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context, outer_bindings);
 		if (!matching_ctor) {
 			return EvalResult::error("No matching constructor found for callable object");
 		}

@@ -1,16 +1,107 @@
 #include "ConstExprEvaluator.h"
+#include "OverloadResolution.h"
 #include <limits>
 
 namespace ConstExpr {
-const ConstructorDeclarationNode* Evaluator::find_matching_constructor_by_parameter_count(
+namespace {
+std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value) {
+	if (value.object_type_index != TypeIndex{0} && value.object_type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[value.object_type_index];
+		return TypeSpecifierNode(type_info.type_, value.object_type_index, type_info.type_size_);
+	}
+
+	if (std::holds_alternative<bool>(value.value)) {
+		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+	}
+	if (std::holds_alternative<long long>(value.value)) {
+		return TypeSpecifierNode(Type::LongLong, TypeQualifier::None, 64);
+	}
+	if (std::holds_alternative<unsigned long long>(value.value)) {
+		return TypeSpecifierNode(Type::UnsignedLongLong, TypeQualifier::None, 64);
+	}
+	if (std::holds_alternative<double>(value.value)) {
+		return TypeSpecifierNode(Type::Double, TypeQualifier::None, 64);
+	}
+
+	return std::nullopt;
+}
+}
+
+const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 	const StructTypeInfo* struct_info,
-	size_t parameter_count) {
+	const ChunkedVector<ASTNode>& arguments,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	if (!struct_info) {
 		return nullptr;
 	}
 
-	auto ctor_candidates = struct_info->getConstructorsByParameterCount(parameter_count, false);
+	auto ctor_candidates = struct_info->getConstructorsByParameterCount(arguments.size(), false);
 	if (ctor_candidates.empty()) {
+		return nullptr;
+	}
+
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(arguments.size());
+	bool has_all_arg_types = true;
+	for (const auto& argument : arguments) {
+		std::optional<TypeSpecifierNode> arg_type_opt;
+		if (context.parser) {
+			arg_type_opt = context.parser->get_expression_type(argument);
+		}
+
+		if (!arg_type_opt.has_value() && argument.is<ExpressionNode>()) {
+			const ExpressionNode& expr = argument.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr)) {
+				const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
+				if (context.local_bindings) {
+					auto local_it = context.local_bindings->find(identifier.name());
+					if (local_it != context.local_bindings->end()) {
+						arg_type_opt = try_get_type_from_eval_result(local_it->second);
+					}
+				}
+				if (!arg_type_opt.has_value() && outer_bindings) {
+					auto outer_it = outer_bindings->find(identifier.name());
+					if (outer_it != outer_bindings->end()) {
+						arg_type_opt = try_get_type_from_eval_result(outer_it->second);
+					}
+				}
+			}
+		}
+
+		if (!arg_type_opt.has_value()) {
+			has_all_arg_types = false;
+			break;
+		}
+
+		TypeSpecifierNode arg_type = *arg_type_opt;
+		adjust_argument_type_for_overload_resolution(argument, arg_type);
+		arg_types.push_back(std::move(arg_type));
+	}
+
+	if (has_all_arg_types && arg_types.size() == arguments.size()) {
+		auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
+		if (resolution.has_match) {
+			return resolution.selected_overload;
+		}
+		if (resolution.is_ambiguous) {
+			return nullptr;
+		}
+		if (ctor_candidates.size() == 1 && ctor_candidates[0] && ctor_candidates[0]->function_decl.is<ConstructorDeclarationNode>()) {
+			const auto& only_ctor = ctor_candidates[0]->function_decl.as<ConstructorDeclarationNode>();
+			const auto& params = only_ctor.parameter_nodes();
+			bool is_implicit_copy_or_move = false;
+			if (only_ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
+				const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+				if (param_type_node.is<TypeSpecifierNode>()) {
+					const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+					is_implicit_copy_or_move = (param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type());
+				}
+			}
+			if (!is_implicit_copy_or_move) {
+				return &only_ctor;
+			}
+		}
 		return nullptr;
 	}
 
@@ -1952,7 +2043,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const auto& ctor_args = ctor_call.arguments();
-	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr " + std::string(usage_name));
 	}
@@ -2415,8 +2506,8 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 				break;
 			}
 		}
-		if (!matching_ctor) {
-			matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+			if (!matching_ctor) {
+				matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
 		}
 		if (!matching_ctor) {
 			return EvalResult::error("No matching constructor found for constexpr array element");
@@ -2911,7 +3002,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 		return EvalResult::error("Constructor call type is not a struct/class");
 	}
 
-	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_call.arguments().size());
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_call.arguments(), context, outer_bindings);
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr object");
 	}
@@ -3282,7 +3373,7 @@ EvalResult Evaluator::extract_object_members(
 	const auto& ctor_args = ctor_call.arguments();
 	
 	// Find the matching constructor
-	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_args.size());
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
 	
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr object");
