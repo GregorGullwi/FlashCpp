@@ -139,6 +139,10 @@
 			!current_function_returns_reference_;
 	}
 
+		bool currentFunctionHasCatchParentReturnValue() const {
+			return current_function_return_type_ != Type::Void;
+		}
+
 	int getCatchParentReturnSpillSizeBits() const {
 		if (currentFunctionReturnsFloatingPointInXmm0()) {
 			return current_function_return_size_in_bits_;
@@ -154,6 +158,10 @@
 	}
 
 	void emitSavePendingCatchParentReturnValue() {
+			if (!currentFunctionHasCatchParentReturnValue()) {
+				return;
+			}
+
 		int spill_size_bits = getCatchParentReturnSpillSizeBits();
 		int32_t catch_return_slot = ensureCatchFuncletReturnSlot();
 
@@ -166,7 +174,7 @@
 	}
 
 	void emitRestorePendingCatchParentReturnValue() {
-		if (catch_funclet_return_slot_offset_ == 0) {
+			if (!currentFunctionHasCatchParentReturnValue() || catch_funclet_return_slot_offset_ == 0) {
 			return;
 		}
 
@@ -407,10 +415,13 @@
 					fixup_handle = getOrCreateCatchContinuationFixupLabel(continuation_handle);
 
 					// Multiple catch handlers in the same try block can share one continuation
-					// fixup stub. Reserve both return spill slots before emitting the first stub
-					// so a later handler with `return` cannot reuse a stub that omitted the
-					// return-flag / return-value path.
-					ensureCatchFuncletReturnSlot();
+					// fixup stub. Reserve the return spill slot only when the enclosing function
+					// actually has a return value, but always reserve the return-flag slot so a
+					// later handler with `return` cannot reuse a stub that omitted the pending
+					// parent-return path.
+					if (currentFunctionHasCatchParentReturnValue()) {
+						ensureCatchFuncletReturnSlot();
+					}
 					ensureCatchFuncletReturnFlagSlot();
 
 					// Normal catch fallthrough must not inherit a stale catch-return flag.
@@ -500,7 +511,9 @@
 
 					emitXorRegReg(X64Register::RCX);
 					emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
-					emitRestorePendingCatchParentReturnValue();
+						if (currentFunctionHasCatchParentReturnValue()) {
+							emitRestorePendingCatchParentReturnValue();
+						}
 					textSectionData.push_back(0x48);
 					textSectionData.push_back(0x89);
 					textSectionData.push_back(0xEC);

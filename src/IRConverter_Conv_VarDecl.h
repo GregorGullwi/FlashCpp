@@ -2635,7 +2635,9 @@
 
 		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (g_enable_exceptions && in_catch_funclet_) {
-				emitSavePendingCatchParentReturnValue();
+					if (currentFunctionHasCatchParentReturnValue()) {
+						emitSavePendingCatchParentReturnValue();
+					}
 
 				flushAllDirtyRegisters();
 				catch_has_pending_parent_return_ = true;
