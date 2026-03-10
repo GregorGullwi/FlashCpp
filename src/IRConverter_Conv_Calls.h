@@ -17,7 +17,11 @@
 		bool emitLoadAddressLikeArgument(X64Register target_reg, const TypedValue& arg, int32_t address_adjustment = 0) {
 			if (std::holds_alternative<StringHandle>(arg.value)) {
 				StringHandle var_handle = std::get<StringHandle>(arg.value);
-				int32_t var_offset = variable_scopes.back().variables[var_handle].offset;
+					const VariableInfo* var_info = findVariableInfo(var_handle);
+					if (!var_info) {
+						return false;
+					}
+					int32_t var_offset = var_info->offset;
 				auto ref_info = getIndirectStackInfo(var_offset);
 				if (ref_info.has_value()) {
 					emitMovFromFrame(target_reg, var_offset);
@@ -718,11 +722,6 @@
 					emitLeaFromFrame(source_reg, source_offset);
 				}
 			} else if (std::holds_alternative<StringHandle>(source_arg.value)) {
-				StringHandle source_name = std::get<StringHandle>(source_arg.value);
-				const VariableInfo* source_info = findVariableInfo(source_name);
-				if (!source_info) {
-					throw InternalError("EH copy construction: source variable not found: " + std::string(StringTable::getStringView(source_name)));
-				}
 					if (!emitLoadAddressLikeArgument(source_reg, source_arg)) {
 						throw InternalError("Same-type constructor source variable is not addressable");
 				}
