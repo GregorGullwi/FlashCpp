@@ -32,8 +32,18 @@
 
 			if (std::holds_alternative<TempVar>(arg.value)) {
 				TempVar temp_var = std::get<TempVar>(arg.value);
-				int32_t var_offset = getStackOffsetFromTempVar(temp_var);
-				auto ref_info = getReferenceInfo(temp_var, var_offset);
+				int32_t var_offset = getStackOffsetFromTempVar(temp_var, arg.size_in_bits);
+				auto ref_info = getIndirectStackInfo(var_offset);
+				if (!ref_info.has_value() && arg.size_in_bits != 64) {
+					int32_t pointer_source_offset = getStackOffsetFromTempVar(temp_var, 64);
+					if (pointer_source_offset != var_offset) {
+						auto pointer_ref_info = getIndirectStackInfo(pointer_source_offset);
+						if (pointer_ref_info.has_value()) {
+							var_offset = pointer_source_offset;
+							ref_info = pointer_ref_info;
+						}
+					}
+				}
 				if (ref_info.has_value()) {
 					emitMovFromFrame(target_reg, var_offset);
 					if (address_adjustment != 0) {
