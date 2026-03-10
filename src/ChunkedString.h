@@ -198,10 +198,7 @@ public:
                 assert(false && "did you forget to call commit() or reset() on the StringBuilder?");
             }
         }
-            }
-            // Verify that commit() or reset() was called
-            assert(false && "did you forget to call commit() or reset() on the StringBuilder?");
-        }
+
         // Restore previous builder if this was the active one
         if (gCurrentStringBuilder == this) {
             gCurrentStringBuilder = previous_builder_;
