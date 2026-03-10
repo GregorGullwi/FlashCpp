@@ -746,7 +746,11 @@ private:
         void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
         ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
         FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
-        void compute_and_set_mangled_name(FunctionDeclarationNode& func_node);  // Phase 6 (mangling): Generate and set mangled name
+        void copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src);  // Copy semantic properties needed before signature finalization/mangling
+        ASTNode create_defaulted_member_function_body(const FunctionDeclarationNode& func_node);  // Synthesize parser-owned bodies for defaulted member functions
+        void finalize_function_signature_after_definition(FunctionDeclarationNode& func_node);  // Materialize return type and other body-dependent signature data
+        void finalize_function_after_definition(FunctionDeclarationNode& func_node, bool force_recompute_mangled_name = false);  // Finalize signature, then mangle
+        void compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bool force_recompute = false);  // Phase 6 (mangling): Generate and set mangled name
         ParseResult parse_struct_declaration();  // Add struct declaration parser (entry point)
         ParseResult parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline);  // With pre-parsed specifiers
         ParseResult parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access);  // Helper: Parse typedef/using in struct/template

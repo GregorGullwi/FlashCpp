@@ -672,19 +672,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 	}
 
-	// Copy function specifiers from original template
-	new_func_ref.set_is_constexpr(func_decl.is_constexpr());
-	new_func_ref.set_is_consteval(func_decl.is_consteval());
-	new_func_ref.set_is_constinit(func_decl.is_constinit());
-	new_func_ref.set_noexcept(func_decl.is_noexcept());
-	new_func_ref.set_is_variadic(func_decl.is_variadic());
-	new_func_ref.set_is_deleted(func_decl.is_deleted());
-	new_func_ref.set_is_static(func_decl.is_static());
-	new_func_ref.set_linkage(func_decl.linkage());
-	new_func_ref.set_calling_convention(func_decl.calling_convention());
+	copy_function_properties(new_func_ref, func_decl);
 
-	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
-	compute_and_set_mangled_name(new_func_ref);
+	if (new_func_ref.get_definition().has_value()) {
+		finalize_function_after_definition(new_func_ref);
+	} else {
+		compute_and_set_mangled_name(new_func_ref);
+	}
 	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
@@ -1816,12 +1810,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
-	// Compute the proper C++ ABI mangled name using NameMangling
-	// We need to pass the function name, return type, parameter types, and namespace path
-	// This MUST be done AFTER adding parameters since the mangled name encodes parameter types
-	NameMangling::MangledName proper_mangled_name = NameMangling::generateMangledNameFromNode(new_func_ref, namespace_path);
-	new_func_ref.set_mangled_name(proper_mangled_name.view());
-
 	// Handle the function body
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
@@ -1833,7 +1821,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// recursive instantiations (e.g. var_sum<int,int,int> called from var_sum<int,int,int,int>)
 		// are NOT blocked — only truly recursive calls to the exact same specialisation are.
 		static thread_local std::unordered_set<std::string_view> body_reparse_in_progress;
-		std::string_view cycle_key = proper_mangled_name.view();
+		std::string_view cycle_key = saved_mangled_name;
 		if (body_reparse_in_progress.count(cycle_key)) {
 			FLASH_LOG(Templates, Debug, "Cycle detected in body re-parsing for '", template_name, "' (mangled: '", cycle_key, "'), skipping body to break cycle");
 			pack_param_info_ = std::move(saved_outer_pack_param_info);
@@ -1877,6 +1865,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// Restore outer pack parameter info (must happen on both branches)
 		pack_param_info_ = std::move(saved_outer_pack_param_info);
 	}
+
+	copy_function_properties(new_func_ref, func_decl);
 
 	// Analyze the function body to determine if it should be inline-always
 	// This applies to both paths: re-parsed bodies and copied bodies
@@ -1944,8 +1934,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
-	// Mangled name was already computed and set above - don't recompute it!
-	// The mangled name is proper_mangled_name and was already set on the function node
+	if (func_definition.has_value()) {
+		finalize_function_after_definition(new_func_ref);
+	} else {
+		compute_and_set_mangled_name(new_func_ref);
+	}
 	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);

@@ -881,11 +881,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
 					FunctionDeclarationNode& final_func_decl = node->as<FunctionDeclarationNode>();
-					// Generate mangled name before finalizing (Phase 6 mangling)
-					compute_and_set_mangled_name(final_func_decl);
 					final_func_decl.set_definition(*block);
-					// Deduce auto return types from function body
-					deduce_and_update_auto_return_type(final_func_decl);
+					finalize_function_after_definition(final_func_decl);
 					return saved_position.success(*node);
 				}
 			}

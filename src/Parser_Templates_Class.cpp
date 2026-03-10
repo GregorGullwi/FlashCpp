@@ -2409,6 +2409,7 @@ ParseResult Parser::parse_template_declaration() {
 						delayed.dtor_node->set_definition(*block);
 					} else if (delayed.func_node) {
 						delayed.func_node->set_definition(*block);
+						finalize_function_after_definition(*delayed.func_node);
 					}
 				}
 
@@ -3463,7 +3464,8 @@ ParseResult Parser::parse_template_declaration() {
 					bool is_defaulted = func_specs.is_defaulted();
 					bool is_deleted = func_specs.is_deleted();
 					
-					// Handle defaulted functions: create implicit function with empty body
+					// Handle defaulted functions by materializing the synthesized body first,
+					// then finalizing any body-dependent signature information.
 					if (is_defaulted) {
 						// Expect ';'
 						if (!consume(";"_tok)) {
@@ -3473,9 +3475,9 @@ ParseResult Parser::parse_template_declaration() {
 						// Mark as implicit
 						member_func_ref.set_is_implicit(true);
 						
-						// Create empty block for the function body
-						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						ASTNode block_node = create_defaulted_member_function_body(member_func_ref);
 						member_func_ref.set_definition(block_node);
+						finalize_function_after_definition(member_func_ref);
 						
 						// Add member function to struct
 						struct_ref.add_member_function(member_func_node, current_access);
@@ -3786,6 +3788,7 @@ if (struct_type_info.getStructInfo()) {
 				if (auto block = block_result.node()) {
 					if (delayed.func_node) {
 						delayed.func_node->set_definition(*block);
+						finalize_function_after_definition(*delayed.func_node);
 					} else if (delayed.ctor_node) {
 						delayed.ctor_node->set_definition(*block);
 					}
@@ -4201,6 +4204,7 @@ if (struct_type_info.getStructInfo()) {
 			// Set the body on the function
 			if (body_result.node().has_value()) {
 				func_node.set_definition(*body_result.node());
+				finalize_function_signature_after_definition(func_node);
 			}
 			
 			// Register the specialization with the template registry

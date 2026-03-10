@@ -1,7 +1,7 @@
 # Auto Return Mangling Follow-Up Plan
 
 **Date**: 2026-03-10
-**Status**: Deferred follow-up after temporary fallback restore
+**Status**: In progress — parser-side finalization refactor started, validation still pending
 
 ## Current status
 
@@ -10,6 +10,33 @@ to restore the previous best-effort fallback behavior.
 
 That revert is a workaround only. The real bug is that unresolved `auto` return types can still
 reach mangling in some parser/template-instantiation paths.
+
+## Progress update (current branch)
+
+Completed so far:
+
+- added parser-side helpers to centralize post-definition work:
+  - `copy_function_properties(...)`
+  - `create_defaulted_member_function_body(...)`
+  - `finalize_function_signature_after_definition(...)`
+  - `finalize_function_after_definition(...)`
+- switched ordinary parsed function definitions to:
+  - `set_definition(...)`
+  - finalize signature / deduce return type
+  - mangle afterwards
+- switched delayed function-body parsing to the same ordering, with forced mangled-name recomputation
+- switched defaulted non-template member functions to create the synthetic body first and finalize afterwards
+- switched template instantiation paths to reuse centralized property copying and only mangle after finalization when a body is already present
+- updated the `operator<=>` codegen fallback site to pass a resolved temporary return-type node into `generateMangledNameForCall(...)` instead of the original unresolved `auto` node
+- added targeted regression tests:
+  - `tests/test_auto_member_delayed_ret42.cpp`
+  - `tests/test_friend_auto_delayed_ret42.cpp`
+
+Still remaining before this plan is done:
+
+- finish auditing all template-class body-attachment paths so every `set_definition(...)` site follows the same finalize-then-mangle invariant
+- build and run focused regression coverage, then broader test coverage
+- once validation is green, remove the temporary `Type::Auto` mangling fallback from `src/NameMangling.h`
 
 ## Root cause summary
 
