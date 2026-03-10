@@ -36,7 +36,7 @@
 
 				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
 				bool is_this = (StringTable::getStringView(object_name_handle) == "this"sv);
-				bool in_ref_stack_info = (reference_stack_info_.count(object_base_offset) > 0);
+				bool in_ref_stack_info = hasIndirectStackStorage(object_base_offset);
 				FLASH_LOG(Codegen, Debug, "MemberAccess check: object='", StringTable::getStringView(object_name_handle),
 				          "' offset=", object_base_offset,
 				          " is_this=", is_this,
@@ -52,7 +52,7 @@
 			object_base_offset = getStackOffsetFromTempVar(object_temp);
 			
 			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
-			if (reference_stack_info_.count(object_base_offset) > 0 || op.is_pointer_to_member) {
+				if (hasIndirectStackStorage(object_base_offset) || op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		}
@@ -530,10 +530,10 @@
 			}
 			object_base_offset = it->second.offset;
 
-			// Check if this is the 'this' pointer or a reference parameter or pointer-to-member access
-			if (StringTable::getStringView(object_name_handle) == "this"sv || 
-			    reference_stack_info_.count(object_base_offset) > 0 ||
-			    op.is_pointer_to_member) {
+				// Check if this is the 'this' pointer or a reference parameter or pointer-to-member access
+				if (StringTable::getStringView(object_name_handle) == "this"sv ||
+					hasIndirectStackStorage(object_base_offset) ||
+					op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		} else {
@@ -542,7 +542,7 @@
 			object_base_offset = getStackOffsetFromTempVar(object_temp);
 			
 			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
-			if (reference_stack_info_.count(object_base_offset) > 0 || op.is_pointer_to_member) {
+				if (hasIndirectStackStorage(object_base_offset) || op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		}
@@ -570,8 +570,8 @@
 				if (it != current_scope.variables.end()) {
 					int32_t var_offset = it->second.offset;
 					// Check if this stack variable is a reference
-					auto ref_it = reference_stack_info_.find(var_offset);
-					if (ref_it != reference_stack_info_.end()) {
+						auto ref_info = getIndirectStackInfo(var_offset);
+						if (ref_info.has_value()) {
 						// This variable is a reference - it already holds a pointer
 						// MOV the pointer value, don't take its address
 						emitMovFromFrame(value_reg, var_offset);
@@ -774,8 +774,8 @@
 			} else {
 				// If the variable is a reference, it already holds an address - use MOV to load it
 				// Otherwise, use LEA to compute the address of the variable
-				auto ref_it = reference_stack_info_.find(var_offset);
-				if (ref_it != reference_stack_info_.end()) {
+				auto ref_info = getIndirectStackInfo(var_offset);
+				if (ref_info.has_value()) {
 					// Variable is a reference - load the address it contains
 					emitMovFromFrame(target_reg, var_offset);
 				} else {
@@ -795,12 +795,7 @@
 			// However, we mark it in reference_stack_info_ so that subsequent operations
 			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
 			// This is needed for proper handling when passing AddressOf results to functions.
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = op.operand.type,
-				.value_size_bits = op.operand.size_in_bits,
-				.is_rvalue_reference = false,  // AddressOf result is a pointer, not a reference
-				.holds_address_only = true
-			};
+			setAddressOnlyInfo(result_offset, op.operand.type, op.operand.size_in_bits);
 			
 			// Release the register since the address has been stored to memory
 			regAlloc.release(target_reg);
@@ -886,9 +881,8 @@
 		//   from the stack slot, then add the member offset
 		// Use register allocator to avoid clobbering dirty registers
 		X64Register target_reg = allocateRegisterWithSpilling();
-		auto ref_it = reference_stack_info_.find(obj_offset);
-		if (op.base_object == this_handle ||
-			ref_it != reference_stack_info_.end()) {
+		auto ref_info = getIndirectStackInfo(obj_offset);
+		if (op.base_object == this_handle || ref_info.has_value()) {
 			emitMovFromFrame(target_reg, obj_offset);
 			if (op.member_offset != 0) {
 				emitAddImmToReg(textSectionData, target_reg, op.member_offset);
@@ -909,12 +903,7 @@
 		// Record that the stack slot already holds an address so later consumers
 		// (notably by-address constructor-call lowering) load it with MOV instead
 		// of taking the address of the spill slot with LEA.
-		reference_stack_info_[result_offset] = ReferenceInfo{
-			.value_type = op.member_type,
-			.value_size_bits = op.member_size_in_bits,
-			.is_rvalue_reference = false,
-			.holds_address_only = true
-		};
+		setAddressOnlyInfo(result_offset, op.member_type, op.member_size_in_bits);
 		
 		// Release the register since the address has been stored to memory
 		regAlloc.release(target_reg);
@@ -960,8 +949,7 @@
 
 				// Check if base is a reference - if so, we need to load the address it contains
 				// instead of computing the address of the variable itself
-				auto ref_it = reference_stack_info_.find(static_cast<int32_t>(base_offset));
-				base_is_reference = (ref_it != reference_stack_info_.end());
+					base_is_reference = hasIndirectStackStorage(static_cast<int32_t>(base_offset));
 			}
 		} else {
 			// TempVar - get its stack offset
@@ -969,8 +957,7 @@
 			base_offset = getStackOffsetFromTempVar(base_temp);
 			
 			// Check if TempVar is a reference
-			auto ref_it = reference_stack_info_.find(static_cast<int32_t>(base_offset));
-			base_is_reference = (ref_it != reference_stack_info_.end());
+				base_is_reference = hasIndirectStackStorage(static_cast<int32_t>(base_offset));
 		}
 		
 		if (base_is_global) {
