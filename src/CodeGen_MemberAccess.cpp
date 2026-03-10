@@ -562,8 +562,23 @@
 				// For pointer types or reference types (not arrays), get the pointee size
 				// BUT: Skip this if we already handled an array of pointers above (decl_ptr->is_array() case)
 				else if (!decl_ptr->is_array() && (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference())) {
-					// Get the base type size (what the pointer points to)
-					element_size_bits = static_cast<int>(type_node.size_in_bits());
+					if (type_node.pointer_depth() > 1) {
+						element_size_bits = POINTER_SIZE_BITS;
+						element_pointer_depth = static_cast<int>(type_node.pointer_depth() - 1);
+					} else {
+						// Single-level pointer/reference indexing yields the base object.
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
+							const TypeInfo& type_info = gTypeInfo[element_type_index];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info) {
+								element_size_bits = static_cast<int>(struct_info->total_size * 8);
+							}
+						}
+						if (element_size_bits == 0) {
+							element_size_bits = get_type_size_bits(type_node.type());
+						}
+					}
 					is_pointer_to_array = true;  // This is a pointer or reference, not an actual array
 				}
 			}

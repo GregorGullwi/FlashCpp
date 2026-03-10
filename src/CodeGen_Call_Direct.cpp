@@ -1182,35 +1182,40 @@
 			}
 			
 			TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], group_size));
-			
-			// Check if this parameter is a reference type
-			ReferenceQualifier arg_ref_qual = ReferenceQualifier::None;
+			const TypeSpecifierNode* param_type_spec = nullptr;
 			if (matched_func_decl && arg_idx < param_nodes.size() && param_nodes[arg_idx].is<DeclarationNode>()) {
-				const TypeSpecifierNode& param_type = param_nodes[arg_idx].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				if (param_type.is_rvalue_reference()) {
-					arg_ref_qual = ReferenceQualifier::RValueReference;
-				} else if (param_type.is_reference()) {
-					arg_ref_qual = ReferenceQualifier::LValueReference;
-				}
+				param_type_spec = &param_nodes[arg_idx].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 			} else if (cached_param_list && !cached_param_list->empty()) {
 				if (arg_idx < cached_param_list->size()) {
 					const auto& cached = (*cached_param_list)[arg_idx];
-					if (cached.is_rvalue_reference()) {
-						arg_ref_qual = ReferenceQualifier::RValueReference;
-					} else if (cached.is_reference()) {
-						arg_ref_qual = ReferenceQualifier::LValueReference;
+					if (cached.type_node.is<TypeSpecifierNode>()) {
+						param_type_spec = &cached.type_node.as<TypeSpecifierNode>();
 					}
 				} else if (cached_param_list->back().is_parameter_pack) {
 					const auto& cached = cached_param_list->back();
-					if (cached.is_rvalue_reference()) {
-						arg_ref_qual = ReferenceQualifier::RValueReference;
-					} else if (cached.is_reference()) {
-						arg_ref_qual = ReferenceQualifier::LValueReference;
+					if (cached.type_node.is<TypeSpecifierNode>()) {
+						param_type_spec = &cached.type_node.as<TypeSpecifierNode>();
 					}
 				}
 			}
-			if (arg_ref_qual != ReferenceQualifier::None) {
-				arg.ref_qualifier = arg_ref_qual;
+			if (param_type_spec) {
+				// For regular call arguments, only apply metadata that the argument
+				// evaluation couldn't know (pointer_depth, cv_qualifier, ref_qualifier).
+				// Do NOT overwrite type/size_in_bits — the argument's evaluated type
+				// must be preserved so the backend emits the correct-width MOV.
+				// (e.g., a short arg must stay 16-bit even if the param is int;
+				// the backend handles the implicit promotion.)
+				// applyTypeNodeMetadata is still used for default arguments where the
+				// parameter type IS the correct type.
+				arg.pointer_depth = static_cast<int>(param_type_spec->pointer_depth());
+				arg.cv_qualifier = param_type_spec->cv_qualifier();
+				if (param_type_spec->is_rvalue_reference()) {
+					arg.ref_qualifier = ReferenceQualifier::RValueReference;
+				} else if (param_type_spec->is_reference()) {
+					arg.ref_qualifier = ReferenceQualifier::LValueReference;
+				} else {
+					arg.ref_qualifier = ReferenceQualifier::None;
+				}
 			}
 			
 			call_op.args.push_back(arg);

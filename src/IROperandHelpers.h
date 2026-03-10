@@ -33,22 +33,27 @@ inline IrValue toIrValue(const IrOperand& operand) {
 }
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
-	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][type_index]");
-	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][type_index]");
-	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][type_index]");
+	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
+	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
+	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][metadata]");
 	
 	TypedValue result;
 	result.type = std::get<Type>(operands[0]);
 	result.size_in_bits = std::get<int>(operands[1]);
 	result.value = toIrValue(operands[2]);
+	result.type_index = 0;
+	result.pointer_depth = 0;
 	
-	// type_index is required for struct types to enable proper name mangling.
-	// For primitive types, it defaults to 0 if not provided.
-	// Struct type producers (like generateConstructorCallIr) should always provide type_index.
+	// The optional 4th operand is overloaded:
+	// - struct/enum values use it for type_index
+	// - non-struct values use it for pointer_depth
 	if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
-		result.type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operands[3]));
-	} else {
-		result.type_index = 0;
+		unsigned long long metadata = std::get<unsigned long long>(operands[3]);
+		if (result.type == Type::Struct || result.type == Type::Enum || result.type == Type::UserDefined) {
+			result.type_index = static_cast<TypeIndex>(metadata);
+		} else {
+			result.pointer_depth = static_cast<int>(metadata);
+		}
 	}
 	
 	return result;
