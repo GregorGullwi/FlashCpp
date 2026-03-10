@@ -192,7 +192,12 @@ public:
             if (std::uncaught_exceptions() > 0) {
                 // During stack unwinding from an exception, skip the assert and clean up properly
                 reset();
-                return;
+                // Fall through to restore gCurrentStringBuilder below
+            } else {
+                // Verify that commit() or reset() was called
+                assert(false && "did you forget to call commit() or reset() on the StringBuilder?");
+            }
+        }
             }
             // Verify that commit() or reset() was called
             assert(false && "did you forget to call commit() or reset() on the StringBuilder?");
