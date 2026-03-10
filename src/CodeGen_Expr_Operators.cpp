@@ -897,8 +897,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						}
 					}
 					
-					std::string operator_func_name = "operator";
-					operator_func_name += op;
+					StringBuilder op_name_sb;
+					op_name_sb.append("operator").append(op);
+					std::string_view operator_func_name = op_name_sb.commit();
 					auto mangled_name = NameMangling::generateMangledName(
 						operator_func_name,
 						return_type,
