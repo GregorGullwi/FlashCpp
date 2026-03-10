@@ -448,6 +448,35 @@ When extending constexpr support:
 4. Document new capabilities and limitations
 5. Consider the compile-time performance impact
 
+### Architectural Follow-Up Task: Evolve `EvalResult` for Fuller C++20 Constexpr Support
+
+As constexpr support expands toward fuller C++20 object/array/closure semantics, `EvalResult` is carrying increasingly rich recursive state (for example array elements, object member bindings, and callable capture bindings). The current value-heavy representation is still workable, but it is now architectural debt and should be treated as a tracked follow-up task rather than an open-ended future concern.
+
+**Task:** Design and implement a phased `EvalResult` representation refactor that keeps scalar constexpr results cheap while making recursive object/array/callable state more scalable.
+
+**Preferred direction:** Keep simple scalar values inline, but split heavier recursive state into dedicated payload objects instead of turning the entire `EvalResult` into a shared, implicitly aliased graph.
+
+**Draft plan:**
+
+1. **Measure current copy pressure**
+   - Identify the hottest `EvalResult` copy paths in constexpr evaluation (binding maps, argument binding, object materialization, array materialization, callable capture state, return propagation).
+   - Add lightweight instrumentation or targeted profiling before changing representation.
+2. **Separate scalar vs structured state**
+   - Keep primitive constant values (`bool` / integer / floating-point) directly embedded in `EvalResult`.
+   - Move array/object/callable payloads behind dedicated state nodes or arena-managed payload storage.
+3. **Preserve explicit value semantics**
+   - Do not switch blindly to `shared_ptr` everywhere.
+   - Make copy-vs-share behavior explicit so constexpr by-value copies, closure copies, `[this]` vs `[*this]`, and local object writeback remain correct.
+4. **Introduce structured clone-on-write only where needed**
+   - If shared backing is introduced for heavy payloads, require explicit detachment before mutation in paths that semantically produce independent state.
+5. **Refactor incrementally with regression coverage**
+   - Convert one payload family at a time (arrays, then object state, then callable state).
+   - Keep targeted regression tests for local object mutation, array element access, constructor materialization, lambda closure copies, and by-reference capture writeback.
+6. **Re-evaluate complexity limits and performance after each slice**
+   - Confirm that new representation changes do not accidentally make constexpr evaluation slower or more alias-prone in common scalar cases.
+
+**Non-goal for the first slice:** A blanket “everything becomes `shared_ptr`” rewrite. That would be too risky for current constexpr value/copy semantics.
+
 ## Examples
 
 ### ✅ Best Practices
