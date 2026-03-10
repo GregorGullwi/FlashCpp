@@ -68,49 +68,55 @@ struct EvalResult {
 	std::string error_message;
 	EvalErrorType error_type = EvalErrorType::None;
 	
-		// Array support for local arrays in constexpr functions
-		bool is_array = false;
-		std::vector<EvalResult> array_elements;
-		std::vector<int64_t> array_values;
-		const VariableDeclarationNode* callable_var_decl = nullptr;
-		const LambdaExpressionNode* callable_lambda = nullptr;
-		std::unordered_map<std::string_view, EvalResult> callable_bindings;
-		TypeIndex object_type_index = 0;
-		std::unordered_map<std::string_view, EvalResult> object_member_bindings;
+	// Array support for local arrays in constexpr functions
+	bool is_array = false;
+	std::vector<EvalResult> array_elements;
+	std::vector<int64_t> array_values;
+	const VariableDeclarationNode* callable_var_decl = nullptr;
+	const LambdaExpressionNode* callable_lambda = nullptr;
+	std::unordered_map<std::string_view, EvalResult> callable_bindings;
+	std::optional<TypeSpecifierNode> exact_type;
+	TypeIndex object_type_index = 0;
+	std::unordered_map<std::string_view, EvalResult> object_member_bindings;
 
 	// Check if evaluation was successful
 	bool success() const {
 		return error_type == EvalErrorType::None;
 	}
 
-		// Convenience constructors
-		static EvalResult from_bool(bool val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	// Convenience constructors
+	static EvalResult from_bool(bool val) {
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_int(long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	static EvalResult from_int(long long val) {
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_uint(unsigned long long val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	static EvalResult from_uint(unsigned long long val) {
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_double(double val) {
-			return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	static EvalResult from_double(double val) {
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, 0, {}};
-		}
+	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, 0, {}};
+	}
 
-		static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-			return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, 0, {}};
-		}
+	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, 0, {}};
+	}
 
-		static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-			return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, 0, {}};
-		}
+	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+	}
+
+	EvalResult& set_exact_type(const TypeSpecifierNode& type) {
+		exact_type = type;
+		return *this;
+	}
 
 	// Convenience helpers for common operations
 	bool as_bool() const {
@@ -371,7 +377,7 @@ private:
 	static EvalResult evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
-	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
+	static EvalResult evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
 	static bool is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context);

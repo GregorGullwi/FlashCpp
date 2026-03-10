@@ -5,6 +5,10 @@
 namespace ConstExpr {
 namespace {
 std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value) {
+	if (value.exact_type.has_value()) {
+		return value.exact_type;
+	}
+
 	if (value.object_type_index != TypeIndex{0} && value.object_type_index < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[value.object_type_index];
 		return TypeSpecifierNode(type_info.type_, value.object_type_index, type_info.type_size_);

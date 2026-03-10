@@ -8,6 +8,49 @@ namespace {
 	bool isStatementExecutedWithoutReturn(const EvalResult& result) {
 		return !result.success() && result.error_message == kStatementExecutedWithoutReturn;
 	}
+
+	bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
+		return type_spec.type() != Type::Auto;
+	}
+
+	void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec) {
+		if (should_preserve_exact_type(type_spec)) {
+			result.set_exact_type(type_spec);
+		}
+	}
+
+	void maybe_set_exact_type_from_declaration(EvalResult& result, const DeclarationNode& decl) {
+		if (decl.is_array() || !decl.type_node().is<TypeSpecifierNode>()) {
+			return;
+		}
+
+		maybe_set_exact_type(result, decl.type_node().as<TypeSpecifierNode>());
+	}
+
+	void maybe_set_exact_type_from_initializer(EvalResult& result, const ASTNode& initializer, EvaluationContext& context) {
+		if (!context.parser) {
+			return;
+		}
+
+		auto init_type = context.parser->get_expression_type(initializer);
+		if (init_type.has_value()) {
+			maybe_set_exact_type(result, *init_type);
+		}
+	}
+
+	void maybe_set_binding_result_exact_type(EvalResult& result, const DeclarationNode& decl, const ASTNode* initializer, EvaluationContext& context) {
+		if (!decl.is_array() && decl.type_node().is<TypeSpecifierNode>()) {
+			const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+			if (should_preserve_exact_type(type_spec)) {
+				result.set_exact_type(type_spec);
+				return;
+			}
+		}
+
+		if (initializer) {
+			maybe_set_exact_type_from_initializer(result, *initializer, context);
+		}
+	}
 }
 
 // Main evaluation entry point
@@ -33,7 +76,9 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 
 	// Check what type of expression it is
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		return EvalResult::from_bool(std::get<BoolLiteralNode>(expr).value());
+		EvalResult result = EvalResult::from_bool(std::get<BoolLiteralNode>(expr).value());
+		result.set_exact_type(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
+		return result;
 	}
 
 	if (std::holds_alternative<NumericLiteralNode>(expr)) {
@@ -180,13 +225,20 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 // Internal evaluation methods for different node types
 EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal) {
 	const auto& value = literal.value();
+	const TypeSpecifierNode literal_type(literal.type(), literal.qualifier(), literal.sizeInBits());
 
 	if (std::holds_alternative<unsigned long long>(value)) {
 		unsigned long long val = std::get<unsigned long long>(value);
-		return EvalResult::from_uint(val);
+		EvalResult result = is_unsigned_integer_type(literal.type())
+			? EvalResult::from_uint(val)
+			: EvalResult::from_int(static_cast<long long>(val));
+		result.set_exact_type(literal_type);
+		return result;
 	} else if (std::holds_alternative<double>(value)) {
 		double val = std::get<double>(value);
-		return EvalResult::from_double(val);
+		EvalResult result = EvalResult::from_double(val);
+		result.set_exact_type(literal_type);
+		return result;
 	}
 
 	return EvalResult::error("Unknown numeric literal type");
@@ -917,23 +969,39 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		// This allows the constructor call to be used for template argument deduction
 		switch (type_spec.type()) {
 			case Type::Bool:
-				return EvalResult::from_bool(false);
+				{
+					EvalResult result = EvalResult::from_bool(false);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case Type::Char:
 			case Type::Short:
 			case Type::Int:
 			case Type::Long:
 			case Type::LongLong:
-				return EvalResult::from_int(0);
+				{
+					EvalResult result = EvalResult::from_int(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case Type::UnsignedChar:
 			case Type::UnsignedShort:
 			case Type::UnsignedInt:
 			case Type::UnsignedLong:
 			case Type::UnsignedLongLong:
-				return EvalResult::from_int(0);
+				{
+					EvalResult result = EvalResult::from_uint(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case Type::Float:
 			case Type::Double:
 			case Type::LongDouble:
-				return EvalResult::from_double(0.0);
+				{
+					EvalResult result = EvalResult::from_double(0.0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case Type::Struct:
 			case Type::UserDefined:
 				// For struct types, return a success result with value 0
@@ -949,7 +1017,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		return EvalResult::error("Constructor call must have 0 or 1 arguments for constant evaluation");
 	}
 	
-	return evaluate_expr_node(type_spec.type(), args[0], context, "Unsupported type in constructor call for constant evaluation");
+	return evaluate_expr_node(type_spec, args[0], context, "Unsupported type in constructor call for constant evaluation");
 }
 
 EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context) {
@@ -964,26 +1032,34 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	
 	// Evaluate the expression being cast
-	return evaluate_expr_node(type_spec.type(), cast_node.expr(), context, "Unsupported type in static_cast for constant evaluation");
+	return evaluate_expr_node(type_spec, cast_node.expr(), context, "Unsupported type in static_cast for constant evaluation");
 }
 
-EvalResult Evaluator::evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr) {
+EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr) {
 	auto expr_result = evaluate(expr, context);
 	if (!expr_result.success()) {
 		return expr_result;
 	}
 	
 	// Perform the type conversion
-	switch (target_type) {
+	switch (target_type.type()) {
 		case Type::Bool:
-			return EvalResult::from_bool(expr_result.as_bool());
+		{
+			EvalResult result = EvalResult::from_bool(expr_result.as_bool());
+			result.set_exact_type(target_type);
+			return result;
+		}
 		
 		case Type::Char:
 		case Type::Short:
 		case Type::Int:
 		case Type::Long:
 		case Type::LongLong:
-			return EvalResult::from_int(expr_result.as_int());
+		{
+			EvalResult result = EvalResult::from_int(expr_result.as_int());
+			result.set_exact_type(target_type);
+			return result;
+		}
 		
 		case Type::UnsignedChar:
 		case Type::UnsignedShort:
@@ -991,12 +1067,20 @@ EvalResult Evaluator::evaluate_expr_node(Type target_type, const ASTNode& expr, 
 		case Type::UnsignedLong:
 		case Type::UnsignedLongLong:
 			// For unsigned types, convert to unsigned
-			return EvalResult::from_uint(static_cast<unsigned long long>(expr_result.as_int()));
+		{
+			EvalResult result = EvalResult::from_uint(static_cast<unsigned long long>(expr_result.as_int()));
+			result.set_exact_type(target_type);
+			return result;
+		}
 		
 		case Type::Float:
 		case Type::Double:
 		case Type::LongDouble:
-			return EvalResult::from_double(expr_result.as_double());
+		{
+			EvalResult result = EvalResult::from_double(expr_result.as_double());
+			result.set_exact_type(target_type);
+			return result;
+		}
 		
 		default:
 			return EvalResult::error(invalidTypeErrorStr);
@@ -1090,7 +1174,9 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 					if (enum_info) {
 						const Enumerator* e = enum_info->findEnumerator(name_handle);
 						if (e) {
-							return EvalResult(static_cast<int64_t>(e->value));
+							EvalResult result = EvalResult::from_int(static_cast<long long>(e->value));
+							result.set_exact_type(type_spec);
+							return result;
 						}
 					}
 				}
@@ -1135,7 +1221,13 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	}
 
 	// Recursively evaluate the initializer
-	return evaluate(initializer.value(), context);
+	EvalResult result = evaluate(initializer.value(), context);
+	if (!result.success()) {
+		return result;
+	}
+
+	maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
+	return result;
 }
 
 EvalResult Evaluator::evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context) {
@@ -2536,6 +2628,7 @@ EvalResult Evaluator::bind_evaluated_arguments(
 		}
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		maybe_set_exact_type_from_declaration(arg_result, param_decl);
 		bindings[param_decl.identifier_token().value()] = arg_result;
 	}
 
@@ -2558,7 +2651,9 @@ EvalResult Evaluator::bind_pre_evaluated_arguments(
 		}
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-		bindings[param_decl.identifier_token().value()] = evaluated_arguments[i];
+		EvalResult arg_result = evaluated_arguments[i];
+		maybe_set_exact_type_from_declaration(arg_result, param_decl);
+		bindings[param_decl.identifier_token().value()] = std::move(arg_result);
 	}
 
 	return EvalResult::from_bool(true);
@@ -2693,6 +2788,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 								if (!object_result.success()) {
 									return object_result;
 								}
+								maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
 								declaration_bindings[var_name] = std::move(object_result);
 								return EvalResult::error("Statement executed (not a return)");
 							}
@@ -2717,6 +2813,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						if (!object_result.success()) {
 							return object_result;
 						}
+						maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
 						declaration_bindings[var_name] = std::move(object_result);
 						return EvalResult::error("Statement executed (not a return)");
 					}
@@ -2728,14 +2825,18 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					return init_result;
 				}
 
+				maybe_set_binding_result_exact_type(init_result, decl, &init_expr, context);
+
 				// Add to bindings
 				declaration_bindings[var_name] = init_result;
 				return EvalResult::error("Statement executed (not a return)");
 			}
 
 			// Uninitialized variable - set to 0
-			declaration_bindings[var_name] = EvalResult::from_int(0);
-			return EvalResult::error("Statement executed (not a return)");
+				EvalResult default_result = EvalResult::from_int(0);
+				maybe_set_binding_result_exact_type(default_result, decl, nullptr, context);
+				declaration_bindings[var_name] = std::move(default_result);
+				return EvalResult::error("Statement executed (not a return)");
 	}
 	
 	// Handle for loops (C++14 constexpr)
