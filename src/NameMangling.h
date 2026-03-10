@@ -219,7 +219,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			output += "$$T";
 			break;
 		case Type::Auto:
-				throw CompileError("MSVC name mangling: unresolved 'auto' type reached mangling");
+			throw CompileError("MSVC name mangling: unresolved 'auto' type reached mangling");
 		default: throw CompileError("MSVC name mangling: unknown type — cannot generate valid symbol");
 	}
 }
