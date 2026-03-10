@@ -1065,9 +1065,10 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	};
 	gatherMemberCandidates(gatherMemberCandidates, left_type_index);
 
-	// --- 2. Gather free-function candidates from symbol table ---
-	std::string op_func_name = "operator";
-	op_func_name += operator_symbol;
+	StringBuilder op_name_sb;
+	op_name_sb.append("operator").append(operator_symbol);
+	std::string_view op_func_name = op_name_sb.commit();
+	auto overloads = symbol_table.lookup_all(op_func_name);
 	auto overloads = symbol_table.lookup_all(op_func_name);
 	for (const auto& overload : overloads) {
 		if (!overload.is<FunctionDeclarationNode>()) continue;
