@@ -1744,17 +1744,13 @@
 				}
 
 				for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
-					if (eh_extra_stack_size > 0) {
-						const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(eh_extra_stack_size);
-						for (int i = 0; i < 4; i++) {
-							textSectionData[fixup_patch_offset + i] = bytes[i];
-						}
-					} else {
-						uint32_t insn_offset = fixup_patch_offset - 3;
-						static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
-						for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
-							textSectionData[insn_offset + i] = kSevenByteNop[i];
-						}
+					uint32_t insn_offset = fixup_patch_offset - 3;
+					// _JumpToContinuation resumes with RSP already restored to the function's
+					// fully allocated stack depth. Re-applying eh_extra_stack_size here would
+					// double-adjust RSP before re-entering the parent frame continuation.
+					static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
+					for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
+						textSectionData[insn_offset + i] = kSevenByteNop[i];
 					}
 				}
 				catch_continuation_sub_rsp_patches_.clear();

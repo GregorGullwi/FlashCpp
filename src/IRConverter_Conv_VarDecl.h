@@ -213,7 +213,8 @@
 				const TypedValue& init = op.initializer.value();
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-						int src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
+					int temp_storage_bits = getTempVarMetadata(temp_var).is_address ? 64 : init.size_in_bits;
+					int src_offset = getStackOffsetFromTempVar(temp_var, temp_storage_bits);
 					FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset, 
 					          " init.type=", static_cast<int>(init.type), 
 					          " init.size_in_bits=", init.size_in_bits);
@@ -411,7 +412,8 @@
 				bool src_is_pointer = false;  // Track if source is a pointer to the actual data
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-						src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
+					int temp_storage_bits = getTempVarMetadata(temp_var).is_address ? 64 : init.size_in_bits;
+					src_offset = getStackOffsetFromTempVar(temp_var, temp_storage_bits);
 					// Check if this temp_var is a reference/pointer to the actual struct
 					// For RVO struct returns, temp_var holds the address of the constructed struct
 					auto ref_it = reference_stack_info_.find(src_offset);
@@ -918,8 +920,8 @@
 					}
 				}
 
-				// Patch catch/cleanup funclet LEA RBP, [RDX + effective_frame_size] instructions.
-				uint32_t funclet_parent_rbp_disp = eh_effective_frame_size;
+					// Patch catch/cleanup funclet LEA RBP, [RDX + effective_frame_size] instructions.
+					uint32_t funclet_parent_rbp_disp = eh_effective_frame_size;
 				for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
 					uint32_t lea_patch_offset = funclet_lea_offset + 3;
 					const auto bytes = std::bit_cast<std::array<char, 4>>(funclet_parent_rbp_disp);

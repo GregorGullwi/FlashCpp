@@ -137,6 +137,13 @@
 		if (!g_enable_exceptions) {
 			return;
 		}
+
+			// A catch handler is a fresh control-flow entry (landing pad / funclet entry).
+			// Runtime register contents here do not correspond to whatever compile-time path
+			// happened to be emitted immediately before the handler in the linear text stream.
+			// Drop all register-to-stack assumptions so the catch body reloads values from
+			// memory instead of reusing stale mappings from earlier code.
+			regAlloc.reset();
 		
 		// CatchBegin marks the start of a catch handler
 		// Record this catch handler in the most recent try block
@@ -188,8 +195,8 @@
 			current_catch_handler_ = &try_block.catch_handlers.back();
 		}
 		
-		// Platform-specific landing pad code generation
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Platform-specific landing pad code generation
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			inside_catch_handler_ = true;
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
 			// For ELF, handler_offset is the LSDA landing pad address.
@@ -414,9 +421,12 @@
 				// Define the fixup label position
 				label_positions_[fixup_handle] = static_cast<uint32_t>(textSectionData.size());
 
-				// SUB RSP, extra_stack_size — restore any post-frame allocation that lives
-				// below the establisher frame. Patched to either SUB RSP, extra or a 7-byte
-				// NOP sequence at function end.
+					// Reserve 7 bytes for a placeholder instruction sequence.
+					// _JumpToContinuation already resumes with RSP at the function's fully
+					// allocated stack depth, so the continuation fixup must NOT apply the
+					// post-frame extra stack allocation a second time.
+					// We keep the 7-byte footprint so later patching can uniformly replace it
+					// with a NOP bundle without disturbing label-relative layout.
 				textSectionData.push_back(0x48); // REX.W
 				textSectionData.push_back(0x81); // SUB imm32
 				textSectionData.push_back(0xEC); // RSP
@@ -512,8 +522,14 @@
 		// Round exception size up to 8-byte alignment
 		size_t aligned_exception_size = (exception_size + 7) & ~7;
 		
-		// Platform-specific exception handling
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			const StructTypeInfo* thrown_exception_struct_info = nullptr;
+			if (throw_op.type_index < gTypeInfo.size()) {
+				const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
+				thrown_exception_struct_info = thrown_type_info.getStructInfo();
+			}
+
+			// Platform-specific exception handling
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
 			// Two-step process:
 			// 1. Call __cxa_allocate_exception(size_t thrown_size) -> returns void*
@@ -590,7 +606,7 @@
 				// Copy: rep movsb
 				emitRepMovsb();
 			}
-			
+
 			// Step 3: Call __cxa_throw(thrown_object, tinfo, destructor)
 			// RDI = thrown_object (from __cxa_allocate_exception, now in R15)
 			emitMovRegReg(X64Register::RDI, X64Register::R15);
@@ -599,15 +615,10 @@
 			std::string typeinfo_symbol;
 			Type exception_type = throw_op.exception_type;
 			
-			// Check if it's a built-in type or user-defined type
-			if (exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
-				// User-defined class type - look up struct info from type_index
-				const TypeInfo& type_info = gTypeInfo[throw_op.type_index];
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (struct_info) {
+				// Check if it's a built-in type or user-defined type
+				if (thrown_exception_struct_info) {
 					// Use hierarchy-aware overload so derived exceptions get __si/__vmi typeinfo
-					typeinfo_symbol = writer.get_or_create_class_typeinfo(struct_info);
-				}
+					typeinfo_symbol = writer.get_or_create_class_typeinfo(thrown_exception_struct_info);
 			} else if (exception_type != Type::Void) {
 				// Built-in type (int, float, etc.) - use the Type enum directly
 				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
@@ -625,12 +636,8 @@
 			// pass the complete-object destructor so __cxa_end_catch can call it when
 			// the exception object's refcount reaches zero).
 			std::string destructor_symbol;
-			if (exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
-				const TypeInfo& ti_ref = gTypeInfo[throw_op.type_index];
-				const StructTypeInfo* si = ti_ref.getStructInfo();
-				if (si) {
-					destructor_symbol = buildDestructorMangledName(*si);
-				}
+				if (thrown_exception_struct_info) {
+					destructor_symbol = buildDestructorMangledName(*thrown_exception_struct_info);
 			}
 			if (!destructor_symbol.empty()) {
 				emitLeaRipRelativeWithRelocation(X64Register::RDX, destructor_symbol);
@@ -716,21 +723,18 @@
 				// RDX (second argument) = pointer to _ThrowInfo metadata
 				std::string throw_type_name;
 				std::string throw_destructor_symbol;
-				const StructTypeInfo* thrown_struct_info = nullptr;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
-					const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
-					throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
-					if (const StructTypeInfo* current_struct_info = thrown_type_info.getStructInfo()) {
-						thrown_struct_info = current_struct_info;
+					const StructTypeInfo* thrown_struct_info = thrown_exception_struct_info;
+					if (thrown_struct_info && throw_op.type_index < gTypeInfo.size()) {
+						const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
+						throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
 						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
-					}
 				} else {
 					throw_type_name = std::string(getTypeName(throw_op.exception_type));
 				}
 
 				std::string throw_info_symbol;
 				if (!throw_type_name.empty() && throw_type_name != "void") {
-					bool is_simple_type = (throw_op.exception_type != Type::Struct);
+						bool is_simple_type = (thrown_struct_info == nullptr);
 					throw_info_symbol = writer.get_or_create_exception_throw_info(throw_type_name, exception_size, is_simple_type, throw_destructor_symbol, thrown_struct_info);
 				}
 
