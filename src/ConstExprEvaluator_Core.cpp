@@ -2627,16 +2627,16 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	
 	// Handle variable declarations
 	if (stmt_node.is<VariableDeclarationNode>()) {
-		const VariableDeclarationNode& var_decl = stmt_node.as<VariableDeclarationNode>();
-		const DeclarationNode& decl = var_decl.declaration_node().as<DeclarationNode>();
-		std::string_view var_name = decl.identifier_token().value();
+			const VariableDeclarationNode& var_decl = stmt_node.as<VariableDeclarationNode>();
+			const DeclarationNode& decl = var_decl.declaration_node().as<DeclarationNode>();
+			std::string_view var_name = decl.identifier_token().value();
 			auto& declaration_bindings = context.local_bindings ? *context.local_bindings : bindings;
-		
-		// Evaluate the initializer if present
-		if (var_decl.initializer().has_value()) {
-			const ASTNode& init_expr = var_decl.initializer().value();
 
-			if (extract_lambda_from_initializer(var_decl.initializer())) {
+			// Evaluate the initializer if present
+			if (var_decl.initializer().has_value()) {
+				const ASTNode& init_expr = var_decl.initializer().value();
+
+				if (extract_lambda_from_initializer(var_decl.initializer())) {
 					EvalResult callable_result = EvalResult::from_callable(var_decl);
 					const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
 					if (lambda) {
@@ -2655,33 +2655,33 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						}
 					}
 					declaration_bindings[var_name] = std::move(callable_result);
-				return EvalResult::error("Statement executed (not a return)");
-			}
-			
-			// Handle array initialization with InitializerListNode
-			if (init_expr.is<InitializerListNode>()) {
-				const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
-				if (decl.is_array()) {
-					if (decl.type_node().is<TypeSpecifierNode>()) {
-						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-						auto array_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, &bindings);
-						if (!array_result.success()) {
-							return array_result;
-						}
-							declaration_bindings[var_name] = std::move(array_result);
-						return EvalResult::error("Statement executed (not a return)");
-					}
-
-					auto array_result = materialize_array_value(Type::Auto, 0, init_list, context, &bindings);
-					if (!array_result.success()) {
-						return array_result;
-					}
-					declaration_bindings[var_name] = std::move(array_result);
 					return EvalResult::error("Statement executed (not a return)");
 				}
 
-				if (decl.type_node().is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				// Handle array initialization with InitializerListNode
+				if (init_expr.is<InitializerListNode>()) {
+					const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+					if (decl.is_array()) {
+						if (decl.type_node().is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+							auto array_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, &bindings);
+							if (!array_result.success()) {
+								return array_result;
+							}
+							declaration_bindings[var_name] = std::move(array_result);
+							return EvalResult::error("Statement executed (not a return)");
+						}
+
+						auto array_result = materialize_array_value(Type::Auto, 0, init_list, context, &bindings);
+						if (!array_result.success()) {
+							return array_result;
+						}
+						declaration_bindings[var_name] = std::move(array_result);
+						return EvalResult::error("Statement executed (not a return)");
+					}
+
+					if (decl.type_node().is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 						if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
 							type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
@@ -2695,22 +2695,44 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							}
 						}
 					}
-			}
-			
-			// Regular expression initializer
-			auto init_result = evaluate_expression_with_bindings(init_expr, bindings, context);
-			if (!init_result.success()) {
-				return init_result;
-			}
-			
-			// Add to bindings
+				}
+
+				const ConstructorCallNode* ctor_call = nullptr;
+				if (init_expr.is<ConstructorCallNode>()) {
+					ctor_call = &init_expr.as<ConstructorCallNode>();
+				} else if (init_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr = init_expr.as<ExpressionNode>();
+					if (std::holds_alternative<ConstructorCallNode>(expr)) {
+						ctor_call = &std::get<ConstructorCallNode>(expr);
+					}
+				}
+
+				if (ctor_call && decl.type_node().is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+					if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+						auto object_result = materialize_constructor_object_value(*ctor_call, context, &bindings);
+						if (!object_result.success()) {
+							return object_result;
+						}
+						declaration_bindings[var_name] = std::move(object_result);
+						return EvalResult::error("Statement executed (not a return)");
+					}
+				}
+
+				// Regular expression initializer
+				auto init_result = evaluate_expression_with_bindings(init_expr, bindings, context);
+				if (!init_result.success()) {
+					return init_result;
+				}
+
+				// Add to bindings
 				declaration_bindings[var_name] = init_result;
-			return EvalResult::error("Statement executed (not a return)");
-		}
-		
-		// Uninitialized variable - set to 0
+				return EvalResult::error("Statement executed (not a return)");
+			}
+
+			// Uninitialized variable - set to 0
 			declaration_bindings[var_name] = EvalResult::from_int(0);
-		return EvalResult::error("Statement executed (not a return)");
+			return EvalResult::error("Statement executed (not a return)");
 	}
 	
 	// Handle for loops (C++14 constexpr)

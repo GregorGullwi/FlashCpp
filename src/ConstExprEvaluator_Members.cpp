@@ -2886,6 +2886,65 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 	return object_result;
 }
 
+EvalResult Evaluator::materialize_constructor_object_value(
+	const ConstructorCallNode& ctor_call,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	bool ignore_default_initializer_errors) {
+	const ASTNode& type_node = ctor_call.type_node();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("Constructor call without valid type specifier");
+	}
+
+	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+		return EvalResult::error("Constructor call is not a struct/class type");
+	}
+
+	TypeIndex type_index = type_spec.type_index();
+	if (type_index == TypeIndex{0} || type_index >= gTypeInfo.size()) {
+		return EvalResult::error("Constructor call has invalid struct/class type");
+	}
+
+	const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+	if (!struct_info) {
+		return EvalResult::error("Constructor call type is not a struct/class");
+	}
+
+	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor_by_parameter_count(struct_info, ctor_call.arguments().size());
+	if (!matching_ctor) {
+		return EvalResult::error("No matching constructor found for constexpr object");
+	}
+
+	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+	auto bind_result = bind_evaluated_arguments(
+		matching_ctor->parameter_nodes(),
+		ctor_call.arguments(),
+		ctor_param_bindings,
+		context,
+		"Invalid parameter node in constexpr constructor object materialization",
+		outer_bindings,
+		true);
+	if (!bind_result.success()) {
+		return bind_result;
+	}
+
+	EvalResult object_result = EvalResult::from_int(0);
+	object_result.object_type_index = type_index;
+	auto materialize_result = materialize_members_from_constructor(
+		struct_info,
+		*matching_ctor,
+		ctor_param_bindings,
+		object_result.object_member_bindings,
+		context,
+		ignore_default_initializer_errors);
+	if (!materialize_result.success()) {
+		return materialize_result;
+	}
+
+	return object_result;
+}
+
 EvalResult Evaluator::materialize_array_value(
 	Type element_type,
 	TypeIndex element_type_index,
