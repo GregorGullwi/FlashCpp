@@ -2658,7 +2658,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					return EvalResult::error("Statement executed (not a return)");
 				}
 
-				// Handle array initialization with InitializerListNode
+				// Handle InitializerListNode initializers that the parser preserves for arrays
+				// and aggregate/object brace-init. Scalar brace-init (e.g. int x{5} / int x = {5})
+				// is normalized by parse_brace_initializer() into the contained expression and
+				// should not reach this branch as an InitializerListNode.
 				if (init_expr.is<InitializerListNode>()) {
 					const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
 					if (decl.is_array()) {
