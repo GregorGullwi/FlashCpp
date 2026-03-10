@@ -1654,22 +1654,22 @@
 														}
 													}
 												}
-													if (params.size() == num_args) {
-														matching_ctor = &ctor_node;
-														break;
-													} else if (params.size() > num_args) {
-														bool all_have_defaults = true;
-														for (size_t i = num_args; i < params.size(); ++i) {
-															if (!params[i].is<DeclarationNode>() || !params[i].as<DeclarationNode>().has_default_value()) {
-																all_have_defaults = false;
-																break;
-															}
-														}
-														if (all_have_defaults) {
-															matching_ctor = &ctor_node;
+												if (params.size() == num_args) {
+													matching_ctor = &ctor_node;
+													break;
+												} else if (params.size() > num_args) {
+													bool all_have_defaults = true;
+													for (size_t i = num_args; i < params.size(); ++i) {
+														if (!params[i].is<DeclarationNode>() || !params[i].as<DeclarationNode>().has_default_value()) {
+															all_have_defaults = false;
 															break;
 														}
 													}
+													if (all_have_defaults) {
+														matching_ctor = &ctor_node;
+														break;
+													}
+												}
 												}
 											}
 										}
