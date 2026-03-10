@@ -2246,6 +2246,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else {
 					FLASH_LOG(Templates, Debug, "Original function has NO definition - may need delayed parsing");
 				}
+
+				copy_function_properties(new_func, orig_func);
+				if (new_func.get_definition().has_value()) {
+					finalize_function_after_definition(new_func);
+				}
 				
 				instantiated_struct_ref.add_member_function(
 					new_func_node,
@@ -5000,16 +5005,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 
-				// Copy function properties but DO NOT set definition
-				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
-				new_func_ref.set_is_consteval(func_decl.is_consteval());
-				new_func_ref.set_is_constinit(func_decl.is_constinit());
-				new_func_ref.set_noexcept(func_decl.is_noexcept());
-				new_func_ref.set_is_variadic(func_decl.is_variadic());
-				new_func_ref.set_is_static(func_decl.is_static());
-				new_func_ref.set_linkage(func_decl.linkage());
-				new_func_ref.set_calling_convention(func_decl.calling_convention());
-				new_func_ref.set_is_implicit(func_decl.is_implicit());
+				// Copy function properties but DO NOT set definition. Delay mangling until
+				// a body/finalized signature exists to avoid caching stale self-type encodings.
+				copy_function_properties(new_func_ref, func_decl);
 
 				// Add the signature-only function to the instantiated struct
 				if (mem_func.is_operator_overload()) {
@@ -5252,15 +5250,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				// Copy function specifiers from original
-				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
-				new_func_ref.set_is_consteval(func_decl.is_consteval());
-				new_func_ref.set_is_constinit(func_decl.is_constinit());
-				new_func_ref.set_noexcept(func_decl.is_noexcept());
-				new_func_ref.set_is_variadic(func_decl.is_variadic());
-				new_func_ref.set_is_static(func_decl.is_static());
-				new_func_ref.set_linkage(func_decl.linkage());
-				new_func_ref.set_calling_convention(func_decl.calling_convention());
-				new_func_ref.set_is_implicit(func_decl.is_implicit());
+				copy_function_properties(new_func_ref, func_decl);
+				if (new_func_ref.get_definition().has_value()) {
+					finalize_function_after_definition(new_func_ref);
+				}
 
 				// Add the substituted function to the instantiated struct
 				if (mem_func.is_operator_overload()) {
@@ -5400,15 +5393,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				// Copy other function properties
-				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
-				new_func_ref.set_is_consteval(func_decl.is_consteval());
-				new_func_ref.set_is_constinit(func_decl.is_constinit());
-				new_func_ref.set_noexcept(func_decl.is_noexcept());
-				new_func_ref.set_is_variadic(func_decl.is_variadic());
-				new_func_ref.set_is_static(func_decl.is_static());
-				new_func_ref.set_linkage(func_decl.linkage());
-				new_func_ref.set_calling_convention(func_decl.calling_convention());
-				new_func_ref.set_is_implicit(func_decl.is_implicit());
+				copy_function_properties(new_func_ref, func_decl);
+				if (new_func_ref.get_definition().has_value()) {
+					finalize_function_after_definition(new_func_ref);
+				}
 
 				// Add the substituted function to the instantiated struct
 				if (mem_func.is_operator_overload()) {
@@ -5714,12 +5702,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				
 				// Copy function specifiers
-				new_func_ref.set_noexcept(func_decl.is_noexcept());
-				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
-				new_func_ref.set_is_consteval(func_decl.is_consteval());
-				new_func_ref.set_is_deleted(func_decl.is_deleted());
-				new_func_ref.set_is_variadic(func_decl.is_variadic());
-				new_func_ref.set_is_static(func_decl.is_static());
+				copy_function_properties(new_func_ref, func_decl);
 				if (func_decl.get_definition().has_value())
 					new_func_ref.set_definition(*func_decl.get_definition());
 				if (func_decl.has_template_body_position())
@@ -5864,23 +5847,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Save current position
 					SaveHandle saved_pos = save_token_position();
 					
-					// Add function parameters to scope so they're available during body parsing
-					gSymbolTable.enter_scope(ScopeType::Block);
-					for (const auto& param_node : inst_func.parameter_nodes()) {
-						if (param_node.is<DeclarationNode>()) {
-							const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-							gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-						}
-					}
-					
-					// Set up member function context so member variables (like 'value') are resolved
-					// as this->value instead of causing "missing identifier" errors
+					// Match the normal delayed-body flow so member/parameter lookup works
+					// during parsing and auto-return deduction.
+					current_function_ = &inst_func;
+					gSymbolTable.enter_scope(ScopeType::Function);
+					register_parameters_in_scope(inst_func.parameter_nodes());
 					member_function_context_stack_.push_back({
 						instantiated_name,
 						struct_type_info.type_index_,
-						&instantiated_struct_ref,
-						nullptr  // local_struct_info - not needed for out-of-line member functions
+						const_cast<StructDeclarationNode*>(&class_decl),
+						nullptr
 					});
+					register_member_functions_in_scope(&instantiated_struct_ref, struct_type_info.type_index_);
 					
 					// Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);
@@ -5889,6 +5867,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (peek() != "{"_tok) {
 						FLASH_LOG(Templates, Error, "Expected '{' at body_start position, got: ", 
 						          (!peek().is_eof() ? std::string(peek_info().value()) : "EOF"));
+						current_function_ = nullptr;
 						member_function_context_stack_.pop_back();
 						gSymbolTable.exit_scope();
 						restore_lexer_position_only(saved_pos);
@@ -5897,19 +5876,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Parse the function body
 					auto body_result = parse_block();
-					
-					// Pop member function context
-					member_function_context_stack_.pop_back();
-					
-					// Pop parameter scope
-					gSymbolTable.exit_scope();
-					
-					// Restore position
-					restore_lexer_position_only(saved_pos);
-					
 					if (body_result.is_error() || !body_result.node().has_value()) {
 						FLASH_LOG(Templates, Error, "Failed to parse out-of-line function body for ", 
 						          decl.identifier_token().value());
+						current_function_ = nullptr;
+						member_function_context_stack_.pop_back();
+						gSymbolTable.exit_scope();
+						restore_lexer_position_only(saved_pos);
 						continue;
 					}
 					
@@ -5921,11 +5894,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_args_to_use
 						);
 						inst_func.set_definition(substituted_body);
+						finalize_function_after_definition(inst_func, true);
 						found_match = true;
-						break;
 					} catch (const std::exception& e) {
 						FLASH_LOG(Templates, Error, "Exception during template parameter substitution for out-of-line function ", 
 						          decl.identifier_token().value(), ": ", e.what());
+					}
+
+					// Pop member function context and parameter scope after body-based
+					// finalization so auto return deduction can still resolve members.
+					current_function_ = nullptr;
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					restore_lexer_position_only(saved_pos);
+
+					if (found_match) {
+						break;
 					}
 				}
 			}
@@ -5947,22 +5931,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Save current position
 					SaveHandle saved_pos = save_token_position();
 					
-					// Add constructor parameters to scope
-					gSymbolTable.enter_scope(ScopeType::Block);
-					for (const auto& param_node : ctor.parameter_nodes()) {
-						if (param_node.is<DeclarationNode>()) {
-							const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-							gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-						}
-					}
-					
-					// Set up member function context
+					// Match the normal delayed-body flow for member functions/constructors.
+					gSymbolTable.enter_scope(ScopeType::Function);
+					register_parameters_in_scope(ctor.parameter_nodes());
 					member_function_context_stack_.push_back({
 						instantiated_name,
 						struct_type_info.type_index_,
-						&instantiated_struct_ref,
+						const_cast<StructDeclarationNode*>(&class_decl),
 						nullptr
 					});
+					register_member_functions_in_scope(&instantiated_struct_ref, struct_type_info.type_index_);
 					
 					// Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);

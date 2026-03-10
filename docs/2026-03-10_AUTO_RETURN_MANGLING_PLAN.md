@@ -32,12 +32,17 @@ Completed so far:
 - added targeted regression tests:
   - `tests/test_auto_member_delayed_ret42.cpp`
   - `tests/test_friend_auto_delayed_ret42.cpp`
+- added another targeted regression for out-of-line class-template member auto return:
+  - `tests/test_template_member_auto_outofline_ret42.cpp`
 - removed the temporary `Type::Auto` mangling fallback from both MSVC and Itanium manglers after the ordering fixes were in place
+- fixed class-template out-of-line member finalization so body-based auto deduction runs with live member/function context
+- fixed `get_expression_type(MemberAccessNode)` for implicit `this->member` cases during deduction/finalization
 - validated focused regressions successfully:
   - `test_friend_auto_delayed_ret42.cpp`
   - `test_auto_member_delayed_ret42.cpp`
   - `test_spaceship_template_ret127.cpp`
   - `test_adl_hidden_friend_ret0.cpp`
+  - `test_template_member_auto_outofline_ret42.cpp`
 
 Still remaining before this plan is done:
 

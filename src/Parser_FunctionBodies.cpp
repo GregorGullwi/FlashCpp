@@ -531,10 +531,19 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 	if (!force_recompute && func_node.has_mangled_name()) {
 		return;
 	}
+
+	const DeclarationNode& decl_node = func_node.decl_node();
+	if (decl_node.type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		if (return_type.type() == Type::Auto && !func_node.get_definition().has_value()) {
+			// A declaration-only function with placeholder return type cannot be mangled yet.
+			// Wait until a definition/body is attached and the signature is finalized.
+			return;
+		}
+	}
 	
 	// C linkage functions don't get mangled - just use the function name as-is
 	if (func_node.linkage() == Linkage::C) {
-		const DeclarationNode& decl_node = func_node.decl_node();
 		std::string_view func_name = decl_node.identifier_token().value();
 		func_node.set_mangled_name(func_name);
 		return;
