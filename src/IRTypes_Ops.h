@@ -806,6 +806,7 @@ struct VariableDeclOp {
 	unsigned long long custom_alignment = 0;
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	bool is_array = false;
+		bool use_copy_constructor = false;
 	// Array info (if is_array)
 	std::optional<Type> array_element_type;
 	std::optional<int> array_element_size;

@@ -549,8 +549,21 @@
 			// Save it to R15 (callee-saved register)
 			emitMovRegReg(X64Register::R15, X64Register::RAX);
 			
-			// Step 2: Copy exception object to allocated memory
-			if (exception_size <= 8) {
+				bool exception_constructed = false;
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0) {
+					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
+					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
+
+					TypedValue source_value;
+					source_value.type = throw_op.exception_type;
+					source_value.size_in_bits = static_cast<int>(exception_size * 8);
+					source_value.type_index = throw_op.type_index;
+					source_value.value = throw_op.exception_value;
+					exception_constructed = emitEhCopyConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value);
+				}
+
+				// Step 2: Copy/construct exception object in allocated memory
+				if (!exception_constructed && exception_size <= 8) {
 				// Small object: load value into RCX and store to [R15]
 				// Use IrValue variant to handle TempVar, integer literal, or float literal
 				if (std::holds_alternative<double>(throw_op.exception_value)) {
@@ -577,6 +590,14 @@
 					} else {
 						emitMovImm64(X64Register::RCX, 0);
 					}
+					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
+						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
+						const VariableInfo* source_info = findVariableInfo(source_name);
+						if (source_info) {
+							emitMovFromFrameBySize(X64Register::RCX, source_info->offset, static_cast<int>(exception_size * 8));
+						} else {
+							emitMovImm64(X64Register::RCX, 0);
+						}
 				} else {
 					// StringHandle is not a valid exception value type - IrValue includes it for
 					// other contexts (like variable names), but throw expressions only use TempVar
@@ -585,7 +606,7 @@
 				}
 				// Store exception value to allocated memory [R15 + 0]
 				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::R15, 0, static_cast<int>(exception_size));
-			} else {
+				} else if (!exception_constructed) {
 				// Large object: memory-to-memory copy (must be TempVar)
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					TempVar temp = std::get<TempVar>(throw_op.exception_value);
@@ -595,6 +616,14 @@
 					} else {
 						emitXorRegReg(X64Register::RSI);
 					}
+					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
+						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
+						const VariableInfo* source_info = findVariableInfo(source_name);
+						if (source_info) {
+							emitLeaFromFrame(X64Register::RSI, source_info->offset);
+						} else {
+							emitXorRegReg(X64Register::RSI);
+						}
 				} else {
 					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 					emitXorRegReg(X64Register::RSI);
@@ -671,8 +700,18 @@
 				}
 			}
 
-			// Copy exception object to frame slot at [RBP+throw_slot_offset]
-			if (exception_size <= 8) {
+				bool exception_constructed = false;
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0) {
+					TypedValue source_value;
+					source_value.type = throw_op.exception_type;
+					source_value.size_in_bits = static_cast<int>(exception_size * 8);
+					source_value.type_index = throw_op.type_index;
+					source_value.value = throw_op.exception_value;
+					exception_constructed = emitEhCopyConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value);
+				}
+
+				// Copy/construct exception object to frame slot at [RBP+throw_slot_offset]
+				if (!exception_constructed && exception_size <= 8) {
 				// Small object: load into RAX and store
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					TempVar temp = std::get<TempVar>(throw_op.exception_value);
@@ -682,6 +721,14 @@
 					} else {
 						emitMovImm64(X64Register::RAX, 0);
 					}
+					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
+						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
+						const VariableInfo* source_info = findVariableInfo(source_name);
+						if (source_info) {
+							emitMovFromFrameBySize(X64Register::RAX, source_info->offset, static_cast<int>(exception_size * 8));
+						} else {
+							emitMovImm64(X64Register::RAX, 0);
+						}
 				} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
 					emitMovImm64(X64Register::RAX, std::get<unsigned long long>(throw_op.exception_value));
 				} else if (std::holds_alternative<double>(throw_op.exception_value)) {
@@ -699,7 +746,7 @@
 					emitMovImm64(X64Register::RAX, 0);
 				}
 				emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
-			} else {
+				} else if (!exception_constructed) {
 				// Large object: use memory-to-memory copy (must be TempVar)
 				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					TempVar temp = std::get<TempVar>(throw_op.exception_value);
@@ -709,6 +756,14 @@
 					} else {
 						emitXorRegReg(X64Register::RSI);
 					}
+					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
+						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
+						const VariableInfo* source_info = findVariableInfo(source_name);
+						if (source_info) {
+							emitLeaFromFrame(X64Register::RSI, source_info->offset);
+						} else {
+							emitXorRegReg(X64Register::RSI);
+						}
 				} else {
 					emitXorRegReg(X64Register::RSI);
 				}
