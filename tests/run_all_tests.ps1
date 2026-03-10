@@ -307,8 +307,6 @@ function Invoke-TestOneFile {
 	$exeFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.exe"
 	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
 	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
-		$stdoutFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.stdout.txt"
-		$stderrFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.stderr.txt"
 
 	# Parse expected return value from filename
 	$expectedReturnValue = $null
@@ -349,22 +347,14 @@ function Invoke-TestOneFile {
 				$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
 
 					if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
-						$stdErrOutput = ""
-						$process = Start-Process -FilePath $exeFile -NoNewWindow -Wait -PassThru `
-							-RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
-						$returnValue = $process.ExitCode
-						if (Test-Path $stdoutFile) {
-							$stdErrOutput += Get-Content $stdoutFile -Raw
-						}
-						if (Test-Path $stderrFile) {
-							$stderrText = Get-Content $stderrFile -Raw
-							if ($stderrText) {
-								if ($stdErrOutput) {
-									$stdErrOutput += "`n"
-								}
-								$stdErrOutput += $stderrText
-							}
-						}
+						$proc = New-Object System.Diagnostics.Process
+						$proc.StartInfo = New-Object System.Diagnostics.ProcessStartInfo($exeFile)
+						$proc.StartInfo.UseShellExecute = $false
+						$proc.StartInfo.CreateNoWindow = $true
+						$proc.Start() | Out-Null
+						$proc.WaitForExit()
+						$returnValue = $proc.ExitCode
+						$proc.Dispose()
 
 					$windowsExceptionCodes = @(
 						-1073741819, -1073740791, -1073741571, -1073740940, -1073741795,
@@ -420,7 +410,7 @@ function Invoke-TestOneFile {
 		$resultLine = "COMPILE_FAIL|$fileName|WORKER ERROR: $_"
 		} finally {
 		# Always clean up temp artifacts
-			foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile, $stdoutFile, $stderrFile)) {
+			foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile)) {
 			if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 		}
 	}
