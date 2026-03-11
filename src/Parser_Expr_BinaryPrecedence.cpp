@@ -349,66 +349,68 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						return type_idx;
 					};
 
+					auto resolve_sfinae_type_index = [&](TypeIndex type_idx) -> TypeIndex {
+						if (type_idx > 0 && type_idx < gTypeInfo.size()) {
+							StringHandle type_name_handle = gTypeInfo[type_idx].name();
+							auto subst_it = sfinae_type_map_.find(type_name_handle);
+							if (subst_it != sfinae_type_map_.end()) {
+								return subst_it->second;
+							}
+						}
+						return type_idx;
+					};
+
+					auto apply_resolved_sfinae_type = [&](std::optional<TypeSpecifierNode>& type_spec, TypeIndex type_idx) {
+						if (!type_spec.has_value() || type_idx == 0 || type_idx >= gTypeInfo.size()) return;
+						type_spec->set_type_index(type_idx);
+						Type resolved_type = gTypeInfo[type_idx].type_;
+						if (resolved_type == Type::Invalid || resolved_type == Type::Void) {
+							resolved_type = Type::Struct;
+						}
+						type_spec->set_type(resolved_type);
+					};
+
 					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
 					TypeIndex right_type_idx = resolve_operand_type_index(*rightNode);
-					Type right_base_type = Type::Void;
-					if (rightNode->is<ExpressionNode>()) {
-						auto right_type_spec = get_expression_type(*rightNode);
-						if (right_type_spec.has_value()) {
-							right_base_type = right_type_spec->type();
-						}
+					auto left_type_spec = get_expression_type(*leftNode);
+					auto right_type_spec = get_expression_type(*rightNode);
+					if (left_type_spec.has_value() && left_type_idx == 0) {
+						left_type_idx = resolve_sfinae_type_index(left_type_spec->type_index());
+					}
+					if (right_type_spec.has_value() && right_type_idx == 0) {
+						right_type_idx = resolve_sfinae_type_index(right_type_spec->type_index());
+					}
+					apply_resolved_sfinae_type(left_type_spec, left_type_idx);
+					apply_resolved_sfinae_type(right_type_spec, right_type_idx);
+					if (left_type_spec.has_value() && right_type_spec.has_value()) {
+						adjust_argument_type_for_overload_resolution(*leftNode, *left_type_spec);
+						adjust_argument_type_for_overload_resolution(*rightNode, *right_type_spec);
 					}
 
-					// If at least one operand is a struct type, validate the operator exists
-					if (left_type_idx > 0 || right_type_idx > 0) {
+					bool should_validate_operator =
+						left_type_spec.has_value() && right_type_spec.has_value() &&
+						(isUserDefinedBinaryOperatorOperandType(*left_type_spec)
+							|| isUserDefinedBinaryOperatorOperandType(*right_type_spec));
+
+					// If at least one operand has a concrete user-defined type, validate the operator exists
+					if (should_validate_operator) {
 						bool operator_found = false;
 						std::string_view op_symbol = operator_token.value();
 
-						// When the LHS is a struct, reuse the same unified member/free-function
-						// lookup as codegen so SFINAE sees ambiguity and mixed incomparable
-						// candidates the same way.
-						if (left_type_idx > 0) {
+						if (left_type_spec.has_value() && right_type_spec.has_value()
+							&& isConcreteBinaryOperatorOperandType(*left_type_spec)
+							&& isConcreteBinaryOperatorOperandType(*right_type_spec)) {
 							auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
-								left_type_idx,
-								right_type_idx,
+								*left_type_spec,
+								*right_type_spec,
 								stringToOverloadableOperator(op_symbol),
 								op_symbol,
-								gSymbolTable,
-								right_base_type);
+								gSymbolTable);
 							if (overload_result.is_ambiguous) {
 								return ParseResult::error("SFINAE: ambiguous operator overload for '" + std::string(op_symbol) + "'", operator_token);
 							}
 							if (overload_result.has_match) {
 								operator_found = true;
-							}
-						}
-
-						// Fall back to the parser's older free-function existence check only
-						// for cases the unified helper does not model yet, such as a non-class
-						// LHS paired with a class RHS.
-						if (!operator_found && left_type_idx == 0) {
-							StringBuilder op_name_builder;
-							op_name_builder.append("operator").append(op_symbol);
-							std::string_view op_func_name = op_name_builder.commit();
-							auto op_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(op_func_name));
-							if (op_symbol_opt.has_value()) {
-								// Verify the free operator accepts the operand types
-								if (op_symbol_opt->is<FunctionDeclarationNode>()) {
-									const auto& op_func = op_symbol_opt->as<FunctionDeclarationNode>();
-									const auto& op_params = op_func.parameter_nodes();
-									// Check first parameter type matches one of the operand types
-									if (op_params.size() >= 2 && op_params[0].is<DeclarationNode>()) {
-										const auto& p0 = op_params[0].as<DeclarationNode>();
-										if (p0.type_node().is<TypeSpecifierNode>()) {
-											TypeIndex p0_idx = p0.type_node().as<TypeSpecifierNode>().type_index();
-											if (p0_idx == left_type_idx || p0_idx == right_type_idx) {
-												operator_found = true;
-											}
-										}
-									}
-								}
-								// If not a FunctionDeclarationNode, don't conservatively accept —
-								// require explicit match for SFINAE correctness
 							}
 						}
 
@@ -424,26 +426,29 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					auto right_type_spec = get_expression_type(*rightNode);
 					OverloadableOperator op_kind = stringToOverloadableOperator(operator_token.value());
 
-					bool has_concrete_left_type = left_type_spec.has_value() && left_type_spec->type_index() > 0;
-					bool has_concrete_right_type = right_type_spec.has_value()
-						&& !(right_type_spec->type() == Type::UserDefined && right_type_spec->type_index() == 0);
+					bool has_concrete_left_type = left_type_spec.has_value() && isConcreteBinaryOperatorOperandType(*left_type_spec);
+					bool has_concrete_right_type = right_type_spec.has_value() && isConcreteBinaryOperatorOperandType(*right_type_spec);
+					bool has_user_defined_operand =
+						(left_type_spec.has_value() && isUserDefinedBinaryOperatorOperandType(*left_type_spec))
+						|| (right_type_spec.has_value() && isUserDefinedBinaryOperatorOperandType(*right_type_spec));
 
-					if (has_concrete_left_type && has_concrete_right_type && op_kind != OverloadableOperator::None) {
+					if (has_concrete_left_type && has_concrete_right_type && has_user_defined_operand && op_kind != OverloadableOperator::None) {
+						adjust_argument_type_for_overload_resolution(*leftNode, *left_type_spec);
+						adjust_argument_type_for_overload_resolution(*rightNode, *right_type_spec);
+
 						OperatorOverloadResult overload_result;
 						if (op_kind == OverloadableOperator::Assign) {
 							overload_result = findBinaryOperatorOverload(
-								left_type_spec->type_index(),
-								right_type_spec->type_index(),
-								op_kind,
-								right_type_spec->type());
+								*left_type_spec,
+								*right_type_spec,
+								op_kind);
 						} else {
 							overload_result = findBinaryOperatorOverloadWithFreeFunction(
-								left_type_spec->type_index(),
-								right_type_spec->type_index(),
+								*left_type_spec,
+								*right_type_spec,
 								op_kind,
 								operator_token.value(),
-								gSymbolTable,
-								right_type_spec->type());
+								gSymbolTable);
 						}
 
 						if (overload_result.is_ambiguous) {
@@ -454,6 +459,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 							} else {
 								binary_operator_node.set_resolved_member_operator_overload(overload_result.member_overload);
 							}
+						} else {
+							binary_operator_node.set_no_match_operator_overload();
 						}
 					}
 				}
