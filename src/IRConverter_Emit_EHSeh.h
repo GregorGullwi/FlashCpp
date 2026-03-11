@@ -748,8 +748,8 @@
 				}
 			}
 
-				bool exception_constructed = false;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0) {
+					bool exception_constructed = false;
+					if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0 && !throw_op.value_is_materialized) {
 					TypedValue source_value;
 					source_value.type = throw_op.exception_type;
 					source_value.size_in_bits = static_cast<int>(exception_size * 8);

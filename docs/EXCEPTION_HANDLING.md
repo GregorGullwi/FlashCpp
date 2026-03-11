@@ -84,8 +84,8 @@ The current recommendation is **minimal first, then reassess**.
 
 ### Explicit follow-ups still worth tracking
 
-- **`throw <expr>` from inside a catch body** remains a follow-up gap. The current hardening only covers `throw;`. This should not be “fixed” by blindly emitting cleanup before expression evaluation, because the thrown expression may still depend on catch-local objects. The likely correct direction is: evaluate/materialize the thrown value first, then clean active catch scopes, then lower the actual throw.
-- **Nested-catch rethrow behavior** should be verified with a dedicated regression. `emitActiveCatchScopeDestructors()` currently uses the innermost active catch base depth, which correctly handles nested lexical scopes within one catch body, but may need further work if `throw;` exits through multiple active catch contexts and outer-catch locals also need explicit cleanup.
+- **`throw <expr>` from inside a catch body** is now hardened on Windows: the frontend materializes the thrown value first, then cleans active catch scopes, and the Windows throw backend skips the extra copy-construction step when that payload is already materialized.
+- **Nested `try/catch` inside an active catch on Windows** is still a known gap. Investigation showed that the crash is broader than just nested `throw;`: even an inner catch that simply returns can still fail fast. Current evidence points at deeper nested FH3 catch-funclet dispatch / continuation semantics, not just missing catch-local destructor cleanup.
 
 ## Windows Catch-Funclet Return Model
 
