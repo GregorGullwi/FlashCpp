@@ -170,11 +170,9 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			}
 
 			// Visit catch block body
-			catch_scope_base_depth_stack_.push_back(scope_stack_.size());
-			catch_scope_try_depth_stack_.push_back(active_try_statement_depth_);
+			catch_scope_stack_.push_back({scope_stack_.size(), active_try_statement_depth_});
 			visit(catch_clause.body());
-			catch_scope_base_depth_stack_.pop_back();
-			catch_scope_try_depth_stack_.pop_back();
+			catch_scope_stack_.pop_back();
 
 			// Emit CatchEnd marker
 			ir_.addInstruction(IrOpcode::CatchEnd, CatchEndOp{.continuation_label = end_label}, catch_clause.catch_token());
@@ -258,7 +256,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				exception_value = static_cast<unsigned long long>(0);
 			}
 
-			if (!catch_scope_base_depth_stack_.empty()) {
+			if (!catch_scope_stack_.empty()) {
 				bool needs_materialization =
 					expr_type == Type::Struct &&
 					!is_rvalue &&

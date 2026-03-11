@@ -171,6 +171,15 @@ public:
 	[[nodiscard]] bool empty() const noexcept {
 		return inline_count_ == 0 && overflow_.empty();
 	}
+
+	void pop_back() {
+		assert(!empty() && "Cannot pop_back from an empty InlineVector");
+		if (!overflow_.empty()) {
+			overflow_.pop_back();
+			return;
+		}
+		--inline_count_;
+	}
 	
 	void clear() noexcept {
 		inline_count_ = 0;
@@ -193,6 +202,16 @@ public:
 	const T& operator[](size_t i) const {
 		assert(i < size() && "Index out of bounds in InlineVector::operator[]");
 		return i < N ? inline_data_[i] : overflow_[i - N];
+	}
+
+	T& front() {
+		assert(!empty() && "Cannot call front() on an empty InlineVector");
+		return inline_data_[0];
+	}
+
+	const T& front() const {
+		assert(!empty() && "Cannot call front() on an empty InlineVector");
+		return inline_data_[0];
 	}
 	
 	T& back() {
