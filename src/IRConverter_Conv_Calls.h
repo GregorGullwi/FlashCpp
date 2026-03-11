@@ -5,9 +5,17 @@
 	// duplicate the same emit sequences.
 
 	/// Resolve a TypedValue (StringHandle or TempVar) to its frame offset.
+	int32_t getVariableOffsetOrThrow(StringHandle var_handle, std::string_view context) const {
+		const VariableInfo* var_info = findVariableInfo(var_handle);
+		if (!var_info) {
+			throw InternalError(std::string(context) + ": variable not found in variables map: " + std::string(StringTable::getStringView(var_handle)));
+		}
+		return var_info->offset;
+	}
+
 	int resolveTypedValueFrameOffset(const TypedValue& arg) {
 		if (std::holds_alternative<StringHandle>(arg.value)) {
-			return variable_scopes.back().variables[std::get<StringHandle>(arg.value)].offset;
+			return getVariableOffsetOrThrow(std::get<StringHandle>(arg.value), "resolveTypedValueFrameOffset");
 		} else if (std::holds_alternative<TempVar>(arg.value)) {
 			return getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
 		}
@@ -255,7 +263,7 @@
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						} else if (std::holds_alternative<StringHandle>(arg.value)) {
 							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
-							int var_offset = variable_scopes.back().variables[var_name_handle].offset;
+							int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall stack float arg");
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						}
@@ -492,8 +500,7 @@
 				} else if (std::holds_alternative<StringHandle>(arg.value)) {
 					// Load variable
 					StringHandle var_name_handle = std::get<StringHandle>(arg.value);
-			[[maybe_unused]] std::string_view var_name = StringTable::getStringView(var_name_handle);
-					int var_offset = variable_scopes.back().variables[var_name_handle].offset;
+					int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall register arg");
 					if (is_float_arg) {
 						// For floating-point, use movsd/movss into XMM register
 						bool is_float = (arg.type == Type::Float);
@@ -560,7 +567,7 @@
 				// Indirect call: the function_name is actually the variable name holding the function pointer
 				// Allocate a register using the register allocator, load the function pointer, then call through it
 				StringHandle func_ptr_name = call_op.getFunctionName();
-				int func_ptr_offset = variable_scopes.back().variables[func_ptr_name].offset;
+				int func_ptr_offset = getVariableOffsetOrThrow(func_ptr_name, "handleFunctionCall indirect call target");
 				
 				// Note: Both function pointers and function references are handled the same way here.
 				// The reference variable holds the function address directly (function references
@@ -1133,7 +1140,7 @@
 							int var_offset = getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
 							emitFloatMovFromFrame(temp_xmm, var_offset, arg.type == Type::Float);
 						} else if (std::holds_alternative<StringHandle>(arg.value)) {
-							int var_offset = variable_scopes.back().variables[std::get<StringHandle>(arg.value)].offset;
+							int var_offset = getVariableOffsetOrThrow(std::get<StringHandle>(arg.value), "handleConstructorCall stack float arg");
 							emitFloatMovFromFrame(temp_xmm, var_offset, arg.type == Type::Float);
 						}
 						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.type == Type::Float);
@@ -1452,8 +1459,7 @@
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(op.object);
-			[[maybe_unused]] std::string_view var_name = StringTable::getStringView(var_name_handle);
-			object_offset = variable_scopes.back().variables[var_name_handle].offset;
+			object_offset = getVariableOffsetOrThrow(var_name_handle, "handleVirtualCall object");
 		}
 
 		// Virtual call sequence varies based on whether object is a pointer or direct:
@@ -1591,7 +1597,7 @@
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						} else if (std::holds_alternative<StringHandle>(arg.value)) {
 							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
-							int var_offset = variable_scopes.back().variables[var_name_handle].offset;
+							int var_offset = getVariableOffsetOrThrow(var_name_handle, "loadTypedValueIntoRegister float");
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						}
@@ -1606,7 +1612,7 @@
 							emitMovFromFrame(target_reg, var_offset);
 						} else if (std::holds_alternative<StringHandle>(arg.value)) {
 							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
-							int var_offset = variable_scopes.back().variables[var_name_handle].offset;
+							int var_offset = getVariableOffsetOrThrow(var_name_handle, "loadTypedValueIntoRegister integer");
 							emitMovFromFrame(target_reg, var_offset);
 						}
 					}
