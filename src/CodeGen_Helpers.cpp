@@ -31,12 +31,7 @@ void AstToIr::emitActiveCatchScopeDestructors() {
 		return;
 	}
 
-	size_t catch_scope_base_depth = catch_scope_base_depth_stack_.front();
-	for (size_t depth : catch_scope_base_depth_stack_) {
-		if (depth < catch_scope_base_depth) {
-			catch_scope_base_depth = depth;
-		}
-	}
+	size_t catch_scope_base_depth = *std::min_element(catch_scope_base_depth_stack_.begin(), catch_scope_base_depth_stack_.end());
 
 	if (scope_stack_.size() <= catch_scope_base_depth) {
 		return;
