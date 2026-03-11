@@ -238,6 +238,45 @@
 
 	ExprOperands AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context) {
+		auto makeIdentifierResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
+			ExprResult result;
+			result.type = type;
+			result.size_in_bits = size_bits;
+			result.value = std::move(value);
+			result.type_index = type_index;
+			result.pointer_depth = pointer_depth;
+			return result;
+		};
+		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
+			bool preserve_pointer_depth = false) -> ExprResult {
+			// Preserve the original direct-identifier encoding rule from these sites:
+			// struct identifiers carry type_index in slot 4. Non-struct identifiers keep 0 by default,
+			// but selected direct global-load sites opt into preserving pointer_depth so downstream
+			// toTypedValue consumers can still recognize pointer-typed globals.
+			Type result_type = type_node.type();
+			if (preserve_pointer_depth && type_node.type() == Type::Enum && type_node.pointer_depth() > 0 &&
+				type_node.type_index() < gTypeInfo.size()) {
+				if (const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index()].getEnumInfo()) {
+					result_type = enum_info->underlying_type;
+				}
+			}
+			const bool carries_type_index = type_node.type() == Type::Struct;
+			const int slot4_pointer_depth = (preserve_pointer_depth && !carries_type_index) ? type_node.pointer_depth() : 0;
+			ExprResult result = makeIdentifierResult(
+				result_type,
+				size_bits,
+				std::move(value),
+				carries_type_index ? type_node.type_index() : 0,
+				slot4_pointer_depth);
+			return result;
+		};
+		auto preserveEnumTypeIndexEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
+			if (type_node.type() == Type::Enum) {
+				result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
+			}
+			return std::move(result);
+		};
+
 		// Check if this is a captured variable in a lambda.
 		// Explicit captures ([x], [&x]) have binding set at parse time.
 		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
@@ -300,7 +339,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
 							TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : 0;
-							return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
+							return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
 						}
 
 						// Fallback: return the pointer temp
@@ -335,7 +374,7 @@
 						}
 						
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
 			}
@@ -368,7 +407,7 @@
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 					
 					TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-					return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+					return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 				}
 			}
 		}
@@ -443,8 +482,7 @@
 								LValueInfo(LValueInfo::Kind::Global, saved_name),
 								type_n.type(), size_bits));
 						}
-						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
-						return { type_n.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
 					}
 
 					if (fast_sym->is<DeclarationNode>()) {
@@ -480,8 +518,7 @@
 								LValueInfo(LValueInfo::Kind::Global, saved_global_name),
 								type_n.type(), size_bits));
 						}
-						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
-						return { type_n.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
 					}
 					// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
 				}
@@ -522,7 +559,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
 			}
@@ -557,7 +594,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
 			}
@@ -734,7 +771,7 @@
 						}
 						
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 					
 					// Check if this identifier is a static member
@@ -763,7 +800,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 						
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-						return { static_member->type, member_size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+						return makeIdentifierResult(static_member->type, member_size_bits, result_temp, type_index);
 					}
 				}
 			}
@@ -867,8 +904,7 @@
 				// Return the temp variable that will hold the loaded value
 				// For pointers and arrays, return 64 bits (pointer size)
 				// Include type_index for struct types
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
 			}
 
 			// Check if this is a reference parameter - if so, we need to dereference it
@@ -934,7 +970,7 @@
 					
 					// Return with TempVar that has lvalue metadata
 					// The type/size are for the pointee (what the reference refers to)
-					return { pointee_type, pointee_size, lvalue_temp, static_cast<unsigned long long>(type_index) };
+					return makeIdentifierResult(pointee_type, pointee_size, lvalue_temp, type_index);
 				}
 				
 				// For non-array references in Load context, we need to dereference to get the value
@@ -973,7 +1009,9 @@
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 				
 				TypeIndex type_index = (pointee_type == Type::Struct || type_node.type() == Type::Enum) ? type_node.type_index() : 0;
-				return { pointee_type, pointee_size, result_temp, static_cast<unsigned long long>(type_index) };
+				return preserveEnumTypeIndexEncoding(
+					makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index),
+					type_node);
 			}
 			
 			// Regular local variable
@@ -997,13 +1035,18 @@
 			// - For enum types, return type_index to preserve type information
 			// - For non-struct/enum pointer types, return pointer_depth
 			// - Otherwise return 0
-			unsigned long long fourth_element = 0ULL;
-			if (type_node.type() == Type::Struct || type_node.type() == Type::Enum) {
-				fourth_element = static_cast<unsigned long long>(type_node.type_index());
-			} else if (type_node.pointer_depth() > 0) {
-				fourth_element = static_cast<unsigned long long>(type_node.pointer_depth());
-			}
-			return { return_type, size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
+			TypeIndex type_index = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
+				? type_node.type_index()
+				: 0;
+			int pointer_depth = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
+				? 0
+				: type_node.pointer_depth();
+			return preserveEnumTypeIndexEncoding(makeIdentifierResult(
+				return_type,
+				size_bits,
+				StringTable::getOrInternStringHandle(identifierNode.name()),
+				type_index,
+				pointer_depth), type_node);
 		}
 
 		// Check if it's a VariableDeclarationNode
@@ -1053,8 +1096,7 @@
 
 				// Return the temp variable that will hold the loaded value
 				// Include type_index for struct types
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
 			} else {
 				// This is a local variable
 				
@@ -1109,7 +1151,7 @@
 						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
 						
 						TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
-						return { pointee_type, pointee_size, addr_temp, static_cast<unsigned long long>(type_index) };
+						return makeIdentifierResult(pointee_type, pointee_size, addr_temp, type_index);
 					}
 					
 					// For Load context (reading the value), dereference to get the value
@@ -1137,7 +1179,7 @@
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 					
 					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
-					return { pointee_type, pointee_size, result_temp, static_cast<unsigned long long>(type_index) };
+					return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 				}
 				
 				// Regular local variable (not a reference) - return variable name

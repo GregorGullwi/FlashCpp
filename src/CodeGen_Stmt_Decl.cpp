@@ -123,9 +123,12 @@
 					data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 				}
 			};
-			
-			// Helper to evaluate a constexpr and get the raw value
-			auto evalToValue = [&](const ASTNode& expr, Type target_type) -> unsigned long long {
+			auto resolveGlobalRelocTarget = [&](std::string_view name) -> StringHandle {
+				StringHandle simple_name_handle = StringTable::getOrInternStringHandle(name);
+				auto it = global_variable_names_.find(simple_name_handle);
+				return (it != global_variable_names_.end()) ? it->second : simple_name_handle;
+			};
+			auto makeStaticStorageEvalContext = [&]() {
 				ConstExpr::EvaluationContext ctx(is_static_local ? symbol_table : gSymbolTable);
 				if (is_static_local && global_symbol_table_) {
 					ctx.global_symbols = global_symbol_table_;
@@ -134,6 +137,12 @@
 				// initializers whose bodies are available (dynamic initialization as-if-constexpr).
 				ctx.storage_duration = ConstExpr::StorageDuration::Static;
 				ctx.parser = parser_;
+				return ctx;
+			};
+			
+			// Helper to evaluate a constexpr and get the raw value
+			auto evalToValue = [&](const ASTNode& expr, Type target_type) -> unsigned long long {
+				auto ctx = makeStaticStorageEvalContext();
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 				
 				if (!eval_result.success()) {
@@ -420,6 +429,16 @@
 					// Single value initialization
 					const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 					bool handled_as_reloc = false;
+					// Writes the outer global-init state (op/init_data/reloc_target/handled_as_reloc)
+					// for relocatable pointer-style static initializers.
+					auto initializeGlobalReloc = [&](std::string_view target_name, std::string_view debug_suffix = {}) {
+						FLASH_LOG(Codegen, Debug, "Global pointer '", decl.identifier_token().value(),
+						"' initialized with &", target_name, debug_suffix);
+						op.is_initialized = true;
+						op.init_data.resize(element_size, 0);
+						op.reloc_target = resolveGlobalRelocTarget(target_name);
+						handled_as_reloc = true;
+					};
 					// Handle address-of initializer: int* ptr = &x;
 					if (std::holds_alternative<UnaryOperatorNode>(init_expr)) {
 						const auto& unary = std::get<UnaryOperatorNode>(init_expr);
@@ -427,12 +446,26 @@
 							const ExpressionNode& inner = unary.get_operand().as<ExpressionNode>();
 							if (std::holds_alternative<IdentifierNode>(inner)) {
 								const auto& target_id = std::get<IdentifierNode>(inner);
-								FLASH_LOG(Codegen, Debug, "Global pointer '", decl.identifier_token().value(),
-								"' initialized with &", target_id.name());
-								op.is_initialized = true;
-								op.init_data.resize(element_size, 0);
-								op.reloc_target = StringTable::getOrInternStringHandle(target_id.name());
-								handled_as_reloc = true;
+								initializeGlobalReloc(target_id.name());
+							} else if (std::holds_alternative<ArraySubscriptNode>(inner)) {
+								const auto& subscript = std::get<ArraySubscriptNode>(inner);
+								if (subscript.array_expr().is<ExpressionNode>() && subscript.index_expr().is<ExpressionNode>()) {
+									const ExpressionNode& base_expr = subscript.array_expr().as<ExpressionNode>();
+									if (std::holds_alternative<IdentifierNode>(base_expr)) {
+										const auto& target_id = std::get<IdentifierNode>(base_expr);
+										const DeclarationNode* base_decl = nullptr;
+										if (auto symbol = lookupSymbol(target_id.name())) {
+											base_decl = get_decl_from_symbol(*symbol);
+										}
+										if (base_decl && (base_decl->is_array() || base_decl->type_node().as<TypeSpecifierNode>().is_array())) {
+											auto ctx = makeStaticStorageEvalContext();
+											auto index_result = ConstExpr::Evaluator::evaluate(subscript.index_expr(), ctx);
+											if (index_result.success() && index_result.as_int() == 0) {
+												initializeGlobalReloc(target_id.name(), "[0]");
+											}
+										}
+									}
+								}
 							}
 						}
 					}
@@ -443,7 +476,7 @@
 						"' initialized with address of ", target_id.name());
 						op.is_initialized = true;
 						op.init_data.resize(element_size, 0);
-						op.reloc_target = StringTable::getOrInternStringHandle(target_id.name());
+						op.reloc_target = resolveGlobalRelocTarget(target_id.name());
 						handled_as_reloc = true;
 					}
 					// Handle function pointer initializer:

@@ -135,6 +135,17 @@
 
 	ExprOperands AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
+		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
+			ExprResult result;
+			result.type = type;
+			result.size_in_bits = size_bits;
+			result.value = std::move(value);
+			result.type_index = type_index;
+			result.pointer_depth = pointer_depth;
+			preserveLegacyEnumPointerDepthEncoding(result);
+			return result;
+		};
+
 		// Generate IR for array[index] expression
 		// This computes the address: base_address + (index * element_size)
 
@@ -377,12 +388,12 @@
 
 					if (context == ExpressionContext::LValueAddress) {
 						// Don't emit ArrayAccess instruction (no load)
-						return { element_type, element_size_bits, result_var, static_cast<unsigned long long>(element_type_index) };
+						return makeArrayResult(element_type, element_size_bits, result_var, static_cast<TypeIndex>(element_type_index));
 					}
 
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-					return { element_type, element_size_bits, result_var, static_cast<unsigned long long>(element_type_index) };
+					return makeArrayResult(element_type, element_size_bits, result_var, static_cast<TypeIndex>(element_type_index));
 				}
 			}
 		}
@@ -725,28 +736,23 @@
 			// Don't emit ArrayAccess instruction (no load)
 			// Just return the metadata with the result temp var
 			// The metadata contains all information needed for store operations
-			// For the 4th element: 
-			// - For struct types, return type_index
-			// - For pointer array elements, return pointer_depth
-			// - Otherwise return 0
-			unsigned long long fourth_element = (element_type == Type::Struct)
-				? static_cast<unsigned long long>(element_type_index)
-				: ((element_pointer_depth > 0) ? static_cast<unsigned long long>(element_pointer_depth) : 0ULL);
-			return { element_type, element_size_bits, result_var, fourth_element };
+			return makeArrayResult(
+				element_type,
+				element_size_bits,
+				result_var,
+				static_cast<TypeIndex>(element_type_index),
+				element_pointer_depth);
 		}
 
 		// Create instruction with typed payload (Load context - default)
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-		// Return [element_type, element_size_bits, result_var, struct_type_index or pointer_depth]
-		// For the 4th element: 
-		// - For struct types, return type_index
-		// - For pointer array elements, return pointer_depth
-		// - Otherwise return 0
-		unsigned long long fourth_element = (element_type == Type::Struct)
-			? static_cast<unsigned long long>(element_type_index)
-			: ((element_pointer_depth > 0) ? static_cast<unsigned long long>(element_pointer_depth) : 0ULL);
-		return { element_type, element_size_bits, result_var, fourth_element };
+		return makeArrayResult(
+			element_type,
+			element_size_bits,
+			result_var,
+			static_cast<TypeIndex>(element_type_index),
+			element_pointer_depth);
 	}
 
 	bool AstToIr::validateAndSetupIdentifierMemberAccess(
@@ -843,14 +849,17 @@
 	}
 
 	ExprOperands AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
+		ExprResult result;
+		result.type = type;
+		result.size_in_bits = size_bits;
+		result.value = result_var;
 		// Include type_index for struct types and for UserDefined types that have actual struct info
 		// (i.e., are instantiated template structs, not placeholders or primitive type params)
-		bool include_type_index = (type == Type::Struct) ||
-			(type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size() && gTypeInfo[type_index].getStructInfo() != nullptr);
-		if (include_type_index) {
-			return { type, size_bits, result_var, static_cast<unsigned long long>(type_index) };
+		if (type == Type::Struct ||
+			(type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size() && gTypeInfo[type_index].getStructInfo() != nullptr)) {
+			result.type_index = static_cast<TypeIndex>(type_index);
 		}
-		return { type, size_bits, result_var };
+		return result;
 	}
 
 	bool AstToIr::setupBaseFromIdentifier(

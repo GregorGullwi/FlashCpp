@@ -419,6 +419,16 @@
 
 	ExprOperands AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
 	ExpressionContext context) {
+		auto makeExprResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
+			ExprResult result;
+			result.type = type;
+			result.size_in_bits = size_bits;
+			result.value = std::move(value);
+			result.type_index = type_index;
+			result.pointer_depth = pointer_depth;
+			return result;
+		};
+
 		// OPERATOR OVERLOAD RESOLUTION
 		// For full standard compliance, operator& should call overloaded operator& if it exists.
 		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
@@ -601,8 +611,14 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 				
 				// Return pointer to result (64-bit pointer)
-				// The 4th element is pointer_depth + 1 (we're taking address, so depth increases)
-				return { addr_components->final_type, 64, result_var, static_cast<unsigned long long>(addr_components->pointer_depth + 1) };
+				ExprResult result = makeExprResult(
+					addr_components->final_type,
+					64,
+					result_var,
+					0,
+					addr_components->pointer_depth + 1);
+				preserveLegacyEnumPointerDepthEncoding(result);
+				return result;
 			}
 			
 			// Fall back to legacy implementation if analysis failed
@@ -883,7 +899,7 @@
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 						
-						return { element_type, 64, addr_var, static_cast<unsigned long long>(element_type_index) };
+						return makeExprResult(element_type, 64, addr_var, element_type_index);
 					}
 				}
 				
