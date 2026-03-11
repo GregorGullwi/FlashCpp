@@ -4,7 +4,7 @@
 // as the RHS. The correct overload is the free function operator+(const A&, const B&).
 //
 // BUG: findBinaryOperatorOverload's Phase 2 (OverloadResolution.h:723-725) returns
-// A::operator+(int) as a fallback (has_overload=true) even though `int` != `B`.
+// A::operator+(int) as a fallback (has_match=true) even though `int` != `B`.
 // findBinaryOperatorOverloadWithFreeFunction then short-circuits at line 755-757
 // and never searches for the free function.
 //

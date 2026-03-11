@@ -351,22 +351,42 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
 					TypeIndex right_type_idx = resolve_operand_type_index(*rightNode);
+					Type right_base_type = Type::Void;
+					if (rightNode->is<ExpressionNode>()) {
+						auto right_type_spec = get_expression_type(*rightNode);
+						if (right_type_spec.has_value()) {
+							right_base_type = right_type_spec->type();
+						}
+					}
 
 					// If at least one operand is a struct type, validate the operator exists
 					if (left_type_idx > 0 || right_type_idx > 0) {
 						bool operator_found = false;
 						std::string_view op_symbol = operator_token.value();
 
-						// Check member operator overload on the left operand
+						// When the LHS is a struct, reuse the same unified member/free-function
+						// lookup as codegen so SFINAE sees ambiguity and mixed incomparable
+						// candidates the same way.
 						if (left_type_idx > 0) {
-							auto member_result = findBinaryOperatorOverload(left_type_idx, right_type_idx, stringToOverloadableOperator(op_symbol));
-							if (member_result.has_overload) {
+							auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
+								left_type_idx,
+								right_type_idx,
+								stringToOverloadableOperator(op_symbol),
+								op_symbol,
+								gSymbolTable,
+								right_base_type);
+							if (overload_result.is_ambiguous) {
+								return ParseResult::error("SFINAE: ambiguous operator overload for '" + std::string(op_symbol) + "'", operator_token);
+							}
+							if (overload_result.has_match) {
 								operator_found = true;
 							}
 						}
 
-						// Check free function operator overload (e.g., operator+(A, B))
-						if (!operator_found) {
+						// Fall back to the parser's older free-function existence check only
+						// for cases the unified helper does not model yet, such as a non-class
+						// LHS paired with a class RHS.
+						if (!operator_found && left_type_idx == 0) {
 							StringBuilder op_name_builder;
 							op_name_builder.append("operator").append(op_symbol);
 							std::string_view op_func_name = op_name_builder.commit();

@@ -440,7 +440,7 @@
 						// Check for operator& overload
 						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::BitwiseAnd);
 						
-						if (overload_result.has_overload) {
+						if (overload_result.has_match) {
 							// Found an overload! Generate a member function call instead of built-in address-of
 							FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator& overload for type index {}", 
 							type_node->type_index());

@@ -922,73 +922,73 @@
 				type_node = &decl->type_node().as<TypeSpecifierNode>();
 			}
 
-			// Check if it's a struct with operator-> overload
-			if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
-				auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::Arrow);
+				// Check if it's a struct with operator-> overload
+				if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+					auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::Arrow);
 
-				if (overload_result.has_overload) {
-					// Found an overload! Call operator->() to get pointer, then access member
-					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}", 
-					type_node->type_index());
+					if (overload_result.has_match) {
+						// Found an overload! Call operator->() to get pointer, then access member
+						FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}",
+							type_node->type_index());
 
-					const StructMemberFunction& member_func = *overload_result.member_overload;
-					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						const StructMemberFunction& member_func = *overload_result.member_overload;
+						const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
-					// Get struct name for mangling
-					std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
+						// Get struct name for mangling
+						std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
 
-					// Get the return type from the function declaration (should be a pointer)
-					const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+						// Get the return type from the function declaration (should be a pointer)
+						const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 
-					// Generate mangled name for operator->
-					std::string_view operator_func_name = "operator->";
-					std::vector<TypeSpecifierNode> empty_params;
-					std::vector<std::string_view> empty_namespace;
-					auto mangled_name = NameMangling::generateMangledName(
-						operator_func_name,
-						return_type,
-						empty_params,
-						false,
-						struct_name,
-						empty_namespace,
-						Linkage::CPlusPlus
-					);
+						// Generate mangled name for operator->
+						std::string_view operator_func_name = "operator->";
+						std::vector<TypeSpecifierNode> empty_params;
+						std::vector<std::string_view> empty_namespace;
+						auto mangled_name = NameMangling::generateMangledName(
+							operator_func_name,
+							return_type,
+							empty_params,
+							false,
+							struct_name,
+							empty_namespace,
+							Linkage::CPlusPlus
+						);
 
-					// Generate the call to operator->()
-					TempVar ptr_result = var_counter.next();
+						// Generate the call to operator->()
+						TempVar ptr_result = var_counter.next();
 
-					CallOp call_op;
-					call_op.result = ptr_result;
-					call_op.return_type = return_type.type();
-					call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-					if (call_op.return_size_in_bits == 0) {
-						call_op.return_size_in_bits = get_type_size_bits(return_type.type());
-					}
-					call_op.function_name = mangled_name;
-					call_op.is_variadic = false;
-					call_op.is_member_function = true;
+						CallOp call_op;
+						call_op.result = ptr_result;
+						call_op.return_type = return_type.type();
+						call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+						if (call_op.return_size_in_bits == 0) {
+							call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+						}
+						call_op.function_name = mangled_name;
+						call_op.is_variadic = false;
+						call_op.is_member_function = true;
 
-					// Add 'this' pointer as first argument
-					call_op.args.push_back(TypedValue{
-						.type = type_node->type(),
-						.size_in_bits = 64,  // Pointer size
-						.value = IrValue(identifier_handle)
-					});
+						// Add 'this' pointer as first argument
+						call_op.args.push_back(TypedValue{
+							.type = type_node->type(),
+							.size_in_bits = 64,  // Pointer size
+							.value = IrValue(identifier_handle)
+						});
 
-					// Add the function call instruction
-					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
+						// Add the function call instruction
+						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
 
-					// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
-					if (return_type.pointer_depth() > 0) {
-						base_object = ptr_result;
-						base_type = return_type.type();
-						base_type_index = return_type.type_index();
-						is_pointer_dereference = true;
-						base_setup_complete = true;
+						// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
+						if (return_type.pointer_depth() > 0) {
+							base_object = ptr_result;
+							base_type = return_type.type();
+							base_type_index = return_type.type_index();
+							is_pointer_dereference = true;
+							base_setup_complete = true;
+						}
 					}
 				}
 			}
-		}
 
 		// Resolve the base object — single dispatch chain regardless of ExpressionNode wrapping
 		if (!base_setup_complete) {

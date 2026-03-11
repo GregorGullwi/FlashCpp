@@ -743,11 +743,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (lhs_type_index > 0 && lhs_type_index < gTypeInfo.size()) {
 				// Check for user-defined operator= that takes the RHS type
 				auto overload_result = findBinaryOperatorOverload(lhs_type_index, 0, OverloadableOperator::Assign);
-				
-				if (overload_result.has_overload) {
+				if (overload_result.is_ambiguous) {
+					throw CompileError("Ambiguous overload for operator=");
+				}
+
+				if (overload_result.has_match) {
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-					
+
 					// Check if the parameter type matches RHS type
 					const auto& param_nodes = func_decl.parameter_nodes();
 					if (!param_nodes.empty() && param_nodes[0].is<DeclarationNode>()) {
@@ -867,14 +870,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
 				auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
 					lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table, rhsType);
-				
-				if (overload_result.has_overload && overload_result.is_free_function) {
+				if (overload_result.is_ambiguous) {
+					throw CompileError("Ambiguous overload for operator" + std::string(op));
+				}
+
+				if (overload_result.has_match && overload_result.is_free_function) {
 					// Found a free-function operator overload: operator+(LHSType, RHSType)
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving free-function operator{} overload", op);
-					
+
 					const FunctionDeclarationNode& func_decl = *overload_result.free_function_overload;
 					TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-					
+
 					// Get parameter types for mangling
 					std::vector<TypeSpecifierNode> param_types;
 					for (const auto& param_node : func_decl.parameter_nodes()) {
@@ -975,10 +981,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					return {return_type.type(), actual_return_size, result_var, return_type.type_index()};
 				}
 				
-				else if (overload_result.has_overload) {
+				else if (overload_result.has_match) {
 					// Found a member operator overload! Generate a member function call
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving binary operator{} overload for type index {}", 
-					op, lhs_type_index);
+						op, lhs_type_index);
 					
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
