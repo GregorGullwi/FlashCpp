@@ -1,6 +1,6 @@
 # Exception Handling in FlashCpp
 
-**Updated**: 2026-03-09  
+**Updated**: 2026-03-11
 **Platform Targets**: Linux (Itanium C++ ABI) and Windows (MSVC SEH / `__CxxFrameHandler3`)
 
 ## Current Status
@@ -42,6 +42,37 @@ Basic and intermediate exception handling works end-to-end:
 | `__try`/`__except`/`__finally` (Win32 SEH) | ✅ | `__C_specific_handler` integration |
 
 ---
+
+## Windows EH Hardening Roadmap
+
+One currently interesting hardening gap is **cleanup of locals declared inside a catch body when control leaves via `throw` / `throw;`**.
+
+Today, the Windows EH path already has dedicated machinery for:
+
+- function-scope cleanup,
+- try-scope cleanup before entering a catch,
+- catch-funclet continuation / parent-return bridging.
+
+The weaker spot is that catch-body locals do not yet appear to be first-class entries in the Windows unwind-state model, which makes rethrow-style exits a likely source of missed destructor cleanup.
+
+### Recommended sequencing
+
+1. **Minimal fix first**
+   Close the concrete bug with the smallest safe change, ideally by making the frontend emit cleanup for the active catch scopes before lowering `throw` / `throw;` from inside a catch body. This is the best first step because it fixes a real failing case with low risk.
+
+2. **Medium refactor if we keep touching EH exits**
+   Introduce a shared “leave scopes down to depth X” cleanup helper in AST→IR and use it for `return`, `break`, `continue`, `goto`, `throw`, and `throw;`. This is not strictly required before a larger redesign, but it is the best practical next step if more non-local-exit hardening work is expected.
+
+3. **Large redesign only if the area keeps surfacing bugs**
+   Upgrade the Windows unwind-state / unwind-map model so catch-body locals and other destructible scopes become first-class unwind actions, instead of relying on frontend-emitted cleanup before exceptional exits. This is the highest-ceiling solution, but also the highest-risk and highest-effort one.
+
+### Recommendation
+
+The current recommendation is **minimal first, then reassess**.
+
+- If the minimal fix closes the bug and no other EH-exit holes appear, stopping there is reasonable.
+- If more control-flow exits in this area need attention, do the medium refactor before continuing.
+- The medium step is **useful but not mandatory** before a future larger redesign.
 
 ## Architecture
 
