@@ -1,6 +1,6 @@
 #include "CodeGen.h"
 
-	std::vector<IrOperand> AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
+	ExprOperands AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		if (!newExpr.type_node().is<TypeSpecifierNode>()) {
 			FLASH_LOG(Codegen, Error, "New expression type node is not a TypeSpecifierNode");
 			return {};
@@ -468,7 +468,7 @@
 		return { type, size_in_bits, result_var, 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
+	ExprOperands AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
 		// Evaluate the expression to get the pointer to delete
 		auto ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
 
@@ -686,7 +686,7 @@
 		}
 	}
 
-	std::vector<IrOperand> AstToIr::handleRValueReferenceCast(
+	ExprOperands AstToIr::handleRValueReferenceCast(
 		const std::vector<IrOperand>& expr_operands,
 		Type target_type,
 		int target_size,
@@ -709,7 +709,7 @@
 		return { target_type, 64, result_var, 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::handleLValueReferenceCast(
+	ExprOperands AstToIr::handleLValueReferenceCast(
 		const std::vector<IrOperand>& expr_operands,
 		Type target_type,
 		int target_size,
@@ -732,7 +732,7 @@
 		return { target_type, 64, result_var, 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
+	ExprOperands AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// Get the target type from the type specifier first
 		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
@@ -901,7 +901,7 @@
 		return { target_type, target_size, expr_operands[2], 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
+	ExprOperands AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		// typeid returns a reference to const std::type_info
 		// For polymorphic types, we need to get RTTI from the vtable
 		// For non-polymorphic types, we return a compile-time constant
@@ -961,7 +961,7 @@
 		return { Type::Void, 64, result_temp, 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
+	ExprOperands AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
 		// dynamic_cast<Type>(expr) performs runtime type checking
 		// Returns nullptr (for pointers) or throws bad_cast (for references) on failure
 
@@ -1042,7 +1042,7 @@
 		return { result_type, result_size, result_temp, 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
+	ExprOperands AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 		// const_cast<Type>(expr) adds or removes const/volatile qualifiers
 		// It doesn't change the actual value, just the type metadata
 		
@@ -1070,7 +1070,7 @@
 		return { target_type, target_size, expr_operands[2], 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
+	ExprOperands AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
 		// reinterpret_cast<Type>(expr) reinterprets the bit pattern as a different type
 		// It doesn't change the actual bits, just the type interpretation
 		

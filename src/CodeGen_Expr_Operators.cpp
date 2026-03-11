@@ -314,7 +314,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	}
 }
 
-	std::vector<IrOperand> AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
+	ExprOperands AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
 		// Ternary operator: condition ? true_expr : false_expr
 		// Generate IR:
 		// 1. Evaluate condition
@@ -385,7 +385,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return { result_type, result_size, result_var, 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
+	ExprOperands AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
 		std::vector<IrOperand> irOperands;
 
 		const auto& op = binaryOperatorNode.op();
@@ -2021,7 +2021,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			func_node.is_variadic(), struct_name, namespace_path, func_node.linkage()).view();
 	}
 
-	std::optional<std::vector<IrOperand>> AstToIr::tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
+	std::optional<ExprOperands> AstToIr::tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
 		// Lookup table for intrinsic handlers using if-else chain
 		// More maintainable than multiple nested if statements
 		
@@ -2075,7 +2075,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return std::nullopt;  // Not an intrinsic
 	}
 
-	std::vector<IrOperand> AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_labs/__builtin_llabs requires exactly 1 argument");
 			return {Type::Long, 64, 0ULL, 0ULL};
@@ -2120,7 +2120,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
 
-	std::vector<IrOperand> AstToIr::generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name) {
+	ExprOperands AstToIr::generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, func_name, " requires exactly 1 argument");
 			return {Type::Double, 64, 0ULL, 0ULL};
@@ -2176,7 +2176,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return false;
 	}
 
-	std::vector<IrOperand> AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
 		// __builtin_va_arg takes 2 arguments: va_list variable and type
 		// After preprocessing: __builtin_va_arg(args, int) - parser sees this as function call with 2 args
 		if (functionCallNode.arguments().size() != 2) {
@@ -2860,7 +2860,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 	}
 
-	std::vector<IrOperand> AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
 		// __builtin_va_start takes 2 arguments: va_list (not pointer!), and last fixed parameter
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start requires exactly 2 arguments");
@@ -3015,7 +3015,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
 
-	std::vector<IrOperand> AstToIr::generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode) {
 		// Verify no arguments (some compilers allow it, we'll be strict)
 		if (functionCallNode.arguments().size() != 0) {
 			FLASH_LOG(Codegen, Warning, "__builtin_unreachable should not have arguments (ignoring)");
@@ -3033,7 +3033,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
 
-	std::vector<IrOperand> AstToIr::generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_assume requires exactly 1 argument (condition)");
 			return {Type::Void, 0, 0ULL, 0ULL};
@@ -3056,7 +3056,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
 
-	std::vector<IrOperand> AstToIr::generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_expect requires exactly 2 arguments (expr, expected_value)");
 			// Return a default value matching typical usage (long type)
@@ -3083,7 +3083,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return expr_ir;
 	}
 
-	std::vector<IrOperand> AstToIr::generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_launder requires exactly 1 argument (pointer)");
 			return {Type::UnsignedLongLong, 64, 0ULL, 0ULL};
@@ -3115,7 +3115,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return ptr_ir;
 	}
 
-	std::vector<IrOperand> AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
 		TempVar result = var_counter.next();
 		if (seh_in_filter_funclet_) {
 			// Filter context: EXCEPTION_POINTERS* is in [rsp+8], read ExceptionCode from there
@@ -3137,7 +3137,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return {Type::UnsignedInt, 32, result, 0ULL};
 	}
 
-	std::vector<IrOperand> AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
 		TempVar result = var_counter.next();
 		SehAbnormalTerminationOp op;
 		op.result = result;
@@ -3145,7 +3145,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return {Type::Int, 32, result, 0ULL};
 	}
 
-	std::vector<IrOperand> AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
+	ExprOperands AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
 		TempVar result = var_counter.next();
 		SehExceptionIntrinsicOp op;
 		op.result = result;

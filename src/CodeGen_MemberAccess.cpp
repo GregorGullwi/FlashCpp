@@ -133,7 +133,7 @@
 		return result;
 	}
 
-	std::vector<IrOperand> AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
+	ExprOperands AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
 		// Generate IR for array[index] expression
 		// This computes the address: base_address + (index * element_size)
@@ -842,7 +842,7 @@
 		return true;
 	}
 
-	std::vector<IrOperand> AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
+	ExprOperands AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
 		// Include type_index for struct types and for UserDefined types that have actual struct info
 		// (i.e., are instantiated template structs, not placeholders or primitive type params)
 		bool include_type_index = (type == Type::Struct) ||
@@ -881,7 +881,7 @@
 		return validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference);
 	}
 
-	std::vector<IrOperand> AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
+	ExprOperands AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	ExpressionContext context) {
 		std::vector<IrOperand> irOperands;
 
@@ -1396,7 +1396,7 @@
 		return element_size * array_count;
 	}
 
-	std::vector<IrOperand> AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
+	ExprOperands AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 		size_t size_in_bytes = 0;
 
 		// Helper: look up sizeof a struct member (static or non-static) by qualified name.
@@ -1813,7 +1813,7 @@
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 	}
 
-	std::vector<IrOperand> AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
+	ExprOperands AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 		size_t alignment = 0;
 
 		if (alignofNode.is_type()) {
@@ -1927,7 +1927,7 @@
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(alignment) };
 	}
 
-	std::vector<IrOperand> AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
+	ExprOperands AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
 		// offsetof(struct_type, member)
 		const ASTNode& type_node = offsetofNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -2044,7 +2044,7 @@
 		return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
 	}
 
-	std::vector<IrOperand> AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
+	ExprOperands AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// Type traits evaluate to a compile-time boolean constant
 		bool result = false;
 

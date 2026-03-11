@@ -1,6 +1,6 @@
 #include "CodeGen.h"
 
-	std::vector<IrOperand> AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
+	ExprOperands AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4);  // ret + name + this + ~4 per arg
 
@@ -1556,7 +1556,7 @@
 
 // Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 // Used when a member function call syntax is used but the object is not a struct
-std::vector<IrOperand> AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
+ExprOperands AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
 	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 	const DeclarationNode& decl_node = func_decl.decl_node();
 	

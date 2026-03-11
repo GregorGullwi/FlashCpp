@@ -14,6 +14,9 @@
 #include <cstdint>
 #include <cstddef>
 #include <type_traits>
+#include <cassert>
+#include <initializer_list>
+#include <utility>
 
 namespace FlashCpp {
 
@@ -31,6 +34,13 @@ template<typename T, size_t N = 4>
 class InlineVector {
 public:
 	InlineVector() = default;
+
+	InlineVector(std::initializer_list<T> init) {
+		reserve(init.size());
+		for (const auto& item : init) {
+			push_back(item);
+		}
+	}
 	
 	// Construct from std::vector (enables seamless migration)
 	InlineVector(const std::vector<T>& vec) {
@@ -64,6 +74,15 @@ public:
 		reserve(vec.size());
 		for (auto& item : vec) {
 			push_back(std::move(item));
+		}
+		return *this;
+	}
+
+	InlineVector& operator=(std::initializer_list<T> init) {
+		clear();
+		reserve(init.size());
+		for (const auto& item : init) {
+			push_back(item);
 		}
 		return *this;
 	}
@@ -162,6 +181,16 @@ public:
 		if (capacity > N) {
 			overflow_.reserve(capacity - N);
 		}
+	}
+
+	T* data() {
+		assert(overflow_.empty() && "InlineVector::data() requires contiguous inline storage");
+		return inline_data_.data();
+	}
+
+	const T* data() const {
+		assert(overflow_.empty() && "InlineVector::data() requires contiguous inline storage");
+		return inline_data_.data();
 	}
 	
 	T& operator[](size_t i) {

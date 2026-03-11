@@ -2173,7 +2173,7 @@
 // Generate IR for std::initializer_list construction
 // This is the "compiler magic" that creates a backing array on the stack
 // and constructs an initializer_list pointing to it
-std::vector<IrOperand> AstToIr::generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list) {
+ExprOperands AstToIr::generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list) {
 	FLASH_LOG(Codegen, Debug, "Generating IR for InitializerListConstructionNode with ", 
 	init_list.size(), " elements");
 	
@@ -2309,7 +2309,7 @@ std::vector<IrOperand> AstToIr::generateInitializerListConstructionIr(const Init
 
 
 
-std::vector<IrOperand> AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
+ExprOperands AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
 	// Get the type being constructed
 	const ASTNode& type_node = constructorCallNode.type_node();
 	if (!type_node.is<TypeSpecifierNode>()) {
