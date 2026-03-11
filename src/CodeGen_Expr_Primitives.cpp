@@ -258,7 +258,7 @@
 				carries_type_index ? type_node.type_index() : 0,
 				carries_type_index ? 0 : type_node.pointer_depth());
 		};
-		auto preserveLegacyEnumMetadata = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
+		auto applyEnumTypeIndexOverride = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
 			if (type_node.type() == Type::Enum) {
 				result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
 			}
@@ -997,7 +997,7 @@
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 				
 				TypeIndex type_index = (pointee_type == Type::Struct || type_node.type() == Type::Enum) ? type_node.type_index() : 0;
-				return preserveLegacyEnumMetadata(
+				return applyEnumTypeIndexOverride(
 					makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index),
 					type_node);
 			}
@@ -1029,7 +1029,7 @@
 			int pointer_depth = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
 				? 0
 				: type_node.pointer_depth();
-			return preserveLegacyEnumMetadata(makeIdentifierResult(
+			return applyEnumTypeIndexOverride(makeIdentifierResult(
 				return_type,
 				size_bits,
 				StringTable::getOrInternStringHandle(identifierNode.name()),
