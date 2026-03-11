@@ -142,6 +142,8 @@
 			result.value = std::move(value);
 			result.type_index = type_index;
 			result.pointer_depth = pointer_depth;
+			// Preserve the pre-migration raw slot-4 encoding for array elements:
+			// struct elements carry type_index, while non-struct pointer elements carry pointer_depth.
 			if (type == Type::Struct) {
 				result.encoded_metadata = static_cast<unsigned long long>(type_index);
 			} else if (pointer_depth > 0) {

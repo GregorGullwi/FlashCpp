@@ -258,11 +258,11 @@
 				carries_type_index ? type_node.type_index() : 0,
 				carries_type_index ? 0 : type_node.pointer_depth());
 		};
-		auto preserveLegacyEnumMetadata = [](ExprResult result, const TypeSpecifierNode& type_node) -> ExprResult {
+		auto preserveLegacyEnumMetadata = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
 			if (type_node.type() == Type::Enum) {
 				result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
 			}
-			return result;
+			return std::move(result);
 		};
 
 		// Check if this is a captured variable in a lambda.

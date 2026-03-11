@@ -617,6 +617,8 @@
 					result_var,
 					0,
 					addr_components->pointer_depth + 1);
+				// Preserve the old raw slot-4 encoding for address-producing expressions even when
+				// the outward type is an enum, because these paths historically carried pointer depth.
 				result.encoded_metadata = static_cast<unsigned long long>(addr_components->pointer_depth + 1);
 				return result;
 			}
