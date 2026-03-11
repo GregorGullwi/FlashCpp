@@ -425,6 +425,14 @@
 					// Single value initialization
 					const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 					bool handled_as_reloc = false;
+					auto initializeGlobalReloc = [&](std::string_view target_name, std::string_view debug_suffix = {}) {
+						FLASH_LOG(Codegen, Debug, "Global pointer '", decl.identifier_token().value(),
+						"' initialized with &", target_name, debug_suffix);
+						op.is_initialized = true;
+						op.init_data.resize(element_size, 0);
+						op.reloc_target = resolveGlobalRelocTarget(target_name);
+						handled_as_reloc = true;
+					};
 					// Handle address-of initializer: int* ptr = &x;
 					if (std::holds_alternative<UnaryOperatorNode>(init_expr)) {
 						const auto& unary = std::get<UnaryOperatorNode>(init_expr);
@@ -432,12 +440,7 @@
 							const ExpressionNode& inner = unary.get_operand().as<ExpressionNode>();
 							if (std::holds_alternative<IdentifierNode>(inner)) {
 								const auto& target_id = std::get<IdentifierNode>(inner);
-								FLASH_LOG(Codegen, Debug, "Global pointer '", decl.identifier_token().value(),
-								"' initialized with &", target_id.name());
-								op.is_initialized = true;
-								op.init_data.resize(element_size, 0);
-								op.reloc_target = resolveGlobalRelocTarget(target_id.name());
-								handled_as_reloc = true;
+								initializeGlobalReloc(target_id.name());
 							} else if (std::holds_alternative<ArraySubscriptNode>(inner)) {
 								const auto& subscript = std::get<ArraySubscriptNode>(inner);
 								if (subscript.array_expr().is<ExpressionNode>() && subscript.index_expr().is<ExpressionNode>()) {
@@ -452,12 +455,7 @@
 										auto index_result = ConstExpr::Evaluator::evaluate(subscript.index_expr(), ctx);
 										if (index_result.success() && index_result.as_int() == 0) {
 											const auto& target_id = std::get<IdentifierNode>(base_expr);
-											FLASH_LOG(Codegen, Debug, "Global pointer '", decl.identifier_token().value(),
-											"' initialized with &", target_id.name(), "[0]");
-											op.is_initialized = true;
-											op.init_data.resize(element_size, 0);
-											op.reloc_target = resolveGlobalRelocTarget(target_id.name());
-											handled_as_reloc = true;
+											initializeGlobalReloc(target_id.name(), "[0]");
 										}
 									}
 								}
