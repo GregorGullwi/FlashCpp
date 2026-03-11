@@ -620,24 +620,24 @@
 	}
 
 	std::variant<StringHandle, TempVar> AstToIr::extractBaseOperand(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		TempVar fallback_var,
 		const char* cast_name) {
 		
 		std::variant<StringHandle, TempVar> base;
-		if (std::holds_alternative<StringHandle>(expr_operands[2])) {
-			base = std::get<StringHandle>(expr_operands[2]);
-		} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
-			base = std::get<TempVar>(expr_operands[2]);
+		if (std::holds_alternative<StringHandle>(expr_operands.value)) {
+			base = std::get<StringHandle>(expr_operands.value);
+		} else if (std::holds_alternative<TempVar>(expr_operands.value)) {
+			base = std::get<TempVar>(expr_operands.value);
 		} else {
-			FLASH_LOG_FORMAT(Codegen, Warning, "{}:  unexpected value type in expr_operands[2]", cast_name);
+			FLASH_LOG_FORMAT(Codegen, Warning, "{}: unexpected value type in ExprResult.value", cast_name);
 			base = fallback_var;
 		}
 		return base;
 	}
 
 	void AstToIr::markReferenceMetadata(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		TempVar result_var,
 		Type target_type,
 		int target_size,
@@ -687,7 +687,7 @@
 	}
 
 	ExprOperands AstToIr::handleRValueReferenceCast(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
@@ -706,11 +706,15 @@
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 		
 		// Return the xvalue with reference semantics (64-bit pointer size)
-		return { target_type, 64, result_var, 0ULL };
+		ExprResult result;
+		result.type = target_type;
+		result.size_in_bits = 64;
+		result.value = result_var;
+		return result;
 	}
 
 	ExprOperands AstToIr::handleLValueReferenceCast(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
@@ -729,7 +733,11 @@
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 		
 		// Return the lvalue with reference semantics (64-bit pointer size)
-		return { target_type, 64, result_var, 0ULL };
+		ExprResult result;
+		result.type = target_type;
+		result.size_in_bits = 64;
+		result.value = result_var;
+		return result;
 	}
 
 	ExprOperands AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
@@ -771,13 +779,13 @@
 		// This produces an xvalue - has identity but can be moved from
 		// Equivalent to std::move
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
+			return handleRValueReferenceCast(toExprResult(expr_operands), target_type, target_size, staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for lvalue reference casts: static_cast<T&>(expr)
 		// This produces an lvalue
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
+			return handleLValueReferenceCast(toExprResult(expr_operands), target_type, target_size, staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for pointer casts (e.g., char* to double*, int* to void*, etc.)
@@ -1050,9 +1058,9 @@
 
 		// Mark value category for reference types
 		if (target_type_node.is_rvalue_reference()) {
-			markReferenceMetadata(expr_operands, result_temp, result_type, result_size, true, "dynamic_cast");
+			markReferenceMetadata(toExprResult(expr_operands), result_temp, result_type, result_size, true, "dynamic_cast");
 		} else if (target_type_node.is_lvalue_reference()) {
-			markReferenceMetadata(expr_operands, result_temp, result_type, result_size, false, "dynamic_cast");
+			markReferenceMetadata(toExprResult(expr_operands), result_temp, result_type, result_size, false, "dynamic_cast");
 		}
 
 		// Return the casted pointer/reference
@@ -1073,12 +1081,12 @@
 		
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
+			return handleRValueReferenceCast(toExprResult(expr_operands), target_type, target_size, constCastNode.cast_token(), "const_cast");
 		}
 		
 		// Special handling for lvalue reference casts: const_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
+			return handleLValueReferenceCast(toExprResult(expr_operands), target_type, target_size, constCastNode.cast_token(), "const_cast");
 		}
 		
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
@@ -1102,12 +1110,12 @@
 		
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleRValueReferenceCast(toExprResult(expr_operands), target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 		
 		// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleLValueReferenceCast(toExprResult(expr_operands), target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 		
 		// reinterpret_cast reinterprets the bits without conversion
@@ -1116,4 +1124,3 @@
 		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
 		return { target_type, result_size, expr_operands[2], static_cast<unsigned long long>(target_pointer_depth) };
 	}
-

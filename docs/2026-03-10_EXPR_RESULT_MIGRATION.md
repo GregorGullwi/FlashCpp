@@ -147,10 +147,10 @@ the heap allocation overhead is eliminated.
 - fixed-size expression-result consumers should index/copy the 3-4 operands
   directly instead of assuming contiguous backing storage
 
-**Remaining `std::vector<IrOperand>` parameter sites (deferred to Phase 2):**
-These functions still accept `const std::vector<IrOperand>&`, causing implicit
+**Original `std::vector<IrOperand>` parameter sites deferred to Phase 2 (44960e4):**
+These functions still accepted `const std::vector<IrOperand>&`, causing implicit
 `InlineVector→std::vector` heap-allocating conversions when called with
-`ExprOperands`. They are deferred because Phase 2 will change them to accept
+`ExprOperands`. They were deferred because Phase 2 would change them to accept
 `const ExprResult&` with named fields, making a Phase 1 `const ExprOperands&`
 intermediate step wasteful:
 - `handleLValueAssignment` (`AstToIr.h:458`) — 2 params
@@ -164,10 +164,21 @@ intermediate step wasteful:
 - `generateUnaryIncDecOverloadCall` (`AstToIr.h:284`)
 - `generateBuiltinIncDec` (`AstToIr.h:296`)
 
-These are not a regression: before this PR they received `std::vector`
+These were not a regression: before this PR they received `std::vector`
 directly (no conversion). The implicit conversion cost is equivalent to the
 previous heap allocation at the producer site. Phase 2 will eliminate both
 by switching to `ExprResult`.
+
+**Current remaining legacy positional helper sites (after 2026-03-11 follow-up):**
+- `handleLValueAssignment` (`AstToIr.h:460`) — 2 params still take
+  `const std::vector<IrOperand>&`
+- `handleLValueCompoundAssignment` (`AstToIr.h:467`) — 2 params still take
+  `const std::vector<IrOperand>&`
+
+All other helpers from the original deferred list now take `const ExprResult&`
+and can consume named fields while preserving the raw slot-4 encoding through
+`ExprResult::encoded_metadata` when they still need to bridge back into
+positional helpers.
 
 ### Phase 2: Migrate producers one at a time
 
@@ -211,6 +222,24 @@ is converted at the return site.  No callers need to change.
 - migrated related array-address producer returns in
   `src/CodeGen_Expr_Conversions.cpp` (`analyzeAddressExpression` result return
   and multidimensional `&arr[i][j]`)
+- added `toExprResult(...)` bridge helpers in `src/IROperandHelpers.h` that
+  preserve raw legacy slot-4 metadata in `ExprResult::encoded_metadata` while
+  exposing named `type` / `size_in_bits` / `value` / decoded metadata fields
+- migrated the deferred helper consumers in `src/CodeGen_MemberAccess.cpp`,
+  `src/CodeGen_NewDeleteCast.cpp`, `src/CodeGen_Expr_Operators.cpp`, and
+  `src/CodeGen_Expr_Conversions.cpp` from `const std::vector<IrOperand>&` to
+  `const ExprResult&` for:
+  - `extractBaseFromOperands`
+  - `extractBaseOperand`
+  - `markReferenceMetadata`
+  - `isVaListPointerType`
+  - `handleRValueReferenceCast`
+  - `handleLValueReferenceCast`
+  - `generateUnaryIncDecOverloadCall`
+  - `generateBuiltinIncDec`
+- kept `handleLValueAssignment` and `handleLValueCompoundAssignment` on their
+  legacy positional signatures for now; migrated inc/dec codepaths bridge back
+  through `ExprResult` only at the final compatibility boundary
 - intentionally deferred broader non-priority/manual 4-slot sites outside these
   producer paths (for example other unary/conversion helpers and qualified
   identifier paths) to keep Phase 2 reviewable and producer-focused

@@ -2483,7 +2483,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
 
-	bool AstToIr::isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const {
+	bool AstToIr::isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const {
 		// Check if the argument is an identifier with pointer type
 		if (arg.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg.as<ExpressionNode>())) {
 			const auto& id = std::get<IdentifierNode>(arg.as<ExpressionNode>());
@@ -2499,10 +2499,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
-		if (ir_result.size() >= 2 && std::holds_alternative<int>(ir_result[1])) {
-			if (std::get<int>(ir_result[1]) == POINTER_SIZE_BITS) {
-				return true;
-			}
+		if (ir_result.size_in_bits == POINTER_SIZE_BITS) {
+			return true;
 		}
 
 		return false;
@@ -2578,7 +2576,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
 		// This must match the detection logic in generateVaStartIntrinsic
-		bool va_list_is_pointer = isVaListPointerType(arg0, va_list_ir);
+		bool va_list_is_pointer = isVaListPointerType(arg0, toExprResult(va_list_ir));
 
 		if (context_->isItaniumMangling() && !va_list_is_pointer) {
 			// Linux/System V AMD64 ABI: Use va_list structure
@@ -3211,7 +3209,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
-		bool va_list_is_pointer = isVaListPointerType(arg0, arg0_ir);
+		bool va_list_is_pointer = isVaListPointerType(arg0, toExprResult(arg0_ir));
 
 		// Get the second argument (last fixed parameter)
 		ASTNode arg1 = functionCallNode.arguments()[1];

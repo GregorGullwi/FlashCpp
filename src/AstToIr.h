@@ -177,7 +177,7 @@ private:
 	std::optional<ExprOperands> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode);
 	ExprOperands generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprOperands generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name);
-	bool isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const;
+	bool isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const;
 	ExprOperands generateVaArgIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprOperands generateVaStartIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprOperands generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode);
@@ -200,7 +200,7 @@ private:
 		size_t& base_type_index,
 		bool& is_pointer_dereference);
 	bool extractBaseFromOperands(
-		const std::vector<IrOperand>& operands,
+		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
 		size_t& base_type_index,
@@ -226,11 +226,11 @@ private:
 	ExprOperands generateNewExpressionIr(const NewExpressionNode& newExpr);
 	ExprOperands generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
 	std::variant<StringHandle, TempVar> extractBaseOperand(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		TempVar fallback_var,
 		const char* cast_name = "cast");
 	void markReferenceMetadata(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		TempVar result_var,
 		Type target_type,
 		int target_size,
@@ -244,13 +244,13 @@ private:
 		const Token& token,
 		const char* cast_name = "cast");
 	ExprOperands handleRValueReferenceCast(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
 	ExprOperands handleLValueReferenceCast(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
@@ -283,7 +283,7 @@ private:
 	std::optional<ExprOperands> generateUnaryIncDecOverloadCall(
 		OverloadableOperator op_kind,  // Increment or Decrement
 		Type operandType,
-		const std::vector<IrOperand>& operandIrOperands,
+		const ExprResult& operandIrResult,
 		bool is_prefix
 	);
 
@@ -295,7 +295,7 @@ private:
 		bool is_prefix,
 		bool operandHandledAsIdentifier,
 		const UnaryOperatorNode& unaryOperatorNode,
-		const std::vector<IrOperand>& operandIrOperands,
+		const ExprResult& operandIrResult,
 		Type operandType,
 		TempVar result_var
 	);

@@ -110,6 +110,40 @@ inline TypedValue toTypedValue(const ExprResult& result) {
 	return toTypedValue(static_cast<ExprOperands>(result));
 }
 
+inline ExprResult toExprResult(std::span<const IrOperand> operands) {
+	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
+	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
+	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][metadata]");
+
+	ExprResult result;
+	result.type = std::get<Type>(operands[0]);
+	result.size_in_bits = std::get<int>(operands[1]);
+	result.value = operands[2];
+
+	TypedValue typed_value = toTypedValue(operands);
+	result.type_index = typed_value.type_index;
+	result.pointer_depth = typed_value.pointer_depth;
+
+	if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
+		result.encoded_metadata = std::get<unsigned long long>(operands[3]);
+	}
+
+	return result;
+}
+
+inline ExprResult toExprResult(const std::vector<IrOperand>& operands) {
+	return toExprResult(std::span<const IrOperand>(operands));
+}
+
+inline ExprResult toExprResult(const ExprOperands& operands) {
+	assert(operands.size() >= 3 && operands.size() <= 4 && "ExprOperands must contain exactly 3 or 4 operands");
+	std::array<IrOperand, 4> inline_copy{};
+	for (size_t i = 0; i < operands.size(); ++i) {
+		inline_copy[i] = operands[i];
+	}
+	return toExprResult(std::span<const IrOperand>(inline_copy.data(), operands.size()));
+}
+
 // ============================================================================
 // Typed Payload Helper Functions
 // ============================================================================
