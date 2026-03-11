@@ -142,11 +142,7 @@
 			result.value = std::move(value);
 			result.type_index = type_index;
 			result.pointer_depth = pointer_depth;
-			// Preserve the pre-migration raw slot-4 encoding for enum pointer elements:
-			// these historically carried pointer_depth even though the outward type is Enum.
-			if (type == Type::Enum && pointer_depth > 0) {
-				result.encoded_metadata = static_cast<unsigned long long>(pointer_depth);
-			}
+			preserveLegacyEnumPointerDepthEncoding(result);
 			return result;
 		};
 

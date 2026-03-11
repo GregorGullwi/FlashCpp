@@ -43,7 +43,8 @@ struct ExprResult {
 	TypeIndex type_index = 0;
 	int pointer_depth = 0;
 	// Legacy slot-4 compatibility for migrated sites whose encoded metadata depends on
-	// something other than the outward result Type (for example enum values lowered as ints).
+	// something other than the outward result Type (for example enum identifiers keeping
+	// type_index when lowered as integers, or enum pointers preserving pointer_depth).
 	std::optional<unsigned long long> encoded_metadata;
 
 	operator ExprOperands() const {
@@ -58,6 +59,12 @@ struct ExprResult {
 		return { type, size_in_bits, value, metadata };
 	}
 };
+
+inline void preserveLegacyEnumPointerDepthEncoding(ExprResult& result) {
+	if (result.type == Type::Enum && result.pointer_depth > 0) {
+		result.encoded_metadata = static_cast<unsigned long long>(result.pointer_depth);
+	}
+}
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
