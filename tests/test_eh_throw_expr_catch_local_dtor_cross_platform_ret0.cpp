@@ -66,9 +66,10 @@ int main() {
 		// Verify each Guard destructor ran exactly once (2 guards)
 		if (g_guard_dtor_count != 2) return 3;
 
-		// Verify Payload destructor ran exactly once (the catch-local copy)
-		// Note: the materialized temporary is consumed by the throw mechanism
-		if (g_payload_dtor_count != 1) return 4;
+		// Verify Payload destructor ran twice:
+		//   1. the original catch-local `payload`
+		//   2. the materialized temporary (after throw copies from it)
+		if (g_payload_dtor_count != 2) return 4;
 
 		// Verify copy constructor ran exactly once (materialization)
 		if (g_copy_ctor_count != 1) return 5;

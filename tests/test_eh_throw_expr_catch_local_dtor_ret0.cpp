@@ -43,7 +43,9 @@ int main() {
 		return 1;
 	} catch (Payload& caught) {
 		if (caught.value != 7) return 2;
-		if (g_cleanup != 101) return 3;
+		// Expected: ~Guard (+100) + ~Payload for original (+1) + ~Payload for
+		// materialized temporary (+1) = 102.
+		if (g_cleanup != 102) return 3;
 		return 0;
 	}
 
