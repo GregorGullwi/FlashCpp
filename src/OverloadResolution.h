@@ -881,7 +881,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 // For binary operators like operator+, operator-, etc.
 // Returns the member function that overloads the given operator, or nullptr if not found
 // This handles the member function form: a.operator+(b)
-inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type = Type::Void) {
+inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
 	// Only struct types can have operator overloads
 	if (left_type_index == 0 || left_type_index >= gTypeInfo.size()) {
 		return OperatorOverloadResult::no_overload();
@@ -920,12 +920,9 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 					if (param_spec.type() == Type::Struct || param_spec.type() == Type::Enum) {
 						TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index(), left_type_index);
 						type_matches = (resolved_param_idx == right_type_index);
-					} else if (right_type != Type::Void) {
-						// Caller provided the actual Type — compare base types
-						type_matches = (param_spec.type() == right_type);
 					} else {
-						// No right_type info available — fall back to type_index comparison
-						type_matches = (param_spec.type_index() == right_type_index);
+							// Caller provides the actual RHS base type for non-struct matches.
+							type_matches = (param_spec.type() == right_type);
 					}
 					if (type_matches) {
 						return OperatorOverloadResult(&member_func);
@@ -934,13 +931,13 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 			}
 		}
 	}
-	// Phase 2: No exact type match found among member operators.
-	// Do NOT fall back to a type-mismatched member operator — per C++20 [over.match.oper],
-	// non-member (free-function) candidates must also be considered. Returning a mismatched
-	// member here would suppress the free-function search in
-	// findBinaryOperatorOverloadWithFreeFunction. Instead, fall through to base-class search
-	// and ultimately return no_overload so the caller can check free functions too.
-	
+		// Phase 2: No exact type match found among member operators.
+		// Do NOT fall back to a type-mismatched member operator — per C++20 [over.match.oper],
+		// non-member (free-function) candidates must also be considered. Returning a mismatched
+		// member here would suppress the free-function search in
+		// findBinaryOperatorOverloadWithFreeFunction. Instead, fall through to base-class search
+		// and ultimately return no_overload so the caller can check free functions too.
+
 		// Search base classes recursively
 		for (const auto& base_spec : left_struct_info->base_classes) {
 			if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
@@ -965,7 +962,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	OverloadableOperator operator_kind,
 	std::string_view operator_symbol,
 	const SymbolTable& symbol_table,
-	Type right_type = Type::Void)
+	Type right_type)
 {
 	// --- Unified candidate set per C++20 [over.match.oper]/2 ---
 	struct OperatorCandidate {

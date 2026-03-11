@@ -739,11 +739,18 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
 				lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 			}
+
+				TypeIndex rhs_type_index = 0;
+				if ((rhsType == Type::Enum || rhsType == Type::UserDefined) && rhsIrOperands.size() >= 4) {
+					if (std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
+						rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
+					}
+				}
 			
 			if (lhs_type_index > 0 && lhs_type_index < gTypeInfo.size()) {
 				// Check for user-defined operator= that takes the RHS type
-				auto overload_result = findBinaryOperatorOverload(lhs_type_index, 0, OverloadableOperator::Assign);
-				if (overload_result.is_ambiguous) {
+					auto overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, OverloadableOperator::Assign, rhsType);
+					if (overload_result.is_ambiguous) {
 					throw CompileError("Ambiguous overload for operator=");
 				}
 
