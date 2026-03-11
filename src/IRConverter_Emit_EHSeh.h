@@ -173,26 +173,18 @@
 		emitMovToFrameBySize(X64Register::RAX, catch_return_slot, spill_size_bits);
 	}
 
-	void emitRestorePendingCatchParentReturnValue(int32_t catch_return_slot_offset = 0) {
-		if (!currentFunctionHasCatchParentReturnValue()) {
-			return;
-		}
-
-		if (catch_return_slot_offset == 0) {
-			catch_return_slot_offset = catch_funclet_return_slot_offset_;
-		}
-
-		if (catch_return_slot_offset == 0) {
+	void emitRestorePendingCatchParentReturnValue() {
+		if (!currentFunctionHasCatchParentReturnValue() || catch_funclet_return_slot_offset_ == 0) {
 			return;
 		}
 
 		int spill_size_bits = getCatchParentReturnSpillSizeBits();
 		if (currentFunctionReturnsFloatingPointInXmm0()) {
-			emitFloatMovFromFrame(X64Register::XMM0, catch_return_slot_offset, spill_size_bits == 32);
+			emitFloatMovFromFrame(X64Register::XMM0, catch_funclet_return_slot_offset_, spill_size_bits == 32);
 			return;
 		}
 
-		emitMovFromFrameBySize(X64Register::RAX, catch_return_slot_offset, spill_size_bits);
+		emitMovFromFrameBySize(X64Register::RAX, catch_funclet_return_slot_offset_, spill_size_bits);
 	}
 
 	void handleCatchBegin(const IrInstruction& instruction) {
@@ -763,20 +755,20 @@
 					source_value.size_in_bits = static_cast<int>(exception_size * 8);
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
-						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
+					exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
 				}
 
 				// Copy/construct exception object to frame slot at [RBP+throw_slot_offset]
 				if (!exception_constructed && exception_size <= 8) {
-				// Small object: load into RAX and store
-				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
-					TempVar temp = std::get<TempVar>(throw_op.exception_value);
-					if (temp.var_number != 0) {
-						int32_t stack_offset = getStackOffsetFromTempVar(temp);
-						emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
-					} else {
-						emitMovImm64(X64Register::RAX, 0);
-					}
+					// Small object: load into RAX and store
+					if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+						TempVar temp = std::get<TempVar>(throw_op.exception_value);
+						if (temp.var_number != 0) {
+							int32_t stack_offset = getStackOffsetFromTempVar(temp);
+							emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
+						} else {
+							emitMovImm64(X64Register::RAX, 0);
+						}
 					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
 						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
 						const VariableInfo* source_info = findVariableInfo(source_name);
@@ -785,33 +777,33 @@
 						} else {
 							emitMovImm64(X64Register::RAX, 0);
 						}
-				} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
-					emitMovImm64(X64Register::RAX, std::get<unsigned long long>(throw_op.exception_value));
-				} else if (std::holds_alternative<double>(throw_op.exception_value)) {
-					double float_val = std::get<double>(throw_op.exception_value);
-					uint64_t bits;
-					if (exception_size == 4) {
-						float f = static_cast<float>(float_val);
-						std::memcpy(&bits, &f, sizeof(float));
-						bits &= 0xFFFFFFFF;
+					} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
+						emitMovImm64(X64Register::RAX, std::get<unsigned long long>(throw_op.exception_value));
+					} else if (std::holds_alternative<double>(throw_op.exception_value)) {
+						double float_val = std::get<double>(throw_op.exception_value);
+						uint64_t bits;
+						if (exception_size == 4) {
+							float f = static_cast<float>(float_val);
+							std::memcpy(&bits, &f, sizeof(float));
+							bits &= 0xFFFFFFFF;
+						} else {
+							std::memcpy(&bits, &float_val, sizeof(double));
+						}
+						emitMovImm64(X64Register::RAX, bits);
 					} else {
-						std::memcpy(&bits, &float_val, sizeof(double));
+						emitMovImm64(X64Register::RAX, 0);
 					}
-					emitMovImm64(X64Register::RAX, bits);
-				} else {
-					emitMovImm64(X64Register::RAX, 0);
-				}
-				emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
+					emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
 				} else if (!exception_constructed) {
-				// Large object: use memory-to-memory copy (must be TempVar)
-				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
-					TempVar temp = std::get<TempVar>(throw_op.exception_value);
-					if (temp.var_number != 0) {
-						int32_t stack_offset = getStackOffsetFromTempVar(temp);
-						emitLeaFromFrame(X64Register::RSI, stack_offset);
-					} else {
-						emitXorRegReg(X64Register::RSI);
-					}
+					// Large object: use memory-to-memory copy (must be TempVar)
+					if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+						TempVar temp = std::get<TempVar>(throw_op.exception_value);
+						if (temp.var_number != 0) {
+							int32_t stack_offset = getStackOffsetFromTempVar(temp);
+							emitLeaFromFrame(X64Register::RSI, stack_offset);
+						} else {
+							emitXorRegReg(X64Register::RSI);
+						}
 					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
 						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
 						const VariableInfo* source_info = findVariableInfo(source_name);
@@ -820,13 +812,13 @@
 						} else {
 							emitXorRegReg(X64Register::RSI);
 						}
-				} else {
-					emitXorRegReg(X64Register::RSI);
+					} else {
+						emitXorRegReg(X64Register::RSI);
+					}
+					emitLeaFromFrame(X64Register::RDI, throw_slot_offset);
+					emitMovImm64(X64Register::RCX, exception_size);
+					emitRepMovsb();
 				}
-				emitLeaFromFrame(X64Register::RDI, throw_slot_offset);
-				emitMovImm64(X64Register::RCX, exception_size);
-				emitRepMovsb();
-			}
 
 				// Set up arguments for _CxxThrowException
 				// RCX (first argument) = pointer to exception object on the frame
@@ -1553,5 +1545,19 @@
 		// Flush all dirty registers before jumping
 		flushAllDirtyRegisters();
 
-		emitJmpToLabel(StringTable::getOrInternStringHandle(target_label));
+		// Generate JMP instruction (E9 + 32-bit relative offset)
+		// We'll use a placeholder offset and fix it up later
+		textSectionData.push_back(0xE9); // JMP rel32
+
+		// Store position where we need to patch the offset
+		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
+
+		// Add placeholder offset (will be patched later)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// Record this jump for later patching (convert string_view to StringHandle)
+		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
 	}

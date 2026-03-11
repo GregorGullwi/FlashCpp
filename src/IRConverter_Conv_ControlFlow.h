@@ -42,7 +42,7 @@
 				emitXorRegReg(X64Register::RCX);
 				emitMovToFrame(X64Register::RCX, bridge.flag_slot_offset, 64);
 				if (currentFunctionHasCatchParentReturnValue()) {
-					emitRestorePendingCatchParentReturnValue(bridge.return_slot_offset);
+					emitRestorePendingCatchParentReturnValue();
 				}
 				emitMovRegReg(X64Register::RSP, X64Register::RBP);
 				emitPopReg(X64Register::RBP);
