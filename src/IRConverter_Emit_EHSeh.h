@@ -139,9 +139,9 @@
 			!current_function_returns_reference_;
 	}
 
-		bool currentFunctionHasCatchParentReturnValue() const {
-			return current_function_return_type_ != Type::Void;
-		}
+	bool currentFunctionHasCatchParentReturnValue() const {
+		return current_function_return_type_ != Type::Void;
+	}
 
 	int getCatchParentReturnSpillSizeBits() const {
 		if (currentFunctionReturnsFloatingPointInXmm0()) {
@@ -158,9 +158,9 @@
 	}
 
 	void emitSavePendingCatchParentReturnValue() {
-			if (!currentFunctionHasCatchParentReturnValue()) {
-				return;
-			}
+		if (!currentFunctionHasCatchParentReturnValue()) {
+			return;
+		}
 
 		int spill_size_bits = getCatchParentReturnSpillSizeBits();
 		int32_t catch_return_slot = ensureCatchFuncletReturnSlot();
@@ -174,7 +174,7 @@
 	}
 
 	void emitRestorePendingCatchParentReturnValue() {
-			if (!currentFunctionHasCatchParentReturnValue() || catch_funclet_return_slot_offset_ == 0) {
+		if (!currentFunctionHasCatchParentReturnValue() || catch_funclet_return_slot_offset_ == 0) {
 			return;
 		}
 

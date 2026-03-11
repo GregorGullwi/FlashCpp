@@ -1314,7 +1314,7 @@
 			};
 		}
 
-			return getIndirectStackInfo(stack_offset);
+		return getIndirectStackInfo(stack_offset);
 	}
 	
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
