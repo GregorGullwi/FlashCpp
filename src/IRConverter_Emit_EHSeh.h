@@ -173,18 +173,26 @@
 		emitMovToFrameBySize(X64Register::RAX, catch_return_slot, spill_size_bits);
 	}
 
-	void emitRestorePendingCatchParentReturnValue() {
-		if (!currentFunctionHasCatchParentReturnValue() || catch_funclet_return_slot_offset_ == 0) {
+	void emitRestorePendingCatchParentReturnValue(int32_t catch_return_slot_offset = 0) {
+		if (!currentFunctionHasCatchParentReturnValue()) {
+			return;
+		}
+
+		if (catch_return_slot_offset == 0) {
+			catch_return_slot_offset = catch_funclet_return_slot_offset_;
+		}
+
+		if (catch_return_slot_offset == 0) {
 			return;
 		}
 
 		int spill_size_bits = getCatchParentReturnSpillSizeBits();
 		if (currentFunctionReturnsFloatingPointInXmm0()) {
-			emitFloatMovFromFrame(X64Register::XMM0, catch_funclet_return_slot_offset_, spill_size_bits == 32);
+			emitFloatMovFromFrame(X64Register::XMM0, catch_return_slot_offset, spill_size_bits == 32);
 			return;
 		}
 
-		emitMovFromFrameBySize(X64Register::RAX, catch_funclet_return_slot_offset_, spill_size_bits);
+		emitMovFromFrameBySize(X64Register::RAX, catch_return_slot_offset, spill_size_bits);
 	}
 
 	void handleCatchBegin(const IrInstruction& instruction) {
