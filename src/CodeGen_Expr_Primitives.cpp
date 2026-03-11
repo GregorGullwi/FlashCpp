@@ -991,7 +991,11 @@
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 				
 				TypeIndex type_index = (pointee_type == Type::Struct || type_node.type() == Type::Enum) ? type_node.type_index() : 0;
-				return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
+				ExprResult result = makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
+				if (type_node.type() == Type::Enum) {
+					result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
+				}
+				return result;
 			}
 			
 			// Regular local variable
@@ -1021,12 +1025,16 @@
 			int pointer_depth = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
 				? 0
 				: type_node.pointer_depth();
-			return makeIdentifierResult(
+			ExprResult result = makeIdentifierResult(
 				return_type,
 				size_bits,
 				StringTable::getOrInternStringHandle(identifierNode.name()),
 				type_index,
 				pointer_depth);
+			if (type_node.type() == Type::Enum) {
+				result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
+			}
+			return result;
 		}
 
 		// Check if it's a VariableDeclarationNode

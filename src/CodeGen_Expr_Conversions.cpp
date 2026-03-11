@@ -611,12 +611,14 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 				
 				// Return pointer to result (64-bit pointer)
-				return makeExprResult(
+				ExprResult result = makeExprResult(
 					addr_components->final_type,
 					64,
 					result_var,
 					0,
 					addr_components->pointer_depth + 1);
+				result.encoded_metadata = static_cast<unsigned long long>(addr_components->pointer_depth + 1);
+				return result;
 			}
 			
 			// Fall back to legacy implementation if analysis failed

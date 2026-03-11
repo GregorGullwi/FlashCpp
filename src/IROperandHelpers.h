@@ -42,10 +42,15 @@ struct ExprResult {
 	IrOperand value{};
 	TypeIndex type_index = 0;
 	int pointer_depth = 0;
+	// Legacy slot-4 compatibility for migrated sites whose encoded metadata depends on
+	// something other than the outward result Type (for example enum values lowered as ints).
+	std::optional<unsigned long long> encoded_metadata;
 
 	operator ExprOperands() const {
 		unsigned long long metadata = 0;
-		if (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) {
+		if (encoded_metadata.has_value()) {
+			metadata = *encoded_metadata;
+		} else if (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) {
 			metadata = static_cast<unsigned long long>(type_index);
 		} else if (pointer_depth > 0) {
 			metadata = static_cast<unsigned long long>(pointer_depth);

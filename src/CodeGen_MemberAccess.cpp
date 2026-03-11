@@ -142,6 +142,9 @@
 			result.value = std::move(value);
 			result.type_index = type_index;
 			result.pointer_depth = pointer_depth;
+			result.encoded_metadata = (type == Type::Struct)
+				? std::optional<unsigned long long>(static_cast<unsigned long long>(type_index))
+				: ((pointer_depth > 0) ? std::optional<unsigned long long>(static_cast<unsigned long long>(pointer_depth)) : std::nullopt);
 			return result;
 		};
 
