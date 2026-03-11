@@ -23,6 +23,8 @@ Completed commits so far:
 - `32d05fe0` — detect ambiguous operator-overload candidates
 - `001de182` — require explicit RHS types for operator lookup
 - `b87594cc` — cache resolved binary operators on the AST
+- `83d0d8ac` — prevent stale member/operator caches from affecting codegen
+- `9a433661` — cache ambiguous operator resolution on the AST
 
 Tests added during this follow-up work:
 
@@ -34,10 +36,12 @@ Tests added during this follow-up work:
 Validation rerun on this branch:
 
 - `./build_flashcpp.bat`
+- `./tests/run_all_tests.ps1 test_nested_classes_ret16.cpp`
 - `./tests/run_all_tests.ps1 test_operator_assign_primitive_ranking_ret0.cpp`
 - `./tests/run_all_tests.ps1 test_operator_member_tiebreak_ret0.cpp`
 - `./tests/run_all_tests.ps1 test_operator_ambiguity_mixed_free_fail.cpp`
 - `./tests/run_all_tests.ps1 test_operator_ambiguity_mixed_member_free_fail.cpp`
+- `./tests/run_all_tests.ps1 test_operator_overload_template_ret40.cpp`
 
 ## Problem summary
 
@@ -47,6 +51,8 @@ it is still not fully semantic-first:
 - Ambiguity handling and candidate ranking are now substantially aligned with normal overload
   resolution.
 - Non-dependent binary expressions can now cache a resolved operator overload on the AST.
+- Parser-time speculative member lookups no longer poison codegen's lazy member cache across the
+  parse/codegen boundary.
 - However, operator matching still relies on reduced `(TypeIndex, Type)` summaries in places where
   full `TypeSpecifierNode` semantics would be more correct.
 - The AST still cannot explicitly represent a semantic `no_match` result for binary operators.
@@ -83,7 +89,13 @@ it is still not fully semantic-first:
 
 - `BinaryOperatorNode` now caches resolved member/free-function overload choices and ambiguity.
 - Parser-side construction records non-dependent, concrete binary overload decisions on the AST.
-- Template/substitution copy sites preserve that semantic payload.
+- Parser-side ambiguity is now cached on the AST instead of being returned immediately as a parse
+  error.
+- Template/substitution and rebinding paths intentionally do **not** preserve cached operator
+  resolution payloads when rebuilding `BinaryOperatorNode`s; codegen re-resolves in those cases to
+  avoid stale operator pointers after substitution.
+- `LazyMemberResolver` is cleared between parsing and codegen so speculative parser-time member
+  queries on incomplete classes do not poison later codegen.
 - Codegen consumes the cached semantic result first and only falls back to lookup when the AST has
   no recorded decision.
 - Remaining gap: the AST still has no explicit `no_match` / `resolved-but-unavailable` state, so
@@ -97,7 +109,8 @@ it is still not fully semantic-first:
    ambiguous / member-match / free-function-match.
 2. Record `no_match` in semantic analysis so codegen can trust the AST instead of re-running
    lookup on cache misses.
-3. Restrict codegen fallback to template-dependent or otherwise intentionally deferred cases.
+3. Restrict codegen fallback to template-dependent expressions, substitution-rebuilt nodes, or
+   otherwise intentionally deferred cases.
 
 ### 2. Upgrade operator argument matching beyond `(TypeIndex, Type)`
 
@@ -126,8 +139,8 @@ Add targeted tests for the still-open cases:
 1. Introduce an explicit semantic result enum/state on `BinaryOperatorNode`, including `no_match`.
 2. Teach parser/semantic analysis to write that full state for every non-dependent binary
    expression.
-3. Narrow codegen fallback so it only runs for dependent expressions or intentionally unresolved
-   cases.
+3. Narrow codegen fallback so it only runs for dependent expressions, substitution-rebuilt nodes,
+   or intentionally unresolved cases.
 4. Replace the remaining `(TypeIndex, Type)` matching shortcuts with `TypeSpecifierNode`-aware
    comparison.
 5. Add the missing regression tests for reference binding, template/self-reference, and
