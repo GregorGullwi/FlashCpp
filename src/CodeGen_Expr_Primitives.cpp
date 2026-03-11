@@ -254,13 +254,16 @@
 			// but selected direct global-load sites opt into preserving pointer_depth so downstream
 			// toTypedValue consumers can still recognize pointer-typed globals.
 			const bool carries_type_index = type_node.type() == Type::Struct;
+			const int slot4_pointer_depth = (preserve_pointer_depth && !carries_type_index) ? type_node.pointer_depth() : 0;
 			ExprResult result = makeIdentifierResult(
 				type_node.type(),
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
-				(preserve_pointer_depth && !carries_type_index) ? type_node.pointer_depth() : 0);
+				slot4_pointer_depth);
 			if (preserve_pointer_depth && type_node.type() == Type::Enum) {
+				// Enum-typed pointers still need the legacy explicit override because ExprResult's
+				// default slot-4 encoding for Type::Enum prefers type_index over pointer_depth.
 				preserveLegacyEnumPointerDepthEncoding(result);
 			}
 			return result;
