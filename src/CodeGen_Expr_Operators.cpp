@@ -771,19 +771,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (!param_nodes.empty() && param_nodes[0].is<DeclarationNode>()) {
 						const auto& param_decl = param_nodes[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-						
+
 						// Check if parameter is a primitive type matching RHS
 						if (param_type.type() != Type::Struct && param_type.type() != Type::UserDefined) {
 							// Found matching operator=(primitive_type)! Generate function call
 							FLASH_LOG_FORMAT(Codegen, Debug, "Found operator= with primitive param for struct type index {}", lhs_type_index);
-							
+
 							std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index].name());
 							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-							
+
 							// Get parameter types for mangling
 							std::vector<TypeSpecifierNode> param_types;
 							param_types.push_back(param_type);
-							
+
 							// Generate mangled name for operator=
 							std::vector<std::string_view> empty_namespace;
 							auto mangled_name = NameMangling::generateMangledName(
@@ -795,9 +795,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								empty_namespace,
 								Linkage::CPlusPlus
 							);
-							
+
 							TempVar result_var = var_counter.next();
-							
+
 							// Take address of LHS to pass as 'this' pointer
 							std::variant<StringHandle, TempVar> lhs_value;
 							if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
@@ -808,7 +808,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								FLASH_LOG(Codegen, Error, "Cannot take address of operator= LHS - not an lvalue");
 								return {};
 							}
-							
+
 							TempVar lhs_addr = var_counter.next();
 							AddressOfOp addr_op;
 							addr_op.result = lhs_addr;
@@ -817,27 +817,27 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							addr_op.operand.pointer_depth = 0;
 							std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
-							
+
 							// Generate function call
 							CallOp call_op;
 							call_op.result = result_var;
 							call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-							
+
 							// Pass 'this' pointer as first argument
 							TypedValue this_arg;
 							this_arg.type = lhsType;
 							this_arg.size_in_bits = 64;  // 'this' is always a pointer (64-bit)
 							this_arg.value = lhs_addr;
 							call_op.args.push_back(this_arg);
-							
+
 							// Pass RHS value as second argument
 							call_op.args.push_back(toTypedValue(rhsIrOperands));
-							
+
 							call_op.return_type = return_type.type();
 							call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-							
+
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-							
+
 							// Return result
 							return { return_type.type(), static_cast<int>(return_type.size_in_bits()), result_var, 0ULL };
 						}
@@ -855,7 +855,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
 				lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 			}
-			
+
 			// Get the type index of the right operand (if it's a struct)
 			TypeIndex rhs_type_index = 0;
 			if (rhsType == Type::Struct && rhsIrOperands.size() >= 4) {
@@ -863,7 +863,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
 				}
 			}
-			
+
 			// List of binary operators that can be overloaded
 			// Assignment operators (=) are handled separately above; compound assignments (+=, etc.)
 			// fall through here when the LHS is a struct with user-defined operator overloads

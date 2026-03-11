@@ -3362,3 +3362,77 @@ TEST_CASE("NamedUnionMultipleDeclarators") {
 TEST_CASE("NamedStructInStruct") {
 	run_test_from_file("test_named_struct_in_struct_ret15.cpp", "Named struct in struct", false);
 }
+
+TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
+	const std::string code = R"(
+		template<typename T>
+		struct UDWrap {
+			T value;
+		};
+
+		struct AssignReceiver {
+			void operator=(UDWrap<int>) {}
+			void operator=(UDWrap<double>) {}
+		};
+
+		struct FreeReceiver {
+			int value;
+		};
+
+		FreeReceiver operator+(const FreeReceiver& lhs, UDWrap<int>) {
+			return FreeReceiver{lhs.value + 1};
+		}
+
+		FreeReceiver operator+(const FreeReceiver& lhs, UDWrap<double>) {
+			return FreeReceiver{lhs.value + 2};
+		}
+
+		int main() { return 0; }
+	)";
+
+	gTypeInfo.clear();
+	gNativeTypes.clear();
+	gTypesByName.clear();
+	gTemplateRegistry.clear();
+	gConceptRegistry.clear();
+
+	Lexer lexer(code);
+	Parser parser(lexer, compile_context);
+	auto parse_result = parser.parse();
+	REQUIRE(!parse_result.is_error());
+
+	auto findTypeIndexByName = [](std::string_view wanted) -> TypeIndex {
+		for (TypeIndex i = 0; i < gTypeInfo.size(); ++i) {
+			if (StringTable::getStringView(gTypeInfo[i].name()) == wanted) {
+				return i;
+			}
+		}
+		return 0;
+	};
+
+	TypeIndex assign_receiver_idx = findTypeIndexByName("AssignReceiver");
+	TypeIndex free_receiver_idx = findTypeIndexByName("FreeReceiver");
+	TypeIndex wrap_int_idx = findTypeIndexByName("UDWrap<int>");
+	TypeIndex wrap_double_idx = findTypeIndexByName("UDWrap<double>");
+
+	REQUIRE(assign_receiver_idx != 0);
+	REQUIRE(free_receiver_idx != 0);
+	REQUIRE(wrap_int_idx != 0);
+	REQUIRE(wrap_double_idx != 0);
+
+	auto assign_result = findBinaryOperatorOverload(assign_receiver_idx, wrap_double_idx, OverloadableOperator::Assign, Type::UserDefined);
+	REQUIRE(assign_result.has_match);
+	CHECK(!assign_result.is_ambiguous);
+	REQUIRE(assign_result.member_overload != nullptr);
+	const auto& assign_param = assign_result.member_overload->decl_node().parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+	CHECK(assign_param.type_index() == wrap_double_idx);
+
+	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, wrap_double_idx, OverloadableOperator::Plus, "+", gSymbolTable, Type::UserDefined);
+	REQUIRE(free_result.has_match);
+	CHECK(!free_result.is_ambiguous);
+	CHECK(free_result.is_free_function);
+	REQUIRE(free_result.free_function_overload != nullptr);
+	const auto& free_param = free_result.free_function_overload->parameter_nodes()[1].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+	CHECK(free_param.type_index() == wrap_double_idx);
+	CHECK(free_param.type_index() != wrap_int_idx);
+}

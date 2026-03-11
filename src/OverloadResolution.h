@@ -909,24 +909,24 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
 			if (params.size() == 1 && params[0].is<DeclarationNode>()) {
 				const auto& param_type = params[0].as<DeclarationNode>().type_node();
-				if (param_type.is<TypeSpecifierNode>()) {
-					const auto& param_spec = param_type.as<TypeSpecifierNode>();
-					// For struct/enum types, match by type_index (which is meaningful).
-					// Resolve self-referential template param types before comparing
-					// (e.g., Wrapper<int>::operator+=(const Wrapper& other) stores
-					//  the param's type_index as the uninstantiated Wrapper template).
-					// For primitive types, match by base Type enum (type_index is always 0).
-					bool type_matches = false;
-					if (param_spec.type() == Type::Struct || param_spec.type() == Type::Enum) {
-						TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index(), left_type_index);
-						type_matches = (resolved_param_idx == right_type_index);
-					} else {
-					// Caller provides the actual RHS base type for non-struct matches.
-					type_matches = (param_spec.type() == right_type);
-				}
-					if (type_matches) {
-						return OperatorOverloadResult(&member_func);
-					}
+					if (param_type.is<TypeSpecifierNode>()) {
+						const auto& param_spec = param_type.as<TypeSpecifierNode>();
+						// For struct/enum/user-defined types, match by type_index (which is meaningful).
+						// Resolve self-referential template param types before comparing
+						// (e.g., Wrapper<int>::operator+=(const Wrapper& other) stores
+						//  the param's type_index as the uninstantiated Wrapper template).
+						// For primitive types, match by base Type enum (type_index is always 0).
+						bool type_matches = false;
+						if (param_spec.type() == Type::Struct || param_spec.type() == Type::Enum || param_spec.type() == Type::UserDefined) {
+							TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index(), left_type_index);
+							type_matches = (resolved_param_idx == right_type_index);
+						} else {
+							// Caller provides the actual RHS base type for primitive matches.
+							type_matches = (param_spec.type() == right_type);
+						}
+						if (type_matches) {
+							return OperatorOverloadResult(&member_func);
+						}
 				}
 			}
 		}
@@ -964,7 +964,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	const SymbolTable& symbol_table,
 	Type right_type)
 {
-	// --- Unified candidate set per C++20 [over.match.oper]/2 ---
+		// --- Unified candidate set per C++20 [over.match.oper]/2 ---
 	struct OperatorCandidate {
 		ConversionRank lhs_rank;
 		ConversionRank rhs_rank;
@@ -976,38 +976,41 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 	const size_t type_info_size = gTypeInfo.size();
 
-	// Helper: rank a single operand against a parameter type.
-	// For struct/enum types, identity is determined by type_index.
-	// For primitive types, uses can_convert_type(Type, Type) for standard rankings.
-	auto rankOperandMatch = [&](Type arg_type, TypeIndex arg_type_index,
-	                            const TypeSpecifierNode& param_spec) -> ConversionRank {
-		Type param_type = param_spec.type();
-		TypeIndex param_idx = param_spec.type_index();
-
-		// Resolve self-referential template parameter types
-		if (param_type == Type::Struct || param_type == Type::Enum) {
-			param_idx = resolveSelfRefParamIndex(param_idx, left_type_index);
-		}
-
-		// Struct/Enum parameter: identity by type_index
-		if (param_type == Type::Struct || param_type == Type::Enum) {
-			if (arg_type == param_type && arg_type_index == param_idx) {
-				return ConversionRank::ExactMatch;
-			}
-			if (arg_type == Type::Struct || arg_type == Type::Enum) {
-				return ConversionRank::NoMatch;  // Different struct/enum types
-			}
-			return ConversionRank::UserDefined;  // Primitive → struct (converting ctor)
-		}
-
-		// Primitive parameter
-		if (arg_type == Type::Struct || arg_type == Type::Enum) {
-			return ConversionRank::UserDefined;  // Struct → primitive (conversion operator)
-		}
-
-		// Both primitive: use standard type conversion ranking
-		return can_convert_type(arg_type, param_type).rank;
+	auto usesTypeIndexIdentity = [](Type type) {
+		return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
 	};
+
+	// Helper: rank a single operand against a parameter type.
+	// For struct/enum/user-defined types, identity is determined by type_index.
+	// For primitive types, uses can_convert_type(Type, Type) for standard rankings.
+	auto rankOperandMatch = [&](Type arg_type, TypeIndex arg_type_index, const TypeSpecifierNode& param_spec) -> ConversionRank {
+			Type param_type = param_spec.type();
+			TypeIndex param_idx = param_spec.type_index();
+
+			// Resolve self-referential template parameter types.
+			if (usesTypeIndexIdentity(param_type)) {
+				param_idx = resolveSelfRefParamIndex(param_idx, left_type_index);
+			}
+
+			// Struct/Enum/UserDefined parameter: identity by type_index.
+			if (usesTypeIndexIdentity(param_type)) {
+				if (usesTypeIndexIdentity(arg_type) && arg_type_index == param_idx) {
+					return ConversionRank::ExactMatch;
+				}
+				if (usesTypeIndexIdentity(arg_type)) {
+					return ConversionRank::NoMatch;  // Different user-defined types.
+				}
+				return ConversionRank::UserDefined;  // Primitive → user-defined type (converting ctor).
+			}
+
+			// Primitive parameter.
+			if (usesTypeIndexIdentity(arg_type)) {
+				return ConversionRank::UserDefined;  // Struct → primitive (conversion operator)
+			}
+
+			// Both primitive: use standard type conversion ranking.
+			return can_convert_type(arg_type, param_type).rank;
+		};
 
 	// Determine LHS actual type from gTypeInfo. If the type entry is invalid/void
 	// (e.g., template instantiation whose type_ wasn't explicitly set), treat as Struct
