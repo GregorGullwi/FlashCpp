@@ -587,7 +587,7 @@
 			emitMovRegReg(X64Register::R15, X64Register::RAX);
 			
 				bool exception_constructed = false;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0) {
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0 && !throw_op.value_is_materialized) {
 					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
 					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
 
