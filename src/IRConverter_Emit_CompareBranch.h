@@ -1274,8 +1274,29 @@
 
 		// If the register is dirty, write it back to the stack
 		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
-			// For XMM registers, use float mov to frame
-			bool is_float = reg_info.size_in_bits <= 32;
+				int spill_size_bits = reg_info.size_in_bits;
+				if (spill_size_bits <= 0) {
+					for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend() && spill_size_bits <= 0; ++scope_it) {
+						for (const auto& [_, variable_info] : scope_it->variables) {
+							if (variable_info.offset == reg_info.stackVariableOffset && variable_info.size_in_bits > 0) {
+								spill_size_bits = variable_info.size_in_bits;
+								break;
+							}
+						}
+					}
+				}
+				if (spill_size_bits <= 0) {
+					auto ref_it = reference_stack_info_.find(reg_info.stackVariableOffset);
+					if (ref_it != reference_stack_info_.end() && ref_it->second.value_size_bits > 0) {
+						spill_size_bits = ref_it->second.value_size_bits;
+					}
+				}
+				if (spill_size_bits <= 0) {
+					throw InternalError("Missing XMM spill size metadata for stack offset " + std::to_string(reg_info.stackVariableOffset));
+				}
+
+				// For XMM registers, use float mov to frame
+				bool is_float = spill_size_bits <= 32;
 			auto store_opcodes = generateFloatMovToFrame(spill_reg, reg_info.stackVariableOffset, is_float);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);

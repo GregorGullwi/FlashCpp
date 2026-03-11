@@ -498,6 +498,10 @@
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
+			if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+				regAlloc.release(ctx.rhs_physical_reg);
+			}
+
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
 	}
@@ -517,6 +521,10 @@
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
+
+			if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+				regAlloc.release(ctx.rhs_physical_reg);
+			}
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
