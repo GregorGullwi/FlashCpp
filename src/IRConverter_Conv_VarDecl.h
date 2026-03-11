@@ -1,3 +1,20 @@
+	void spillAndInvalidateRegisterForManualOverwrite(X64Register target_reg) {
+		auto& reg_info = regAlloc.registers[static_cast<size_t>(target_reg)];
+		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
+			if (reg_info.stackVariableOffset < variable_scopes.back().scope_stack_space) {
+				variable_scopes.back().scope_stack_space = reg_info.stackVariableOffset;
+			}
+
+			int spill_size_in_bits = reg_info.size_in_bits > 0 ? reg_info.size_in_bits : 64;
+			emitMovToFrameSized(
+				SizedRegister{target_reg, 64, false},
+				SizedStackSlot{reg_info.stackVariableOffset, spill_size_in_bits, false}
+			);
+		}
+
+		regAlloc.invalidateRegister(target_reg);
+	}
+
 	void handleGlobalVariableDecl(const IrInstruction& instruction) {
 		// Extract typed payload
 		const GlobalVariableDeclOp& op = std::any_cast<const GlobalVariableDeclOp&>(instruction.getTypedPayload());
@@ -52,29 +69,7 @@
 		// BUGFIX: Before using RAX or XMM0, flush them if they hold dirty data
 		// This prevents overwriting intermediate results in chained operations
 		X64Register target_reg = is_floating_point ? X64Register::XMM0 : X64Register::RAX;
-		auto& reg_info = regAlloc.registers[static_cast<size_t>(target_reg)];
-		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
-			// Flush the register to memory before overwriting it
-			auto tempVarIndex = getTempVarFromOffset(reg_info.stackVariableOffset);
-			if (tempVarIndex.has_value()) {
-				int32_t stackVariableOffset = reg_info.stackVariableOffset;
-				int flush_size_in_bits = reg_info.size_in_bits;
-				
-				// Extend scope_stack_space if needed
-				if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
-					variable_scopes.back().scope_stack_space = stackVariableOffset;
-				}
-				
-				// Store the register value to stack
-				emitMovToFrameSized(
-					SizedRegister{target_reg, 64, false},
-					SizedStackSlot{stackVariableOffset, flush_size_in_bits, false}
-				);
-			}
-			reg_info.isDirty = false;
-			// Clear the register allocation so it won't be reused without reloading
-			reg_info.stackVariableOffset = INT_MIN;
-		}
+		spillAndInvalidateRegisterForManualOverwrite(target_reg);
 
 		// Load the global value/address using RIP-relative addressing
 		uint32_t reloc_offset;
@@ -213,17 +208,16 @@
 				const TypedValue& init = op.initializer.value();
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-					int temp_storage_bits = getTempVarMetadata(temp_var).is_address ? 64 : init.size_in_bits;
-					int src_offset = getStackOffsetFromTempVar(temp_var, temp_storage_bits);
+					int src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
 					FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset, 
 					          " init.type=", static_cast<int>(init.type), 
 					          " init.size_in_bits=", init.size_in_bits);
 					// Check if source is itself a pointer/reference - if so, load the value
 					// Otherwise, take the address
-					auto src_ref_it = reference_stack_info_.find(src_offset);
-					if (src_ref_it != reference_stack_info_.end()) {
+					auto src_ref_info = getReferenceInfo(temp_var, src_offset);
+					if (src_ref_info.has_value()) {
 						// Source is a reference - copy the pointer value
-						FLASH_LOG(Codegen, Debug, "Source is in reference_stack_info, using MOV");
+						FLASH_LOG(Codegen, Debug, "Source uses indirect storage, using MOV");
 						emitMovFromFrame(pointer_reg, src_offset);
 					} else {
 						// Check if it's a 64-bit value (likely a pointer)
@@ -251,8 +245,8 @@
 					if (src_it != current_scope.variables.end()) {
 						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", StringTable::getStringView(rvalue_var_name_handle), "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
 						// Check if source is a reference
-						auto src_ref_it = reference_stack_info_.find(src_it->second.offset);
-						if (src_ref_it != reference_stack_info_.end()) {
+						auto src_ref_info = getIndirectStackInfo(src_it->second.offset);
+						if (src_ref_info.has_value()) {
 							// Source is a reference - copy the pointer value
 							FLASH_LOG(Codegen, Debug, "Using MOV (source is reference)");
 							emitMovFromFrame(pointer_reg, src_it->second.offset);
@@ -412,12 +406,23 @@
 				bool src_is_pointer = false;  // Track if source is a pointer to the actual data
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-					int temp_storage_bits = getTempVarMetadata(temp_var).is_address ? 64 : init.size_in_bits;
-					src_offset = getStackOffsetFromTempVar(temp_var, temp_storage_bits);
-					// Check if this temp_var is a reference/pointer to the actual struct
-					// For RVO struct returns, temp_var holds the address of the constructed struct
-					auto ref_it = reference_stack_info_.find(src_offset);
-					if (ref_it != reference_stack_info_.end()) {
+						src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
+						// Backend lowering must use current-function indirect-storage state here.
+						// Frontend TempVar metadata can describe a different function by the time
+						// we lower this VariableDecl, which can misclassify inline struct storage
+						// (such as large return-slot results) as an indirect pointer source.
+						auto ref_info = getIndirectStackInfo(src_offset);
+						if (!ref_info.has_value() && init.size_in_bits != 64) {
+							int32_t pointer_src_offset = getStackOffsetFromTempVar(temp_var, 64);
+							if (pointer_src_offset != src_offset) {
+								auto pointer_ref_info = getIndirectStackInfo(pointer_src_offset);
+								if (pointer_ref_info.has_value()) {
+									src_offset = pointer_src_offset;
+									ref_info = pointer_ref_info;
+								}
+							}
+						}
+						if (ref_info.has_value()) {
 						// This is a reference - need to dereference it
 						src_is_pointer = true;
 					}
@@ -447,13 +452,18 @@
 						regAlloc.release(addr_reg);
 						return;  // Early return - we've handled this case
 					}
+
+						auto src_ref_info = getIndirectStackInfo(src_offset);
+						if (src_ref_info.has_value()) {
+							src_is_pointer = true;
+						}
 				}
 
-				if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
-						if (emitEhCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
-						return;
+						if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
+							if (emitSameTypeCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
+							return;
+						}
 					}
-				}
 
 				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
 					// Source value is already in a register (e.g., from function return or arithmetic)
@@ -713,7 +723,9 @@
 		catch_funclet_return_slot_offset_ = 0;
 		catch_funclet_return_flag_slot_offset_ = 0;
 		catch_funclet_return_label_counter_ = 0;
-		catch_funclet_terminated_by_return_ = false;
+		catch_has_pending_parent_return_ = false;
+		current_function_return_type_ = Type::Void;
+		current_function_return_size_in_bits_ = 0;
 		current_catch_continuation_label_ = StringHandle();
 		catch_return_bridges_.clear();
 		catch_continuation_fixup_map_.clear();
@@ -806,6 +818,11 @@
 		
 		// Finalize previous function before starting new one
 		if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
+				// Branch fixups and local labels are function-scoped. Patch and clear them now
+				// before finalizing the previous function so later functions cannot reuse or
+				// overwrite label state from this one.
+				finalizeFunctionBranches();
+
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
@@ -1075,21 +1092,14 @@
 		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
+		current_function_return_type_ = func_decl.return_type;
+		current_function_return_size_in_bits_ = func_decl.return_size_in_bits;
 		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 		current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
 		current_function_this_offset_ = 0;
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			current_function_is_noexcept_ = func_decl.is_noexcept;
 		}
-
-		// Patch pending branches from previous function before clearing
-		if (!pending_branches_.empty()) {
-			patchBranches();
-		}
-
-		// Clear control flow tracking for new function
-		label_positions_.clear();
-		pending_branches_.clear();
 
 		// Set up debug information for this function
 		// For now, use file ID 0 (first source file)
@@ -1220,7 +1230,7 @@
 							if (vt.vtable_symbol == vtable_symbol) {
 								if (member_func->vtable_index < static_cast<int>(vt.function_symbols.size())) {
 									vt.function_symbols[member_func->vtable_index] = mangled_name;
-									FLASH_LOG(Codegen, Debug, "  Added virtual function ", func_name, 
+									FLASH_LOG(Codegen, Debug, "  Added virtual function ", func_name,
 									          " at vtable index ", member_func->vtable_index);
 								}
 								break;
@@ -2085,6 +2095,7 @@
 					}
 
 					// mov eax, immediate instruction has a fixed size of 5 bytes
+					spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 					std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
 					for (size_t i = 0; i < 4; ++i) {
 						movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
@@ -2131,8 +2142,10 @@
 								}
 
 								if (base_is_pointer) {
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 									emitMovFromFrame(X64Register::RAX, base_offset);
 								} else {
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 									emitLeaFromFrame(X64Register::RAX, base_offset);
 								}
 								return true;
@@ -2171,8 +2184,10 @@
 										auto this_it = current_scope.variables.find(StringTable::getOrInternStringHandle("this"));
 										if (this_it != current_scope.variables.end()) {
 											if (base_is_pointer) {
+												spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 												emitMovFromFrame(X64Register::RAX, this_it->second.offset);
 											} else {
+												spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 												emitLeaFromFrame(X64Register::RAX, this_it->second.offset);
 											}
 											if (lv_info.offset != 0) {
@@ -2274,6 +2289,7 @@
 									regAlloc.release(src_reg);
 									
 									// For struct return, RAX should contain the return slot address (per ABI)
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 									emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
 									
 									FLASH_LOG_FORMAT(Codegen, Debug,
@@ -2283,6 +2299,7 @@
 								// Scalar return by value - load pointer and dereference
 								FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing reference at offset ", var_offset);
 								X64Register ptr_reg = X64Register::RAX;
+								spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 								emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 								// Dereference to get the value
 								int value_size_bytes = ref_it->second.value_size_bits / 8;
@@ -2293,6 +2310,7 @@
 							// This is a reference and function returns a reference - return the address itself
 							FLASH_LOG(Codegen, Debug, "handleReturn: Returning reference address from offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
+							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer (address)
 							// Address is now in RAX, ready to return
 						} else {
@@ -2316,6 +2334,7 @@
 								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
 								if (return_slot_it != variable_scopes.back().variables.end()) {
 									int return_slot_param_offset = return_slot_it->second.offset;
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 									emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
 								}
 							} else if (current_function_has_hidden_return_param_) {
@@ -2331,6 +2350,7 @@
 									int return_slot_param_offset = return_slot_it->second.offset;
 									// Load the address from __return_slot into a register
 									X64Register dest_reg = X64Register::RDI;
+									spillAndInvalidateRegisterForManualOverwrite(dest_reg);
 									emitMovFromFrame(dest_reg, return_slot_param_offset);
 									
 									FLASH_LOG_FORMAT(Codegen, Debug,
@@ -2341,6 +2361,7 @@
 									// Copy in 8-byte chunks, then handle remaining bytes (4, 2, 1)
 									int struct_size_bytes = var_size / 8;
 									int bytes_copied = 0;
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 									
 									// Copy 8-byte chunks
 									while (bytes_copied + 8 <= struct_size_bytes) {
@@ -2372,12 +2393,15 @@
 							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 							} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 								// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
 								if (ret_op.return_type.has_value() && ret_op.return_type.value() == Type::Struct && 
 									var_size > 64 && var_size <= 128) {
 									// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
 									emitMovFromFrame(X64Register::RAX, var_offset);  // Load low 8 bytes
 									emitMovFromFrame(X64Register::RDX, var_offset + 8);  // Load high 8 bytes
 									FLASH_LOG_FORMAT(Codegen, Debug,
@@ -2389,6 +2413,7 @@
 									// Single-register return (≤64 bits) in RAX - integer/pointer return
 									if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
 										if (reg_var.value() != X64Register::RAX) {
+											spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 											auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
 											for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
 											}
@@ -2400,6 +2425,7 @@
 									else {
 										// Load from stack using RBP-relative addressing
 										// Use actual variable size for proper zero/sign extension
+										spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 										emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 										regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 									}
@@ -2408,6 +2434,7 @@
 								// Windows x64 ABI: small structs (≤64 bits) return in RAX only - integer/pointer return
 								if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
 									if (reg_var.value() != X64Register::RAX) {
+										spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 										auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
 										for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
 										}
@@ -2419,6 +2446,7 @@
 								else {
 									// Load from stack using RBP-relative addressing
 									// Use actual variable size for proper zero/sign extension
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 									emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 									regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 								}
@@ -2439,17 +2467,21 @@
 							auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
 							if (return_slot_it != variable_scopes.back().variables.end()) {
 								int return_slot_param_offset = return_slot_it->second.offset;
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 								emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
 							}
 						} else if (is_float_return) {
 							// Load floating-point value into XMM0
 							bool is_float = (ret_op.return_size == 32);
+							spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 						} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 							// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
 							if (ret_op.return_type.has_value() && ret_op.return_type.value() == Type::Struct && 
 								var_size > 64 && var_size <= 128) {
 								// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
 								emitMovFromFrame(X64Register::RAX, var_offset);  // Load low 8 bytes
 								emitMovFromFrame(X64Register::RDX, var_offset + 8);  // Load high 8 bytes
 								FLASH_LOG_FORMAT(Codegen, Debug,
@@ -2459,11 +2491,13 @@
 								regAlloc.flushSingleDirtyRegister(X64Register::RDX);
 							} else {
 								// Single-register return (≤64 bits) in RAX
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 							}
 						} else {
 							// Windows x64 ABI: small structs (≤64 bits) return in RAX only
+							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 						}
@@ -2485,6 +2519,7 @@
 							// This is a reference and function does not return a reference - load pointer and dereference to get value
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
+							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 							// Dereference to get the value
 							int value_size_bytes = ref_it->second.value_size_bits / 8;
@@ -2494,6 +2529,7 @@
 							// This is a reference and function returns a reference - return the address itself
 							FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
+							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer (address)
 							// Address is now in RAX, ready to return
 						} else {
@@ -2518,6 +2554,7 @@
 									int return_slot_param_offset = return_slot_it->second.offset;
 									// Load the address from __return_slot into a register
 									X64Register dest_reg = X64Register::RDI;
+									spillAndInvalidateRegisterForManualOverwrite(dest_reg);
 									emitMovFromFrame(dest_reg, return_slot_param_offset);
 									
 									FLASH_LOG_FORMAT(Codegen, Debug,
@@ -2528,6 +2565,7 @@
 									// Copy in 8-byte chunks, then handle remaining bytes (4, 2, 1)
 									int struct_size_bytes = var_size / 8;
 									int bytes_copied = 0;
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 									
 									// Copy 8-byte chunks
 									while (bytes_copied + 8 <= struct_size_bytes) {
@@ -2559,10 +2597,12 @@
 							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 							} else {
 								// Load integer/pointer value into RAX
 								// Use actual variable size for proper zero/sign extension
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 							}
@@ -2591,6 +2631,7 @@
 					}
 					
 					// mov rax, immediate64
+					spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 					textSectionData.push_back(0x48);
 					textSectionData.push_back(0xB8);
 					for (int i = 0; i < 8; ++i) {
@@ -2606,6 +2647,7 @@
 					
 					// Load from stack to XMM0
 					// movss/movsd xmm0, [rbp + offset]
+					spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 					emitFloatMovFromFrame(X64Register::XMM0, literal_offset, is_float);
 				}
 			}
@@ -2613,40 +2655,32 @@
 
 		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (g_enable_exceptions && in_catch_funclet_) {
-				bool has_float_return = false;
-				bool has_return_value = false;
-				if (instruction.hasTypedPayload()) {
-					const auto& catch_return_op = instruction.getTypedPayload<ReturnOp>();
-					has_return_value = catch_return_op.return_value.has_value();
-					has_float_return = catch_return_op.return_type.has_value() &&
-						is_floating_point_type(catch_return_op.return_type.value());
-				}
-				int32_t catch_return_slot = 0;
-				if (!has_float_return && has_return_value) {
-					catch_return_slot = ensureCatchFuncletReturnSlot();
-					emitMovToFrame(X64Register::RAX, catch_return_slot, 64);
+				if (currentFunctionHasCatchParentReturnValue()) {
+					emitSavePendingCatchParentReturnValue();
+					regAlloc.invalidateRegister(currentFunctionReturnsFloatingPointInXmm0() ? X64Register::XMM0 : X64Register::RAX);
 				}
 
 				flushAllDirtyRegisters();
+				catch_has_pending_parent_return_ = true;
 
 				int32_t catch_return_flag_slot = ensureCatchFuncletReturnFlagSlot();
 				emitMovImm32(X64Register::RCX, 1);
 				emitMovToFrame(X64Register::RCX, catch_return_flag_slot, 64);
 
 				if (current_catch_continuation_label_.isValid()) {
-						StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
-						textSectionData.push_back(0x48);
-						textSectionData.push_back(0x8D);
-						textSectionData.push_back(0x05);
-						uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
-						textSectionData.push_back(0x00);
-						textSectionData.push_back(0x00);
-						textSectionData.push_back(0x00);
-						textSectionData.push_back(0x00);
-						pending_branches_.push_back({fixup_handle, lea_patch});
-					} else {
-						emitXorRegReg(X64Register::RAX);
-					}
+					StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x8D);
+					textSectionData.push_back(0x05);
+					uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					pending_branches_.push_back({fixup_handle, lea_patch});
+				} else {
+					emitXorRegReg(X64Register::RAX);
+				}
 
 				emitAddRSP(32);
 				emitPopReg(X64Register::RBP);

@@ -794,6 +794,58 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
     return nullptr;
 }
 
+const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
+	bool prefer_move,
+	bool include_implicit) const {
+	auto findMatchingConstructor = [&](bool want_move) -> const StructMemberFunction* {
+		for (const auto& func : member_functions) {
+			if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+			if (!include_implicit && ctor_node.is_implicit()) {
+				continue;
+			}
+
+			const auto& params = ctor_node.parameter_nodes();
+			if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
+				continue;
+			}
+
+			const auto& param_decl = params[0].as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			if (param_type.type() != Type::Struct || !isOwnTypeIndex(param_type.type_index())) {
+				continue;
+			}
+
+			if (want_move) {
+				if (param_type.is_rvalue_reference()) {
+					return &func;
+				}
+			} else if (param_type.is_lvalue_reference()) {
+				return &func;
+			}
+		}
+
+		return nullptr;
+	};
+
+	if (prefer_move && !isMoveConstructorDeleted()) {
+		if (const StructMemberFunction* move_ctor = findMatchingConstructor(true)) {
+			return move_ctor;
+		}
+	}
+
+	if (!isCopyConstructorDeleted()) {
+		if (const StructMemberFunction* copy_ctor = findMatchingConstructor(false)) {
+			return copy_ctor;
+		}
+	}
+
+	return nullptr;
+}
+
 const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
     for (const auto& func : member_functions) {
         if (!isAssignOperator(func.operator_kind)) continue;

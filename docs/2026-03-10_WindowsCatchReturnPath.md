@@ -1,113 +1,138 @@
-# Windows catch-funclet `return` follow-up plan
+# Windows catch-funclet return path
 
-This note documents the **proper long-term fix** for `return` statements inside Windows catch funclets.
+This note documents the Windows/MSVC-style catch-return model that is already implemented on this branch.
 
-## Current hotfix
+The important point is that a `return` inside a catch funclet is **not** treated as “the catch is done.” Instead, it records a pending return from the **parent** function, then lets normal catch finalization finish.
 
-The immediate regression fix is to **revert** the state change added in `src/IRConverter_Conv_VarDecl.h` that set:
+## Problem statement
 
-- `catch_funclet_terminated_by_return_ = true;`
-- `in_catch_funclet_ = false;`
+On Windows FH3, a catch handler is emitted as a real funclet. That means a source-level `return` from inside the catch body cannot simply bypass `CatchEnd` bookkeeping.
 
-directly after emitting the catch-funclet `ret` for a `return` statement inside a catch body.
+`CatchEnd` still owns important work:
 
-That change caused `CatchEnd` handling in `src/IRConverter_Emit_EHSeh.h` to skip required Windows catch-finalization work, which led to broad runtime crashes across EH tests.
+- finishing catch-handler bookkeeping,
+- returning the continuation address expected by the runtime,
+- emitting/reusing the parent-function continuation fixup,
+- deciding whether control resumes normally after the catch or returns from the parent function.
 
-## Why the reverted approach was wrong
+The earlier “terminated catch funclet” idea was wrong because it implied catch finalization could be skipped. The landed implementation instead uses a **pending parent return** model.
 
-For Windows/MSVC-style EH, a `return` inside a catch body is **not** equivalent to “the catch is fully finalized, so skip `CatchEnd`”.
+## Current implementation shape
 
-`CatchEnd` still owns important responsibilities:
+### State tracked in the IR converter
 
-- catch handler end bookkeeping
-- funclet end bookkeeping
-- continuation fixup emission
-- bridging back into parent-function control flow
+The current Windows path tracks these pieces of state:
 
-So the compiler must not use a catch-local `return` to short-circuit those steps.
-
-## Correct semantic model
-
-The most correct model is:
-
-1. A `return` inside a catch records **pending parent-function return intent**.
-2. Catch finalization still proceeds through the normal Windows `CatchEnd` path.
-3. After catch finalization, the continuation logic decides whether to:
-   - continue normal execution after the catch, or
-   - return from the parent function using the saved return value.
-
-This matches the intended source-level meaning better: the catch still exits normally as a handler, but the enclosing function returns afterward.
-
-## Recommended design
-
-### Keep `CatchEnd` authoritative
-
-`src/IRConverter_Emit_EHSeh.h` should remain the single place that finalizes Windows catch handlers.
-
-It should always handle:
-
-- funclet epilogue ownership
-- catch-handler end offsets
-- catch continuation fixup stubs
-- catch return-bridge setup
-
-### Replace “terminated catch funclet” with “pending parent return”
-
-If an extra state bit is needed, it should express something like:
-
+- `catch_funclet_return_slot_offset_`
+- `catch_funclet_return_flag_slot_offset_`
 - `catch_has_pending_parent_return_`
+- `current_catch_continuation_label_`
+- `catch_continuation_fixup_map_`
+- `catch_return_bridges_`
 
-not:
+These are declared in `src/IRConverter_Conv_Fields.h` and reset per function in `src/IRConverter_Conv_VarDecl.h`.
 
-- `catch_funclet_terminated_by_return_`
+### Saved return value
 
-The first describes a post-catch control-flow decision.
-The second incorrectly implies that catch finalization can be skipped.
+`src/IRConverter_Emit_EHSeh.h` provides:
 
-### Preserve `in_catch_funclet_` until catch finalization is complete
+- `emitSavePendingCatchParentReturnValue()`
+- `emitRestorePendingCatchParentReturnValue()`
 
-The compiler may still need `in_catch_funclet_` while emitting the catch body, including register-allocation restrictions and catch-specific return lowering.
+The saved value lives in a parent-frame spill slot whose size is derived from the function's actual return convention:
 
-But it should only be cleared when catch finalization actually completes, not at the first emitted `ret` inside the catch body.
+- floating-point returns use the XMM0 spill path,
+- integer/pointer-like returns use a sized RAX spill path,
+- hidden-return / reference-return cases reserve pointer-sized storage.
 
-## Suggested implementation shape
+### Reserved slots
 
-### On `return` inside a catch funclet
+`src/IRConverter_Conv_VarDecl.h` provides:
 
-- save the parent-function return value if present
-- set a parent-frame flag indicating “return after catch cleanup”
-- emit the catch-funclet return path needed by the ABI
-- do **not** mark the catch as fully finalized
+- `ensureCatchFuncletReturnSlot()`
+- `ensureCatchFuncletReturnFlagSlot()`
 
-### On `CatchEnd`
+These helpers either reuse the pre-reserved catch-return area or carve slots out of the current scope when needed.
 
-- always emit Windows catch-finalization logic
-- always emit or reuse the continuation fixup stub
-- in the continuation/fixup path, branch based on the saved “return after catch” flag:
-  - if clear: jump to the normal catch continuation label
-  - if set: restore / load the saved return value and return from the parent function
+The flag slot means:
 
-## File areas likely involved
+- `0`: normal fallthrough after catch finalization,
+- `1`: return from the parent function after catch finalization.
 
-- `src/IRConverter_Conv_VarDecl.h`
-  - catch-body `return` lowering
-- `src/IRConverter_Emit_EHSeh.h`
-  - `CatchBegin` / `CatchEnd` Windows funclet orchestration
-- `src/IRConverter_Conv_Fields.h`
-  - state naming / lifetime cleanup
+## Return lowering inside a catch funclet
 
-## Validation expectations for the future implementation
+When `handleReturn(...)` runs while `in_catch_funclet_` is true on the Windows path, it does the following:
 
-At minimum, re-run:
+1. save the pending parent return value,
+2. flush dirty registers,
+3. set `catch_has_pending_parent_return_ = true`,
+4. store `1` into the catch-return flag slot,
+5. load `RAX` with the appropriate continuation-fixup address when a continuation label exists,
+6. emit the funclet epilogue and `ret`.
 
-- `test_exceptions_basic_ret0.cpp`
-- `test_exceptions_catch_funclets_ret0.cpp`
-- `test_eh_throw_catch_int_ret0.cpp`
-- the previously reported crash list from GitHub Actions
-- `./tests/run_all_tests.ps1`
+If there is no continuation label, the path currently zeroes `RAX` before the funclet return.
 
-## Non-goal of the hotfix
+The important semantic detail is that this does **not** claim catch finalization is complete. It only hands control back through the Windows funclet mechanism with enough state preserved for the parent continuation logic to finish the job.
 
-The current revert intentionally does **not** redesign catch-return lowering.
+## CatchEnd remains authoritative
 
-It only restores the previously working behavior and documents the correct architectural direction for a separate follow-up change.
+The matching Windows `CatchEnd` logic lives in `src/IRConverter_Emit_EHSeh.h`.
+
+Its current behavior is:
+
+- obtain the parent continuation label from `CatchEndOp`,
+- create or reuse a synthetic continuation-fixup label via `getOrCreateCatchContinuationFixupLabel(...)`,
+- reserve both return spill slots **before** emitting the first shared fixup stub,
+- clear the catch-return flag on normal fallthrough so a previous return path cannot leak into a later non-returning path,
+- return the continuation/fixup address expected by the CRT.
+
+That “reserve both slots before first stub” detail is important: multiple handlers in the same try block can share one continuation stub, so the first emitted stub must already account for the later-returning case.
+
+## How the continuation decides between fallthrough and parent return
+
+The continuation/fixup path checks the saved catch-return flag:
+
+- if the flag is clear, execution resumes at the normal continuation label,
+- if the flag is set, the fixup clears the flag, restores the saved parent return value, emits the parent epilogue, and returns from the enclosing function.
+
+This logic is implemented in two places:
+
+- the shared catch-fixup emission in `src/IRConverter_Emit_EHSeh.h`,
+- the label-side bridge handling in `src/IRConverter_Conv_ControlFlow.h` via `catch_return_bridges_`.
+
+That split allows multiple catch handlers to converge on one continuation label without losing the information that one handler requested a parent return.
+
+## Why this model is correct
+
+This implementation matches the source-level meaning more closely than the earlier shortcut:
+
+- the catch still exits through normal Windows catch-finalization machinery,
+- local cleanup inside the catch still happens,
+- shared continuation labels still work,
+- returning and non-returning catch paths can coexist safely in the same try block.
+
+## Regression coverage to keep with this design
+
+The most relevant tests for this path are:
+
+- `tests/test_exceptions_catch_funclets_ret0.cpp`
+- `tests/test_eh_catch_float_return_ret0.cpp`
+- `tests/test_eh_catch_conditional_return_fallthrough_ret0.cpp`
+- `tests/test_eh_catch_shared_fixup_late_return_ret0.cpp`
+- `tests/test_eh_catch_local_dtor_fallthrough_ret0.cpp`
+
+Together these cover:
+
+- direct returns from multiple concrete catch handlers,
+- floating-point return preservation,
+- a catch body that contains a return path but falls through normally on another path,
+- shared continuation-fixup reuse across multiple handlers,
+- local destructor execution on normal fallthrough even when the catch also contains a return.
+
+At the time of writing, this path and the surrounding EH fixes pass `./tests/run_all_tests.ps1` on this branch.
+
+## Boundaries of this document
+
+This note is only about the catch-return path.
+
+It does **not** try to document every other EH change on the branch. The constructor-selection and indirect-storage fixes that landed alongside it are reflected in the code and regression tests.

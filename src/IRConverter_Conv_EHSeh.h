@@ -314,6 +314,12 @@
 		}
 	}
 
+	void finalizeFunctionBranches() {
+		patchBranches();
+		pending_branches_.clear();
+		label_positions_.clear();
+	}
+
 	// Patch ELF catch handler filter values in the generated code.
 	// This is called at function finalization when we know the complete type table.
 	// The filter values must match what the LSDA generator will produce.
@@ -333,6 +339,7 @@
 				}
 			}
 		}
+
 		// Add NULL entry for catch-all (same as LSDAGenerator's generate() does)
 		bool has_catch_all = false;
 		for (const auto& try_block : try_blocks) {

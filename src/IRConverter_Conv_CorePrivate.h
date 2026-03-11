@@ -472,15 +472,19 @@
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
 						// Check if this is a reference - if so, we need to dereference it
-						auto ref_it = reference_stack_info_.find(lhs_var_id->second.offset);
-						if (ref_it != reference_stack_info_.end()) {
+						auto ref_info = getIndirectStackInfo(lhs_var_id->second.offset);
+						if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 							// This is a reference - load the pointer first, then dereference
 							ctx.result_physical_reg = allocateRegisterWithSpilling();
 							// Load the pointer into the register
 							emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
 							// Now dereference: load from [register + 0]
-							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							int value_size_bytes = ref_info->value_size_bits / 8;
 							emitMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0, value_size_bytes);
+						} else if (ref_info.has_value()) {
+							// This holds an address value directly (e.g. addressof) - load it as-is
+							ctx.result_physical_reg = allocateRegisterWithSpilling();
+							emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
 						} else if (lhs_var_id->second.is_array) {
 							// Source is an array - use LEA to get its address (array-to-pointer decay)
 							ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -680,23 +684,32 @@
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
 						// Check if this is a reference - if so, we need to dereference it
-						auto ref_it = reference_stack_info_.find(rhs_var_id->second.offset);
-						if (ref_it != reference_stack_info_.end()) {
+						auto ref_info = getIndirectStackInfo(rhs_var_id->second.offset);
+						if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 							// This is a reference - load the pointer first, then dereference
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-							
+
 							// If RHS register conflicts with result register, we need to handle it
 							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
 								// Allocate a NEW register for RHS, excluding the LHS register
 								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 							}
-							
+
 							// Load the pointer into the register
 							emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
 							// Now dereference: load from [register + 0]
-							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							int value_size_bytes = ref_info->value_size_bits / 8;
 							emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
+						} else if (ref_info.has_value()) {
+							// This holds an address value directly (e.g. addressof) - load it as-is
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+
+							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
+							}
+
+							emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
 						} else {
 							// Not a reference, load normally
 							// For integers, use regular MOV
@@ -764,33 +777,42 @@
 						}
 					}
 					
-					if (ref_it != reference_stack_info_.end()) {
+					if (ref_it != reference_stack_info_.end() && shouldImplicitlyDeref(ref_it->second)) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						
+
 						// If RHS register conflicts with result register, we need to handle it
 						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
 							// Allocate a NEW register for RHS, excluding the LHS register
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 						}
-						
+
 						// Load the pointer into the register
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 						// Now dereference: load from [register + 0]
 						int value_size_bytes = ref_it->second.value_size_bits / 8;
 						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
+					} else if (ref_it != reference_stack_info_.end()) {
+						// This holds an address value directly (e.g. addressof) - load it as-is
+						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+
+						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
+						}
+
+						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						
+
 						// If RHS register conflicts with result register, we need to handle it
 						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
 							// Allocate a NEW register for RHS, excluding the LHS register
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 						}
-						
+
 						// Use the RHS's actual size for loading, not the LHS/operand size
 						// This is important when types are mixed (e.g., int + long)
 						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, bin_op.rhs.size_in_bits);
@@ -1000,15 +1022,15 @@
 			int final_result_offset = variable_scopes.back().variables[std::get<StringHandle>(ctx.result_value.value)].offset;
 
 			// Check if this is a reference - if so, we need to store through the pointer
-			auto ref_it = reference_stack_info_.find(final_result_offset);
-			if (ref_it != reference_stack_info_.end()) {
+			auto ref_info = getIndirectStackInfo(final_result_offset);
+			if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 				// This is a reference - load the pointer, then store the value through it
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				// Load the pointer into the register
 				auto load_ptr = generatePtrMovFromFrame(ptr_reg, final_result_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
-				int value_size_bits = ref_it->second.value_size_bits;
+				int value_size_bits = ref_info->value_size_bits;
 				int value_size_bytes = value_size_bits / 8;
 				emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
 				regAlloc.release(ptr_reg);
@@ -1036,14 +1058,14 @@
 			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits);
 			
 			// Check if this is a reference - if so, we need to store through the pointer
-			auto ref_it = reference_stack_info_.find(res_stack_var_addr);
-			if (ref_it != reference_stack_info_.end()) {
+			auto ref_info = getIndirectStackInfo(res_stack_var_addr);
+			if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 				// This is a reference - load the pointer, then store the value through it
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				// Load the pointer into the register
 				emitMovFromFrame(ptr_reg, res_stack_var_addr);
 				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
-				int value_size_bits = ref_it->second.value_size_bits;
+				int value_size_bits = ref_info->value_size_bits;
 				int value_size_bytes = value_size_bits / 8;
 				emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
 				regAlloc.release(ptr_reg);
@@ -1187,22 +1209,54 @@
 		// not a reference that should be implicitly dereferenced.
 		bool holds_address_only = false;
 	};
-	
-	// Helper function to set reference information in both storage systems
-	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
-	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar()) {
-		// Always update the stack offset map (for named variables and legacy lookups)
+
+	void setIndirectStorageInfo(
+		int32_t stack_offset,
+		Type value_type,
+		int value_size_bits,
+		bool is_rvalue_ref,
+		bool holds_address_only,
+		TempVar temp_var = TempVar()) {
+
 		reference_stack_info_[stack_offset] = ReferenceInfo{
 			.value_type = value_type,
 			.value_size_bits = value_size_bits,
 			.is_rvalue_reference = is_rvalue_ref,
-			.holds_address_only = false
+			.holds_address_only = holds_address_only
 		};
-		
-		// If we have a valid TempVar, also update its metadata
-		if (temp_var.var_number != 0) {
+
+		// TempVar metadata currently models true references but not plain address-only values.
+		// Keep that asymmetry explicit here instead of open-coding it at each call site.
+		if (!holds_address_only && temp_var.var_number != 0) {
 			setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, is_rvalue_ref));
 		}
+	}
+
+	// Helper function to set reference information in both storage systems
+	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
+	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar()) {
+		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, is_rvalue_ref, false, temp_var);
+	}
+
+	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits) {
+		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true);
+	}
+
+	std::optional<ReferenceInfo> getIndirectStackInfo(int32_t stack_offset) const {
+		auto it = reference_stack_info_.find(stack_offset);
+		if (it != reference_stack_info_.end()) {
+			return it->second;
+		}
+
+		return std::nullopt;
+	}
+
+	bool hasIndirectStackStorage(int32_t stack_offset) const {
+		return getIndirectStackInfo(stack_offset).has_value();
+	}
+
+	bool shouldImplicitlyDeref(const ReferenceInfo& info) const {
+		return !info.holds_address_only;
 	}
 
 	// Build the mangled symbol name for the complete-object destructor of a class.
@@ -1236,20 +1290,19 @@
 		return std::string(writer.generateMangledName(func_name, sig));
 	}
 
-	// Helper function to check if a TempVar or stack offset is a reference
-	// Checks TempVar metadata first (preferred), then falls back to stack offset lookup
-	bool isReference(TempVar temp_var, int32_t stack_offset) const {
-		// Check TempVar metadata first (more reliable, travels with the value)
+	// Helper function to check if a TempVar or stack offset uses indirect storage.
+	// This includes both true references and address-only pointer temps.
+	bool hasIndirectStorage(TempVar temp_var, int32_t stack_offset) const {
 		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
 			return true;
 		}
-		
-		// Fall back to stack offset lookup (for named variables or legacy code)
-		return reference_stack_info_.find(stack_offset) != reference_stack_info_.end();
+
+		return hasIndirectStackStorage(stack_offset);
 	}
-	
-	// Helper function to get reference info for a TempVar or stack offset
-	// Returns the reference info from TempVar metadata if available, otherwise from stack offset map
+
+	// Helper function to get indirect-storage info for a TempVar or stack offset.
+	// Returns TempVar metadata first when the temp is a true reference, otherwise falls back
+	// to the stack-offset side table for named variables and address-only pointer temps.
 	std::optional<ReferenceInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
 		// Check TempVar metadata first
 		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
@@ -1260,14 +1313,8 @@
 				.holds_address_only = false
 			};
 		}
-		
-		// Fall back to stack offset lookup
-		auto it = reference_stack_info_.find(stack_offset);
-		if (it != reference_stack_info_.end()) {
-			return it->second;
-		}
-		
-		return std::nullopt;
+
+		return getIndirectStackInfo(stack_offset);
 	}
 	
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
@@ -1560,6 +1607,12 @@
 						else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
 							temp_var_sizes_[StringTable::getOrInternStringHandle(addr_of_op->result.name())] = 64; // Pointer is always 64-bit
+							handled_by_typed_payload = true;
+						}
+						// Try AddressOfMemberOp (for taking address of struct members)
+						else if (const AddressOfMemberOp* addr_member_op = std::any_cast<AddressOfMemberOp>(&instruction.getTypedPayload())) {
+							// Phase 5: Convert temp var name to StringHandle
+							temp_var_sizes_[StringTable::getOrInternStringHandle(addr_member_op->result.name())] = 64; // Pointer is always 64-bit
 							handled_by_typed_payload = true;
 						}
 						// Try GlobalLoadOp (for loading global variables)
