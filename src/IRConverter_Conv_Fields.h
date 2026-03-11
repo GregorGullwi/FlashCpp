@@ -151,7 +151,20 @@
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
 	std::vector<size_t> try_block_nesting_stack_;  // Stack of try block indices for nested try tracking
 	size_t pending_catch_try_index_ = SIZE_MAX;  // Try block index awaiting catch handlers
+		struct ActiveCatchHandlerRef {
+			size_t try_block_index = SIZE_MAX;
+			size_t handler_index = SIZE_MAX;
+		};
+		struct CatchCodegenContext {
+			ActiveCatchHandlerRef handler_ref{};
+			bool inside_catch_handler = false;
+			bool in_catch_funclet = false;
+			bool catch_has_pending_parent_return = false;
+			StringHandle continuation_label{};
+		};
 	CatchHandler* current_catch_handler_ = nullptr;  // Currently active catch handler being processed
+		ActiveCatchHandlerRef current_catch_handler_ref_{};  // Ref-based active catch handler tracking for nested catch codegen state.
+		std::vector<CatchCodegenContext> catch_codegen_context_stack_;  // Saved nested catch codegen contexts.
 	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF).
 	bool in_catch_funclet_ = false;  // Tracks whether codegen is currently inside a Windows catch funclet.
 	bool current_function_has_cpp_eh_ = false;  // Pre-scanned: function has C++ try/catch blocks (needs FH3 state variable).

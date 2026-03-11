@@ -712,13 +712,15 @@
 		current_try_block_ = nullptr;
 		try_block_nesting_stack_.clear();
 		pending_catch_try_index_ = SIZE_MAX;
-		current_catch_handler_ = nullptr;
+			current_catch_handler_ = nullptr;
+			current_catch_handler_ref_ = ActiveCatchHandlerRef{};
 		current_function_local_objects_.clear();
 		current_function_unwind_map_.clear();
 		current_exception_state_ = -1;
 		current_function_seh_try_blocks_.clear();
 		seh_try_block_stack_.clear();
 		current_seh_filter_funclet_offset_ = 0;
+			catch_codegen_context_stack_.clear();
 		in_catch_funclet_ = false;
 		catch_funclet_return_slot_offset_ = 0;
 		catch_funclet_return_flag_slot_offset_ = 0;

@@ -407,6 +407,7 @@
 				StringHandle continuation_handle;
 				StringHandle fixup_handle;
 				bool has_continuation = false;
+					bool return_directly_to_parent_catch_continuation = false;
 
 				if (instruction.hasTypedPayload()) {
 					const auto& catch_end_op = instruction.getTypedPayload<CatchEndOp>();
@@ -441,12 +442,14 @@
 					textSectionData.push_back(0x00);
 					textSectionData.push_back(0x00);
 					textSectionData.push_back(0x00);
-					pending_branches_.push_back({fixup_handle, lea_patch});
+						pending_branches_.push_back({return_directly_to_parent_catch_continuation ? continuation_handle : fixup_handle, lea_patch});
 				} else {
-					if (catch_funclet_return_flag_slot_offset_ != 0) {
-						emitXorRegReg(X64Register::RCX);
-						emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
-					}
+						if (catch_funclet_return_flag_slot_offset_ != 0) {
+							if (!return_directly_to_parent_catch_continuation) {
+								emitXorRegReg(X64Register::RCX);
+								emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
+							}
+						}
 					emitXorRegReg(X64Register::RAX);
 				}
 
@@ -465,7 +468,7 @@
 			// the establisher frame = RSP_after_prologue = S-8-N.
 			// After _JumpToContinuation: RSP = S-8-N (fully allocated frame).
 			// We just need to restore RBP (corrupted by CRT) and jump to normal code.
-			if (has_continuation && label_positions_.find(fixup_handle) == label_positions_.end()) {
+				if (!return_directly_to_parent_catch_continuation && has_continuation && label_positions_.find(fixup_handle) == label_positions_.end()) {
 				// Define the fixup label position
 				label_positions_[fixup_handle] = static_cast<uint32_t>(textSectionData.size());
 
@@ -748,27 +751,27 @@
 				}
 			}
 
-					bool exception_constructed = false;
-					if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0 && !throw_op.value_is_materialized) {
+				bool exception_constructed = false;
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0) {
 					TypedValue source_value;
 					source_value.type = throw_op.exception_type;
 					source_value.size_in_bits = static_cast<int>(exception_size * 8);
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
-					exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
+						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
 				}
 
 				// Copy/construct exception object to frame slot at [RBP+throw_slot_offset]
 				if (!exception_constructed && exception_size <= 8) {
-					// Small object: load into RAX and store
-					if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
-						TempVar temp = std::get<TempVar>(throw_op.exception_value);
-						if (temp.var_number != 0) {
-							int32_t stack_offset = getStackOffsetFromTempVar(temp);
-							emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
-						} else {
-							emitMovImm64(X64Register::RAX, 0);
-						}
+				// Small object: load into RAX and store
+				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
+					} else {
+						emitMovImm64(X64Register::RAX, 0);
+					}
 					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
 						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
 						const VariableInfo* source_info = findVariableInfo(source_name);
@@ -777,33 +780,33 @@
 						} else {
 							emitMovImm64(X64Register::RAX, 0);
 						}
-					} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
-						emitMovImm64(X64Register::RAX, std::get<unsigned long long>(throw_op.exception_value));
-					} else if (std::holds_alternative<double>(throw_op.exception_value)) {
-						double float_val = std::get<double>(throw_op.exception_value);
-						uint64_t bits;
-						if (exception_size == 4) {
-							float f = static_cast<float>(float_val);
-							std::memcpy(&bits, &f, sizeof(float));
-							bits &= 0xFFFFFFFF;
-						} else {
-							std::memcpy(&bits, &float_val, sizeof(double));
-						}
-						emitMovImm64(X64Register::RAX, bits);
+				} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
+					emitMovImm64(X64Register::RAX, std::get<unsigned long long>(throw_op.exception_value));
+				} else if (std::holds_alternative<double>(throw_op.exception_value)) {
+					double float_val = std::get<double>(throw_op.exception_value);
+					uint64_t bits;
+					if (exception_size == 4) {
+						float f = static_cast<float>(float_val);
+						std::memcpy(&bits, &f, sizeof(float));
+						bits &= 0xFFFFFFFF;
 					} else {
-						emitMovImm64(X64Register::RAX, 0);
+						std::memcpy(&bits, &float_val, sizeof(double));
 					}
-					emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
+					emitMovImm64(X64Register::RAX, bits);
+				} else {
+					emitMovImm64(X64Register::RAX, 0);
+				}
+				emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
 				} else if (!exception_constructed) {
-					// Large object: use memory-to-memory copy (must be TempVar)
-					if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
-						TempVar temp = std::get<TempVar>(throw_op.exception_value);
-						if (temp.var_number != 0) {
-							int32_t stack_offset = getStackOffsetFromTempVar(temp);
-							emitLeaFromFrame(X64Register::RSI, stack_offset);
-						} else {
-							emitXorRegReg(X64Register::RSI);
-						}
+				// Large object: use memory-to-memory copy (must be TempVar)
+				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitLeaFromFrame(X64Register::RSI, stack_offset);
+					} else {
+						emitXorRegReg(X64Register::RSI);
+					}
 					} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
 						StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
 						const VariableInfo* source_info = findVariableInfo(source_name);
@@ -812,13 +815,13 @@
 						} else {
 							emitXorRegReg(X64Register::RSI);
 						}
-					} else {
-						emitXorRegReg(X64Register::RSI);
-					}
-					emitLeaFromFrame(X64Register::RDI, throw_slot_offset);
-					emitMovImm64(X64Register::RCX, exception_size);
-					emitRepMovsb();
+				} else {
+					emitXorRegReg(X64Register::RSI);
 				}
+				emitLeaFromFrame(X64Register::RDI, throw_slot_offset);
+				emitMovImm64(X64Register::RCX, exception_size);
+				emitRepMovsb();
+			}
 
 				// Set up arguments for _CxxThrowException
 				// RCX (first argument) = pointer to exception object on the frame
