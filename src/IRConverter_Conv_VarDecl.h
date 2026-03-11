@@ -724,8 +724,8 @@
 		catch_funclet_return_flag_slot_offset_ = 0;
 		catch_funclet_return_label_counter_ = 0;
 		catch_has_pending_parent_return_ = false;
-			current_function_return_type_ = Type::Void;
-			current_function_return_size_in_bits_ = 0;
+		current_function_return_type_ = Type::Void;
+		current_function_return_size_in_bits_ = 0;
 		current_catch_continuation_label_ = StringHandle();
 		catch_return_bridges_.clear();
 		catch_continuation_fixup_map_.clear();

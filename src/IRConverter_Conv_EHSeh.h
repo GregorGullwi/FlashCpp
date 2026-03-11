@@ -314,11 +314,11 @@
 		}
 	}
 
-		void finalizeFunctionBranches() {
-			patchBranches();
-			pending_branches_.clear();
-			label_positions_.clear();
-		}
+	void finalizeFunctionBranches() {
+		patchBranches();
+		pending_branches_.clear();
+		label_positions_.clear();
+	}
 
 	// Patch ELF catch handler filter values in the generated code.
 	// This is called at function finalization when we know the complete type table.
