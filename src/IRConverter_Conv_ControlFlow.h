@@ -44,9 +44,9 @@
 				if (currentFunctionHasCatchParentReturnValue()) {
 					emitRestorePendingCatchParentReturnValue(bridge.return_slot_offset);
 				}
-					emitMovRegReg(X64Register::RSP, X64Register::RBP);
-					emitPopReg(X64Register::RBP);
-					emitRet();
+				emitMovRegReg(X64Register::RSP, X64Register::RBP);
+				emitPopReg(X64Register::RBP);
+				emitRet();
 
 				uint32_t skip_target = static_cast<uint32_t>(textSectionData.size());
 				int32_t rel = static_cast<int32_t>(skip_target) - static_cast<int32_t>(skip_patch + 4);
