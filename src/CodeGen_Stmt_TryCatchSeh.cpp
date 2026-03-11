@@ -1,6 +1,11 @@
 #include "CodeGen.h"
 
-	void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
+void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
+	active_try_statement_depth_ += 1;
+	auto pop_try_depth = [this]() {
+		active_try_statement_depth_ -= 1;
+	};
+
 		// Generate try-catch-finally structure
 		// For now, we'll generate a simplified version that doesn't actually implement exception handling
 		// but allows the code to compile and run
@@ -166,8 +171,10 @@
 
 			// Visit catch block body
 			catch_scope_base_depth_stack_.push_back(scope_stack_.size());
+			catch_scope_try_depth_stack_.push_back(active_try_statement_depth_);
 			visit(catch_clause.body());
 			catch_scope_base_depth_stack_.pop_back();
+			catch_scope_try_depth_stack_.pop_back();
 
 			// Emit CatchEnd marker
 			ir_.addInstruction(IrOpcode::CatchEnd, CatchEndOp{.continuation_label = end_label}, catch_clause.catch_token());
@@ -199,6 +206,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::ElfCatchNoMatch, ElfCatchNoMatchOp{}, node.try_token()));
 		}
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_end_label)}, node.try_token()));
+		pop_try_depth();
 	}
 
 	void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {

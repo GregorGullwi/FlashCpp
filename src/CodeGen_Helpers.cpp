@@ -31,7 +31,20 @@ void AstToIr::emitActiveCatchScopeDestructors() {
 		return;
 	}
 
-	size_t catch_scope_base_depth = catch_scope_base_depth_stack_.back();
+	size_t catch_scope_index = catch_scope_base_depth_stack_.size();
+	for (size_t i = catch_scope_base_depth_stack_.size(); i > 0; --i) {
+		size_t candidate_index = i - 1;
+		if (catch_scope_try_depth_stack_[candidate_index] == active_try_statement_depth_) {
+			catch_scope_index = candidate_index;
+			break;
+		}
+	}
+
+	if (catch_scope_index == catch_scope_base_depth_stack_.size()) {
+		return;
+	}
+
+	size_t catch_scope_base_depth = catch_scope_base_depth_stack_.front();
 
 	if (scope_stack_.size() <= catch_scope_base_depth) {
 		return;

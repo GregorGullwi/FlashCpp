@@ -106,6 +106,8 @@ private:
 	// Phase 2 capture state: vars captured by exitFunctionScope() awaiting LP emission
 	std::vector<std::pair<StringHandle, StringHandle>> pending_function_cleanup_vars_;
 	std::vector<size_t> catch_scope_base_depth_stack_;
+	std::vector<size_t> catch_scope_try_depth_stack_;
+	size_t active_try_statement_depth_ = 0;
 	// Set by visitTryStatementNode() when any typed (non-catch-all) handlers are present.
 	// Used by emitPendingFunctionCleanupLP() to ensure FunctionCleanupLP is always emitted
 	// on ELF when ElfCatchNoMatch references need resolving.
