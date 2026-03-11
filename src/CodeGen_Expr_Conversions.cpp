@@ -412,13 +412,11 @@
 		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
 		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
-		return std::vector<IrOperand>{ Type::FunctionPointer, 64, func_addr_var, 0ULL };
+		return ExprOperands{ Type::FunctionPointer, 64, func_addr_var, 0ULL };
 	}
 
 	ExprOperands AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
 	ExpressionContext context) {
-		std::vector<IrOperand> irOperands;
-
 		// OPERATOR OVERLOAD RESOLUTION
 		// For full standard compliance, operator& should call overloaded operator& if it exists.
 		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.

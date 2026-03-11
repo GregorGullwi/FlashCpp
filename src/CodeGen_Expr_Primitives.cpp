@@ -2,7 +2,7 @@
 
 	ExprOperands AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
 	ExpressionContext context) {
-		return std::visit([this, context](const auto& expr) -> std::vector<IrOperand> {
+		return std::visit([this, context](const auto& expr) -> ExprOperands {
 			using T = std::decay_t<decltype(expr)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return generateIdentifierIr(expr, context);
@@ -1563,4 +1563,3 @@
 			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()), 0ULL };
 		}
 	}
-

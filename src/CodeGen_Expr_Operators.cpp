@@ -386,8 +386,6 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	}
 
 	ExprOperands AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
-		std::vector<IrOperand> irOperands;
-
 		const auto& op = binaryOperatorNode.op();
 		static const std::unordered_set<std::string_view> compound_assignment_ops = {
 			"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="

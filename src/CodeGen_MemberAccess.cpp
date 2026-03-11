@@ -883,8 +883,6 @@
 
 	ExprOperands AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	ExpressionContext context) {
-		std::vector<IrOperand> irOperands;
-
 		// Get the object being accessed
 		ASTNode object_node = memberAccessNode.object();
 		std::string_view member_name = memberAccessNode.member_name();
