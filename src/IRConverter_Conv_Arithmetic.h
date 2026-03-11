@@ -477,9 +477,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
-			if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
-				regAlloc.release(ctx.rhs_physical_reg);
-			}
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleFloatMultiply(const IrInstruction& instruction) {
