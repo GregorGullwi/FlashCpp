@@ -964,7 +964,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	const SymbolTable& symbol_table,
 	Type right_type)
 {
-		// --- Unified candidate set per C++20 [over.match.oper]/2 ---
+	// --- Unified candidate set per C++20 [over.match.oper]/2 ---
 	struct OperatorCandidate {
 		ConversionRank lhs_rank;
 		ConversionRank rhs_rank;
