@@ -212,26 +212,29 @@ Refined hypothesis:
 
 ## Issue: Windows FH3 nested `try/catch` inside an active catch body
 
-### Status: OPEN / NARROWED
+### Status: ADDRESSED FOR CURRENT REGRESSIONS / MONITOR
 
 ### Current status (2026-03-11)
 
-The broad “Windows catch funclets are broken” issue is no longer current, but a
-more specific nested-control-flow gap still appears to remain:
+The older nested-catch failure has been narrowed and fixed for the currently
+covered patterns. The key missing pieces were Windows-specific bridge handling
+for an inner catch that returns into an enclosing catch funclet, plus the
+correct Windows EH parameter-home slot bias so `[rbp-8]` remains reserved for
+`dispUnwindHelp` instead of overlapping the first homed register parameter.
 
-- a nested `try/catch` inside an already-active Windows catch body can still
-  misbehave in some patterns,
-- current evidence points at deeper FH3 catch-funclet dispatch / continuation
-  semantics rather than the simpler catch-local cleanup bugs that were fixed.
+Current branch status:
 
-This should be treated as a separate issue from the now-resolved basic
-catch-funclet bring-up work above.
+- no active repro remains among the focused nested-catch regressions,
+- nested inner-catch `return` now resumes at an outer-catch-local continuation
+  label with a `catch_return_bridges_` check, and Windows EH register-home
+  parameters are shifted down one slot so the unwind-help slot is not reused.
 
 ### What is already known to be fixed
 
 The following related cases have been revalidated as working:
 
 - catch fallthrough with post-catch stack-local access,
+- nested catch return from inside an active outer catch body,
 - `throw <expr>` from inside a catch body with catch-local destructor cleanup,
 - nested catch throw + destructor cleanup where the inner throw must not destroy
   outer catch locals twice.
@@ -239,18 +242,23 @@ The following related cases have been revalidated as working:
 Representative regressions:
 
 - `tests/test_eh_catch_fallthrough_frame_restore_ret0.cpp`
-- `tests/test_eh_throw_expr_catch_local_dtor_ret0.cpp`
-- `tests/test_eh_nested_catch_throw_dtor_ret0.cpp`
+- `tests/test_eh_nested_catch_return_ret0.cpp`
+- `tests/test_eh_nested_catch_fallthrough_ret0.cpp`
+- `tests/test_eh_nested_catch_throw_expr_dtor_ret0.cpp`
+- `tests/test_eh_nested_catch_rethrow_dtor_ret0.cpp`
 
-### Remaining symptom
+### What changed
 
-What still appears risky is **nesting another `try/catch` while already inside a
-Windows catch funclet**, especially when the inner catch performs additional
-non-local control flow.
+Investigation compared native MSVC output against FlashCpp's Windows FH3 path
+and found two issues:
 
-Investigation so far suggests this is broader than just missed destructor
-cleanup. Even when catch-local cleanup is correct, some nested catch patterns
-still appear capable of failing due to funclet dispatch / continuation state.
+- nested inner-catch returns should target a continuation point inside the
+  enclosing catch funclet, not always a parent-frame continuation fixup stub,
+- Windows EH functions must keep the first homed register parameter below the
+  `dispUnwindHelp` slot instead of reusing `[rbp-8]`.
+
+The current implementation now restores that bridge-based path and applies the
+extra parameter-home bias for COFF C++ EH functions.
 
 ### Why this is probably not just another cleanup bug
 
@@ -262,21 +270,19 @@ The recent fixes already addressed the obvious frontend cleanup holes:
 3. Active catch-scope selection now tracks try depth, so nested throws do not
    incorrectly destroy enclosing catch locals.
 
-That leaves the remaining failures more likely to be in one of these areas:
+This means the remaining risk, if new regressions appear later, is more likely
+to be in one of these areas:
 
 - nested FH3 establisher-frame / funclet entry expectations,
-- continuation-target validity when a nested catch exits back into an outer
-  catch funclet,
-- unwind-state / IP-to-state modeling for nested catch-inside-catch control
-  flow.
+- catch-funclet metadata / FuncInfo shaping for more complex nesting,
+- unwind-state / IP-to-state modeling for patterns not yet covered by tests.
 
 ### Recommended next steps
 
-1. Build a minimal permanent regression that isolates “nested `try/catch` inside
-   active catch body” without depending on destructor side effects.
-2. Inspect the emitted Windows catch-funclet metadata and continuation flow for
-   that reduced case.
-3. Only after that, decide whether the fix belongs in:
+1. Keep the focused permanent regressions in place.
+2. If a new Windows nested-catch repro appears, inspect emitted funclet
+   metadata and continuation flow first.
+3. Only after that, decide whether the next fix belongs in:
    - frontend catch-exit lowering,
    - Windows `CatchBegin` / `CatchEnd` continuation handling,
    - or FuncInfo / unwind-state modeling.

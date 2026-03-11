@@ -1391,54 +1391,55 @@
 				}
 			}
 
-		// Handle parameters
-		struct ParameterInfo {
-			Type param_type;
-			int param_size;
-			std::string_view param_name;
-			int paramNumber;
-			int offset;
-			X64Register src_reg;
-			int pointer_depth;
-			bool is_reference;
-			// SysV AMD64: for 9-16 byte by-value struct params, the upper half is in a second register.
-			// X64Register::Count means this is a regular single-register parameter.
-			X64Register second_reg = X64Register::Count;
-		};
-		std::vector<ParameterInfo> parameters;
+			// Handle parameters
+			const int coff_eh_param_home_bias = (!std::is_same_v<TWriterClass, ElfFileWriter> && current_function_has_cpp_eh_) ? 1 : 0;
+			struct ParameterInfo {
+				Type param_type;
+				int param_size;
+				std::string_view param_name;
+				int paramNumber;
+				int offset;
+				X64Register src_reg;
+				int pointer_depth;
+				bool is_reference;
+				// SysV AMD64: for 9-16 byte by-value struct params, the upper half is in a second register.
+				// X64Register::Count means this is a regular single-register parameter.
+				X64Register second_reg = X64Register::Count;
+			};
+			std::vector<ParameterInfo> parameters;
 
-		// For member functions, add implicit 'this' pointer as first parameter
-		int param_offset_adjustment = 0;
-		
-		// For functions returning struct by value, add hidden return parameter FIRST
-		// This comes BEFORE all other parameters (including 'this' for member functions)
-		// System V AMD64: hidden param in RDI (first register)
-		// Windows x64: hidden param in RCX (first register)
-		if (func_decl.has_hidden_return_param) {
-			int return_slot_offset = -8;  // Hidden return parameter is always first, so offset -8
-			variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
+			// For member functions, add implicit 'this' pointer as first parameter
+			int param_offset_adjustment = 0;
 			
-			X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);  // Always first register
-			parameters.push_back({Type::Struct, 64, "__return_slot", 0, return_slot_offset, return_slot_reg, 1, false});
-			regAlloc.allocateSpecific(return_slot_reg, return_slot_offset);
+			// For functions returning struct by value, add hidden return parameter FIRST
+			// This comes BEFORE all other parameters (including 'this' for member functions)
+			// System V AMD64: hidden param in RDI (first register)
+			// Windows x64: hidden param in RCX (first register)
+			if (func_decl.has_hidden_return_param) {
+				int return_slot_offset = -(coff_eh_param_home_bias + 1) * 8;  // Hidden return parameter is always first
+				variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
+
+				X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);  // Always first register
+				parameters.push_back({Type::Struct, 64, "__return_slot", 0, return_slot_offset, return_slot_reg, 1, false});
+				regAlloc.allocateSpecific(return_slot_reg, return_slot_offset);
+
+				param_offset_adjustment = 1;  // Shift other parameters (including 'this') by 1
+
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Function {} has hidden return parameter at offset {} in register {}",
+					func_name, return_slot_offset, static_cast<int>(return_slot_reg));
+			}
 			
-			param_offset_adjustment = 1;  // Shift other parameters (including 'this') by 1
-			
-			FLASH_LOG_FORMAT(Codegen, Debug,
-				"Function {} has hidden return parameter at offset {} in register {}",
-				func_name, return_slot_offset, static_cast<int>(return_slot_reg));
-		}
-		
-		// For non-static member functions, add 'this' pointer parameter
-		// This comes after hidden return parameter (if present)
-		// Static member functions have no 'this' pointer
-		int this_offset_saved = 0;  // Will be set if this is a member function
-		if (!struct_name.empty() && !func_decl.is_static_member) {
-			// 'this' offset depends on whether there's a hidden return parameter
-			int this_offset = (param_offset_adjustment + 1) * -8;
-			this_offset_saved = this_offset;  // Save for later reference_stack_info_ registration
-			current_function_this_offset_ = this_offset;
-			variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
+			// For non-static member functions, add 'this' pointer parameter
+			// This comes after hidden return parameter (if present)
+			// Static member functions have no 'this' pointer
+			int this_offset_saved = 0;  // Will be set if this is a member function
+			if (!struct_name.empty() && !func_decl.is_static_member) {
+				// 'this' offset depends on whether there's a hidden return parameter
+				int this_offset = (param_offset_adjustment + coff_eh_param_home_bias + 1) * -8;
+				this_offset_saved = this_offset;  // Save for later reference_stack_info_ registration
+				current_function_this_offset_ = this_offset;
+				variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
 
 			// Add 'this' parameter to debug information
 			writer.add_function_parameter("this", 0x603, this_offset);  // 0x603 = T_64PVOID (pointer type)
@@ -1532,10 +1533,10 @@
 					// Use param_slot_index so two-register struct params don't collide with neighbours.
 					// For two-register structs, both slots must fit; otherwise fall through to stack path.
 					if (is_two_reg_struct) {
-						offset = (param_slot_index + 2) * -8;  // struct base at more-negative slot
+						offset = (param_slot_index + coff_eh_param_home_bias + 2) * -8;  // struct base at more-negative slot
 						param_slot_index += 2;
 					} else {
-						offset = (param_slot_index + 1) * -8;
+						offset = (param_slot_index + coff_eh_param_home_bias + 1) * -8;
 						param_slot_index++;
 					}
 				} else {
@@ -1691,10 +1692,10 @@
 					// Use param_slot_index so two-register struct params don't collide with neighbours.
 					// For two-register structs, both slots must fit; otherwise fall through to stack path.
 					if (is_two_reg_struct) {
-						offset = (param_slot_index + 2) * -8;  // struct base at more-negative slot
+						offset = (param_slot_index + coff_eh_param_home_bias + 2) * -8;  // struct base at more-negative slot
 						param_slot_index += 2;
 					} else {
-						offset = (param_slot_index + 1) * -8;
+						offset = (param_slot_index + coff_eh_param_home_bias + 1) * -8;
 						param_slot_index++;
 					}
 				} else {
@@ -2665,21 +2666,46 @@
 				flushAllDirtyRegisters();
 				catch_has_pending_parent_return_ = true;
 
+				int32_t catch_return_slot = ensureCatchFuncletReturnSlot();
 				int32_t catch_return_flag_slot = ensureCatchFuncletReturnFlagSlot();
 				emitMovImm32(X64Register::RCX, 1);
 				emitMovToFrame(X64Register::RCX, catch_return_flag_slot, 64);
 
 				if (current_catch_continuation_label_.isValid()) {
-					StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
-					textSectionData.push_back(0x48);
-					textSectionData.push_back(0x8D);
-					textSectionData.push_back(0x05);
-					uint32_t lea_patch = static_cast<uint32_t>(textSectionData.size());
-					textSectionData.push_back(0x00);
-					textSectionData.push_back(0x00);
-					textSectionData.push_back(0x00);
-					textSectionData.push_back(0x00);
-					pending_branches_.push_back({fixup_handle, lea_patch});
+					bool has_enclosing_catch_funclet = false;
+					for (auto it = catch_codegen_context_stack_.rbegin(); it != catch_codegen_context_stack_.rend(); ++it) {
+						if (it->in_catch_funclet) {
+							has_enclosing_catch_funclet = true;
+							break;
+						}
+					}
+
+					if (has_enclosing_catch_funclet) {
+						StringHandle catch_return_bridge_label = current_catch_continuation_label_;
+						auto continuation_label_it = label_positions_.find(current_catch_continuation_label_);
+						if (continuation_label_it != label_positions_.end()) {
+							uint32_t continuation_branch_patch = continuation_label_it->second + 1;
+							for (const auto& pending_branch : pending_branches_) {
+								if (pending_branch.patch_position == continuation_branch_patch) {
+									catch_return_bridge_label = pending_branch.target_label;
+									break;
+								}
+							}
+						}
+
+						auto bridge_it = catch_return_bridges_.find(catch_return_bridge_label);
+						if (bridge_it == catch_return_bridges_.end()) {
+							CatchReturnBridge bridge{
+								.return_slot_offset = catch_return_slot,
+								.flag_slot_offset = catch_return_flag_slot,
+							};
+							catch_return_bridges_.emplace(catch_return_bridge_label, bridge);
+						}
+						emitLeaLabelAddress(X64Register::RAX, current_catch_continuation_label_);
+					} else {
+						StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
+						emitLeaLabelAddress(X64Register::RAX, fixup_handle);
+					}
 				} else {
 					emitXorRegReg(X64Register::RAX);
 				}

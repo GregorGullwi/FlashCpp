@@ -176,8 +176,6 @@
 	struct CatchReturnBridge {
 		int32_t return_slot_offset;
 		int32_t flag_slot_offset;
-		int return_size_bits;
-		bool is_float;
 	};
 	std::unordered_map<StringHandle, CatchReturnBridge> catch_return_bridges_;
 	std::unordered_map<StringHandle, StringHandle> catch_continuation_fixup_map_;  // continuation_label → fixup_label for catch path stack restoration

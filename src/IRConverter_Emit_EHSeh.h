@@ -178,13 +178,21 @@
 			return;
 		}
 
-		int spill_size_bits = getCatchParentReturnSpillSizeBits();
-		if (currentFunctionReturnsFloatingPointInXmm0()) {
-			emitFloatMovFromFrame(X64Register::XMM0, catch_funclet_return_slot_offset_, spill_size_bits == 32);
+		emitRestorePendingCatchParentReturnValue(catch_funclet_return_slot_offset_);
+	}
+
+	void emitRestorePendingCatchParentReturnValue(int32_t catch_return_slot_offset) {
+		if (!currentFunctionHasCatchParentReturnValue() || catch_return_slot_offset == 0) {
 			return;
 		}
 
-		emitMovFromFrameBySize(X64Register::RAX, catch_funclet_return_slot_offset_, spill_size_bits);
+		int spill_size_bits = getCatchParentReturnSpillSizeBits();
+		if (currentFunctionReturnsFloatingPointInXmm0()) {
+			emitFloatMovFromFrame(X64Register::XMM0, catch_return_slot_offset, spill_size_bits == 32);
+			return;
+		}
+
+		emitMovFromFrameBySize(X64Register::RAX, catch_return_slot_offset, spill_size_bits);
 	}
 
 	void handleCatchBegin(const IrInstruction& instruction) {
@@ -193,80 +201,81 @@
 			return;
 		}
 
-			// A catch handler is a fresh control-flow entry (landing pad / funclet entry).
-			// Runtime register contents here do not correspond to whatever compile-time path
-			// happened to be emitted immediately before the handler in the linear text stream.
-			// Drop all register-to-stack assumptions so the catch body reloads values from
-			// memory instead of reusing stale mappings from earlier code.
-			regAlloc.reset();
+		// A catch handler is a fresh control-flow entry (landing pad / funclet entry).
+		// Runtime register contents here do not correspond to whatever compile-time path
+		// happened to be emitted immediately before the handler in the linear text stream.
+		// Drop all register-to-stack assumptions so the catch body reloads values from
+		// memory instead of reusing stale mappings from earlier code.
+		regAlloc.reset();
 
-			// CatchBegin marks the start of a catch handler
-			// Record this catch handler in the most recent try block
-			catch_codegen_context_stack_.push_back(CatchCodegenContext{
-				.handler_ref = current_catch_handler_ref_,
-				.inside_catch_handler = inside_catch_handler_,
-				.in_catch_funclet = in_catch_funclet_,
-				.catch_has_pending_parent_return = catch_has_pending_parent_return_,
-				.continuation_label = current_catch_continuation_label_,
-			});
+		// CatchBegin marks the start of a catch handler.
+		// Record this catch handler in the most recent try block.
+		catch_codegen_context_stack_.push_back(CatchCodegenContext{
+			.handler_ref = current_catch_handler_ref_,
+			.inside_catch_handler = inside_catch_handler_,
+			.in_catch_funclet = in_catch_funclet_,
+			.catch_has_pending_parent_return = catch_has_pending_parent_return_,
+			.continuation_label = current_catch_continuation_label_,
+		});
 
-			if (pending_catch_try_index_ != SIZE_MAX && pending_catch_try_index_ < current_function_try_blocks_.size()) {
-				// Get the try block that just ended (tracked by pending_catch_try_index_)
-				TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
+		if (pending_catch_try_index_ != SIZE_MAX && pending_catch_try_index_ < current_function_try_blocks_.size()) {
+			// Get the try block that just ended (tracked by pending_catch_try_index_)
+			TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
 
-				CatchHandler handler;
-				handler.handler_offset = 0;
-				handler.handler_end_offset = 0;
-				handler.funclet_entry_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-				handler.funclet_end_offset = 0;
+			CatchHandler handler;
+			handler.handler_offset = 0;
+			handler.handler_end_offset = 0;
+			handler.funclet_entry_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			handler.funclet_end_offset = 0;
 
-				// Extract data from typed payload
-				const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
-				if (try_block.cleanup_vars.empty()) {
-					try_block.cleanup_vars = catch_op.cleanup_vars;
-				}
-				handler.type_index = catch_op.type_index;
-				handler.exception_type = catch_op.exception_type;  // Copy the Type enum
-				handler.is_const = catch_op.is_const;
-				handler.ref_qualifier = catch_op.ref_qualifier;
-				handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
+			// Extract data from typed payload
+			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+			if (try_block.cleanup_vars.empty()) {
+				try_block.cleanup_vars = catch_op.cleanup_vars;
+			}
+			handler.type_index = catch_op.type_index;
+			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
+			handler.is_const = catch_op.is_const;
+			handler.ref_qualifier = catch_op.ref_qualifier;
+			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
 
-				// Pre-compute stack offset for exception object during IR processing.
-				// This is necessary because variable_scopes may be cleared by the time
-				// we call convertExceptionInfoToWriterFormat() during finalization.
-				// var_number == 0 indicates catch(...) which has no exception variable,
-				// or an unnamed catch parameter like catch(int) without a variable name.
-				if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
-					int catch_storage_bits = 64;
-					if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
-						if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
-							catch_storage_bits = gTypeInfo[catch_op.type_index].type_size_;
-						} else {
-							int builtin_size = get_type_size_bits(catch_op.exception_type);
-							if (builtin_size > 0) {
-								catch_storage_bits = builtin_size;
-							}
+			// Pre-compute stack offset for exception object during IR processing.
+			// This is necessary because variable_scopes may be cleared by the time
+			// we call convertExceptionInfoToWriterFormat() during finalization.
+			// var_number == 0 indicates catch(...) which has no exception variable,
+			// or an unnamed catch parameter like catch(int) without a variable name.
+			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
+				int catch_storage_bits = 64;
+				if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
+					if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
+						catch_storage_bits = gTypeInfo[catch_op.type_index].type_size_;
+					} else {
+						int builtin_size = get_type_size_bits(catch_op.exception_type);
+						if (builtin_size > 0) {
+							catch_storage_bits = builtin_size;
 						}
 					}
-					handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, catch_storage_bits);
-				} else {
-					handler.catch_obj_stack_offset = 0;
 				}
-
-				try_block.catch_handlers.push_back(handler);
-				current_catch_handler_ = &try_block.catch_handlers.back();
-				current_catch_handler_ref_ = ActiveCatchHandlerRef{
-					.try_block_index = pending_catch_try_index_,
-					.handler_index = try_block.catch_handlers.size() - 1,
-				};
+				handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, catch_storage_bits);
 			} else {
-				current_catch_handler_ = nullptr;
-				current_catch_handler_ref_ = ActiveCatchHandlerRef{};
+				handler.catch_obj_stack_offset = 0;
 			}
 
-			// Platform-specific landing pad code generation
-			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			try_block.catch_handlers.push_back(handler);
+			current_catch_handler_ = &try_block.catch_handlers.back();
+			current_catch_handler_ref_ = ActiveCatchHandlerRef{
+				.try_block_index = pending_catch_try_index_,
+				.handler_index = try_block.catch_handlers.size() - 1,
+			};
+		} else {
+			current_catch_handler_ = nullptr;
+			current_catch_handler_ref_ = ActiveCatchHandlerRef{};
+		}
+
+		// Platform-specific landing pad code generation
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			inside_catch_handler_ = true;
+
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
 			// For ELF, handler_offset is the LSDA landing pad address.
 			// funclet_entry_offset was assigned the current code position above;
@@ -274,6 +283,7 @@
 			if (current_catch_handler_) {
 				current_catch_handler_->handler_offset = current_catch_handler_->funclet_entry_offset;
 			}
+
 			// Landing pad: call __cxa_begin_catch to get the exception object
 			//
 			// For try blocks with MULTIPLE catch handlers, the personality routine
@@ -282,9 +292,8 @@
 			//   EDX = selector (type_filter of matched action)
 			// We must save these, dispatch to the correct handler based on selector,
 			// then call __cxa_begin_catch in the matched handler.
-			
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
-			
+
 			// Determine handler index within this try block
 			size_t handler_index = 0;
 			bool is_multi_handler = false;
@@ -294,13 +303,14 @@
 				// We don't know total count yet, but if handler_index > 0, we're multi
 				is_multi_handler = (handler_index > 0);
 			}
-			
+
 			if (handler_index == 0) {
-				// First handler: save RAX (exception ptr) and EDX (selector) to stack
+				// First handler: save RAX (exception ptr) and EDX (selector) to stack.
 				// These will be used by subsequent handlers for dispatch.
 				// We allocate two 8-byte slots for these.
 				elf_exc_ptr_offset_ = allocateElfTempStackSlot(8);
 				elf_selector_offset_ = allocateElfTempStackSlot(4);
+
 				// mov [rbp+exc_ptr_offset], rax
 				emitMovToFrame(X64Register::RAX, elf_exc_ptr_offset_, 64);
 				// mov [rbp+selector_offset], edx (32-bit)
@@ -312,7 +322,7 @@
 					emitInlineDestructorCall(cv);
 				}
 			}
-			
+
 			// For non-last handlers, emit selector comparison + skip jump.
 			// We always emit it (even for potentially-last handlers) because we don't
 			// know if more handlers follow. If this IS the last handler, the personality
@@ -322,10 +332,11 @@
 				// The actual filter value will be patched at function finalization.
 				// CMP dword [rbp+offset], imm32
 				emitCmpFrameImm32(elf_selector_offset_, 0);  // placeholder 0
+
 				// Record patch position: the IMM32 is at the last 4 bytes we just wrote
 				uint32_t filter_patch_pos = static_cast<uint32_t>(textSectionData.size()) - 4;
 				elf_catch_filter_patches_.push_back({filter_patch_pos, pending_catch_try_index_, handler_index});
-				
+
 				// JNE catch_end_label (skip this handler if selector doesn't match)
 				StringHandle catch_end_handle = StringTable::getOrInternStringHandle(catch_op.catch_end_label);
 				textSectionData.push_back(0x0F);  // Two-byte opcode prefix
@@ -337,7 +348,7 @@
 				textSectionData.push_back(0x00);
 				pending_branches_.push_back({catch_end_handle, jne_patch});
 			}
-			
+
 			// Load exception pointer from saved slot and call __cxa_begin_catch
 			if (is_multi_handler || !catch_op.is_catch_all) {
 				// Multi-handler or typed: use saved exception pointer
@@ -347,17 +358,17 @@
 				emitMovRegReg(X64Register::RDI, X64Register::RAX);
 			}
 			emitCall("__cxa_begin_catch");
-			
-				// Result in RAX is pointer to the actual exception object.
-				// Materialize it explicitly so catch variable handling stays uniform.
-				materializeCatchObjectFromRax(catch_op);
-			
+
+			// Result in RAX is pointer to the actual exception object.
+			// Materialize it explicitly so catch variable handling stays uniform.
+			materializeCatchObjectFromRax(catch_op);
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
 			// Catch handler is a real FH3 funclet entered with establisher-frame in RDX.
 			// Emit a funclet prologue so the runtime can unwind it as an independent
 			// range and all frame-relative accesses resolve against the parent frame.
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+
 			// Save establisher frame (RDX) to caller's shadow space before push.
 			// Clang emits this and the CRT may rely on it during unwinding.
 			// mov [rsp+10h], rdx  (48 89 54 24 10)
@@ -368,6 +379,7 @@
 			textSectionData.push_back(0x10);
 			emitPushReg(X64Register::RBP);
 			emitSubRSP(32);
+
 			// For frame-pointer based parent functions, rebuild the same frame pointer from
 			// the establisher frame (RDX) so the catch body can keep using normal RBP-relative
 			// local/catch-object offsets.
@@ -388,7 +400,6 @@
 			if (current_catch_handler_) {
 				current_catch_handler_->handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			}
-
 		}
 	}
 

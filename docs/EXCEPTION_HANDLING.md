@@ -85,7 +85,7 @@ The current recommendation is **minimal first, then reassess**.
 ### Explicit follow-ups still worth tracking
 
 - **`throw <expr>` from inside a catch body** is now hardened on Windows: the frontend materializes the thrown value first, then cleans active catch scopes, and the Windows throw backend skips the extra copy-construction step when that payload is already materialized.
-- **Nested `try/catch` inside an active catch on Windows** is still a known gap. Investigation showed that the crash is broader than just nested `throw;`: even an inner catch that simply returns can still fail fast. Current evidence points at deeper nested FH3 catch-funclet dispatch / continuation semantics, not just missing catch-local destructor cleanup.
+- **Nested `try/catch` inside an active catch on Windows** now has focused regression coverage for fallthrough, `return`, `throw <expr>`, and `throw;` / rethrow. The nested-return fix uses an enclosing-catch bridge plus the correct Windows EH parameter-home slot bias so `dispUnwindHelp` keeps ownership of `[rbp-8]`.
 
 ## Windows Catch-Funclet Return Model
 
@@ -134,10 +134,12 @@ When `handleReturn(...)` executes while `in_catch_funclet_` is true on Windows, 
 2. flushes dirty registers,
 3. sets `catch_has_pending_parent_return_ = true`,
 4. stores `1` into the catch-return flag slot,
-5. loads `RAX` with the continuation-fixup address when a continuation label exists,
+5. loads `RAX` with either:
+   - the normal continuation label for a nested catch returning into an enclosing catch funclet, or
+   - the continuation-fixup address for a top-level catch funclet returning to the parent function,
 6. emits the funclet epilogue and `ret`.
 
-`CatchEnd` then remains authoritative:
+`CatchEnd` remains authoritative for normal fallthrough and for top-level catch returns that need a parent-frame continuation fixup:
 
 - it obtains the parent continuation label from `CatchEndOp`,
 - creates or reuses a synthetic continuation-fixup label,
@@ -148,7 +150,8 @@ When `handleReturn(...)` executes while `in_catch_funclet_` is true on Windows, 
 The continuation/fixup decides between normal fallthrough and parent return by checking the saved catch-return flag:
 
 - if the flag is clear, execution resumes at the normal continuation label,
-- if the flag is set, the fixup clears the flag, restores the saved parent return value, emits the parent epilogue, and returns from the enclosing function.
+- if the flag is set in a nested-catch bridge, the enclosing catch funclet returns the parent-function fixup address expected by the CRT,
+- if the flag is set in a top-level catch fixup, the fixup clears the flag, restores the saved parent return value, emits the parent epilogue, and returns from the enclosing function.
 
 ### Key regression coverage for this model
 
@@ -157,6 +160,10 @@ The continuation/fixup decides between normal fallthrough and parent return by c
 - `test_eh_catch_conditional_return_fallthrough_ret0.cpp`
 - `test_eh_catch_shared_fixup_late_return_ret0.cpp`
 - `test_eh_catch_local_dtor_fallthrough_ret0.cpp`
+- `test_eh_nested_catch_return_ret0.cpp`
+- `test_eh_nested_catch_fallthrough_ret0.cpp`
+- `test_eh_nested_catch_throw_expr_dtor_ret0.cpp`
+- `test_eh_nested_catch_rethrow_dtor_ret0.cpp`
 
 Together these cover:
 

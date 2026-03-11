@@ -39,14 +39,22 @@
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
 
-				emitXorRegReg(X64Register::RCX);
-				emitMovToFrame(X64Register::RCX, bridge.flag_slot_offset, 64);
-				if (currentFunctionHasCatchParentReturnValue()) {
-					emitRestorePendingCatchParentReturnValue();
-				}
-				emitMovRegReg(X64Register::RSP, X64Register::RBP);
-				emitPopReg(X64Register::RBP);
-				emitRet();
+					if (in_catch_funclet_ && current_catch_continuation_label_.isValid()) {
+						StringHandle fixup_handle = getOrCreateCatchContinuationFixupLabel(current_catch_continuation_label_);
+						emitLeaLabelAddress(X64Register::RAX, fixup_handle);
+						emitAddRSP(32);
+						emitPopReg(X64Register::RBP);
+						emitRet();
+					} else {
+						emitXorRegReg(X64Register::RCX);
+						emitMovToFrame(X64Register::RCX, bridge.flag_slot_offset, 64);
+						if (currentFunctionHasCatchParentReturnValue()) {
+							emitRestorePendingCatchParentReturnValue(bridge.return_slot_offset);
+						}
+						emitMovRegReg(X64Register::RSP, X64Register::RBP);
+						emitPopReg(X64Register::RBP);
+						emitRet();
+					}
 
 				uint32_t skip_target = static_cast<uint32_t>(textSectionData.size());
 				int32_t rel = static_cast<int32_t>(skip_target) - static_cast<int32_t>(skip_patch + 4);
