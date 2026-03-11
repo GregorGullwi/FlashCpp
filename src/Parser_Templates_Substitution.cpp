@@ -871,29 +871,49 @@ ASTNode Parser::substituteTemplateParameters(
 		// Substitute the type specifier
 		ASTNode substituted_type = substituteTemplateParameters(decl.type_node(), template_params, template_args);
 
-		// Create new declaration with substituted type
-		return emplace_node<DeclarationNode>(substituted_type, decl.identifier_token());
+		// Create new declaration with substituted type while preserving declaration metadata
+		ASTNode new_decl_node = emplace_node<DeclarationNode>(substituted_type, decl.identifier_token());
+		DeclarationNode& new_decl = new_decl_node.as<DeclarationNode>();
+		new_decl.set_custom_alignment(decl.custom_alignment());
+		new_decl.set_parameter_pack(decl.is_parameter_pack());
+		new_decl.set_unsized_array(decl.is_unsized_array());
+		if (!decl.array_dimensions().empty()) {
+			std::vector<ASTNode> substituted_dims;
+			substituted_dims.reserve(decl.array_dimensions().size());
+			for (const auto& dim : decl.array_dimensions()) {
+				substituted_dims.push_back(substituteTemplateParameters(dim, template_params, template_args));
+			}
+			new_decl.set_array_dimensions(std::move(substituted_dims));
+		}
+		if (decl.has_default_value()) {
+			new_decl.set_default_value(substituteTemplateParameters(decl.default_value(), template_params, template_args));
+		}
+		return new_decl_node;
 
 	} else if (node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
 
 		// Check if this is a user-defined type that matches a template parameter
-		if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-			std::string_view type_name = StringTable::getStringView(type_info.name());
-
-			// Check if this type name matches a template parameter
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.name() == type_name && template_args[i].isTypeArgument()) {
-					// Substitute with concrete type
-					return emplace_node<TypeSpecifierNode>(
-						template_args[i].base_type,
-						TypeQualifier::None,
-						get_type_size_bits(template_args[i].base_type),
-						Token()
-					);
+		if (type_spec.type() == Type::UserDefined) {
+			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+				type_spec,
+				template_params,
+				template_args);
+			if (substituted_type != type_spec.type() || substituted_type_index != type_spec.type_index()) {
+				int substituted_size_bits = get_type_size_bits(substituted_type);
+				if (substituted_type_index > 0 && substituted_type_index < gTypeInfo.size() && gTypeInfo[substituted_type_index].type_size_ > 0) {
+					substituted_size_bits = gTypeInfo[substituted_type_index].type_size_;
 				}
+				TypeSpecifierNode substituted_spec(
+					substituted_type,
+					substituted_type_index,
+					substituted_size_bits,
+					type_spec.token(),
+					type_spec.cv_qualifier(),
+					type_spec.reference_qualifier());
+				substituted_spec.copy_indirection_from(type_spec);
+				substituted_spec.set_reference_qualifier(type_spec.reference_qualifier());
+				return emplace_node<TypeSpecifierNode>(substituted_spec);
 			}
 		}
 
@@ -940,12 +960,13 @@ ASTNode Parser::substituteTemplateParameters(
 	} else if (node.is<VariableDeclarationNode>()) {
 		// Handle variable declarations
 		const VariableDeclarationNode& var_decl = node.as<VariableDeclarationNode>();
+		ASTNode substituted_decl = substituteTemplateParameters(var_decl.declaration_node(), template_params, template_args);
 		
 		auto initializer = var_decl.initializer().has_value() ?
 			std::optional<ASTNode>(substituteTemplateParameters(*var_decl.initializer(), template_params, template_args)) :
 			std::nullopt;
 		
-		ASTNode new_var_node = emplace_node<VariableDeclarationNode>(var_decl.declaration_node(), initializer, var_decl.storage_class());
+		ASTNode new_var_node = emplace_node<VariableDeclarationNode>(substituted_decl, initializer, var_decl.storage_class());
 		VariableDeclarationNode& new_var = new_var_node.as<VariableDeclarationNode>();
 		
 		// Preserve constexpr/constinit flags

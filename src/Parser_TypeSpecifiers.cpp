@@ -790,6 +790,7 @@ ParseResult Parser::parse_type_specifier()
 		StringBuilder type_name_builder;
 		type_name_builder.append(peek_info().value());
 		Token type_name_token = peek_info();  // Save the token before consuming it
+		Token last_qualified_token = type_name_token;
 		advance();
 
 		// Check for qualified name (e.g., Outer::Inner for nested classes)
@@ -812,11 +813,52 @@ ParseResult Parser::parse_type_specifier()
 			}
 
 			type_name_builder.append("::"sv).append(peek_info().value());
+			last_qualified_token = peek_info();
 			advance();
 		}
 
 		// Commit the StringBuilder to get a persistent string_view
 		std::string_view type_name = type_name_builder.commit();
+
+		// Preserve simple dependent qualified member types like T::value_type or T::size_type
+		// as placeholder types so template instantiation can resolve them later.
+		// Without this, they can collapse to bare T before instantiation.
+		if (type_name.find("::") != std::string_view::npos && peek() != "<"_tok &&
+		    (parsing_template_depth_ > 0 || !current_template_param_names_.empty())) {
+			std::string_view base_part = type_name.substr(0, type_name.find("::"));
+			bool is_dependent_qualified_type = false;
+			for (const auto& param_name : current_template_param_names_) {
+				if (param_name == StringTable::getOrInternStringHandle(base_part)) {
+					is_dependent_qualified_type = true;
+					break;
+				}
+			}
+
+			if (is_dependent_qualified_type) {
+				StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+				auto type_it = gTypesByName.find(type_handle);
+				TypeIndex type_idx;
+				if (type_it == gTypesByName.end()) {
+					auto& placeholder_type = gTypeInfo.emplace_back();
+					placeholder_type.type_ = Type::UserDefined;
+					placeholder_type.type_index_ = gTypeInfo.size() - 1;
+					placeholder_type.type_size_ = 0;
+					placeholder_type.name_ = type_handle;
+					placeholder_type.is_incomplete_instantiation_ = true;
+					gTypesByName[type_handle] = &placeholder_type;
+					type_idx = placeholder_type.type_index_;
+				} else {
+					type_idx = type_it->second->type_index_;
+				}
+
+				return ParseResult::success(emplace_node<TypeSpecifierNode>(
+					Type::UserDefined,
+					type_idx,
+					0,
+					last_qualified_token,
+					cv_qualifier));
+			}
+		}
 
 		// Check for template arguments: Container<int>
 		std::optional<std::vector<TemplateTypeArg>> template_args;

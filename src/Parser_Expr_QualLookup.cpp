@@ -409,6 +409,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	}
 	
 	auto result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), func_token));
+		std::get<FunctionCallNode>(result.as<ExpressionNode>()).set_qualified_name(func_name);
 	
 	// Set the mangled name on the function call if we have the function declaration
 	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
@@ -1368,6 +1369,50 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& binary = std::get<BinaryOperatorNode>(expr);
 		TokenKind op_kind = binary.get_token().kind();
+		auto lhs_type_opt = get_expression_type(binary.get_lhs());
+
+		auto get_overload_return_type = [&]() -> std::optional<TypeSpecifierNode> {
+			if (binary.has_resolved_member_operator_overload()) {
+				const StructMemberFunction* member_overload = binary.resolved_member_operator_overload();
+				if (!member_overload || !member_overload->function_decl.is<FunctionDeclarationNode>()) {
+					return std::nullopt;
+				}
+
+				const auto& type_node = member_overload->function_decl.as<FunctionDeclarationNode>().decl_node().type_node();
+				if (!type_node.is<TypeSpecifierNode>()) {
+					return std::nullopt;
+				}
+
+				TypeSpecifierNode return_type = type_node.as<TypeSpecifierNode>();
+				if (lhs_type_opt.has_value() && lhs_type_opt->type_index() > 0) {
+					return_type = resolveBinaryOperatorTypeForSelfReference(return_type, lhs_type_opt->type_index());
+				}
+				return return_type;
+			}
+
+			if (binary.has_resolved_free_function_operator_overload()) {
+				const FunctionDeclarationNode* free_function_overload = binary.resolved_free_function_operator_overload();
+				if (!free_function_overload) {
+					return std::nullopt;
+				}
+
+				const ASTNode& type_node = free_function_overload->decl_node().type_node();
+				if (!type_node.is<TypeSpecifierNode>()) {
+					return std::nullopt;
+				}
+				return type_node.as<TypeSpecifierNode>();
+			}
+
+			return std::nullopt;
+		};
+
+		if (binary.has_ambiguous_operator_overload()) {
+			return std::nullopt;
+		}
+
+		if (auto overload_return_type = get_overload_return_type(); overload_return_type.has_value()) {
+			return *overload_return_type;
+		}
 
 		// Comparison and logical operators always return bool
 		if (op_kind == tok::Equal || op_kind == tok::NotEqual ||
@@ -1379,7 +1424,6 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 		// For bitwise/arithmetic operators, check the LHS type
 		// If LHS is an enum, check for free function operator overloads
-		auto lhs_type_opt = get_expression_type(binary.get_lhs());
 		if (lhs_type_opt.has_value() && lhs_type_opt->type() == Type::Enum) {
 			// Look for a free function operator overload (e.g., operator&(EnumA, EnumB) -> EnumA)
 			StringBuilder op_name_builder;

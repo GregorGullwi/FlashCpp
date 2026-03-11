@@ -250,29 +250,44 @@
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
 			bool preserve_pointer_depth = false) -> ExprResult {
 			// Preserve the original direct-identifier encoding rule from these sites:
-			// struct identifiers carry type_index in slot 4. Non-struct identifiers keep 0 by default,
-			// but selected direct global-load sites opt into preserving pointer_depth so downstream
-			// toTypedValue consumers can still recognize pointer-typed globals.
+			// semantic identity types carry type_index in ExprResult, while legacy slot-4 metadata
+			// keeps enum values identifiable after integral lowering and keeps enum pointers usable
+			// for still-unmigrated pointer-depth consumers.
 			Type result_type = type_node.type();
-			if (preserve_pointer_depth && type_node.type() == Type::Enum && type_node.pointer_depth() > 0 &&
-				type_node.type_index() < gTypeInfo.size()) {
+			const bool is_enum_pointer = type_node.type() == Type::Enum && type_node.pointer_depth() > 0;
+			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
 				if (const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index()].getEnumInfo()) {
 					result_type = enum_info->underlying_type;
 				}
 			}
-			const bool carries_type_index = type_node.type() == Type::Struct;
-			const int slot4_pointer_depth = (preserve_pointer_depth && !carries_type_index) ? type_node.pointer_depth() : 0;
+			Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
+			if (type_node.type_index() > 0 && type_node.type_index() < gTypeInfo.size()) {
+				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index()].type_, type_node.type_index());
+			}
+			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
+			const int pointer_depth = preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0;
 			ExprResult result = makeIdentifierResult(
 				result_type,
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
-				slot4_pointer_depth);
+				pointer_depth);
+			if (type_node.type() == Type::Enum) {
+				if (is_enum_pointer) {
+					preserveLegacyEnumPointerDepthEncoding(result);
+				} else {
+					result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
+				}
+			}
 			return result;
 		};
-		auto preserveEnumTypeIndexEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
+		auto preserveEnumIdentifierEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
 			if (type_node.type() == Type::Enum) {
-				result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
+				if (type_node.pointer_depth() > 0) {
+					preserveLegacyEnumPointerDepthEncoding(result);
+				} else {
+					result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
+				}
 			}
 			return std::move(result);
 		};
@@ -282,6 +297,9 @@
 		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
+		auto preserveSemanticTypeIndex = [](Type type, TypeIndex type_index) {
+			return (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) ? type_index : 0;
+		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
 		bool is_implicit_capture = !is_explicit_capture && current_lambda_context_.isActive() &&
@@ -942,7 +960,7 @@
 						pointee_size = 32;
 					}
 					
-					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+					TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 					
 					// Create a TempVar with Indirect lvalue metadata for compound assignments
 					// This allows handleLValueCompoundAssignment to work with reference variables
@@ -1007,9 +1025,9 @@
 					0  // offset is 0 for simple dereference
 				);
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
-				
-				TypeIndex type_index = (pointee_type == Type::Struct || type_node.type() == Type::Enum) ? type_node.type_index() : 0;
-				return preserveEnumTypeIndexEncoding(
+
+				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
+				return preserveEnumIdentifierEncoding(
 					makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index),
 					type_node);
 			}
@@ -1018,10 +1036,10 @@
 			// Use helper function to calculate size_bits with proper fallback handling
 			int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 			
-			// For enum variables (not enumerators), return the underlying integer type
+			// For non-pointer enum variables (not enumerators), return the underlying integer type
 			// This allows enum variables to work in arithmetic/bitwise operations
 			Type return_type = type_node.type();
-			if (type_node.type() == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
+			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0 && type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 				const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 				if (enum_info) {
@@ -1038,15 +1056,15 @@
 			TypeIndex type_index = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
 				? type_node.type_index()
 				: 0;
-			int pointer_depth = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
+			int pointer_depth = (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 				? 0
 				: type_node.pointer_depth();
-			return preserveEnumTypeIndexEncoding(makeIdentifierResult(
-				return_type,
-				size_bits,
-				StringTable::getOrInternStringHandle(identifierNode.name()),
-				type_index,
-				pointer_depth), type_node);
+			return preserveEnumIdentifierEncoding(makeIdentifierResult(
+					return_type,
+					size_bits,
+					StringTable::getOrInternStringHandle(identifierNode.name()),
+					type_index,
+					pointer_depth), type_node);
 		}
 
 		// Check if it's a VariableDeclarationNode
@@ -1150,7 +1168,7 @@
 						);
 						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
 						
-						TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+						TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 						return makeIdentifierResult(pointee_type, pointee_size, addr_temp, type_index);
 					}
 					
@@ -1177,9 +1195,11 @@
 						0  // offset is 0 for simple dereference
 					);
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
-					
-					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
-					return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
+
+					TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
+					return preserveEnumIdentifierEncoding(
+						makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index),
+						type_node);
 				}
 				
 				// Regular local variable (not a reference) - return variable name
@@ -1190,10 +1210,17 @@
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
 				// - Otherwise return 0
-				unsigned long long fourth_element = (type_node.type() == Type::Struct)
-					? static_cast<unsigned long long>(type_node.type_index())
-					: ((type_node.pointer_depth() > 0) ? static_cast<unsigned long long>(type_node.pointer_depth()) : 0ULL);
-				return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
+				ExprResult result = makeIdentifierResult(
+					type_node.type(),
+					size_bits,
+					StringTable::getOrInternStringHandle(identifierNode.name()),
+					(type_node.type() == Type::Struct || type_node.type() == Type::Enum || type_node.type() == Type::UserDefined)
+						? type_node.type_index()
+						: 0,
+					(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+						? 0
+						: static_cast<int>(type_node.pointer_depth()));
+				return preserveEnumIdentifierEncoding(std::move(result), type_node);
 			}
 		}
 		

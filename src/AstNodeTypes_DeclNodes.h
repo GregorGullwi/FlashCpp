@@ -803,6 +803,9 @@ struct TypeInfo
 	EnumTypeInfo* getEnumInfo() { return enum_info_.get(); }
 
 	void setEnumInfo(std::unique_ptr<EnumTypeInfo> info) {
+		if (info) {
+			type_size_ = info->underlying_size;
+		}
 		enum_info_ = std::move(info);
 	}
 };
@@ -1113,12 +1116,15 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 		return 64;
 	}
 	Type t = type_spec.type();
-	if (t == Type::Struct || t == Type::UserDefined) {
+	if (t == Type::Struct || t == Type::UserDefined || t == Type::Enum) {
 		TypeIndex idx = type_spec.type_index();
 		if (idx > 0 && idx < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[idx];
 			if (const StructTypeInfo* si = ti.getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
+			}
+			if (const EnumTypeInfo* ei = ti.getEnumInfo()) {
+				return static_cast<int>(ei->underlying_size);
 			}
 			if (ti.type_size_ > 0) {
 				return ti.type_size_;
@@ -1312,6 +1318,14 @@ private:
 	bool value_;
 };
 
+enum class BinaryOperatorSemanticResolutionState : uint8_t {
+	Unresolved,
+	NoMatch,
+	Ambiguous,
+	MemberMatch,
+	FreeFunctionMatch,
+};
+
 class BinaryOperatorNode {
 public:
 	explicit BinaryOperatorNode(Token identifier, ASTNode lhs_node,
@@ -1322,35 +1336,54 @@ public:
 	const Token& get_token() const { return identifier_; }
 	auto get_lhs() const { return lhs_node_; }
 	auto get_rhs() const { return rhs_node_; }
-	bool has_resolved_member_operator_overload() const { return resolved_member_operator_overload_ != nullptr; }
-	bool has_resolved_free_function_operator_overload() const { return resolved_free_function_operator_overload_ != nullptr; }
+	BinaryOperatorSemanticResolutionState semantic_operator_resolution_state() const { return semantic_operator_resolution_state_; }
+	bool has_recorded_operator_overload_resolution() const { return semantic_operator_resolution_state_ != BinaryOperatorSemanticResolutionState::Unresolved; }
+	bool has_resolved_member_operator_overload() const { return semantic_operator_resolution_state_ == BinaryOperatorSemanticResolutionState::MemberMatch; }
+	bool has_resolved_free_function_operator_overload() const { return semantic_operator_resolution_state_ == BinaryOperatorSemanticResolutionState::FreeFunctionMatch; }
 	bool has_resolved_operator_overload() const { return has_resolved_member_operator_overload() || has_resolved_free_function_operator_overload(); }
-	bool has_ambiguous_operator_overload() const { return ambiguous_operator_overload_; }
+	bool has_ambiguous_operator_overload() const { return semantic_operator_resolution_state_ == BinaryOperatorSemanticResolutionState::Ambiguous; }
+	bool has_no_match_operator_overload() const { return semantic_operator_resolution_state_ == BinaryOperatorSemanticResolutionState::NoMatch; }
 	const StructMemberFunction* resolved_member_operator_overload() const { return resolved_member_operator_overload_; }
 	const FunctionDeclarationNode* resolved_free_function_operator_overload() const { return resolved_free_function_operator_overload_; }
 
 	void set_resolved_member_operator_overload(const StructMemberFunction* overload) {
 		resolved_member_operator_overload_ = overload;
 		resolved_free_function_operator_overload_ = nullptr;
-		ambiguous_operator_overload_ = false;
+		semantic_operator_resolution_state_ = overload != nullptr
+			? BinaryOperatorSemanticResolutionState::MemberMatch
+			: BinaryOperatorSemanticResolutionState::NoMatch;
 	}
 
 	void set_resolved_free_function_operator_overload(const FunctionDeclarationNode* overload) {
 		resolved_free_function_operator_overload_ = overload;
 		resolved_member_operator_overload_ = nullptr;
-		ambiguous_operator_overload_ = false;
+		semantic_operator_resolution_state_ = overload != nullptr
+			? BinaryOperatorSemanticResolutionState::FreeFunctionMatch
+			: BinaryOperatorSemanticResolutionState::NoMatch;
+	}
+
+	void set_no_match_operator_overload() {
+		resolved_member_operator_overload_ = nullptr;
+		resolved_free_function_operator_overload_ = nullptr;
+		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::NoMatch;
 	}
 
 	void set_ambiguous_operator_overload() {
 		resolved_member_operator_overload_ = nullptr;
 		resolved_free_function_operator_overload_ = nullptr;
-		ambiguous_operator_overload_ = true;
+		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Ambiguous;
+	}
+
+	void clear_semantic_operator_resolution() {
+		resolved_member_operator_overload_ = nullptr;
+		resolved_free_function_operator_overload_ = nullptr;
+		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;
 	}
 
 	void copy_semantic_operator_resolution_from(const BinaryOperatorNode& other) {
 		resolved_member_operator_overload_ = other.resolved_member_operator_overload_;
 		resolved_free_function_operator_overload_ = other.resolved_free_function_operator_overload_;
-		ambiguous_operator_overload_ = other.ambiguous_operator_overload_;
+		semantic_operator_resolution_state_ = other.semantic_operator_resolution_state_;
 	}
 
 private:
@@ -1359,7 +1392,7 @@ private:
 	ASTNode rhs_node_;
 	const StructMemberFunction* resolved_member_operator_overload_ = nullptr;
 	const FunctionDeclarationNode* resolved_free_function_operator_overload_ = nullptr;
-	bool ambiguous_operator_overload_ = false;
+	BinaryOperatorSemanticResolutionState semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;
 };
 
 class UnaryOperatorNode {

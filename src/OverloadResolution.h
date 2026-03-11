@@ -321,6 +321,9 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
 				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
+						if ((from.is_const() && !to.is_const()) || (from.is_volatile() && !to.is_volatile())) {
+							return TypeConversionResult::no_match();
+						}
 					return TypeConversionResult::exact_match();
 				}
 				
@@ -842,6 +845,148 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	return (template_base_name == base_name) ? left_type_index : param_idx;
 }
 
+inline bool binaryOperatorUsesTypeIndexIdentity(Type type) {
+	return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
+}
+
+inline Type effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
+	Type type = spec.type();
+	if ((type == Type::Invalid || type == Type::Void) && spec.type_index() > 0 && spec.type_index() < gTypeInfo.size()) {
+		type = gTypeInfo[spec.type_index()].type_;
+	}
+	if ((type == Type::Invalid || type == Type::Void) && spec.type_index() > 0) {
+		return Type::Struct;
+	}
+	return type;
+}
+
+inline bool isConcreteBinaryOperatorOperandType(const TypeSpecifierNode& spec) {
+	Type type = effectiveBinaryOperatorTypeFromSpec(spec);
+	if (type == Type::Invalid || type == Type::Void) {
+		return false;
+	}
+	if (binaryOperatorUsesTypeIndexIdentity(type)) {
+		return spec.type_index() > 0;
+	}
+	return true;
+}
+
+inline bool isUserDefinedBinaryOperatorOperandType(const TypeSpecifierNode& spec) {
+	if (spec.pointer_depth() > 0
+		|| spec.is_function_pointer()
+		|| spec.is_member_function_pointer()
+		|| spec.is_member_object_pointer()) {
+		return false;
+	}
+	Type type = effectiveBinaryOperatorTypeFromSpec(spec);
+	return binaryOperatorUsesTypeIndexIdentity(type) && spec.type_index() > 0;
+}
+
+inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex type_index) {
+	Type effective_type = type;
+	int size_bits = 0;
+
+	if (type_index > 0 && type_index < gTypeInfo.size()) {
+		const auto& type_info = gTypeInfo[type_index];
+		if (effective_type == Type::Invalid || effective_type == Type::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
+			if (type_info.type_ != Type::Invalid && type_info.type_ != Type::Void) {
+				effective_type = type_info.type_;
+			} else if (effective_type == Type::Invalid || effective_type == Type::Void) {
+				effective_type = Type::Struct;
+			}
+		}
+
+		if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+			size_bits = static_cast<int>(struct_info->total_size * 8);
+		} else if (type_info.type_size_ > 0) {
+			size_bits = type_info.type_size_;
+		}
+	}
+
+	if (size_bits == 0 && effective_type != Type::Invalid && effective_type != Type::Void) {
+		size_bits = get_type_size_bits(effective_type);
+	}
+
+	if (binaryOperatorUsesTypeIndexIdentity(effective_type) || type_index > 0) {
+		return TypeSpecifierNode(effective_type, type_index, size_bits);
+	}
+
+	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits);
+}
+
+inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
+	TypeSpecifierNode resolved = type_spec;
+	Type resolved_type = effectiveBinaryOperatorTypeFromSpec(resolved);
+	if (binaryOperatorUsesTypeIndexIdentity(resolved_type)) {
+		resolved.set_type_index(resolveSelfRefParamIndex(resolved.type_index(), enclosing_type_index));
+	}
+	return resolved;
+}
+
+inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& arg_spec, const TypeSpecifierNode& param_spec, TypeIndex enclosing_type_index) {
+	TypeSpecifierNode resolved_param_spec = resolveBinaryOperatorTypeForSelfReference(param_spec, enclosing_type_index);
+	if (isUserDefinedBinaryOperatorOperandType(arg_spec)
+		&& isUserDefinedBinaryOperatorOperandType(resolved_param_spec)
+		&& arg_spec.type_index() > 0
+		&& resolved_param_spec.type_index() > 0
+		&& arg_spec.type_index() != resolved_param_spec.type_index()) {
+		return ConversionRank::NoMatch;
+	}
+	auto conversion = can_convert_type(arg_spec, resolved_param_spec);
+	return conversion.is_valid ? conversion.rank : ConversionRank::NoMatch;
+}
+
+inline ConversionRank rankImplicitObjectToBinaryOperator(
+	const TypeSpecifierNode& object_spec,
+	const StructMemberFunction& member_func,
+	TypeIndex actual_object_type_index,
+	TypeIndex member_owner_type_index)
+{
+	if (object_spec.is_const() && !member_func.is_const()) {
+		return ConversionRank::NoMatch;
+	}
+	if (object_spec.is_volatile() && !member_func.is_volatile()) {
+		return ConversionRank::NoMatch;
+	}
+
+	bool uses_base_member = actual_object_type_index != 0 && member_owner_type_index != 0
+		&& actual_object_type_index != member_owner_type_index;
+
+	if (uses_base_member) {
+		return ConversionRank::Conversion;
+	}
+
+	return ConversionRank::ExactMatch;
+}
+
+enum class BinaryOperatorCandidateComparison {
+	Better,
+	Worse,
+	Equivalent,
+	Incomparable,
+};
+
+inline BinaryOperatorCandidateComparison compareBinaryOperatorCandidateRanks(
+	ConversionRank lhs_lhs_rank,
+	ConversionRank lhs_rhs_rank,
+	ConversionRank rhs_lhs_rank,
+	ConversionRank rhs_rhs_rank)
+{
+	bool lhs_is_better = false;
+	bool lhs_is_worse = false;
+
+	if (lhs_lhs_rank < rhs_lhs_rank) lhs_is_better = true;
+	else if (lhs_lhs_rank > rhs_lhs_rank) lhs_is_worse = true;
+
+	if (lhs_rhs_rank < rhs_rhs_rank) lhs_is_better = true;
+	else if (lhs_rhs_rank > rhs_rhs_rank) lhs_is_worse = true;
+
+	if (lhs_is_better && !lhs_is_worse) return BinaryOperatorCandidateComparison::Better;
+	if (!lhs_is_better && lhs_is_worse) return BinaryOperatorCandidateComparison::Worse;
+	if (!lhs_is_better && !lhs_is_worse) return BinaryOperatorCandidateComparison::Equivalent;
+	return BinaryOperatorCandidateComparison::Incomparable;
+}
+
 // Find operator overload in a struct type
 // Returns the member function that overloads the given operator, or nullptr if not found
 inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_index, OverloadableOperator operator_kind) {
@@ -881,74 +1026,123 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 // For binary operators like operator+, operator-, etc.
 // Returns the member function that overloads the given operator, or nullptr if not found
 // This handles the member function form: a.operator+(b)
-inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
-	// Only struct types can have operator overloads
+inline OperatorOverloadResult findBinaryOperatorOverload(
+	const TypeSpecifierNode& left_type_spec,
+	const TypeSpecifierNode& right_type_spec,
+	OverloadableOperator operator_kind)
+{
+	TypeIndex left_type_index = left_type_spec.type_index();
 	if (left_type_index == 0 || left_type_index >= gTypeInfo.size()) {
 		return OperatorOverloadResult::no_overload();
 	}
-	
-	const TypeInfo& left_type_info = gTypeInfo[left_type_index];
-	const StructTypeInfo* left_struct_info = left_type_info.getStructInfo();
-	
+
+	const StructTypeInfo* left_struct_info = gTypeInfo[left_type_index].getStructInfo();
 	if (!left_struct_info) {
 		return OperatorOverloadResult::no_overload();
 	}
-	
-	// Search for the operator overload in member functions
-	// For member function form: Number::operator+(const Number& other)
-	// Phase 1: Exact type match on the parameter's type_index (with self-referential resolution
-	// for template instantiations, per the logic above)
-	for (const auto& member_func : left_struct_info->member_functions) {
-		if (operator_kind == OverloadableOperator::Assign) {
-			if (!isAssignOperator(member_func.operator_kind)) continue;
-		} else {
-			if (member_func.operator_kind != operator_kind) continue;
-		}
-		// Check if the single parameter type matches the right operand
-		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
-			if (params.size() == 1 && params[0].is<DeclarationNode>()) {
-				const auto& param_type = params[0].as<DeclarationNode>().type_node();
-					if (param_type.is<TypeSpecifierNode>()) {
-						const auto& param_spec = param_type.as<TypeSpecifierNode>();
-						// For struct/enum/user-defined types, match by type_index (which is meaningful).
-						// Resolve self-referential template param types before comparing
-						// (e.g., Wrapper<int>::operator+=(const Wrapper& other) stores
-						//  the param's type_index as the uninstantiated Wrapper template).
-						// For primitive types, match by base Type enum (type_index is always 0).
-						bool type_matches = false;
-						if (param_spec.type() == Type::Struct || param_spec.type() == Type::Enum || param_spec.type() == Type::UserDefined) {
-							TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index(), left_type_index);
-							type_matches = (resolved_param_idx == right_type_index);
-						} else {
-							// Caller provides the actual RHS base type for primitive matches.
-							type_matches = (param_spec.type() == right_type);
-						}
-						if (type_matches) {
-							return OperatorOverloadResult(&member_func);
-						}
-				}
-			}
-		}
-	}
-	// Phase 2: No exact type match found among member operators.
-	// Do NOT fall back to a type-mismatched member operator — per C++20 [over.match.oper],
-	// non-member (free-function) candidates must also be considered. Returning a mismatched
-	// member here would suppress the free-function search in
-	// findBinaryOperatorOverloadWithFreeFunction. Instead, fall through to base-class search
-	// and ultimately return no_overload so the caller can check free functions too.
 
-	// Search base classes recursively
-	for (const auto& base_spec : left_struct_info->base_classes) {
-		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
-			auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_kind, right_type);
-			if (result.has_match || result.is_ambiguous) {
-				return result;
+	struct OperatorCandidate {
+		ConversionRank lhs_rank;
+		ConversionRank rhs_rank;
+		const StructMemberFunction* member_func = nullptr;
+	};
+	std::vector<OperatorCandidate> candidates;
+
+	auto gatherMemberCandidates = [&](auto& self, TypeIndex struct_idx) -> void {
+		if (struct_idx == 0 || struct_idx >= gTypeInfo.size()) return;
+		const StructTypeInfo* si = gTypeInfo[struct_idx].getStructInfo();
+		if (!si) return;
+
+		for (const auto& member_func : si->member_functions) {
+			if (operator_kind == OverloadableOperator::Assign) {
+				if (!isAssignOperator(member_func.operator_kind)) continue;
+			} else if (member_func.operator_kind != operator_kind) {
+				continue;
+			}
+
+			if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
+
+			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+			if (params.size() != 1 || !params[0].is<DeclarationNode>()) continue;
+
+			const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+			if (!param_type_node.is<TypeSpecifierNode>()) continue;
+
+		ConversionRank lhs_rank = rankImplicitObjectToBinaryOperator(
+			left_type_spec,
+			member_func,
+			left_type_index,
+			struct_idx);
+		if (lhs_rank == ConversionRank::NoMatch) continue;
+
+			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
+				right_type_spec,
+				param_type_node.as<TypeSpecifierNode>(),
+				struct_idx);
+			if (rhs_rank == ConversionRank::NoMatch) continue;
+
+			candidates.push_back({lhs_rank, rhs_rank, &member_func});
+		}
+
+		for (const auto& base_spec : si->base_classes) {
+			if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
+				self(self, base_spec.type_index);
 			}
 		}
+	};
+	gatherMemberCandidates(gatherMemberCandidates, left_type_index);
+
+	if (candidates.empty()) {
+		return OperatorOverloadResult::no_overload();
 	}
-	
-	return OperatorOverloadResult::no_overload();
+
+	std::vector<const OperatorCandidate*> best_candidates;
+	best_candidates.reserve(candidates.size());
+
+	for (size_t i = 0; i < candidates.size(); ++i) {
+		const auto& candidate = candidates[i];
+		bool is_dominated = false;
+
+		for (size_t j = 0; j < candidates.size(); ++j) {
+			if (i == j) continue;
+			if (compareBinaryOperatorCandidateRanks(
+					candidates[j].lhs_rank,
+					candidates[j].rhs_rank,
+					candidate.lhs_rank,
+					candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
+				is_dominated = true;
+				break;
+			}
+		}
+
+		if (!is_dominated) {
+			best_candidates.push_back(&candidate);
+		}
+	}
+
+	if (best_candidates.empty()) {
+		return OperatorOverloadResult::no_match();
+	}
+
+	if (best_candidates.size() != 1) {
+		return OperatorOverloadResult::ambiguous();
+	}
+
+	return OperatorOverloadResult(best_candidates[0]->member_func);
+}
+
+inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
+	Type effective_right_type = right_type;
+	if (right_type_index > 0 && right_type_index < gTypeInfo.size()) {
+		Type indexed_right_type = resolve_type_alias(gTypeInfo[right_type_index].type_, right_type_index);
+		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
+			effective_right_type = Type::Invalid;
+		}
+	}
+	return findBinaryOperatorOverload(
+		makeBinaryOperatorTypeSpecifier(Type::Invalid, left_type_index),
+		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
+		operator_kind);
 }
 
 // Find binary operator overload, including free-function operators in the given symbol table.
@@ -957,12 +1151,11 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 // When a member and non-member have identical conversion ranks on all positions,
 // the member is preferred per [over.match.oper]/3.3.
 inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
-	TypeIndex left_type_index,
-	TypeIndex right_type_index,
+	const TypeSpecifierNode& left_type_spec,
+	const TypeSpecifierNode& right_type_spec,
 	OverloadableOperator operator_kind,
 	std::string_view operator_symbol,
-	const SymbolTable& symbol_table,
-	Type right_type)
+	const SymbolTable& symbol_table)
 {
 	// --- Unified candidate set per C++20 [over.match.oper]/2 ---
 	struct OperatorCandidate {
@@ -974,52 +1167,9 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	};
 	std::vector<OperatorCandidate> candidates;
 
+	TypeIndex left_type_index = left_type_spec.type_index();
+	TypeIndex right_type_index = right_type_spec.type_index();
 	const size_t type_info_size = gTypeInfo.size();
-
-	auto usesTypeIndexIdentity = [](Type type) {
-		return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
-	};
-
-	// Helper: rank a single operand against a parameter type.
-	// For struct/enum/user-defined types, identity is determined by type_index.
-	// For primitive types, uses can_convert_type(Type, Type) for standard rankings.
-	auto rankOperandMatch = [&](Type arg_type, TypeIndex arg_type_index, const TypeSpecifierNode& param_spec) -> ConversionRank {
-		Type param_type = param_spec.type();
-		TypeIndex param_idx = param_spec.type_index();
-
-		// Resolve self-referential template parameter types.
-		if (usesTypeIndexIdentity(param_type)) {
-			param_idx = resolveSelfRefParamIndex(param_idx, left_type_index);
-		}
-
-		// Struct/Enum/UserDefined parameter: identity by type_index.
-		if (usesTypeIndexIdentity(param_type)) {
-			if (usesTypeIndexIdentity(arg_type) && arg_type_index == param_idx) {
-				return ConversionRank::ExactMatch;
-			}
-			if (usesTypeIndexIdentity(arg_type)) {
-				return ConversionRank::NoMatch;  // Different user-defined types.
-			}
-			return ConversionRank::UserDefined;  // Primitive → user-defined type (converting ctor).
-		}
-
-		// Primitive parameter.
-		if (usesTypeIndexIdentity(arg_type)) {
-			return ConversionRank::UserDefined;  // Struct → primitive (conversion operator)
-		}
-
-		// Both primitive: use standard type conversion ranking.
-		return can_convert_type(arg_type, param_type).rank;
-	};
-
-	// Determine LHS actual type from gTypeInfo. If the type entry is invalid/void
-	// (e.g., template instantiation whose type_ wasn't explicitly set), treat as Struct
-	// since only struct types reach operator overload resolution.
-	Type left_type = Type::Void;
-	if (left_type_index > 0 && left_type_index < type_info_size) {
-		left_type = gTypeInfo[left_type_index].type_;
-		if (left_type == Type::Invalid || left_type == Type::Void) left_type = Type::Struct;
-	}
 
 	// --- 1. Gather member-function candidates (recursive through base classes) ---
 	// Uses self-referencing lambda pattern to avoid std::function overhead.
@@ -1040,12 +1190,20 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 			if (params.size() != 1 || !params[0].is<DeclarationNode>()) continue;
 			const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
 			if (!param_type_node.is<TypeSpecifierNode>()) continue;
-			const auto& param_spec = param_type_node.as<TypeSpecifierNode>();
 
-			// LHS is always ExactMatch for member operators (implicit this)
-			ConversionRank rhs_rank = rankOperandMatch(right_type, right_type_index, param_spec);
+			ConversionRank lhs_rank = rankImplicitObjectToBinaryOperator(
+				left_type_spec,
+				member_func,
+				left_type_index,
+				struct_idx);
+			if (lhs_rank == ConversionRank::NoMatch) continue;
+
+			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
+				right_type_spec,
+				param_type_node.as<TypeSpecifierNode>(),
+				struct_idx);
 			if (rhs_rank != ConversionRank::NoMatch) {
-				candidates.push_back({ConversionRank::ExactMatch, rhs_rank, &member_func, nullptr, false});
+				candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false});
 			}
 		}
 
@@ -1079,10 +1237,10 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		if (!p1_type.is<TypeSpecifierNode>()) continue;
 		const auto& p1_spec = p1_type.as<TypeSpecifierNode>();
 
-		ConversionRank lhs_rank = rankOperandMatch(left_type, left_type_index, p0_spec);
+		ConversionRank lhs_rank = rankBinaryOperatorOperandMatch(left_type_spec, p0_spec, left_type_index);
 		if (lhs_rank == ConversionRank::NoMatch) continue;
 
-		ConversionRank rhs_rank = rankOperandMatch(right_type, right_type_index, p1_spec);
+		ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, p1_spec, right_type_index);
 		if (rhs_rank == ConversionRank::NoMatch) continue;
 
 		candidates.push_back({lhs_rank, rhs_rank, nullptr, &func_decl, true});
@@ -1093,29 +1251,6 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		return OperatorOverloadResult::no_overload();
 	}
 
-	enum class CandidateComparison {
-		Better,
-		Worse,
-		Equivalent,
-		Incomparable,
-	};
-
-	auto compareCandidates = [](const OperatorCandidate& lhs, const OperatorCandidate& rhs) -> CandidateComparison {
-		bool lhs_is_better = false;
-		bool lhs_is_worse = false;
-
-		if (lhs.lhs_rank < rhs.lhs_rank) lhs_is_better = true;
-		else if (lhs.lhs_rank > rhs.lhs_rank) lhs_is_worse = true;
-
-		if (lhs.rhs_rank < rhs.rhs_rank) lhs_is_better = true;
-		else if (lhs.rhs_rank > rhs.rhs_rank) lhs_is_worse = true;
-
-		if (lhs_is_better && !lhs_is_worse) return CandidateComparison::Better;
-		if (!lhs_is_better && lhs_is_worse) return CandidateComparison::Worse;
-		if (!lhs_is_better && !lhs_is_worse) return CandidateComparison::Equivalent;
-		return CandidateComparison::Incomparable;
-	};
-
 	std::vector<const OperatorCandidate*> best_candidates;
 	best_candidates.reserve(candidates.size());
 
@@ -1125,7 +1260,11 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 		for (size_t j = 0; j < candidates.size(); ++j) {
 			if (i == j) continue;
-			if (compareCandidates(candidates[j], candidate) == CandidateComparison::Better) {
+			if (compareBinaryOperatorCandidateRanks(
+					candidates[j].lhs_rank,
+					candidates[j].rhs_rank,
+					candidate.lhs_rank,
+					candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
 				is_dominated = true;
 				break;
 			}
@@ -1148,7 +1287,11 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		if (candidate->is_free_function) {
 			for (const OperatorCandidate* other : best_candidates) {
 				if (other->is_free_function) continue;
-				if (compareCandidates(*candidate, *other) == CandidateComparison::Equivalent) {
+				if (compareBinaryOperatorCandidateRanks(
+						candidate->lhs_rank,
+						candidate->rhs_rank,
+						other->lhs_rank,
+						other->rhs_rank) == BinaryOperatorCandidateComparison::Equivalent) {
 					loses_member_tiebreak = true;
 					break;
 				}
@@ -1172,6 +1315,29 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	} else {
 		return OperatorOverloadResult(best->member_func);
 	}
+}
+
+inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
+	TypeIndex left_type_index,
+	TypeIndex right_type_index,
+	OverloadableOperator operator_kind,
+	std::string_view operator_symbol,
+	const SymbolTable& symbol_table,
+	Type right_type)
+{
+	Type effective_right_type = right_type;
+	if (right_type_index > 0 && right_type_index < gTypeInfo.size()) {
+		Type indexed_right_type = resolve_type_alias(gTypeInfo[right_type_index].type_, right_type_index);
+		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
+			effective_right_type = Type::Invalid;
+		}
+	}
+	return findBinaryOperatorOverloadWithFreeFunction(
+		makeBinaryOperatorTypeSpecifier(Type::Invalid, left_type_index),
+		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
+		operator_kind,
+		operator_symbol,
+		symbol_table);
 }
 
 // ============================================================================

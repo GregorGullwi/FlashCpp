@@ -678,7 +678,7 @@
 
 					if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
-						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling();
+						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 						bool is_float = (operand_type == Type::Float);
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
@@ -751,7 +751,7 @@
 
 				if (is_floating_point_type(operand_type)) {
 					// For float/double, allocate an XMM register
-					ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling();
+						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 					bool is_float = (operand_type == Type::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
@@ -874,7 +874,7 @@
 		else if (std::holds_alternative<double>(bin_op.rhs.value)) {
 			// RHS is a floating-point literal value
 			auto rhs_value = std::get<double>(bin_op.rhs.value);
-			ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling();
+				ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 
 			// For floating-point, we need to load the value into an XMM register
 			// Strategy: Load the bit pattern as integer into a GPR, then move to XMM

@@ -2,7 +2,9 @@
 		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
 		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
-		regAlloc.release(ctx.rhs_physical_reg);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void reserveDivisionFixedRegisters() {
@@ -92,7 +94,9 @@
 		storeArithmeticResult(ctx);
 
 		// Release the RHS register (we're done with it)
-		regAlloc.release(ctx.rhs_physical_reg);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
 	}
 
@@ -158,6 +162,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleShiftRight(const IrInstruction& instruction) {
@@ -175,6 +182,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleUnsignedDivide(const IrInstruction& instruction) {
@@ -218,13 +228,18 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleBitwiseArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
 		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
-		regAlloc.release(ctx.rhs_physical_reg);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleBitwiseAnd(const IrInstruction& instruction) {
@@ -370,6 +385,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleLogicalOr(const IrInstruction& instruction) {
@@ -384,6 +402,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleLogicalNot(const IrInstruction& instruction) {
@@ -439,6 +460,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleFloatSubtract(const IrInstruction& instruction) {
@@ -459,6 +483,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleFloatMultiply(const IrInstruction& instruction) {
@@ -475,6 +502,10 @@
 			// mulsd xmm_dst, xmm_src (F2 [REX] 0F 59 /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+		}
+
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
 		}
 
 		// Store the result to the appropriate destination
@@ -495,6 +526,10 @@
 			// divsd xmm_dst, xmm_src (F2 [REX] 0F 5E /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+		}
+
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
 		}
 
 		// Store the result to the appropriate destination
@@ -1646,6 +1681,9 @@
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 			}
 			storeArithmeticResult(ctx);
+			if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+				regAlloc.release(ctx.rhs_physical_reg);
+			}
 			return;
 		}
 

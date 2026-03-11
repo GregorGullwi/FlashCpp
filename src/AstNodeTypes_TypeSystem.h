@@ -108,6 +108,47 @@ inline bool isAssignOperator(OverloadableOperator op) {
 	    || op == OverloadableOperator::MoveAssign;
 }
 
+inline bool isOverloadableBinaryOperator(OverloadableOperator op) {
+	switch (op) {
+	case OverloadableOperator::Assign:
+	case OverloadableOperator::CopyAssign:
+	case OverloadableOperator::MoveAssign:
+	case OverloadableOperator::Plus:
+	case OverloadableOperator::Minus:
+	case OverloadableOperator::Multiply:
+	case OverloadableOperator::Divide:
+	case OverloadableOperator::Modulo:
+	case OverloadableOperator::PlusAssign:
+	case OverloadableOperator::MinusAssign:
+	case OverloadableOperator::MultiplyAssign:
+	case OverloadableOperator::DivideAssign:
+	case OverloadableOperator::ModuloAssign:
+	case OverloadableOperator::BitwiseAnd:
+	case OverloadableOperator::BitwiseOr:
+	case OverloadableOperator::BitwiseXor:
+	case OverloadableOperator::LeftShift:
+	case OverloadableOperator::RightShift:
+	case OverloadableOperator::AndAssign:
+	case OverloadableOperator::OrAssign:
+	case OverloadableOperator::XorAssign:
+	case OverloadableOperator::LeftShiftAssign:
+	case OverloadableOperator::RightShiftAssign:
+	case OverloadableOperator::Equal:
+	case OverloadableOperator::NotEqual:
+	case OverloadableOperator::Less:
+	case OverloadableOperator::Greater:
+	case OverloadableOperator::LessEqual:
+	case OverloadableOperator::GreaterEqual:
+	case OverloadableOperator::Spaceship:
+	case OverloadableOperator::LogicalAnd:
+	case OverloadableOperator::LogicalOr:
+	case OverloadableOperator::Comma:
+		return true;
+	default:
+		return false;
+	}
+}
+
 inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol) {
 	if (symbol.empty()) return OverloadableOperator::None;
 	// Single-character operators (most common first)

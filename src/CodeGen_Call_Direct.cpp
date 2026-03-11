@@ -6,6 +6,9 @@
 
 		const auto& decl_node = functionCallNode.function_declaration();
 		std::string_view func_name_view = decl_node.identifier_token().value();
+		std::string_view lookup_name_view = functionCallNode.has_qualified_name()
+			? functionCallNode.qualified_name()
+			: func_name_view;
 		
 		FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
 
@@ -301,6 +304,42 @@
 			}
 		};
 
+		auto resolveQualifiedCallStruct = [&](std::string_view struct_part) -> const TypeInfo* {
+			auto resolve_type_info = [&](StringHandle handle) -> const TypeInfo* {
+				auto it = gTypesByName.find(handle);
+				return it != gTypesByName.end() ? it->second : nullptr;
+			};
+
+			const TypeInfo* type_info = resolve_type_info(StringTable::getOrInternStringHandle(struct_part));
+			if (!type_info && current_struct_name_.isValid() && struct_part.find("::") == std::string_view::npos) {
+				std::string_view alias_qualified_name = StringBuilder()
+					.append(StringTable::getStringView(current_struct_name_))
+					.append("::")
+					.append(struct_part)
+					.commit();
+				type_info = resolve_type_info(StringTable::getOrInternStringHandle(alias_qualified_name));
+			}
+
+			constexpr size_t kMaxAliasDepth = 100;
+			size_t alias_depth = 0;
+			while (type_info && alias_depth < kMaxAliasDepth) {
+				if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
+					return type_info;
+				}
+				if (type_info->type_index_ == 0 || type_info->type_index_ >= gTypeInfo.size()) {
+					break;
+				}
+				const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
+				if (&underlying == type_info) {
+					break;
+				}
+				type_info = &underlying;
+				++alias_depth;
+			}
+
+			return nullptr;
+		};
+
 		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic
 		if (has_precomputed_mangled) {
@@ -324,7 +363,7 @@
 		// This works because the FunctionCallNode holds a reference to the specific
 		// DeclarationNode that was selected by overload resolution
 		FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
-			func_name_view, scoped_overloads.size(), gSymbolTable_overloads.size());
+			lookup_name_view, scoped_overloads.size(), gSymbolTable_overloads.size());
 		for (const auto& overload : scoped_overloads) {
 			const FunctionDeclarationNode* overload_func_decl = nullptr;
 			if (overload.is<FunctionDeclarationNode>()) {
@@ -388,7 +427,7 @@
 		}
 
 		// Final fallback: if we're in a member function, check the current struct's member functions
-		if (!matched_func_decl && current_struct_name_.isValid()) {
+		if (!matched_func_decl && current_struct_name_.isValid() && !functionCallNode.has_qualified_name()) {
 			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
@@ -447,7 +486,7 @@
 		// look up the struct by iterating over known types and matching the function.
 		// Note: We match by function name AND parameter count to avoid false positives
 		// from identically named functions on different structs.
-		if (!matched_func_decl && !has_precomputed_mangled) {
+		if (!matched_func_decl && !has_precomputed_mangled && !functionCallNode.has_qualified_name()) {
 			size_t expected_param_count = 0;
 			functionCallNode.arguments().visit([&](ASTNode) { ++expected_param_count; });
 			
@@ -535,20 +574,21 @@
 		// These occur when a template body contains Base<T>::member() and T is substituted
 		// but the hash was computed with the dependent type, not the concrete type.
 		if (!matched_func_decl) {
-			size_t scope_pos = func_name_view.find("::");
+			size_t scope_pos = lookup_name_view.find("::");
 			std::string_view base_template_name;
 			if (scope_pos != std::string_view::npos) {
-				base_template_name = extractBaseTemplateName(func_name_view.substr(0, scope_pos));
+				base_template_name = extractBaseTemplateName(lookup_name_view.substr(0, scope_pos));
 			}
 			// Direct lookup: if the struct qualifier is directly in gTypesByName (e.g., "Mid$hash::get"),
 			// find it immediately rather than only checking base classes.
 			if (scope_pos != std::string_view::npos && !matched_func_decl) {
-				std::string_view struct_part = func_name_view.substr(0, scope_pos);
-				std::string_view member_name_direct = func_name_view.substr(scope_pos + 2);
-				auto direct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_part));
-				if (direct_it != gTypesByName.end() && direct_it->second->isStruct()) {
-					const StructTypeInfo* si = direct_it->second->getStructInfo();
+				std::string_view struct_part = lookup_name_view.substr(0, scope_pos);
+				std::string_view member_name_direct = lookup_name_view.substr(scope_pos + 2);
+				const TypeInfo* direct_type_info = resolveQualifiedCallStruct(struct_part);
+				if (direct_type_info && direct_type_info->isStruct()) {
+					const StructTypeInfo* si = direct_type_info->getStructInfo();
 					if (si) {
+						std::string_view resolved_struct_part = StringTable::getStringView(direct_type_info->name());
 						// Count expected parameters for overload disambiguation
 						size_t direct_expected_param_count = 0;
 						functionCallNode.arguments().visit([&](ASTNode) { ++direct_expected_param_count; });
@@ -558,7 +598,7 @@
 								if (fd.decl_node().identifier_token().value() == member_name_direct
 								&& fd.parameter_nodes().size() == direct_expected_param_count) {
 									matched_func_decl = &fd;
-									resolveMangledName(matched_func_decl, struct_part);
+									resolveMangledName(matched_func_decl, resolved_struct_part);
 									// Queue all member functions of this struct for deferred generation
 									std::vector<std::string> ns_stack;
 									auto parse_ns = [&](std::string_view qualified_name) {
@@ -576,13 +616,13 @@
 											start = pos + 2;
 										}
 									};
-									parse_ns(struct_part);
+									parse_ns(resolved_struct_part);
 									if (ns_stack.empty()) {
-										parse_ns(StringTable::getStringView(direct_it->second->name()));
+										parse_ns(StringTable::getStringView(direct_type_info->name()));
 									}
 									for (const auto& dmf : si->member_functions) {
 										DeferredMemberFunctionInfo deferred_info;
-										deferred_info.struct_name = direct_it->second->name();
+										deferred_info.struct_name = direct_type_info->name();
 										deferred_info.function_node = dmf.function_decl;
 										deferred_info.namespace_stack = ns_stack;
 										deferred_member_functions_.push_back(std::move(deferred_info));
@@ -595,7 +635,7 @@
 				}
 			}
 			if (!matched_func_decl && !base_template_name.empty() && scope_pos != std::string_view::npos) {
-				std::string_view member_name = func_name_view.substr(scope_pos + 2);
+				std::string_view member_name = lookup_name_view.substr(scope_pos + 2);
 				
 				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving dependent qualified call: base_template='{}', member='{}'", base_template_name, member_name);
 				
@@ -1142,6 +1182,26 @@
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
 		call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
+		if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
+			call_op.is_member_function = true;
+			Type this_type = Type::Struct;
+			TypeIndex this_type_index = 0;
+			std::string_view parent_struct = matched_func_decl->parent_struct_name();
+			if (!parent_struct.empty()) {
+				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
+				auto parent_it = gTypesByName.find(parent_struct_handle);
+				if (parent_it != gTypesByName.end() && parent_it->second != nullptr) {
+					this_type = parent_it->second->type_;
+					this_type_index = parent_it->second->type_index_;
+				}
+			}
+			call_op.args.push_back(TypedValue{
+				.type = this_type,
+				.size_in_bits = 64,
+				.value = IrValue(StringTable::getOrInternStringHandle("this")),
+				.type_index = this_type_index,
+			});
+		}
 		
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 		// Exclude references - they return a pointer, not a struct by value

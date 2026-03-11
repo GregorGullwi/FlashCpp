@@ -415,6 +415,7 @@
 									member_load.offset = static_cast<int>(member.offset);
 									member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 									member_load.struct_type_info = &member_type_info;  // MemberLoadOp expects TypeInfo*
+									member_load.is_pointer_to_member = member_access.is_arrow();
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 									
@@ -723,6 +724,10 @@
 						member_load.offset = static_cast<int>(member.offset);  // Member offset
 						member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 						member_load.struct_type_info = nullptr;  // Not used downstream; consistent with all other MemberLoadOp sites
+							member_load.is_pointer_to_member = object_decl &&
+								(object_decl->type_node().as<TypeSpecifierNode>().pointer_depth() > 0 ||
+								 object_decl->type_node().as<TypeSpecifierNode>().is_reference() ||
+								 object_decl->type_node().as<TypeSpecifierNode>().is_rvalue_reference());
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
