@@ -14,10 +14,3 @@ validated.
   constexpr evaluator recursion guard works, but the parser can still fail first on
   sufficiently deep source expressions.
 
-## Template-struct member operator lookup gaps
-
-- Some member operator overloads on class-template instantiations still fail to resolve in
-  expressions like `lhs + rhs`, reporting `Operator+ not defined for operand types`.
-- The same family of failures was also observed while probing function-template bodies that
-  operate on template-struct operands.
-- This was discovered while extending operator-overload follow-up regressions on 2026-03-11.
