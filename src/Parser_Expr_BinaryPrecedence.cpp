@@ -351,22 +351,42 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
 					TypeIndex right_type_idx = resolve_operand_type_index(*rightNode);
+					Type right_base_type = Type::Void;
+					if (rightNode->is<ExpressionNode>()) {
+						auto right_type_spec = get_expression_type(*rightNode);
+						if (right_type_spec.has_value()) {
+							right_base_type = right_type_spec->type();
+						}
+					}
 
 					// If at least one operand is a struct type, validate the operator exists
 					if (left_type_idx > 0 || right_type_idx > 0) {
 						bool operator_found = false;
 						std::string_view op_symbol = operator_token.value();
 
-						// Check member operator overload on the left operand
+						// When the LHS is a struct, reuse the same unified member/free-function
+						// lookup as codegen so SFINAE sees ambiguity and mixed incomparable
+						// candidates the same way.
 						if (left_type_idx > 0) {
-							auto member_result = findBinaryOperatorOverload(left_type_idx, right_type_idx, stringToOverloadableOperator(op_symbol));
-							if (member_result.has_overload) {
+							auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
+								left_type_idx,
+								right_type_idx,
+								stringToOverloadableOperator(op_symbol),
+								op_symbol,
+								gSymbolTable,
+								right_base_type);
+							if (overload_result.is_ambiguous) {
+								return ParseResult::error("SFINAE: ambiguous operator overload for '" + std::string(op_symbol) + "'", operator_token);
+							}
+							if (overload_result.has_match) {
 								operator_found = true;
 							}
 						}
 
-						// Check free function operator overload (e.g., operator+(A, B))
-						if (!operator_found) {
+						// Fall back to the parser's older free-function existence check only
+						// for cases the unified helper does not model yet, such as a non-class
+						// LHS paired with a class RHS.
+						if (!operator_found && left_type_idx == 0) {
 							StringBuilder op_name_builder;
 							op_name_builder.append("operator").append(op_symbol);
 							std::string_view op_func_name = op_name_builder.commit();
@@ -398,9 +418,48 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					}
 				}
 
+				BinaryOperatorNode binary_operator_node(operator_token, *leftNode, *rightNode);
+				if (leftNode->is<ExpressionNode>() && rightNode->is<ExpressionNode>()) {
+					auto left_type_spec = get_expression_type(*leftNode);
+					auto right_type_spec = get_expression_type(*rightNode);
+					OverloadableOperator op_kind = stringToOverloadableOperator(operator_token.value());
+
+					bool has_concrete_left_type = left_type_spec.has_value() && left_type_spec->type_index() > 0;
+					bool has_concrete_right_type = right_type_spec.has_value()
+						&& !(right_type_spec->type() == Type::UserDefined && right_type_spec->type_index() == 0);
+
+					if (has_concrete_left_type && has_concrete_right_type && op_kind != OverloadableOperator::None) {
+						OperatorOverloadResult overload_result;
+						if (op_kind == OverloadableOperator::Assign) {
+							overload_result = findBinaryOperatorOverload(
+								left_type_spec->type_index(),
+								right_type_spec->type_index(),
+								op_kind,
+								right_type_spec->type());
+						} else {
+							overload_result = findBinaryOperatorOverloadWithFreeFunction(
+								left_type_spec->type_index(),
+								right_type_spec->type_index(),
+								op_kind,
+								operator_token.value(),
+								gSymbolTable,
+								right_type_spec->type());
+						}
+
+						if (overload_result.is_ambiguous) {
+							binary_operator_node.set_ambiguous_operator_overload();
+						} else if (overload_result.has_match) {
+							if (overload_result.is_free_function) {
+								binary_operator_node.set_resolved_free_function_operator_overload(overload_result.free_function_overload);
+							} else {
+								binary_operator_node.set_resolved_member_operator_overload(overload_result.member_overload);
+							}
+						}
+					}
+				}
+
 				// Create the binary operation and update the result
-				auto binary_op = emplace_node<ExpressionNode>(
-					BinaryOperatorNode(operator_token, *leftNode, *rightNode));
+				auto binary_op = emplace_node<ExpressionNode>(binary_operator_node);
 				result = ParseResult::success(binary_op);
 			}
 		}

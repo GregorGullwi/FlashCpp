@@ -240,10 +240,11 @@ static ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& binop = std::get<BinaryOperatorNode>(expr);
-		return ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(
+		BinaryOperatorNode rebound_binop(
 			binop.get_token(),
 			rebindStaticMemberInitializerFunctionCalls(binop.get_lhs(), struct_info),
-			rebindStaticMemberInitializerFunctionCalls(binop.get_rhs(), struct_info)));
+			rebindStaticMemberInitializerFunctionCalls(binop.get_rhs(), struct_info));
+		return ASTNode::emplace_node<ExpressionNode>(rebound_binop);
 	}
 
 	if (std::holds_alternative<UnaryOperatorNode>(expr)) {

@@ -794,17 +794,28 @@ inline OverloadResolutionResult resolve_overload(
 struct OperatorOverloadResult {
 	const StructMemberFunction* member_overload = nullptr;
 	const FunctionDeclarationNode* free_function_overload = nullptr;  // For free-function operators
-	bool has_overload = false;
+	bool is_ambiguous = false;
+	bool has_match = false;
 	bool is_free_function = false;  // True when free_function_overload is the active match
 	
 	OperatorOverloadResult() = default;
-	OperatorOverloadResult(const StructMemberFunction* overload) 
-		: member_overload(overload), has_overload(true) {}
-	OperatorOverloadResult(const FunctionDeclarationNode* free_func)
-		: free_function_overload(free_func), has_overload(true), is_free_function(true) {}
+	explicit OperatorOverloadResult(const StructMemberFunction* overload)
+		: member_overload(overload), has_match(overload != nullptr) {}
+	explicit OperatorOverloadResult(const FunctionDeclarationNode* free_func)
+		: free_function_overload(free_func), has_match(free_func != nullptr), is_free_function(free_func != nullptr) {}
+
+	static OperatorOverloadResult ambiguous() {
+		OperatorOverloadResult result;
+		result.is_ambiguous = true;
+		return result;
+	}
+
+	static OperatorOverloadResult no_match() {
+		return OperatorOverloadResult();
+	}
 	
 	static OperatorOverloadResult no_overload() {
-		return OperatorOverloadResult();
+		return no_match();
 	}
 };
 
@@ -857,7 +868,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 	for (const auto& base_spec : struct_info->base_classes) {
 		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
 			auto result = findUnaryOperatorOverload(base_spec.type_index, operator_kind);
-			if (result.has_overload) {
+			if (result.has_match || result.is_ambiguous) {
 				return result;
 			}
 		}
@@ -870,7 +881,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 // For binary operators like operator+, operator-, etc.
 // Returns the member function that overloads the given operator, or nullptr if not found
 // This handles the member function form: a.operator+(b)
-inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type = Type::Void) {
+inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
 	// Only struct types can have operator overloads
 	if (left_type_index == 0 || left_type_index >= gTypeInfo.size()) {
 		return OperatorOverloadResult::no_overload();
@@ -898,27 +909,24 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
 			if (params.size() == 1 && params[0].is<DeclarationNode>()) {
 				const auto& param_type = params[0].as<DeclarationNode>().type_node();
-				if (param_type.is<TypeSpecifierNode>()) {
-					const auto& param_spec = param_type.as<TypeSpecifierNode>();
-					// For struct/enum types, match by type_index (which is meaningful).
-					// Resolve self-referential template param types before comparing
-					// (e.g., Wrapper<int>::operator+=(const Wrapper& other) stores
-					//  the param's type_index as the uninstantiated Wrapper template).
-					// For primitive types, match by base Type enum (type_index is always 0).
-					bool type_matches = false;
-					if (param_spec.type() == Type::Struct || param_spec.type() == Type::Enum) {
-						TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index(), left_type_index);
-						type_matches = (resolved_param_idx == right_type_index);
-					} else if (right_type != Type::Void) {
-						// Caller provided the actual Type — compare base types
-						type_matches = (param_spec.type() == right_type);
-					} else {
-						// No right_type info available — fall back to type_index comparison
-						type_matches = (param_spec.type_index() == right_type_index);
-					}
-					if (type_matches) {
-						return OperatorOverloadResult(&member_func);
-					}
+					if (param_type.is<TypeSpecifierNode>()) {
+						const auto& param_spec = param_type.as<TypeSpecifierNode>();
+						// For struct/enum/user-defined types, match by type_index (which is meaningful).
+						// Resolve self-referential template param types before comparing
+						// (e.g., Wrapper<int>::operator+=(const Wrapper& other) stores
+						//  the param's type_index as the uninstantiated Wrapper template).
+						// For primitive types, match by base Type enum (type_index is always 0).
+						bool type_matches = false;
+						if (param_spec.type() == Type::Struct || param_spec.type() == Type::Enum || param_spec.type() == Type::UserDefined) {
+							TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index(), left_type_index);
+							type_matches = (resolved_param_idx == right_type_index);
+						} else {
+							// Caller provides the actual RHS base type for primitive matches.
+							type_matches = (param_spec.type() == right_type);
+						}
+						if (type_matches) {
+							return OperatorOverloadResult(&member_func);
+						}
 				}
 			}
 		}
@@ -929,12 +937,12 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	// member here would suppress the free-function search in
 	// findBinaryOperatorOverloadWithFreeFunction. Instead, fall through to base-class search
 	// and ultimately return no_overload so the caller can check free functions too.
-	
+
 	// Search base classes recursively
 	for (const auto& base_spec : left_struct_info->base_classes) {
 		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
 			auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_kind, right_type);
-			if (result.has_overload) {
+			if (result.has_match || result.is_ambiguous) {
 				return result;
 			}
 		}
@@ -954,7 +962,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	OverloadableOperator operator_kind,
 	std::string_view operator_symbol,
 	const SymbolTable& symbol_table,
-	Type right_type = Type::Void)
+	Type right_type)
 {
 	// --- Unified candidate set per C++20 [over.match.oper]/2 ---
 	struct OperatorCandidate {
@@ -968,36 +976,39 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 	const size_t type_info_size = gTypeInfo.size();
 
+	auto usesTypeIndexIdentity = [](Type type) {
+		return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
+	};
+
 	// Helper: rank a single operand against a parameter type.
-	// For struct/enum types, identity is determined by type_index.
+	// For struct/enum/user-defined types, identity is determined by type_index.
 	// For primitive types, uses can_convert_type(Type, Type) for standard rankings.
-	auto rankOperandMatch = [&](Type arg_type, TypeIndex arg_type_index,
-	                            const TypeSpecifierNode& param_spec) -> ConversionRank {
+	auto rankOperandMatch = [&](Type arg_type, TypeIndex arg_type_index, const TypeSpecifierNode& param_spec) -> ConversionRank {
 		Type param_type = param_spec.type();
 		TypeIndex param_idx = param_spec.type_index();
 
-		// Resolve self-referential template parameter types
-		if (param_type == Type::Struct || param_type == Type::Enum) {
+		// Resolve self-referential template parameter types.
+		if (usesTypeIndexIdentity(param_type)) {
 			param_idx = resolveSelfRefParamIndex(param_idx, left_type_index);
 		}
 
-		// Struct/Enum parameter: identity by type_index
-		if (param_type == Type::Struct || param_type == Type::Enum) {
-			if (arg_type == param_type && arg_type_index == param_idx) {
+		// Struct/Enum/UserDefined parameter: identity by type_index.
+		if (usesTypeIndexIdentity(param_type)) {
+			if (usesTypeIndexIdentity(arg_type) && arg_type_index == param_idx) {
 				return ConversionRank::ExactMatch;
 			}
-			if (arg_type == Type::Struct || arg_type == Type::Enum) {
-				return ConversionRank::NoMatch;  // Different struct/enum types
+			if (usesTypeIndexIdentity(arg_type)) {
+				return ConversionRank::NoMatch;  // Different user-defined types.
 			}
-			return ConversionRank::UserDefined;  // Primitive → struct (converting ctor)
+			return ConversionRank::UserDefined;  // Primitive → user-defined type (converting ctor).
 		}
 
-		// Primitive parameter
-		if (arg_type == Type::Struct || arg_type == Type::Enum) {
+		// Primitive parameter.
+		if (usesTypeIndexIdentity(arg_type)) {
 			return ConversionRank::UserDefined;  // Struct → primitive (conversion operator)
 		}
 
-		// Both primitive: use standard type conversion ranking
+		// Both primitive: use standard type conversion ranking.
 		return can_convert_type(arg_type, param_type).rank;
 	};
 
@@ -1082,29 +1093,78 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		return OperatorOverloadResult::no_overload();
 	}
 
-	const OperatorCandidate* best = &candidates[0];
-	for (size_t i = 1; i < candidates.size(); ++i) {
-		const auto& cand = candidates[i];
-		bool cand_is_better = false;
-		bool cand_is_worse = false;
+	enum class CandidateComparison {
+		Better,
+		Worse,
+		Equivalent,
+		Incomparable,
+	};
 
-		if (cand.lhs_rank < best->lhs_rank) cand_is_better = true;
-		else if (cand.lhs_rank > best->lhs_rank) cand_is_worse = true;
+	auto compareCandidates = [](const OperatorCandidate& lhs, const OperatorCandidate& rhs) -> CandidateComparison {
+		bool lhs_is_better = false;
+		bool lhs_is_worse = false;
 
-		if (cand.rhs_rank < best->rhs_rank) cand_is_better = true;
-		else if (cand.rhs_rank > best->rhs_rank) cand_is_worse = true;
+		if (lhs.lhs_rank < rhs.lhs_rank) lhs_is_better = true;
+		else if (lhs.lhs_rank > rhs.lhs_rank) lhs_is_worse = true;
 
-		if (cand_is_better && !cand_is_worse) {
-			// Strictly better on at least one position, no worse on any
-			best = &cand;
-		} else if (!cand_is_better && !cand_is_worse) {
-			// Equal ranks: tiebreaker per [over.match.oper]/3.3 — prefer member
-			if (!cand.is_free_function && best->is_free_function) {
-				best = &cand;
+		if (lhs.rhs_rank < rhs.rhs_rank) lhs_is_better = true;
+		else if (lhs.rhs_rank > rhs.rhs_rank) lhs_is_worse = true;
+
+		if (lhs_is_better && !lhs_is_worse) return CandidateComparison::Better;
+		if (!lhs_is_better && lhs_is_worse) return CandidateComparison::Worse;
+		if (!lhs_is_better && !lhs_is_worse) return CandidateComparison::Equivalent;
+		return CandidateComparison::Incomparable;
+	};
+
+	std::vector<const OperatorCandidate*> best_candidates;
+	best_candidates.reserve(candidates.size());
+
+	for (size_t i = 0; i < candidates.size(); ++i) {
+		const auto& candidate = candidates[i];
+		bool is_dominated = false;
+
+		for (size_t j = 0; j < candidates.size(); ++j) {
+			if (i == j) continue;
+			if (compareCandidates(candidates[j], candidate) == CandidateComparison::Better) {
+				is_dominated = true;
+				break;
 			}
 		}
-		// If cand_is_worse (or mixed better/worse), skip this candidate
+
+		if (!is_dominated) {
+			best_candidates.push_back(&candidate);
+		}
 	}
+
+	if (best_candidates.empty()) {
+		return OperatorOverloadResult::no_match();
+	}
+
+	std::vector<const OperatorCandidate*> filtered_best_candidates;
+	filtered_best_candidates.reserve(best_candidates.size());
+
+	for (const OperatorCandidate* candidate : best_candidates) {
+		bool loses_member_tiebreak = false;
+		if (candidate->is_free_function) {
+			for (const OperatorCandidate* other : best_candidates) {
+				if (other->is_free_function) continue;
+				if (compareCandidates(*candidate, *other) == CandidateComparison::Equivalent) {
+					loses_member_tiebreak = true;
+					break;
+				}
+			}
+		}
+
+		if (!loses_member_tiebreak) {
+			filtered_best_candidates.push_back(candidate);
+		}
+	}
+
+	if (filtered_best_candidates.size() != 1) {
+		return OperatorOverloadResult::ambiguous();
+	}
+
+	const OperatorCandidate* best = filtered_best_candidates[0];
 
 	// Return the winner
 	if (best->is_free_function) {

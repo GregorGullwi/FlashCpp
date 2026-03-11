@@ -737,33 +737,51 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
 				lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 			}
+
+			TypeIndex rhs_type_index = 0;
+			if ((rhsType == Type::Enum || rhsType == Type::UserDefined) && rhsIrOperands.size() >= 4) {
+				if (std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
+					rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
+				}
+			}
 			
 			if (lhs_type_index > 0 && lhs_type_index < gTypeInfo.size()) {
 				// Check for user-defined operator= that takes the RHS type
-				auto overload_result = findBinaryOperatorOverload(lhs_type_index, 0, OverloadableOperator::Assign);
-				
-				if (overload_result.has_overload) {
+				OperatorOverloadResult overload_result;
+				if (binaryOperatorNode.has_ambiguous_operator_overload()) {
+					overload_result = OperatorOverloadResult::ambiguous();
+				} else if (binaryOperatorNode.has_resolved_member_operator_overload()) {
+					overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload());
+				} else {
+					overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, OverloadableOperator::Assign, rhsType);
+				}
+
+				if (overload_result.is_ambiguous) {
+					throw CompileError("Ambiguous overload for operator=");
+				}
+
+				if (overload_result.has_match) {
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-					
+
 					// Check if the parameter type matches RHS type
 					const auto& param_nodes = func_decl.parameter_nodes();
 					if (!param_nodes.empty() && param_nodes[0].is<DeclarationNode>()) {
 						const auto& param_decl = param_nodes[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-						
+
 						// Check if parameter is a primitive type matching RHS
 						if (param_type.type() != Type::Struct && param_type.type() != Type::UserDefined) {
 							// Found matching operator=(primitive_type)! Generate function call
 							FLASH_LOG_FORMAT(Codegen, Debug, "Found operator= with primitive param for struct type index {}", lhs_type_index);
-							
+
 							std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index].name());
 							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-							
+
 							// Get parameter types for mangling
 							std::vector<TypeSpecifierNode> param_types;
 							param_types.push_back(param_type);
-							
+
 							// Generate mangled name for operator=
 							std::vector<std::string_view> empty_namespace;
 							auto mangled_name = NameMangling::generateMangledName(
@@ -775,9 +793,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								empty_namespace,
 								Linkage::CPlusPlus
 							);
-							
+
 							TempVar result_var = var_counter.next();
-							
+
 							// Take address of LHS to pass as 'this' pointer
 							std::variant<StringHandle, TempVar> lhs_value;
 							if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
@@ -788,7 +806,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								FLASH_LOG(Codegen, Error, "Cannot take address of operator= LHS - not an lvalue");
 								return {};
 							}
-							
+
 							TempVar lhs_addr = var_counter.next();
 							AddressOfOp addr_op;
 							addr_op.result = lhs_addr;
@@ -797,27 +815,27 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							addr_op.operand.pointer_depth = 0;
 							std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
-							
+
 							// Generate function call
 							CallOp call_op;
 							call_op.result = result_var;
 							call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-							
+
 							// Pass 'this' pointer as first argument
 							TypedValue this_arg;
 							this_arg.type = lhsType;
 							this_arg.size_in_bits = 64;  // 'this' is always a pointer (64-bit)
 							this_arg.value = lhs_addr;
 							call_op.args.push_back(this_arg);
-							
+
 							// Pass RHS value as second argument
 							call_op.args.push_back(toTypedValue(rhsIrOperands));
-							
+
 							call_op.return_type = return_type.type();
 							call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-							
+
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-							
+
 							// Return result
 							return { return_type.type(), static_cast<int>(return_type.size_in_bits()), result_var, 0ULL };
 						}
@@ -835,15 +853,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
 				lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 			}
-			
-			// Get the type index of the right operand (if it's a struct)
+
+			// Get the type index of the right operand for type-index-identity types.
 			TypeIndex rhs_type_index = 0;
-			if (rhsType == Type::Struct && rhsIrOperands.size() >= 4) {
+			if ((rhsType == Type::Struct || rhsType == Type::Enum || rhsType == Type::UserDefined) && rhsIrOperands.size() >= 4) {
 				if (std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
 					rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
 				}
 			}
-			
+
 			// List of binary operators that can be overloaded
 			// Assignment operators (=) are handled separately above; compound assignments (+=, etc.)
 			// fall through here when the LHS is a struct with user-defined operator overloads
@@ -862,17 +880,29 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			
 			if (overloadable_binary_ops.count(op) > 0 && lhs_type_index > 0) {
 				// Check for operator overload (member function or free function)
-				SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
-				auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
-					lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table, rhsType);
-				
-				if (overload_result.has_overload && overload_result.is_free_function) {
+				OperatorOverloadResult overload_result;
+				if (binaryOperatorNode.has_ambiguous_operator_overload()) {
+					overload_result = OperatorOverloadResult::ambiguous();
+				} else if (binaryOperatorNode.has_resolved_free_function_operator_overload()) {
+					overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_free_function_operator_overload());
+				} else if (binaryOperatorNode.has_resolved_member_operator_overload()) {
+					overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload());
+				} else {
+					SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
+					overload_result = findBinaryOperatorOverloadWithFreeFunction(
+						lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table, rhsType);
+				}
+				if (overload_result.is_ambiguous) {
+					throw CompileError("Ambiguous overload for operator" + std::string(op));
+				}
+
+				if (overload_result.has_match && overload_result.is_free_function) {
 					// Found a free-function operator overload: operator+(LHSType, RHSType)
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving free-function operator{} overload", op);
-					
+
 					const FunctionDeclarationNode& func_decl = *overload_result.free_function_overload;
 					TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-					
+
 					// Get parameter types for mangling
 					std::vector<TypeSpecifierNode> param_types;
 					for (const auto& param_node : func_decl.parameter_nodes()) {
@@ -973,10 +1003,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					return {return_type.type(), actual_return_size, result_var, return_type.type_index()};
 				}
 				
-				else if (overload_result.has_overload) {
+				else if (overload_result.has_match) {
 					// Found a member operator overload! Generate a member function call
 					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving binary operator{} overload for type index {}", 
-					op, lhs_type_index);
+						op, lhs_type_index);
 					
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
