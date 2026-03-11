@@ -706,11 +706,7 @@
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 		
 		// Return the xvalue with reference semantics (64-bit pointer size)
-		ExprResult result;
-		result.type = target_type;
-		result.size_in_bits = 64;
-		result.value = result_var;
-		return result;
+		return makeExprResult(target_type, 64, result_var);
 	}
 
 	ExprOperands AstToIr::handleLValueReferenceCast(
@@ -733,11 +729,7 @@
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 		
 		// Return the lvalue with reference semantics (64-bit pointer size)
-		ExprResult result;
-		result.type = target_type;
-		result.size_in_bits = 64;
-		result.value = result_var;
-		return result;
+		return makeExprResult(target_type, 64, result_var);
 	}
 
 	ExprOperands AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {

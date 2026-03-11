@@ -1648,12 +1648,7 @@ std::optional<ExprOperands> AstToIr::generateUnaryIncDecOverloadCall(
 	TypeIndex result_type_index = call_op.return_type_index;
 	Type result_type = call_op.return_type;
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
-	ExprResult result;
-	result.type = result_type;
-	result.size_in_bits = result_size;
-	result.value = ret_var;
-	result.type_index = result_type_index;
-	return result;
+	return makeExprResult(result_type, result_size, ret_var, result_type_index);
 }
 
 
@@ -1675,6 +1670,13 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 	};
 
 	int operand_pointer_depth = getOperandPointerDepth();
+	auto makeUpdatedPointerResult = [&](TempVar value_var) {
+		ExprResult result = makeExprResult(operandType, 64, value_var, operandIrResult.type_index, operand_pointer_depth);
+		if (operandIrResult.encoded_metadata.has_value()) {
+			result.encoded_metadata = operandIrResult.encoded_metadata;
+		}
+		return result;
+	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
 		if ((typed_value.type == Type::Struct || typed_value.type == Type::Enum) && operandIrResult.type_index != 0) {
@@ -1774,14 +1776,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
-			ExprResult rhs_operands;
-			rhs_operands.type = operandType;
-			rhs_operands.size_in_bits = 64;
-			rhs_operands.value = result_var;
-			rhs_operands.pointer_depth = operand_pointer_depth;
-			if (operandIrResult.encoded_metadata.has_value()) {
-				rhs_operands.encoded_metadata = operandIrResult.encoded_metadata;
-			}
+			ExprResult rhs_operands = makeUpdatedPointerResult(result_var);
 			if (!storeBackUpdatedValue(rhs_operands)) {
 				FLASH_LOG(Codegen, Error, "Failed to store back pointer increment/decrement result");
 				return {};
@@ -1802,14 +1797,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
-			ExprResult rhs_operands;
-			rhs_operands.type = operandType;
-			rhs_operands.size_in_bits = 64;
-			rhs_operands.value = result_var;
-			rhs_operands.pointer_depth = operand_pointer_depth;
-			if (operandIrResult.encoded_metadata.has_value()) {
-				rhs_operands.encoded_metadata = operandIrResult.encoded_metadata;
-			}
+			ExprResult rhs_operands = makeUpdatedPointerResult(result_var);
 			if (!storeBackUpdatedValue(rhs_operands)) {
 				FLASH_LOG(Codegen, Error, "Failed to store back pointer postfix increment/decrement result");
 				return {};

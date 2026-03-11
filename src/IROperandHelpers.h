@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <algorithm>
 #include <vector>
 #include <span>
 
@@ -60,6 +61,22 @@ struct ExprResult {
 	}
 };
 
+inline ExprResult makeExprResult(
+	Type type,
+	int size_in_bits,
+	IrOperand value,
+	TypeIndex type_index = 0,
+	int pointer_depth = 0
+) {
+	ExprResult result;
+	result.type = type;
+	result.size_in_bits = size_in_bits;
+	result.value = std::move(value);
+	result.type_index = type_index;
+	result.pointer_depth = pointer_depth;
+	return result;
+}
+
 inline void preserveLegacyEnumPointerDepthEncoding(ExprResult& result) {
 	if (result.type == Type::Enum && result.pointer_depth > 0) {
 		result.encoded_metadata = static_cast<unsigned long long>(result.pointer_depth);
@@ -100,9 +117,7 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 inline TypedValue toTypedValue(const ExprOperands& operands) {
 	assert(operands.size() >= 3 && operands.size() <= 4 && "ExprOperands must contain exactly 3 or 4 operands");
 	std::array<IrOperand, 4> inline_copy{};
-	for (size_t i = 0; i < operands.size(); ++i) {
-		inline_copy[i] = operands[i];
-	}
+	std::copy_n(operands.begin(), operands.size(), inline_copy.begin());
 	return toTypedValue(std::span<const IrOperand>(inline_copy.data(), operands.size()));
 }
 
@@ -138,9 +153,7 @@ inline ExprResult toExprResult(const std::vector<IrOperand>& operands) {
 inline ExprResult toExprResult(const ExprOperands& operands) {
 	assert(operands.size() >= 3 && operands.size() <= 4 && "ExprOperands must contain exactly 3 or 4 operands");
 	std::array<IrOperand, 4> inline_copy{};
-	for (size_t i = 0; i < operands.size(); ++i) {
-		inline_copy[i] = operands[i];
-	}
+	std::copy_n(operands.begin(), operands.size(), inline_copy.begin());
 	return toExprResult(std::span<const IrOperand>(inline_copy.data(), operands.size()));
 }
 
