@@ -158,7 +158,7 @@ private:
 	ExprOperands generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
 	ExprOperands
 		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
-	ExprOperands generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token);
+	ExprOperands generateTypeConversion(const ExprOperands& operands, Type fromType, Type toType, const Token& source_token);
 	ExprOperands
 		generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);

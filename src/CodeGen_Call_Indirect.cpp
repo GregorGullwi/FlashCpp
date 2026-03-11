@@ -1435,7 +1435,7 @@
 					} else {
 						// Unknown symbol type - fall back to visitExpressionNode
 						auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-						call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+						call_op.args.push_back(toTypedValue(argumentIrOperands));
 					}
 				}
 				else {
@@ -1505,12 +1505,12 @@
 								});
 							} else {
 								// Fallback - just pass through
-								call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+								call_op.args.push_back(toTypedValue(argumentIrOperands));
 							}
 						}
 					} else {
 						// Parameter doesn't expect a reference - pass through as-is
-						call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+						call_op.args.push_back(toTypedValue(argumentIrOperands));
 					}
 				}
 			

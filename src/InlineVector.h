@@ -183,16 +183,6 @@ public:
 		}
 	}
 
-	T* data() {
-		assert(overflow_.empty() && "InlineVector::data() requires contiguous inline storage");
-		return inline_data_.data();
-	}
-
-	const T* data() const {
-		assert(overflow_.empty() && "InlineVector::data() requires contiguous inline storage");
-		return inline_data_.data();
-	}
-	
 	T& operator[](size_t i) {
 		// If i is within inline storage, use inline_data_
 		// Otherwise use overflow - index into overflow is (i - N) since inline storage holds exactly N elements

@@ -1,7 +1,7 @@
 #include "CodeGen.h"
 #include "LambdaHelpers.h"
 
-	ExprOperands AstToIr::generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
+	ExprOperands AstToIr::generateTypeConversion(const ExprOperands& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
 		// operands format: [type, size, value]
 		int fromSize = (operands.size() >= 2) ? std::get<int>(operands[1]) : get_type_size_bits(fromType);
@@ -54,7 +54,7 @@
 			TempVar resultVar = var_counter.next();
 			TypeConversionOp conv_op{
 				.result = resultVar,
-				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.from = toTypedValue(operands),
 				.to_type = toType,
 				.to_size_in_bits = toSize
 			};
@@ -75,7 +75,7 @@
 			TempVar resultVar = var_counter.next();
 			TypeConversionOp conv_op{
 				.result = resultVar,
-				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.from = toTypedValue(operands),
 				.to_type = toType,
 				.to_size_in_bits = toSize
 			};
@@ -88,11 +88,13 @@
 		if (fromSize == toSize) {
 			// Same size, different signedness - just change the type metadata
 			// Return the same value with the new type
-			std::vector<IrOperand> result;
+			ExprOperands result;
 			result.push_back(toType);
 			result.push_back(toSize);
 			// Copy the value (TempVar or identifier)
-			result.insert(result.end(), operands.begin() + 2, operands.end());
+			for (size_t i = 2; i < operands.size(); ++i) {
+				result.push_back(operands[i]);
+			}
 			return result;
 		}
 
@@ -102,7 +104,7 @@
 		if (fromSize < toSize) {
 			// Extension needed
 			ConversionOp conv_op{
-				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.from = toTypedValue(operands),
 				.to_type = toType,
 				.to_size = toSize,
 				.result = resultVar
@@ -149,7 +151,7 @@
 		} else if (fromSize > toSize) {
 			// Truncation needed
 			ConversionOp conv_op{
-				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.from = toTypedValue(operands),
 				.to_type = toType,
 				.to_size = toSize,
 				.result = resultVar

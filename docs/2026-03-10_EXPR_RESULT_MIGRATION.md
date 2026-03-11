@@ -1,7 +1,7 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: Proposed
+**Status**: In Progress
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
 ## Problem
@@ -109,6 +109,26 @@ from `std::vector<IrOperand>` to `InlineVector<IrOperand, 4>`.
 
 All existing code continues to work — nothing returns `ExprResult` yet, but
 the heap allocation overhead is eliminated.
+
+**PR #882 status (2026-03-11):**
+- `ExprResult` was added in `IROperandHelpers.h`
+- the existing `InlineVector` was reused for `ExprOperands`
+- fixed-size expression-result return types were migrated from
+  `std::vector<IrOperand>` to `InlineVector<IrOperand, 4>`
+- hot-path consumers such as `toTypedValue(const ExprOperands&)` and
+  `generateTypeConversion(...)` must stay on `ExprOperands` (or another
+  non-owning/fixed-size view) to avoid implicitly converting back to
+  `std::vector<IrOperand>` and reintroducing heap allocation
+- variable-length operand builders used to assemble call packets remain
+  `std::vector<IrOperand>` internally; they are not the fixed 3-4 operand
+  expression-result tuple that this migration is targeting
+
+**Phase 1 clarification discovered during PR #882:**
+- `InlineVector::data()` must not be used to form a span over an `InlineVector`
+  that may overflow, because its storage is not guaranteed to be contiguous
+  across inline and overflow elements
+- fixed-size expression-result consumers should index/copy the 3-4 operands
+  directly instead of assuming contiguous backing storage
 
 ### Phase 2: Migrate producers one at a time
 

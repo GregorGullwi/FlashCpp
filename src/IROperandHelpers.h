@@ -86,7 +86,12 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 }
 
 inline TypedValue toTypedValue(const ExprOperands& operands) {
-	return toTypedValue(std::span<const IrOperand>(operands.data(), operands.size()));
+	assert(operands.size() >= 3 && operands.size() <= 4 && "ExprOperands must contain exactly 3 or 4 operands");
+	std::array<IrOperand, 4> inline_copy{};
+	for (size_t i = 0; i < operands.size(); ++i) {
+		inline_copy[i] = operands[i];
+	}
+	return toTypedValue(std::span<const IrOperand>(inline_copy.data(), operands.size()));
 }
 
 inline TypedValue toTypedValue(const ExprResult& result) {

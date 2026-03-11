@@ -258,7 +258,7 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 		const auto& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 		if (default_expr.is<ExpressionNode>()) {
 			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
-			TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
+			TypedValue tv = toTypedValue(default_operands);
 			applyTypeNodeMetadata(tv, param_type_spec);
 			call_op.args.push_back(tv);
 		} else if (default_expr.is<InitializerListNode>()) {
@@ -297,7 +297,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		if (default_expr.is<ExpressionNode>()) {
 			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
-			TypedValue tv = toTypedValue(std::span<const IrOperand>(default_operands.data(), default_operands.size()));
+			TypedValue tv = toTypedValue(default_operands);
 			applyTypeNodeMetadata(tv, param_type_spec);
 			call_op.args.push_back(std::move(tv));
 		} else if (default_expr.is<InitializerListNode>()) {
@@ -337,7 +337,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		CondBranchOp cond_branch;
 		cond_branch.label_true = true_label;
 		cond_branch.label_false = false_label;
-		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		cond_branch.condition = toTypedValue(condition_operands);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), ternaryNode.get_token()));
 
 		// True branch label

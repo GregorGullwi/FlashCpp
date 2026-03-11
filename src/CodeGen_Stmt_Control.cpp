@@ -113,7 +113,7 @@
 		CondBranchOp cond_branch;
 		cond_branch.label_true = StringTable::getOrInternStringHandle(then_label);
 		cond_branch.label_false = StringTable::getOrInternStringHandle(node.has_else() ? else_label : end_label);
-		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		cond_branch.condition = toTypedValue(condition_operands);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Then block
@@ -187,7 +187,7 @@
 			CondBranchOp cond_branch;
 			cond_branch.label_true = loop_body_label;
 			cond_branch.label_false = loop_end_label;
-			cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+			cond_branch.condition = toTypedValue(condition_operands);
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 		}
 
@@ -253,7 +253,7 @@
 		CondBranchOp cond_branch;
 		cond_branch.label_true = loop_body_label;
 		cond_branch.label_false = loop_end_label;
-		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		cond_branch.condition = toTypedValue(condition_operands);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
@@ -314,7 +314,7 @@
 		CondBranchOp cond_branch;
 		cond_branch.label_true = loop_start_label;
 		cond_branch.label_false = loop_end_label;
-		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		cond_branch.condition = toTypedValue(condition_operands);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop end label
@@ -710,7 +710,7 @@
 		CondBranchOp cond_branch;
 		cond_branch.label_true = loop_body_label;
 		cond_branch.label_false = loop_end_label;
-		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		cond_branch.condition = toTypedValue(condition_operands);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
@@ -886,7 +886,7 @@
 		CondBranchOp cond_branch;
 		cond_branch.label_true = loop_body_label;
 		cond_branch.label_false = loop_end_label;
-		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		cond_branch.condition = toTypedValue(condition_operands);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
@@ -980,4 +980,3 @@
 		std::string label_name(node.label_name());
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(label_name)}, node.label_token()));
 	}
-
