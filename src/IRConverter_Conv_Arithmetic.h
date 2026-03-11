@@ -2,7 +2,9 @@
 		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
 		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
-		regAlloc.release(ctx.rhs_physical_reg);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void reserveDivisionFixedRegisters() {
@@ -92,7 +94,9 @@
 		storeArithmeticResult(ctx);
 
 		// Release the RHS register (we're done with it)
-		regAlloc.release(ctx.rhs_physical_reg);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
 	}
 
@@ -233,7 +237,9 @@
 		auto ctx = setupAndLoadArithmeticOperation(instruction, description);
 		emitBinaryOpInstruction(opcode, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 		storeArithmeticResult(ctx);
-		regAlloc.release(ctx.rhs_physical_reg);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleBitwiseAnd(const IrInstruction& instruction) {
@@ -498,9 +504,9 @@
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
-			if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
-				regAlloc.release(ctx.rhs_physical_reg);
-			}
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -522,9 +528,9 @@
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
-			if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
-				regAlloc.release(ctx.rhs_physical_reg);
-			}
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
