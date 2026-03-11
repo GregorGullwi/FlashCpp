@@ -2049,7 +2049,31 @@
 		
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (inside_catch_handler_ && g_enable_exceptions) {
-				emitCall("__cxa_end_catch");
+				// Flush all dirty registers to ensure the return value is safely spilled to
+				// the stack before we call __cxa_end_catch (which clobbers caller-saved regs).
+				flushAllDirtyRegisters();
+
+				// Count how many nested catch handlers we need to unwind through.
+				// The current handler counts as 1; for each saved context entry that
+				// was also inside a catch handler, add one more.
+				int catch_depth = 1;
+				for (auto it = catch_codegen_context_stack_.rbegin(); it != catch_codegen_context_stack_.rend(); ++it) {
+					if (it->inside_catch_handler) {
+						++catch_depth;
+					} else {
+						break;
+					}
+				}
+
+				// Call __cxa_end_catch for each active catch level, innermost first.
+				for (int i = 0; i < catch_depth; ++i) {
+					emitCall("__cxa_end_catch");
+				}
+
+				// The __cxa_end_catch calls clobbered caller-saved registers.
+				// Reset the register allocator so the return value is reloaded from memory.
+				regAlloc.reset();
+
 				inside_catch_handler_ = false;
 			}
 		}
