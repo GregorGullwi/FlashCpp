@@ -183,6 +183,21 @@ is converted at the return site.  No callers need to change.
 - `generateIdentifierIr` in `CodeGen.h`
 - `makeMemberResult` in `CodeGen_MemberAccess.cpp`
 
+**Phase 2 progress (2026-03-11):**
+- migrated `generateArraySubscriptIr` return sites in `src/CodeGen_MemberAccess.cpp`
+  to build `ExprResult` and let the conversion operator encode
+  `type_index`/`pointer_depth`
+- migrated `makeMemberResult` in `src/CodeGen_MemberAccess.cpp` to populate
+  named `ExprResult` fields instead of manually constructing a 4-slot result
+- migrated the priority 4-slot return sites in `generateIdentifierIr`
+  (`src/CodeGen_Expr_Primitives.cpp`) to a tiny local `ExprResult` helper
+- migrated related array-address producer returns in
+  `src/CodeGen_Expr_Conversions.cpp` (`analyzeAddressExpression` result return
+  and multidimensional `&arr[i][j]`)
+- intentionally deferred broader non-priority/manual 4-slot sites outside these
+  producer paths (for example other unary/conversion helpers and qualified
+  identifier paths) to keep Phase 2 reviewable and producer-focused
+
 ### Phase 3: Change function signatures (optional, longer-term)
 
 Once all producers for a function use `ExprResult`, change its return type:
