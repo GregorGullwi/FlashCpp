@@ -249,14 +249,17 @@
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value) -> ExprResult {
 			// Preserve the original direct-identifier encoding rule from these sites:
-			// struct identifiers carry type_index; non-struct identifiers carry pointer_depth.
+			// struct identifiers carry type_index in slot 4; all others get 0.
+			// This matches the old code: TypeIndex type_index = (type == Struct) ? type_index : 0;
+			// pointer_depth is NOT encoded here — only the local-variable DeclarationNode
+			// path (below) explicitly encodes pointer_depth for non-struct/enum types.
 			const bool carries_type_index = type_node.type() == Type::Struct;
 			return makeIdentifierResult(
 				type_node.type(),
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
-				carries_type_index ? 0 : type_node.pointer_depth());
+				0);
 		};
 		auto preserveEnumTypeIndexEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
 			if (type_node.type() == Type::Enum) {
@@ -1178,10 +1181,10 @@
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
 				// - Otherwise return 0
-				return makeIdentifierResultFromTypeNode(
-					type_node,
-					size_bits,
-					StringTable::getOrInternStringHandle(identifierNode.name()));
+				unsigned long long fourth_element = (type_node.type() == Type::Struct)
+					? static_cast<unsigned long long>(type_node.type_index())
+					: ((type_node.pointer_depth() > 0) ? static_cast<unsigned long long>(type_node.pointer_depth()) : 0ULL);
+				return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
 			}
 		}
 		
