@@ -194,7 +194,9 @@ ASTNode Parser::substituteTemplateParameters(
 			const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr);
 			ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
 			ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
-			return emplace_node<ExpressionNode>(BinaryOperatorNode(bin_op.get_token(), substituted_left, substituted_right));
+			BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
+			substituted_binop.copy_semantic_operator_resolution_from(bin_op);
+			return emplace_node<ExpressionNode>(substituted_binop);
 		} else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 			const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(expr);
 			ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
@@ -1266,7 +1268,9 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			const BinaryOperatorNode& binop = std::get<BinaryOperatorNode>(expr_variant);
 			ASTNode new_lhs = replacePackIdentifierInExpr(binop.get_lhs(), pack_name, element_index);
 			ASTNode new_rhs = replacePackIdentifierInExpr(binop.get_rhs(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(BinaryOperatorNode(binop.get_token(), new_lhs, new_rhs));
+			BinaryOperatorNode rebound_binop(binop.get_token(), new_lhs, new_rhs);
+			rebound_binop.copy_semantic_operator_resolution_from(binop);
+			return emplace_node<ExpressionNode>(rebound_binop);
 		}
 
 		if (std::holds_alternative<UnaryOperatorNode>(expr_variant)) {

@@ -1322,11 +1322,44 @@ public:
 	const Token& get_token() const { return identifier_; }
 	auto get_lhs() const { return lhs_node_; }
 	auto get_rhs() const { return rhs_node_; }
+	bool has_resolved_member_operator_overload() const { return resolved_member_operator_overload_ != nullptr; }
+	bool has_resolved_free_function_operator_overload() const { return resolved_free_function_operator_overload_ != nullptr; }
+	bool has_resolved_operator_overload() const { return has_resolved_member_operator_overload() || has_resolved_free_function_operator_overload(); }
+	bool has_ambiguous_operator_overload() const { return ambiguous_operator_overload_; }
+	const StructMemberFunction* resolved_member_operator_overload() const { return resolved_member_operator_overload_; }
+	const FunctionDeclarationNode* resolved_free_function_operator_overload() const { return resolved_free_function_operator_overload_; }
+
+	void set_resolved_member_operator_overload(const StructMemberFunction* overload) {
+		resolved_member_operator_overload_ = overload;
+		resolved_free_function_operator_overload_ = nullptr;
+		ambiguous_operator_overload_ = false;
+	}
+
+	void set_resolved_free_function_operator_overload(const FunctionDeclarationNode* overload) {
+		resolved_free_function_operator_overload_ = overload;
+		resolved_member_operator_overload_ = nullptr;
+		ambiguous_operator_overload_ = false;
+	}
+
+	void set_ambiguous_operator_overload() {
+		resolved_member_operator_overload_ = nullptr;
+		resolved_free_function_operator_overload_ = nullptr;
+		ambiguous_operator_overload_ = true;
+	}
+
+	void copy_semantic_operator_resolution_from(const BinaryOperatorNode& other) {
+		resolved_member_operator_overload_ = other.resolved_member_operator_overload_;
+		resolved_free_function_operator_overload_ = other.resolved_free_function_operator_overload_;
+		ambiguous_operator_overload_ = other.ambiguous_operator_overload_;
+	}
 
 private:
 	class Token identifier_;
 	ASTNode lhs_node_;
 	ASTNode rhs_node_;
+	const StructMemberFunction* resolved_member_operator_overload_ = nullptr;
+	const FunctionDeclarationNode* resolved_free_function_operator_overload_ = nullptr;
+	bool ambiguous_operator_overload_ = false;
 };
 
 class UnaryOperatorNode {

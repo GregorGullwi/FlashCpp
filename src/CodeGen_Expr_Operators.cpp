@@ -740,17 +740,25 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 			}
 
-				TypeIndex rhs_type_index = 0;
-				if ((rhsType == Type::Enum || rhsType == Type::UserDefined) && rhsIrOperands.size() >= 4) {
-					if (std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
-						rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
-					}
+			TypeIndex rhs_type_index = 0;
+			if ((rhsType == Type::Enum || rhsType == Type::UserDefined) && rhsIrOperands.size() >= 4) {
+				if (std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
+					rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
 				}
+			}
 			
 			if (lhs_type_index > 0 && lhs_type_index < gTypeInfo.size()) {
 				// Check for user-defined operator= that takes the RHS type
-					auto overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, OverloadableOperator::Assign, rhsType);
-					if (overload_result.is_ambiguous) {
+				OperatorOverloadResult overload_result;
+				if (binaryOperatorNode.has_ambiguous_operator_overload()) {
+					overload_result = OperatorOverloadResult::ambiguous();
+				} else if (binaryOperatorNode.has_resolved_member_operator_overload()) {
+					overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload());
+				} else {
+					overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, OverloadableOperator::Assign, rhsType);
+				}
+
+				if (overload_result.is_ambiguous) {
 					throw CompileError("Ambiguous overload for operator=");
 				}
 
@@ -874,9 +882,18 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			
 			if (overloadable_binary_ops.count(op) > 0 && lhs_type_index > 0) {
 				// Check for operator overload (member function or free function)
-				SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
-				auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
-					lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table, rhsType);
+				OperatorOverloadResult overload_result;
+				if (binaryOperatorNode.has_ambiguous_operator_overload()) {
+					overload_result = OperatorOverloadResult::ambiguous();
+				} else if (binaryOperatorNode.has_resolved_free_function_operator_overload()) {
+					overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_free_function_operator_overload());
+				} else if (binaryOperatorNode.has_resolved_member_operator_overload()) {
+					overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload());
+				} else {
+					SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
+					overload_result = findBinaryOperatorOverloadWithFreeFunction(
+						lhs_type_index, rhs_type_index, stringToOverloadableOperator(op), op, sym_table, rhsType);
+				}
 				if (overload_result.is_ambiguous) {
 					throw CompileError("Ambiguous overload for operator" + std::string(op));
 				}
