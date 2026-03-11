@@ -247,19 +247,23 @@
 			result.pointer_depth = pointer_depth;
 			return result;
 		};
-		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value) -> ExprResult {
+		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
+			bool preserve_pointer_depth = false) -> ExprResult {
 			// Preserve the original direct-identifier encoding rule from these sites:
-			// struct identifiers carry type_index in slot 4; all others get 0.
-			// This matches the old code: TypeIndex type_index = (type == Struct) ? type_index : 0;
-			// pointer_depth is NOT encoded here — only the local-variable DeclarationNode
-			// path (below) explicitly encodes pointer_depth for non-struct/enum types.
+			// struct identifiers carry type_index in slot 4. Non-struct identifiers keep 0 by default,
+			// but selected direct global-load sites opt into preserving pointer_depth so downstream
+			// toTypedValue consumers can still recognize pointer-typed globals.
 			const bool carries_type_index = type_node.type() == Type::Struct;
-			return makeIdentifierResult(
+			ExprResult result = makeIdentifierResult(
 				type_node.type(),
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
-				0);
+				(carries_type_index || !preserve_pointer_depth) ? 0 : type_node.pointer_depth());
+			if (preserve_pointer_depth) {
+				preserveLegacyEnumPointerDepthEncoding(result);
+			}
+			return result;
 		};
 		auto preserveEnumTypeIndexEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
 			if (type_node.type() == Type::Enum) {
@@ -473,7 +477,7 @@
 								LValueInfo(LValueInfo::Kind::Global, saved_name),
 								type_n.type(), size_bits));
 						}
-						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp);
+						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
 					}
 
 					if (fast_sym->is<DeclarationNode>()) {
@@ -509,7 +513,7 @@
 								LValueInfo(LValueInfo::Kind::Global, saved_global_name),
 								type_n.type(), size_bits));
 						}
-						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp);
+						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
 					}
 					// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
 				}
@@ -895,7 +899,7 @@
 				// Return the temp variable that will hold the loaded value
 				// For pointers and arrays, return 64 bits (pointer size)
 				// Include type_index for struct types
-				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp);
+				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
 			}
 
 			// Check if this is a reference parameter - if so, we need to dereference it
@@ -1087,7 +1091,7 @@
 
 				// Return the temp variable that will hold the loaded value
 				// Include type_index for struct types
-				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp);
+				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
 			} else {
 				// This is a local variable
 				
