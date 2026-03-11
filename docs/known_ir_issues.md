@@ -107,14 +107,33 @@ None needed - the generated code is functionally correct and efficient enough. T
 
 ---
 
-## Issue: Windows C++ EH still fails at runtime (missing catch funclet model)
+## Issue: Windows C++ EH catch-funclet model (ARCHIVED / RESOLVED)
 
-### Status: OPEN - ARCHITECTURAL WORK REQUIRED
+### Status: RESOLVED - KEPT FOR IMPLEMENTATION HISTORY
 
-### Symptoms
+### Current status (2026-03-11)
 
-- `tests/test_exceptions_basic_ret0.cpp` crashes at runtime on Windows.
-- `tests/test_noexcept_ret0.cpp` returns mismatch (`99`) due failed C++ EH flow.
+The catch-funclet/continuation work described below is now implemented and the
+historically failing Windows regressions for this issue are passing again.
+
+Re-validated on this branch:
+
+- `tests/test_exceptions_basic_ret0.cpp`
+- `tests/test_noexcept_ret0.cpp`
+- `tests/test_eh_throw_catchall_ret0.cpp`
+- `tests/test_eh_throw_catch_int_ret0.cpp`
+- `tests/test_eh_twofunc_throw_ret0.cpp`
+- `tests/test_eh_twofunc_mixed_ret0.cpp`
+- `tests/test_eh_twofunc_throw_with_main_eh_ret0.cpp`
+
+See also:
+
+- `docs/EXCEPTION_HANDLING.md`
+
+### Historical symptoms
+
+- `tests/test_exceptions_basic_ret0.cpp` crashed at runtime on Windows.
+- `tests/test_noexcept_ret0.cpp` returned mismatch (`99`) due failed C++ EH flow.
 
 ### What was improved already
 
@@ -129,11 +148,11 @@ None needed - the generated code is functionally correct and efficient enough. T
 - Tried non-zero `dispUnwindHelp` derived from frame size; crash signature changed but failure persisted.
 - Mirrored `FuncInfo` into `.rdata` (`$cppxdata$...`) and repointed the UNWIND language-specific pointer there with map relocations; runtime failure persisted.
 
-### Root cause (current hypothesis)
+### Root cause (historical hypothesis)
 
 `__CxxFrameHandler3` expects a catch-funclet oriented model (separate catch entry points with matching unwind/pdata/xdata semantics). FlashCpp currently records catch handlers as inline offsets in the parent function body, which appears insufficient and leads to runtime fail-fast during dispatch/unwind.
 
-### Required next steps
+### Original required next steps
 
 1. Implement Windows catch funclet emission (separate symbols/regions for each catch).
 2. Emit matching `.pdata/.xdata` for catch funclets.

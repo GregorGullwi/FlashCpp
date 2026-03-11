@@ -26,6 +26,29 @@ void AstToIr::exitScope() {
 
 
 
+void AstToIr::emitActiveCatchScopeDestructors() {
+	if (catch_scope_base_depth_stack_.empty()) {
+		return;
+	}
+
+	size_t catch_scope_base_depth = catch_scope_base_depth_stack_.back();
+	if (scope_stack_.size() <= catch_scope_base_depth) {
+		return;
+	}
+
+	for (size_t scope_index = scope_stack_.size(); scope_index > catch_scope_base_depth; --scope_index) {
+		const auto& scope_vars = scope_stack_[scope_index - 1];
+		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+			DestructorCallOp dtor_op;
+			dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
+			dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
+			ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+		}
+	}
+}
+
+
+
 void AstToIr::exitFunctionScope() {
 	if (scope_stack_.empty()) return;
 

@@ -1,6 +1,6 @@
 	void handleLabel(const IrInstruction& instruction) {
 		// Label instruction: mark a position in code for jumps
-			assert(instruction.hasTypedPayload() && "Label instruction must use typed payload");
+		assert(instruction.hasTypedPayload() && "Label instruction must use typed payload");
 		const auto& label_op = instruction.getTypedPayload<LabelOp>();
 		std::string_view label_name = StringTable::getStringView(label_op.getLabelName());  // Phase 4: Use helper
 
@@ -12,6 +12,16 @@
 		if (label_positions_.find(StringTable::getOrInternStringHandle(label_name_str)) == label_positions_.end()) {
 			label_positions_[StringTable::getOrInternStringHandle(label_name_str)] = label_offset;
 		}
+
+		// Flush at the label entry before any bridge code uses scratch registers.
+		// Jumps target the label offset recorded above, so these spills remain part of
+		// the label entry path instead of being skipped by control-flow transfers.
+		flushAllDirtyRegisters();
+
+		// Release all register allocations at merge points (labels).
+		// Different execution paths may have left different values in registers,
+		// so we can't trust that a register still holds a particular variable.
+		regAlloc.reset();
 
 		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 			StringHandle label_handle = StringTable::getOrInternStringHandle(label_name_str);
@@ -31,14 +41,12 @@
 
 				emitXorRegReg(X64Register::RCX);
 				emitMovToFrame(X64Register::RCX, bridge.flag_slot_offset, 64);
-				if (!bridge.is_float) {
-					emitMovFromFrameBySize(X64Register::RAX, bridge.return_slot_offset, bridge.return_size_bits);
+				if (currentFunctionHasCatchParentReturnValue()) {
+					emitRestorePendingCatchParentReturnValue(bridge.return_slot_offset);
 				}
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x89);
-				textSectionData.push_back(0xEC);
-				textSectionData.push_back(0x5D);
-				textSectionData.push_back(0xC3);
+				emitMovRegReg(X64Register::RSP, X64Register::RBP);
+				emitPopReg(X64Register::RBP);
+				emitRet();
 
 				uint32_t skip_target = static_cast<uint32_t>(textSectionData.size());
 				int32_t rel = static_cast<int32_t>(skip_target) - static_cast<int32_t>(skip_patch + 4);
@@ -48,39 +56,17 @@
 				textSectionData[skip_patch + 3] = static_cast<uint8_t>((rel >> 24) & 0xFF);
 			}
 		}
-
-		// Flush all dirty registers at label boundaries to ensure correct state
-		flushAllDirtyRegisters();
-		
-		// Release all register allocations at merge points (labels)
-		// Different execution paths may have left different values in registers,
-		// so we can't trust that a register still holds a particular variable
-		regAlloc.reset();
 	}
 
 	void handleBranch(const IrInstruction& instruction) {
-	// Unconditional branch: jmp label
-	assert(instruction.hasTypedPayload() && "Branch instruction must use typed payload");
-	const auto& branch_op = instruction.getTypedPayload<BranchOp>();
-	std::string_view target_label = StringTable::getStringView(branch_op.getTargetLabel());  // Phase 4: Use helper
+		// Unconditional branch: jmp label
+		assert(instruction.hasTypedPayload() && "Branch instruction must use typed payload");
+		const auto& branch_op = instruction.getTypedPayload<BranchOp>();
+		StringHandle target_label = branch_op.getTargetLabel();
 		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
 
-		// Generate JMP instruction (E9 + 32-bit relative offset)
-		// We'll use a placeholder offset and fix it up later
-		textSectionData.push_back(0xE9); // JMP rel32
-
-		// Store position where we need to patch the offset
-		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
-
-		// Add placeholder offset (will be patched later)
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-
-		// Record this branch for later patching
-		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
+		emitJmpToLabel(target_label);
 	}
 
 	void handleLoopBegin(const IrInstruction& instruction) {

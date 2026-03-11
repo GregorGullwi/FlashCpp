@@ -173,18 +173,26 @@
 		emitMovToFrameBySize(X64Register::RAX, catch_return_slot, spill_size_bits);
 	}
 
-	void emitRestorePendingCatchParentReturnValue() {
-		if (!currentFunctionHasCatchParentReturnValue() || catch_funclet_return_slot_offset_ == 0) {
+	void emitRestorePendingCatchParentReturnValue(int32_t catch_return_slot_offset = 0) {
+		if (!currentFunctionHasCatchParentReturnValue()) {
+			return;
+		}
+
+		if (catch_return_slot_offset == 0) {
+			catch_return_slot_offset = catch_funclet_return_slot_offset_;
+		}
+
+		if (catch_return_slot_offset == 0) {
 			return;
 		}
 
 		int spill_size_bits = getCatchParentReturnSpillSizeBits();
 		if (currentFunctionReturnsFloatingPointInXmm0()) {
-			emitFloatMovFromFrame(X64Register::XMM0, catch_funclet_return_slot_offset_, spill_size_bits == 32);
+			emitFloatMovFromFrame(X64Register::XMM0, catch_return_slot_offset, spill_size_bits == 32);
 			return;
 		}
 
-		emitMovFromFrameBySize(X64Register::RAX, catch_funclet_return_slot_offset_, spill_size_bits);
+		emitMovFromFrameBySize(X64Register::RAX, catch_return_slot_offset, spill_size_bits);
 	}
 
 	void handleCatchBegin(const IrInstruction& instruction) {
@@ -1545,19 +1553,5 @@
 		// Flush all dirty registers before jumping
 		flushAllDirtyRegisters();
 
-		// Generate JMP instruction (E9 + 32-bit relative offset)
-		// We'll use a placeholder offset and fix it up later
-		textSectionData.push_back(0xE9); // JMP rel32
-
-		// Store position where we need to patch the offset
-		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
-
-		// Add placeholder offset (will be patched later)
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-
-		// Record this jump for later patching (convert string_view to StringHandle)
-		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
+		emitJmpToLabel(StringTable::getOrInternStringHandle(target_label));
 	}

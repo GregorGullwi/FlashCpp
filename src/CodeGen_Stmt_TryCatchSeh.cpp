@@ -165,7 +165,9 @@
 			}
 
 			// Visit catch block body
+			catch_scope_base_depth_stack_.push_back(scope_stack_.size());
 			visit(catch_clause.body());
+			catch_scope_base_depth_stack_.pop_back();
 
 			// Emit CatchEnd marker
 			ir_.addInstruction(IrOpcode::CatchEnd, CatchEndOp{.continuation_label = end_label}, catch_clause.catch_token());
@@ -201,6 +203,7 @@
 
 	void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 		if (node.is_rethrow()) {
+			emitActiveCatchScopeDestructors();
 			// throw; (rethrow current exception)
 			ir_.addInstruction(IrOpcode::Rethrow, {}, node.throw_token());
 		} else {

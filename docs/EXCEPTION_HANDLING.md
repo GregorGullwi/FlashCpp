@@ -1,6 +1,6 @@
 # Exception Handling in FlashCpp
 
-**Updated**: 2026-03-09  
+**Updated**: 2026-03-11
 **Platform Targets**: Linux (Itanium C++ ABI) and Windows (MSVC SEH / `__CxxFrameHandler3`)
 
 ## Current Status
@@ -42,6 +42,129 @@ Basic and intermediate exception handling works end-to-end:
 | `__try`/`__except`/`__finally` (Win32 SEH) | ✅ | `__C_specific_handler` integration |
 
 ---
+
+## Windows EH Hardening Roadmap
+
+One currently interesting hardening area is **cleanup of locals declared inside a catch body when control leaves exceptionally**.
+
+Today, the Windows EH path already has dedicated machinery for:
+
+- function-scope cleanup,
+- try-scope cleanup before entering a catch,
+- catch-funclet continuation / parent-return bridging.
+
+The weaker spot is that catch-body locals do not yet appear to be first-class entries in the Windows unwind-state model, which makes catch-body throw/rethrow exits a likely source of missed destructor cleanup.
+
+### Current state
+
+The first minimal hardening step has already landed for **`throw;` / rethrow** inside a catch body:
+
+- before lowering `Rethrow`, the frontend emits destructor calls for the active catch-body scopes.
+
+This intentionally does **not** yet change `throw <expr>` lowering inside a catch body.
+
+### Recommended sequencing
+
+1. **Minimal fix first**
+   Close the concrete bug with the smallest safe change. The landed minimal fix handles `throw;` / rethrow from inside a catch body by emitting cleanup for the active catch scopes before lowering `Rethrow`. This was the best first step because it fixed a real failing case with low risk.
+
+2. **Medium refactor if we keep touching EH exits**
+   Introduce a shared “leave scopes down to depth X” cleanup helper in AST→IR and use it for `return`, `break`, `continue`, `goto`, `throw`, and `throw;`. This is not strictly required before a larger redesign, but it is the best practical next step if more non-local-exit hardening work is expected.
+
+3. **Large redesign only if the area keeps surfacing bugs**
+   Upgrade the Windows unwind-state / unwind-map model so catch-body locals and other destructible scopes become first-class unwind actions, instead of relying on frontend-emitted cleanup before exceptional exits. This is the highest-ceiling solution, but also the highest-risk and highest-effort one.
+
+### Recommendation
+
+The current recommendation is **minimal first, then reassess**.
+
+- If the minimal fix closes the bug and no other EH-exit holes appear, stopping there is reasonable.
+- If more control-flow exits in this area need attention, do the medium refactor before continuing.
+- The medium step is **useful but not mandatory** before a future larger redesign.
+
+### Explicit follow-ups still worth tracking
+
+- **`throw <expr>` from inside a catch body** remains a follow-up gap. The current hardening only covers `throw;`. This should not be “fixed” by blindly emitting cleanup before expression evaluation, because the thrown expression may still depend on catch-local objects. The likely correct direction is: evaluate/materialize the thrown value first, then clean active catch scopes, then lower the actual throw.
+- **Nested-catch rethrow behavior** should be verified with a dedicated regression. `emitActiveCatchScopeDestructors()` currently uses the innermost active catch base depth, which correctly handles nested lexical scopes within one catch body, but may need further work if `throw;` exits through multiple active catch contexts and outer-catch locals also need explicit cleanup.
+
+## Windows Catch-Funclet Return Model
+
+On Windows FH3, a source-level `return` inside a catch body is **not** treated as “the catch is complete.”
+Instead, the catch funclet records a pending return from the **parent** function, then the normal catch-finalization path remains authoritative.
+
+### Why this matters
+
+`CatchEnd` still owns several pieces of required work:
+
+- finishing catch-handler bookkeeping,
+- returning the continuation address expected by the CRT,
+- creating or reusing the parent-function continuation fixup,
+- deciding whether control resumes normally after the catch or returns from the parent function.
+
+The older “terminated catch funclet” idea was wrong because it implied catch finalization could be skipped.
+The landed implementation instead uses a **pending parent return** model.
+
+### Current implementation shape
+
+The Windows path tracks catch-return state with:
+
+- `catch_funclet_return_slot_offset_`
+- `catch_funclet_return_flag_slot_offset_`
+- `catch_has_pending_parent_return_`
+- `current_catch_continuation_label_`
+- `catch_continuation_fixup_map_`
+- `catch_return_bridges_`
+
+The saved parent return value lives in a spill slot sized from the enclosing function's actual return convention:
+
+- floating-point returns use the XMM0 spill path,
+- integer/pointer-like returns use a sized RAX spill path,
+- hidden-return / reference-return cases reserve pointer-sized storage.
+
+The catch-return flag means:
+
+- `0`: normal fallthrough after catch finalization,
+- `1`: return from the parent function after catch finalization.
+
+### Lowering model
+
+When `handleReturn(...)` executes while `in_catch_funclet_` is true on Windows, it:
+
+1. saves the pending parent return value,
+2. flushes dirty registers,
+3. sets `catch_has_pending_parent_return_ = true`,
+4. stores `1` into the catch-return flag slot,
+5. loads `RAX` with the continuation-fixup address when a continuation label exists,
+6. emits the funclet epilogue and `ret`.
+
+`CatchEnd` then remains authoritative:
+
+- it obtains the parent continuation label from `CatchEndOp`,
+- creates or reuses a synthetic continuation-fixup label,
+- reserves both spill slots before the first shared fixup stub,
+- clears the catch-return flag on normal fallthrough,
+- returns the continuation/fixup address expected by the CRT.
+
+The continuation/fixup decides between normal fallthrough and parent return by checking the saved catch-return flag:
+
+- if the flag is clear, execution resumes at the normal continuation label,
+- if the flag is set, the fixup clears the flag, restores the saved parent return value, emits the parent epilogue, and returns from the enclosing function.
+
+### Key regression coverage for this model
+
+- `test_exceptions_catch_funclets_ret0.cpp`
+- `test_eh_catch_float_return_ret0.cpp`
+- `test_eh_catch_conditional_return_fallthrough_ret0.cpp`
+- `test_eh_catch_shared_fixup_late_return_ret0.cpp`
+- `test_eh_catch_local_dtor_fallthrough_ret0.cpp`
+
+Together these cover:
+
+- direct returns from multiple typed catch handlers,
+- floating-point return preservation,
+- mixed return/fallthrough paths inside one catch,
+- shared continuation-fixup reuse,
+- catch-local destructor execution on normal fallthrough.
 
 ## Architecture
 
@@ -208,6 +331,10 @@ Key test files:
 - `test_eh_catch_virtual_base_value_late_handler_ret0.cpp` — later typed catch handler materializes virtual-base catch object
 - `test_eh_catch_virtual_base_value_late_handler_return_ret0.cpp` — direct return from by-value virtual-base catch handler
 - `test_eh_rethrow_propagate_ret0.cpp` — `throw;` (rethrow) propagates with correct type info
+- `test_eh_rethrow_catch_local_dtor_ret0.cpp` — rethrow from inside a catch cleans up catch-local destructors before propagation
+- `test_eh_catch_float_return_ret0.cpp` — catch-funclet parent return preserves floating-point return values
+- `test_eh_catch_conditional_return_fallthrough_ret0.cpp` — catch body can return on one path and fall through on another
+- `test_eh_catch_shared_fixup_late_return_ret0.cpp` — multiple handlers safely share one continuation/fixup path
 - `test_eh_noexcept_normal_ret0.cpp` — noexcept functions work normally + inner try/catch
 
 ## References
