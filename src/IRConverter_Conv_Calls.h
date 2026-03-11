@@ -14,53 +14,53 @@
 		return 0;
 	}
 
-		bool emitLoadAddressLikeArgument(X64Register target_reg, const TypedValue& arg, int32_t address_adjustment = 0) {
-			if (std::holds_alternative<StringHandle>(arg.value)) {
-				StringHandle var_handle = std::get<StringHandle>(arg.value);
-					const VariableInfo* var_info = findVariableInfo(var_handle);
-					if (!var_info) {
-						return false;
-					}
-					int32_t var_offset = var_info->offset;
-				auto ref_info = getIndirectStackInfo(var_offset);
-				if (ref_info.has_value()) {
-					emitMovFromFrame(target_reg, var_offset);
-					if (address_adjustment != 0) {
-						emitAddRegImm32(textSectionData, target_reg, address_adjustment);
-					}
-				} else {
-					emitLeaFromFrame(target_reg, var_offset + address_adjustment);
-				}
-				return true;
+	bool emitLoadAddressLikeArgument(X64Register target_reg, const TypedValue& arg, int32_t address_adjustment = 0) {
+		if (std::holds_alternative<StringHandle>(arg.value)) {
+			StringHandle var_handle = std::get<StringHandle>(arg.value);
+			const VariableInfo* var_info = findVariableInfo(var_handle);
+			if (!var_info) {
+				return false;
 			}
-
-			if (std::holds_alternative<TempVar>(arg.value)) {
-				TempVar temp_var = std::get<TempVar>(arg.value);
-				int32_t var_offset = getStackOffsetFromTempVar(temp_var, arg.size_in_bits);
-				auto ref_info = getIndirectStackInfo(var_offset);
-				if (!ref_info.has_value() && arg.size_in_bits != 64) {
-					int32_t pointer_source_offset = getStackOffsetFromTempVar(temp_var, 64);
-					if (pointer_source_offset != var_offset) {
-						auto pointer_ref_info = getIndirectStackInfo(pointer_source_offset);
-						if (pointer_ref_info.has_value()) {
-							var_offset = pointer_source_offset;
-							ref_info = pointer_ref_info;
-						}
-					}
+			int32_t var_offset = var_info->offset;
+			auto ref_info = getIndirectStackInfo(var_offset);
+			if (ref_info.has_value()) {
+				emitMovFromFrame(target_reg, var_offset);
+				if (address_adjustment != 0) {
+					emitAddRegImm32(textSectionData, target_reg, address_adjustment);
 				}
-				if (ref_info.has_value()) {
-					emitMovFromFrame(target_reg, var_offset);
-					if (address_adjustment != 0) {
-						emitAddRegImm32(textSectionData, target_reg, address_adjustment);
-					}
-				} else {
-					emitLeaFromFrame(target_reg, var_offset + address_adjustment);
-				}
-				return true;
+			} else {
+				emitLeaFromFrame(target_reg, var_offset + address_adjustment);
 			}
-
-			return false;
+			return true;
 		}
+
+		if (std::holds_alternative<TempVar>(arg.value)) {
+			TempVar temp_var = std::get<TempVar>(arg.value);
+			int32_t var_offset = getStackOffsetFromTempVar(temp_var, arg.size_in_bits);
+			auto ref_info = getIndirectStackInfo(var_offset);
+			if (!ref_info.has_value() && arg.size_in_bits != 64) {
+				int32_t pointer_source_offset = getStackOffsetFromTempVar(temp_var, 64);
+				if (pointer_source_offset != var_offset) {
+					auto pointer_ref_info = getIndirectStackInfo(pointer_source_offset);
+					if (pointer_ref_info.has_value()) {
+						var_offset = pointer_source_offset;
+						ref_info = pointer_ref_info;
+					}
+				}
+			}
+			if (ref_info.has_value()) {
+				emitMovFromFrame(target_reg, var_offset);
+				if (address_adjustment != 0) {
+					emitAddRegImm32(textSectionData, target_reg, address_adjustment);
+				}
+			} else {
+				emitLeaFromFrame(target_reg, var_offset + address_adjustment);
+			}
+			return true;
+		}
+
+		return false;
+	}
 
 	/// Emit code to store both 8-byte halves of a two-register struct to
 	/// consecutive RSP-relative stack slots (used when the struct overflows
@@ -375,10 +375,10 @@
 					should_pass_address = true;
 				}
 				
-					if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
-						if (!emitLoadAddressLikeArgument(target_reg, arg)) {
-							throw InternalError("Register call argument marked pass-by-address is not addressable");
-						}
+				if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
+					if (!emitLoadAddressLikeArgument(target_reg, arg)) {
+						throw InternalError("Register call argument marked pass-by-address is not addressable");
+					}
 					continue;
 				}
 				
@@ -391,9 +391,9 @@
 				
 				// Handle TempVar arguments that should pass an address (e.g., constructor calls passed to rvalue reference params)
 				if (should_pass_address && std::holds_alternative<TempVar>(arg.value)) {
-						if (!emitLoadAddressLikeArgument(target_reg, arg)) {
-							throw InternalError("Register call TempVar marked pass-by-address is not addressable");
-						}
+					if (!emitLoadAddressLikeArgument(target_reg, arg)) {
+						throw InternalError("Register call TempVar marked pass-by-address is not addressable");
+					}
 					continue;
 				}
 				
@@ -666,95 +666,95 @@
 		throw InternalError("Function call without typed payload - should not happen");
 	}
 
-			bool emitSameTypeCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false) {
-			if (type_index == 0 || type_index >= gTypeInfo.size()) {
-				return false;
-			}
+	bool emitSameTypeCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false) {
+		if (type_index == 0 || type_index >= gTypeInfo.size()) {
+			return false;
+		}
 
-			const TypeInfo& type_info = gTypeInfo[type_index];
-			const StructTypeInfo* struct_info = type_info.getStructInfo();
-			if (!struct_info) {
-				return false;
-			}
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		if (!struct_info) {
+			return false;
+		}
 
-			const StructMemberFunction* selected_ctor = struct_info->findPreferredSameTypeConstructor(prefer_move);
+		const StructMemberFunction* selected_ctor = struct_info->findPreferredSameTypeConstructor(prefer_move);
 
-			if (!selected_ctor) {
-				return false;
-			}
+		if (!selected_ctor) {
+			return false;
+		}
 
-			const auto& ctor_node = selected_ctor->function_decl.as<ConstructorDeclarationNode>();
-			if (ctor_node.parameter_nodes().empty() || !ctor_node.parameter_nodes()[0].is<DeclarationNode>()) {
-				return false;
-			}
+		const auto& ctor_node = selected_ctor->function_decl.as<ConstructorDeclarationNode>();
+		if (ctor_node.parameter_nodes().empty() || !ctor_node.parameter_nodes()[0].is<DeclarationNode>()) {
+			return false;
+		}
 
-			flushAllDirtyRegisters();
+		flushAllDirtyRegisters();
 
-			X64Register this_reg = getIntParamReg<TWriterClass>(0);
-			if (object_is_pointer) {
-				emitMovFromFrame(this_reg, object_offset);
-			} else {
-				emitLeaFromFrame(this_reg, object_offset);
-			}
+		X64Register this_reg = getIntParamReg<TWriterClass>(0);
+		if (object_is_pointer) {
+			emitMovFromFrame(this_reg, object_offset);
+		} else {
+			emitLeaFromFrame(this_reg, object_offset);
+		}
 
-			X64Register source_reg = getIntParamReg<TWriterClass>(1);
-			if (std::holds_alternative<TempVar>(source_arg.value)) {
-				TempVar source_temp = std::get<TempVar>(source_arg.value);
-				// Backend lowering must not rely on GlobalTempVarMetadataStorage here because that
-				// metadata is populated during IR generation and later reused across multiple
-				// functions. Use only current-function stack-side indirect-storage info.
-				int32_t source_offset = getStackOffsetFromTempVar(source_temp, source_arg.size_in_bits);
-				auto source_ref_info = getIndirectStackInfo(source_offset);
-				if (!source_ref_info.has_value() && source_arg.size_in_bits != 64) {
-					int32_t pointer_source_offset = getStackOffsetFromTempVar(source_temp, 64);
-					if (pointer_source_offset != source_offset) {
-						auto pointer_ref_info = getIndirectStackInfo(pointer_source_offset);
-						if (pointer_ref_info.has_value()) {
-							source_offset = pointer_source_offset;
-							source_ref_info = pointer_ref_info;
-						}
+		X64Register source_reg = getIntParamReg<TWriterClass>(1);
+		if (std::holds_alternative<TempVar>(source_arg.value)) {
+			TempVar source_temp = std::get<TempVar>(source_arg.value);
+			// Backend lowering must not rely on GlobalTempVarMetadataStorage here because that
+			// metadata is populated during IR generation and later reused across multiple
+			// functions. Use only current-function stack-side indirect-storage info.
+			int32_t source_offset = getStackOffsetFromTempVar(source_temp, source_arg.size_in_bits);
+			auto source_ref_info = getIndirectStackInfo(source_offset);
+			if (!source_ref_info.has_value() && source_arg.size_in_bits != 64) {
+				int32_t pointer_source_offset = getStackOffsetFromTempVar(source_temp, 64);
+				if (pointer_source_offset != source_offset) {
+					auto pointer_ref_info = getIndirectStackInfo(pointer_source_offset);
+					if (pointer_ref_info.has_value()) {
+						source_offset = pointer_source_offset;
+						source_ref_info = pointer_ref_info;
 					}
 				}
-
-				if (source_ref_info.has_value()) {
-					emitMovFromFrame(source_reg, source_offset);
-				} else {
-					emitLeaFromFrame(source_reg, source_offset);
-				}
-			} else if (std::holds_alternative<StringHandle>(source_arg.value)) {
-					if (!emitLoadAddressLikeArgument(source_reg, source_arg)) {
-						throw InternalError("Same-type constructor source variable is not addressable");
-				}
-			} else {
-				return false;
 			}
 
-			std::vector<TypeSpecifierNode> parameter_types;
-			parameter_types.push_back(ctor_node.parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
-
-			std::string struct_name = std::string(StringTable::getStringView(type_info.name()));
-			std::string function_name;
-			std::string class_name;
-			size_t last_colon_pos = struct_name.rfind("::");
-			if (last_colon_pos != std::string::npos) {
-				function_name = struct_name.substr(last_colon_pos + 2);
-				class_name = struct_name;
+			if (source_ref_info.has_value()) {
+				emitMovFromFrame(source_reg, source_offset);
 			} else {
-				function_name = struct_name;
-				class_name = struct_name;
+				emitLeaFromFrame(source_reg, source_offset);
 			}
-
-			TypeSpecifierNode void_return(Type::Void, 0, 0);
-			ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
-			sig.class_name = class_name;
-
-			std::string ctor_mangled = std::string(writer.generateMangledName(function_name, sig));
-			emitCall(ctor_mangled);
-
-			regAlloc.invalidateCallerSavedRegisters();
-			regAlloc.reset();
-			return true;
+		} else if (std::holds_alternative<StringHandle>(source_arg.value)) {
+			if (!emitLoadAddressLikeArgument(source_reg, source_arg)) {
+				throw InternalError("Same-type constructor source variable is not addressable");
+			}
+		} else {
+			return false;
 		}
+
+		std::vector<TypeSpecifierNode> parameter_types;
+		parameter_types.push_back(ctor_node.parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+
+		std::string struct_name = std::string(StringTable::getStringView(type_info.name()));
+		std::string function_name;
+		std::string class_name;
+		size_t last_colon_pos = struct_name.rfind("::");
+		if (last_colon_pos != std::string::npos) {
+			function_name = struct_name.substr(last_colon_pos + 2);
+			class_name = struct_name;
+		} else {
+			function_name = struct_name;
+			class_name = struct_name;
+		}
+
+		TypeSpecifierNode void_return(Type::Void, 0, 0);
+		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
+		sig.class_name = class_name;
+
+		std::string ctor_mangled = std::string(writer.generateMangledName(function_name, sig));
+		emitCall(ctor_mangled);
+
+		regAlloc.invalidateCallerSavedRegisters();
+		regAlloc.reset();
+		return true;
+	}
 
 	void handleConstructorCall(const IrInstruction& instruction) {
 		// Constructor call format: ConstructorCallOp {struct_name, object, arguments}
@@ -963,6 +963,7 @@
 								}
 							}
 						}
+				}
 				}
 			}
 		}
@@ -1175,7 +1176,7 @@
 			TypeIndex arg_type_index = arg.type_index;
 			const IrValue& paramValue = arg.value;
 			bool arg_is_reference = arg.is_reference();  // Check if marked as reference
-				const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
+			const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
 			// Check if this is a floating-point parameter
 			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double) && !arg_is_reference;
