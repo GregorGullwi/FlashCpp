@@ -864,15 +864,15 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 		}
 	}
 	
-		// Search base classes recursively
-		for (const auto& base_spec : struct_info->base_classes) {
-			if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
-				auto result = findUnaryOperatorOverload(base_spec.type_index, operator_kind);
-				if (result.has_match || result.is_ambiguous) {
-					return result;
-				}
+	// Search base classes recursively
+	for (const auto& base_spec : struct_info->base_classes) {
+		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
+			auto result = findUnaryOperatorOverload(base_spec.type_index, operator_kind);
+			if (result.has_match || result.is_ambiguous) {
+				return result;
 			}
 		}
+	}
 	
 	return OperatorOverloadResult::no_overload();
 }
@@ -921,9 +921,9 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 						TypeIndex resolved_param_idx = resolveSelfRefParamIndex(param_spec.type_index(), left_type_index);
 						type_matches = (resolved_param_idx == right_type_index);
 					} else {
-							// Caller provides the actual RHS base type for non-struct matches.
-							type_matches = (param_spec.type() == right_type);
-					}
+					// Caller provides the actual RHS base type for non-struct matches.
+					type_matches = (param_spec.type() == right_type);
+				}
 					if (type_matches) {
 						return OperatorOverloadResult(&member_func);
 					}
@@ -931,22 +931,22 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 			}
 		}
 	}
-		// Phase 2: No exact type match found among member operators.
-		// Do NOT fall back to a type-mismatched member operator — per C++20 [over.match.oper],
-		// non-member (free-function) candidates must also be considered. Returning a mismatched
-		// member here would suppress the free-function search in
-		// findBinaryOperatorOverloadWithFreeFunction. Instead, fall through to base-class search
-		// and ultimately return no_overload so the caller can check free functions too.
+	// Phase 2: No exact type match found among member operators.
+	// Do NOT fall back to a type-mismatched member operator — per C++20 [over.match.oper],
+	// non-member (free-function) candidates must also be considered. Returning a mismatched
+	// member here would suppress the free-function search in
+	// findBinaryOperatorOverloadWithFreeFunction. Instead, fall through to base-class search
+	// and ultimately return no_overload so the caller can check free functions too.
 
-		// Search base classes recursively
-		for (const auto& base_spec : left_struct_info->base_classes) {
-			if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
-				auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_kind, right_type);
-				if (result.has_match || result.is_ambiguous) {
-					return result;
-				}
+	// Search base classes recursively
+	for (const auto& base_spec : left_struct_info->base_classes) {
+		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
+			auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_kind, right_type);
+			if (result.has_match || result.is_ambiguous) {
+				return result;
 			}
 		}
+	}
 	
 	return OperatorOverloadResult::no_overload();
 }
@@ -1085,90 +1085,90 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		candidates.push_back({lhs_rank, rhs_rank, nullptr, &func_decl, true});
 	}
 
-		// --- 3. Rank all candidates per [over.match.best]/2 ---
-		if (candidates.empty()) {
-			return OperatorOverloadResult::no_overload();
+	// --- 3. Rank all candidates per [over.match.best]/2 ---
+	if (candidates.empty()) {
+		return OperatorOverloadResult::no_overload();
+	}
+
+	enum class CandidateComparison {
+		Better,
+		Worse,
+		Equivalent,
+		Incomparable,
+	};
+
+	auto compareCandidates = [](const OperatorCandidate& lhs, const OperatorCandidate& rhs) -> CandidateComparison {
+		bool lhs_is_better = false;
+		bool lhs_is_worse = false;
+
+		if (lhs.lhs_rank < rhs.lhs_rank) lhs_is_better = true;
+		else if (lhs.lhs_rank > rhs.lhs_rank) lhs_is_worse = true;
+
+		if (lhs.rhs_rank < rhs.rhs_rank) lhs_is_better = true;
+		else if (lhs.rhs_rank > rhs.rhs_rank) lhs_is_worse = true;
+
+		if (lhs_is_better && !lhs_is_worse) return CandidateComparison::Better;
+		if (!lhs_is_better && lhs_is_worse) return CandidateComparison::Worse;
+		if (!lhs_is_better && !lhs_is_worse) return CandidateComparison::Equivalent;
+		return CandidateComparison::Incomparable;
+	};
+
+	std::vector<const OperatorCandidate*> best_candidates;
+	best_candidates.reserve(candidates.size());
+
+	for (size_t i = 0; i < candidates.size(); ++i) {
+		const auto& candidate = candidates[i];
+		bool is_dominated = false;
+
+		for (size_t j = 0; j < candidates.size(); ++j) {
+			if (i == j) continue;
+			if (compareCandidates(candidates[j], candidate) == CandidateComparison::Better) {
+				is_dominated = true;
+				break;
+			}
 		}
 
-		enum class CandidateComparison {
-			Better,
-			Worse,
-			Equivalent,
-			Incomparable,
-		};
+		if (!is_dominated) {
+			best_candidates.push_back(&candidate);
+		}
+	}
 
-		auto compareCandidates = [](const OperatorCandidate& lhs, const OperatorCandidate& rhs) -> CandidateComparison {
-			bool lhs_is_better = false;
-			bool lhs_is_worse = false;
+	if (best_candidates.empty()) {
+		return OperatorOverloadResult::no_match();
+	}
 
-			if (lhs.lhs_rank < rhs.lhs_rank) lhs_is_better = true;
-			else if (lhs.lhs_rank > rhs.lhs_rank) lhs_is_worse = true;
+	std::vector<const OperatorCandidate*> filtered_best_candidates;
+	filtered_best_candidates.reserve(best_candidates.size());
 
-			if (lhs.rhs_rank < rhs.rhs_rank) lhs_is_better = true;
-			else if (lhs.rhs_rank > rhs.rhs_rank) lhs_is_worse = true;
-
-			if (lhs_is_better && !lhs_is_worse) return CandidateComparison::Better;
-			if (!lhs_is_better && lhs_is_worse) return CandidateComparison::Worse;
-			if (!lhs_is_better && !lhs_is_worse) return CandidateComparison::Equivalent;
-			return CandidateComparison::Incomparable;
-		};
-
-		std::vector<const OperatorCandidate*> best_candidates;
-		best_candidates.reserve(candidates.size());
-
-		for (size_t i = 0; i < candidates.size(); ++i) {
-			const auto& candidate = candidates[i];
-			bool is_dominated = false;
-
-			for (size_t j = 0; j < candidates.size(); ++j) {
-				if (i == j) continue;
-				if (compareCandidates(candidates[j], candidate) == CandidateComparison::Better) {
-					is_dominated = true;
+	for (const OperatorCandidate* candidate : best_candidates) {
+		bool loses_member_tiebreak = false;
+		if (candidate->is_free_function) {
+			for (const OperatorCandidate* other : best_candidates) {
+				if (other->is_free_function) continue;
+				if (compareCandidates(*candidate, *other) == CandidateComparison::Equivalent) {
+					loses_member_tiebreak = true;
 					break;
 				}
 			}
-
-			if (!is_dominated) {
-				best_candidates.push_back(&candidate);
-			}
 		}
 
-		if (best_candidates.empty()) {
-			return OperatorOverloadResult::no_match();
+		if (!loses_member_tiebreak) {
+			filtered_best_candidates.push_back(candidate);
 		}
+	}
 
-		std::vector<const OperatorCandidate*> filtered_best_candidates;
-		filtered_best_candidates.reserve(best_candidates.size());
+	if (filtered_best_candidates.size() != 1) {
+		return OperatorOverloadResult::ambiguous();
+	}
 
-		for (const OperatorCandidate* candidate : best_candidates) {
-			bool loses_member_tiebreak = false;
-			if (candidate->is_free_function) {
-				for (const OperatorCandidate* other : best_candidates) {
-					if (other->is_free_function) continue;
-					if (compareCandidates(*candidate, *other) == CandidateComparison::Equivalent) {
-						loses_member_tiebreak = true;
-						break;
-					}
-				}
-			}
+	const OperatorCandidate* best = filtered_best_candidates[0];
 
-			if (!loses_member_tiebreak) {
-				filtered_best_candidates.push_back(candidate);
-			}
-		}
-
-		if (filtered_best_candidates.size() != 1) {
-			return OperatorOverloadResult::ambiguous();
-		}
-
-		const OperatorCandidate* best = filtered_best_candidates[0];
-
-		// Return the winner
-		if (best->is_free_function) {
-			return OperatorOverloadResult(best->free_func);
-		} else {
-			return OperatorOverloadResult(best->member_func);
-		}
+	// Return the winner
+	if (best->is_free_function) {
+		return OperatorOverloadResult(best->free_func);
+	} else {
+		return OperatorOverloadResult(best->member_func);
+	}
 }
 
 // ============================================================================
