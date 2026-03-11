@@ -259,8 +259,8 @@
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
-				(carries_type_index || !preserve_pointer_depth) ? 0 : type_node.pointer_depth());
-			if (preserve_pointer_depth) {
+				(preserve_pointer_depth && !carries_type_index) ? type_node.pointer_depth() : 0);
+			if (preserve_pointer_depth && type_node.type() == Type::Enum) {
 				preserveLegacyEnumPointerDepthEncoding(result);
 			}
 			return result;
