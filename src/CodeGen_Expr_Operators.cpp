@@ -1468,7 +1468,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				// Get the LHS value - can be an identifier, member access, or other expression
 				std::variant<StringHandle, TempVar> lhs_value;
-				TypeIndex lhs_type_index = 0;
+				TypeIndex spaceship_lhs_type_index = 0;
 
 				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 					// Simple identifier case: p1 <=> p2
@@ -1482,11 +1482,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						const auto& var_decl = symbol->as<VariableDeclarationNode>();
 						const auto& decl = var_decl.declaration();
 						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-						lhs_type_index = type_node.type_index();
+						spaceship_lhs_type_index = type_node.type_index();
 					} else if (symbol && symbol->is<DeclarationNode>()) {
 						const auto& decl = symbol->as<DeclarationNode>();
 						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-						lhs_type_index = type_node.type_index();
+						spaceship_lhs_type_index = type_node.type_index();
 					} else {
 						// Can't find the variable declaration
 						return {};
@@ -1503,7 +1503,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					// Extract the result temp var and type index
 					lhs_value = std::get<TempVar>(member_ir[2]);
-					lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(member_ir[3]));
+					spaceship_lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(member_ir[3]));
 				} else {
 					// Other expression types - use already-generated lhsIrOperands
 					// The lhsIrOperands were already generated earlier in this function
@@ -1516,7 +1516,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					// Try to get type index from lhsIrOperands if available
 					if (lhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
-						lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
+						spaceship_lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 					} else {
 						// Can't determine type index for complex expression
 						return {};
@@ -1524,8 +1524,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 
 				// Look up the operator<=> function in the struct
-				if (lhs_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[lhs_type_index];
+				if (spaceship_lhs_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[spaceship_lhs_type_index];
 					if (type_info.struct_info_) {
 						const StructTypeInfo& struct_info = *type_info.struct_info_;
 
@@ -1566,7 +1566,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								if (param_node.is<DeclarationNode>()) {
 									const auto& param_decl = param_node.as<DeclarationNode>();
 									TypeSpecifierNode param_type = param_decl.type_node().as<TypeSpecifierNode>();
-									resolveSelfReferentialType(param_type, lhs_type_index);
+									resolveSelfReferentialType(param_type, spaceship_lhs_type_index);
 									param_types.push_back(param_type);
 								}
 							}
