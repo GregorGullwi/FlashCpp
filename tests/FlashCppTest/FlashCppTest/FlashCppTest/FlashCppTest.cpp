@@ -73,6 +73,10 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 
     const auto& ast = parser.get_nodes();
 
+    // Match the production pipeline: parser-side speculative member lookups on
+    // incomplete classes must not poison codegen's lazy member-resolution cache.
+    FlashCpp::gLazyMemberResolver.clearCache();
+
     AstToIr converter(gSymbolTable, compile_context, parser);
     for (auto& node_handle : ast) {
         converter.visit(node_handle);

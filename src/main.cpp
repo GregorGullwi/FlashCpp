@@ -456,6 +456,11 @@ int main_impl(int argc, char *argv[]) {
     const auto& ast = parser->get_nodes();
     FLASH_LOG(Parser, Debug, "After parsing, AST has ", ast.size(), " nodes\n");
 
+    // Parser-side speculative type queries can hit the lazy member resolver while
+    // enclosing classes are still incomplete. Clear the cache before codegen so
+    // stale negative member lookups do not poison later IR generation.
+    FlashCpp::gLazyMemberResolver.clearCache();
+
     AstToIr converter(gSymbolTable, context, *parser);
 
     // Reserve space for IR instructions

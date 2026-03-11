@@ -244,7 +244,6 @@ static ASTNode rebindStaticMemberInitializerFunctionCalls(
 			binop.get_token(),
 			rebindStaticMemberInitializerFunctionCalls(binop.get_lhs(), struct_info),
 			rebindStaticMemberInitializerFunctionCalls(binop.get_rhs(), struct_info));
-		rebound_binop.copy_semantic_operator_resolution_from(binop);
 		return ASTNode::emplace_node<ExpressionNode>(rebound_binop);
 	}
 

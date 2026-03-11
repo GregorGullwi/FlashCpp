@@ -608,7 +608,6 @@ ASTNode ExpressionSubstitutor::substituteBinaryOp(const BinaryOperatorNode& bino
 		substituted_lhs,
 		substituted_rhs
 	);
-	new_binop_value.copy_semantic_operator_resolution_from(binop);
 	
 	// Wrap in ExpressionNode so it can be evaluated by try_evaluate_constant_expression
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_binop_value);
