@@ -1671,11 +1671,14 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 
 	int operand_pointer_depth = getOperandPointerDepth();
 	auto makeUpdatedPointerResult = [&](TempVar value_var) {
-		ExprResult result = makeExprResult(operandType, 64, value_var, operandIrResult.type_index, operand_pointer_depth);
-		if (operandIrResult.encoded_metadata.has_value()) {
-			result.encoded_metadata = operandIrResult.encoded_metadata;
-		}
-		return result;
+		return makeExprResult(
+			operandType,
+			64,
+			value_var,
+			operandIrResult.type_index,
+			operand_pointer_depth,
+			operandIrResult.encoded_metadata
+		);
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {

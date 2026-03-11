@@ -252,17 +252,9 @@ The plan is easier to execute if it is split into these concrete slices:
    - migrate any remaining manual 4-slot expression-result builders
    - prefer tiny local `ExprResult` builders over open-coded `{ type, size, value, metadata }`
 2. **Convert legacy expression-result helper parameters**
-   - the current deferred `AstToIr.h` sites still taking `const std::vector<IrOperand>&` are the clearest next boundary:
+   - the current deferred `AstToIr.h` sites still taking `const std::vector<IrOperand>&` are now:
      - `handleLValueAssignment`
      - `handleLValueCompoundAssignment`
-     - `extractBaseFromOperands`
-     - `extractBaseOperand`
-     - `markReferenceMetadata`
-     - `isVaListPointerType`
-     - `handleRValueReferenceCast`
-     - `handleLValueReferenceCast`
-     - `generateUnaryIncDecOverloadCall`
-     - `generateBuiltinIncDec`
 3. **Only once producers and helper parameters are mostly migrated, change return signatures**
    - otherwise Phase 3 creates churn without removing the legacy positional access patterns
 4. **Delete the compatibility shim last**

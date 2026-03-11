@@ -61,12 +61,17 @@ struct ExprResult {
 	}
 };
 
+// Tiny aggregate builder for migrated Phase 2 sites that want named ExprResult
+// fields without open-coding member assignments. `encoded_metadata` is optional
+// so callers can preserve the raw legacy slot-4 payload when they are only
+// partially migrated and still have to bridge back into positional helpers.
 inline ExprResult makeExprResult(
 	Type type,
 	int size_in_bits,
 	IrOperand value,
 	TypeIndex type_index = 0,
-	int pointer_depth = 0
+	int pointer_depth = 0,
+	std::optional<unsigned long long> encoded_metadata = std::nullopt
 ) {
 	ExprResult result;
 	result.type = type;
@@ -74,6 +79,7 @@ inline ExprResult makeExprResult(
 	result.value = std::move(value);
 	result.type_index = type_index;
 	result.pointer_depth = pointer_depth;
+	result.encoded_metadata = encoded_metadata;
 	return result;
 }
 
@@ -125,6 +131,11 @@ inline TypedValue toTypedValue(const ExprResult& result) {
 	return toTypedValue(static_cast<ExprOperands>(result));
 }
 
+// Temporary Phase 2 bridge: decode positional expression operands into named
+// ExprResult fields while also preserving the raw slot-4 payload in
+// `encoded_metadata`. This lets migrated helpers use named fields internally
+// but round-trip back to legacy positional consumers without changing the
+// compatibility encoding yet.
 inline ExprResult toExprResult(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
