@@ -1185,8 +1185,8 @@
 					);
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-						TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
-						return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
+					TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
+					return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 				}
 				
 				// Regular local variable (not a reference) - return variable name

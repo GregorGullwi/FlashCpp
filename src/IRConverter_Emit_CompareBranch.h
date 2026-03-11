@@ -1230,41 +1230,41 @@
 
 	// Allocate an XMM register, spilling one to the stack if necessary
 	X64Register allocateXMMRegisterWithSpilling() {
-			return allocateXMMRegisterWithSpilling(X64Register::Count);
-		}
+		return allocateXMMRegisterWithSpilling(X64Register::Count);
+	}
 
-		// Allocate an XMM register, spilling one to the stack if necessary, excluding a specific register
-		X64Register allocateXMMRegisterWithSpilling(X64Register exclude) {
+	// Allocate an XMM register, spilling one to the stack if necessary, excluding a specific register
+	X64Register allocateXMMRegisterWithSpilling(X64Register exclude) {
 		// Try to allocate a free XMM register first
 		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
-				if (!regAlloc.registers[i].isAllocated && regAlloc.registers[i].reg != exclude) {
+			if (!regAlloc.registers[i].isAllocated && regAlloc.registers[i].reg != exclude) {
 				regAlloc.registers[i].isAllocated = true;
 				return regAlloc.registers[i].reg;
 			}
 		}
 
 		// No free XMM registers - need to spill one
-			auto reg_to_spill = [&]() -> std::optional<X64Register> {
-				X64Register best_candidate = X64Register::Count;
-				bool found_dirty = false;
-				for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
-					const auto& reg = regAlloc.registers[i];
-					if (!reg.isAllocated || reg.reg == exclude) {
-						continue;
-					}
-					if (!reg.isDirty) {
-						return reg.reg;
-					}
-					if (best_candidate == X64Register::Count) {
-						best_candidate = reg.reg;
-						found_dirty = true;
-					}
+		auto reg_to_spill = [&]() -> std::optional<X64Register> {
+			X64Register best_candidate = X64Register::Count;
+			bool found_dirty = false;
+			for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
+				const auto& reg = regAlloc.registers[i];
+				if (!reg.isAllocated || reg.reg == exclude) {
+					continue;
 				}
-				if (found_dirty) {
-					return best_candidate;
+				if (!reg.isDirty) {
+					return reg.reg;
 				}
-				return std::nullopt;
-			}();
+				if (best_candidate == X64Register::Count) {
+					best_candidate = reg.reg;
+					found_dirty = true;
+				}
+			}
+			if (found_dirty) {
+				return best_candidate;
+			}
+			return std::nullopt;
+		}();
 		if (!reg_to_spill.has_value()) {
 			throw InternalError("No XMM registers available for spilling");
 		}
@@ -1275,7 +1275,7 @@
 		// If the register is dirty, write it back to the stack
 		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
 			// For XMM registers, use float mov to frame
-				bool is_float = reg_info.size_in_bits <= 32;
+			bool is_float = reg_info.size_in_bits <= 32;
 			auto store_opcodes = generateFloatMovToFrame(spill_reg, reg_info.stackVariableOffset, is_float);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);

@@ -584,11 +584,11 @@
 			if (scope_pos != std::string_view::npos && !matched_func_decl) {
 				std::string_view struct_part = lookup_name_view.substr(0, scope_pos);
 				std::string_view member_name_direct = lookup_name_view.substr(scope_pos + 2);
-					const TypeInfo* direct_type_info = resolveQualifiedCallStruct(struct_part);
-					if (direct_type_info && direct_type_info->isStruct()) {
-						const StructTypeInfo* si = direct_type_info->getStructInfo();
+				const TypeInfo* direct_type_info = resolveQualifiedCallStruct(struct_part);
+				if (direct_type_info && direct_type_info->isStruct()) {
+					const StructTypeInfo* si = direct_type_info->getStructInfo();
 					if (si) {
-							std::string_view resolved_struct_part = StringTable::getStringView(direct_type_info->name());
+						std::string_view resolved_struct_part = StringTable::getStringView(direct_type_info->name());
 						// Count expected parameters for overload disambiguation
 						size_t direct_expected_param_count = 0;
 						functionCallNode.arguments().visit([&](ASTNode) { ++direct_expected_param_count; });
@@ -598,7 +598,7 @@
 								if (fd.decl_node().identifier_token().value() == member_name_direct
 								&& fd.parameter_nodes().size() == direct_expected_param_count) {
 									matched_func_decl = &fd;
-										resolveMangledName(matched_func_decl, resolved_struct_part);
+									resolveMangledName(matched_func_decl, resolved_struct_part);
 									// Queue all member functions of this struct for deferred generation
 									std::vector<std::string> ns_stack;
 									auto parse_ns = [&](std::string_view qualified_name) {
@@ -616,13 +616,13 @@
 											start = pos + 2;
 										}
 									};
-										parse_ns(resolved_struct_part);
+									parse_ns(resolved_struct_part);
 									if (ns_stack.empty()) {
-											parse_ns(StringTable::getStringView(direct_type_info->name()));
+										parse_ns(StringTable::getStringView(direct_type_info->name()));
 									}
 									for (const auto& dmf : si->member_functions) {
 										DeferredMemberFunctionInfo deferred_info;
-											deferred_info.struct_name = direct_type_info->name();
+										deferred_info.struct_name = direct_type_info->name();
 										deferred_info.function_node = dmf.function_decl;
 										deferred_info.namespace_stack = ns_stack;
 										deferred_member_functions_.push_back(std::move(deferred_info));
