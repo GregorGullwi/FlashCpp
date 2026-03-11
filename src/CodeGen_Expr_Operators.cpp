@@ -1152,6 +1152,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			&& (concrete_type_specs.has_value()
 				? concrete_operands_require_user_defined_operator
 				: (lhs_has_user_defined_identity || rhs_has_user_defined_identity || recorded_overload_still_relevant));
+		bool can_try_spaceship_rewrite = false;
 
 		if (should_attempt_operator_overload) {
 			// Check for operator overload (member function or free function)
@@ -1212,7 +1213,6 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					|| requiresUserDefinedBinaryOperatorByBase(rhsType, rhs_type_index);
 			}
 
-			bool can_try_spaceship_rewrite = false;
 				can_try_spaceship_rewrite =
 					!overload_result.has_match
 					&& requires_user_defined_operator
