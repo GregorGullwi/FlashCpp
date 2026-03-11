@@ -1667,11 +1667,18 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Try to get pointer depth for pointer arithmetic
 		int lhs_pointer_depth = 0;
 		const TypeSpecifierNode* lhs_type_node = nullptr;
+		auto lookupIdentifierSymbol = [&](const IdentifierNode& identifier) -> std::optional<ASTNode> {
+			auto symbol = symbol_table.lookup(identifier.name());
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(identifier.name());
+			}
+			return symbol;
+		};
 		if (binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const auto& lhs_id = std::get<IdentifierNode>(lhs_expr);
-				auto symbol = symbol_table.lookup(lhs_id.name());
+				auto symbol = lookupIdentifierSymbol(lhs_id);
 				if (symbol && symbol->is<VariableDeclarationNode>()) {
 					const auto& var_decl = symbol->as<VariableDeclarationNode>();
 					const auto& decl = var_decl.declaration();
@@ -1707,7 +1714,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ExpressionNode& rhs_expr = binaryOperatorNode.get_rhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(rhs_expr)) {
 				const auto& rhs_id = std::get<IdentifierNode>(rhs_expr);
-				auto symbol = symbol_table.lookup(rhs_id.name());
+				auto symbol = lookupIdentifierSymbol(rhs_id);
 				if (symbol && symbol->is<VariableDeclarationNode>()) {
 					const auto& var_decl = symbol->as<VariableDeclarationNode>();
 					const auto& decl = var_decl.declaration();
