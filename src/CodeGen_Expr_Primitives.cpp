@@ -248,9 +248,7 @@
 			return result;
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value) -> ExprResult {
-			const bool carries_type_index = type_node.type() == Type::Struct ||
-				type_node.type() == Type::Enum ||
-				type_node.type() == Type::UserDefined;
+			const bool carries_type_index = type_node.type() == Type::Struct;
 			return makeIdentifierResult(
 				type_node.type(),
 				size_bits,
