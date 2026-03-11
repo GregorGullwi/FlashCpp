@@ -45,7 +45,7 @@ Basic and intermediate exception handling works end-to-end:
 
 ## Windows EH Hardening Roadmap
 
-One currently interesting hardening gap is **cleanup of locals declared inside a catch body when control leaves via `throw` / `throw;`**.
+One currently interesting hardening area is **cleanup of locals declared inside a catch body when control leaves exceptionally**.
 
 Today, the Windows EH path already has dedicated machinery for:
 
@@ -53,12 +53,20 @@ Today, the Windows EH path already has dedicated machinery for:
 - try-scope cleanup before entering a catch,
 - catch-funclet continuation / parent-return bridging.
 
-The weaker spot is that catch-body locals do not yet appear to be first-class entries in the Windows unwind-state model, which makes rethrow-style exits a likely source of missed destructor cleanup.
+The weaker spot is that catch-body locals do not yet appear to be first-class entries in the Windows unwind-state model, which makes catch-body throw/rethrow exits a likely source of missed destructor cleanup.
+
+### Current state
+
+The first minimal hardening step has already landed for **`throw;` / rethrow** inside a catch body:
+
+- before lowering `Rethrow`, the frontend emits destructor calls for the active catch-body scopes.
+
+This intentionally does **not** yet change `throw <expr>` lowering inside a catch body.
 
 ### Recommended sequencing
 
 1. **Minimal fix first**
-   Close the concrete bug with the smallest safe change, ideally by making the frontend emit cleanup for the active catch scopes before lowering `throw` / `throw;` from inside a catch body. This is the best first step because it fixes a real failing case with low risk.
+   Close the concrete bug with the smallest safe change. The landed minimal fix handles `throw;` / rethrow from inside a catch body by emitting cleanup for the active catch scopes before lowering `Rethrow`. This was the best first step because it fixed a real failing case with low risk.
 
 2. **Medium refactor if we keep touching EH exits**
    Introduce a shared “leave scopes down to depth X” cleanup helper in AST→IR and use it for `return`, `break`, `continue`, `goto`, `throw`, and `throw;`. This is not strictly required before a larger redesign, but it is the best practical next step if more non-local-exit hardening work is expected.
@@ -73,6 +81,11 @@ The current recommendation is **minimal first, then reassess**.
 - If the minimal fix closes the bug and no other EH-exit holes appear, stopping there is reasonable.
 - If more control-flow exits in this area need attention, do the medium refactor before continuing.
 - The medium step is **useful but not mandatory** before a future larger redesign.
+
+### Explicit follow-ups still worth tracking
+
+- **`throw <expr>` from inside a catch body** remains a follow-up gap. The current hardening only covers `throw;`. This should not be “fixed” by blindly emitting cleanup before expression evaluation, because the thrown expression may still depend on catch-local objects. The likely correct direction is: evaluate/materialize the thrown value first, then clean active catch scopes, then lower the actual throw.
+- **Nested-catch rethrow behavior** should be verified with a dedicated regression. `emitActiveCatchScopeDestructors()` currently uses the innermost active catch base depth, which correctly handles nested lexical scopes within one catch body, but may need further work if `throw;` exits through multiple active catch contexts and outer-catch locals also need explicit cleanup.
 
 ## Windows Catch-Funclet Return Model
 
