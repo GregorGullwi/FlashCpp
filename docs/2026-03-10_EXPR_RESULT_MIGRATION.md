@@ -130,6 +130,28 @@ the heap allocation overhead is eliminated.
 - fixed-size expression-result consumers should index/copy the 3-4 operands
   directly instead of assuming contiguous backing storage
 
+**Remaining `std::vector<IrOperand>` parameter sites (deferred to Phase 2):**
+These functions still accept `const std::vector<IrOperand>&`, causing implicit
+`InlineVector→std::vector` heap-allocating conversions when called with
+`ExprOperands`. They are deferred because Phase 2 will change them to accept
+`const ExprResult&` with named fields, making a Phase 1 `const ExprOperands&`
+intermediate step wasteful:
+- `handleLValueAssignment` (`AstToIr.h:458`) — 2 params
+- `handleLValueCompoundAssignment` (`AstToIr.h:465`) — 2 params
+- `extractBaseFromOperands` (`AstToIr.h:201`)
+- `extractBaseOperand` (`AstToIr.h:227`)
+- `markReferenceMetadata` (`AstToIr.h:231`)
+- `isVaListPointerType` (`AstToIr.h:178`)
+- `handleRValueReferenceCast` (`AstToIr.h:245`)
+- `handleLValueReferenceCast` (`AstToIr.h:251`)
+- `generateUnaryIncDecOverloadCall` (`AstToIr.h:284`)
+- `generateBuiltinIncDec` (`AstToIr.h:296`)
+
+These are not a regression: before this PR they received `std::vector`
+directly (no conversion). The implicit conversion cost is equivalent to the
+previous heap allocation at the producer site. Phase 2 will eliminate both
+by switching to `ExprResult`.
+
 ### Phase 2: Migrate producers one at a time
 
 For each function that constructs a 4-element operand vector with
