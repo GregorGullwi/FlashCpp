@@ -253,19 +253,21 @@
 			// struct identifiers carry type_index in slot 4. Non-struct identifiers keep 0 by default,
 			// but selected direct global-load sites opt into preserving pointer_depth so downstream
 			// toTypedValue consumers can still recognize pointer-typed globals.
+			Type result_type = type_node.type();
+			if (preserve_pointer_depth && type_node.type() == Type::Enum && type_node.pointer_depth() > 0 &&
+				type_node.type_index() < gTypeInfo.size()) {
+				if (const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index()].getEnumInfo()) {
+					result_type = enum_info->underlying_type;
+				}
+			}
 			const bool carries_type_index = type_node.type() == Type::Struct;
 			const int slot4_pointer_depth = (preserve_pointer_depth && !carries_type_index) ? type_node.pointer_depth() : 0;
 			ExprResult result = makeIdentifierResult(
-				type_node.type(),
+				result_type,
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
 				slot4_pointer_depth);
-			if (preserve_pointer_depth && type_node.type() == Type::Enum) {
-				// Enum-typed pointers still need the legacy explicit override because ExprResult's
-				// default slot-4 encoding for Type::Enum prefers type_index over pointer_depth.
-				preserveLegacyEnumPointerDepthEncoding(result);
-			}
 			return result;
 		};
 		auto preserveEnumTypeIndexEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
