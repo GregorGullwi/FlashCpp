@@ -447,10 +447,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						}
 
 						if (overload_result.is_ambiguous) {
-							return ParseResult::error("Ambiguous overload for operator '" + std::string(operator_token.value()) + "'", operator_token);
-						}
-
-						if (overload_result.has_match) {
+							binary_operator_node.set_ambiguous_operator_overload();
+						} else if (overload_result.has_match) {
 							if (overload_result.is_free_function) {
 								binary_operator_node.set_resolved_free_function_operator_overload(overload_result.free_function_overload);
 							} else {
