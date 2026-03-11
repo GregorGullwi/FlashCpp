@@ -1126,9 +1126,16 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 }
 
 inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
+	Type effective_right_type = right_type;
+	if (right_type_index > 0 && right_type_index < gTypeInfo.size()) {
+		Type indexed_right_type = resolve_type_alias(gTypeInfo[right_type_index].type_, right_type_index);
+		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
+			effective_right_type = Type::Invalid;
+		}
+	}
 	return findBinaryOperatorOverload(
 		makeBinaryOperatorTypeSpecifier(Type::Invalid, left_type_index),
-		makeBinaryOperatorTypeSpecifier(right_type, right_type_index),
+		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
 		operator_kind);
 }
 
@@ -1312,9 +1319,16 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	const SymbolTable& symbol_table,
 	Type right_type)
 {
+	Type effective_right_type = right_type;
+	if (right_type_index > 0 && right_type_index < gTypeInfo.size()) {
+		Type indexed_right_type = resolve_type_alias(gTypeInfo[right_type_index].type_, right_type_index);
+		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
+			effective_right_type = Type::Invalid;
+		}
+	}
 	return findBinaryOperatorOverloadWithFreeFunction(
 		makeBinaryOperatorTypeSpecifier(Type::Invalid, left_type_index),
-		makeBinaryOperatorTypeSpecifier(right_type, right_type_index),
+		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
 		operator_kind,
 		operator_symbol,
 		symbol_table);

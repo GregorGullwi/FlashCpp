@@ -752,6 +752,20 @@
 		// Get the source type
 		Type source_type = std::get<Type>(expr_operands[0]);
 		int source_size = std::get<int>(expr_operands[1]);
+		TypeIndex source_type_index = 0;
+		if (expr_operands.size() > 3 && std::holds_alternative<unsigned long long>(expr_operands[3])) {
+			source_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(expr_operands[3]));
+		}
+		auto source_has_semantic_identity = [&]() {
+			if (source_type_index == 0 || source_type_index >= gTypeInfo.size()) {
+				return false;
+			}
+			Type semantic_type = resolve_type_alias(source_type, source_type_index);
+			if (semantic_type != Type::Struct && semantic_type != Type::Enum && semantic_type != Type::UserDefined) {
+				semantic_type = resolve_type_alias(gTypeInfo[source_type_index].type_, source_type_index);
+			}
+			return semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
+		};
 
 		// Special handling for rvalue reference casts: static_cast<T&&>(expr)
 		// This produces an xvalue - has identity but can be moved from
@@ -784,6 +798,9 @@
 
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
+			if (source_has_semantic_identity() && target_type != Type::Struct && target_type != Type::Enum && target_type != Type::UserDefined) {
+				return { target_type, target_size, expr_operands[2], 0ULL };
+			}
 			return expr_operands;
 		}
 

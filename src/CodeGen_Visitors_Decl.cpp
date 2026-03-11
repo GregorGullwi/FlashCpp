@@ -48,15 +48,7 @@
 		current_function_return_type_ = ret_type_spec.type();
 		current_function_returns_reference_ = ret_type_spec.is_reference();
 		
-		// Get actual return size - for struct types, TypeSpecifierNode.size_in_bits() may be 0
-		// so we need to look it up from gTypeInfo using the type_index
-		int actual_ret_size = static_cast<int>(ret_type_spec.size_in_bits());
-		if (actual_ret_size == 0 && ret_type_spec.type() == Type::Struct && ret_type_spec.type_index() > 0) {
-			// Look up struct size from type info
-			if (ret_type_spec.type_index() < gTypeInfo.size() && gTypeInfo[ret_type_spec.type_index()].struct_info_) {
-				actual_ret_size = static_cast<int>(gTypeInfo[ret_type_spec.type_index()].struct_info_->total_size * 8);
-			}
-		}
+		int actual_ret_size = getTypeSpecSizeBits(ret_type_spec);
 		
 		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
 		// References are represented as pointers at the IR level
@@ -127,15 +119,7 @@
 		// Return type information
 		func_decl_op.return_type = ret_type.type();
 		
-		// Get actual return size - for struct types, TypeSpecifierNode.size_in_bits() may be 0
-		// so we need to look it up from gTypeInfo using the type_index
-		int actual_return_size = static_cast<int>(ret_type.size_in_bits());
-		if (actual_return_size == 0 && ret_type.type() == Type::Struct && ret_type.type_index() > 0) {
-			// Look up struct size from type info
-			if (ret_type.type_index() < gTypeInfo.size() && gTypeInfo[ret_type.type_index()].struct_info_) {
-				actual_return_size = static_cast<int>(gTypeInfo[ret_type.type_index()].struct_info_->total_size * 8);
-			}
-		}
+		int actual_return_size = getTypeSpecSizeBits(ret_type);
 		
 		// For pointer return types, use 64-bit size (pointer size on x64)
 		// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
@@ -295,14 +279,7 @@
 
 			FunctionParam param_info;
 			param_info.type = param_type.type();
-			param_info.size_in_bits = static_cast<int>(param_type.size_in_bits());
-			// For struct types, TypeSpecifierNode.size_in_bits() may be 0 (e.g. template-instantiated
-			// struct parameters) — resolve from gTypeInfo using the type_index, same as return types.
-			if (param_info.size_in_bits == 0 && param_type.type() == Type::Struct && param_type.type_index() > 0) {
-				if (param_type.type_index() < gTypeInfo.size() && gTypeInfo[param_type.type_index()].struct_info_) {
-					param_info.size_in_bits = static_cast<int>(gTypeInfo[param_type.type_index()].struct_info_->total_size * 8);
-				}
-			}
+			param_info.size_in_bits = getTypeSpecSizeBits(param_type);
 			
 			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
@@ -1284,7 +1261,7 @@
 
 			FunctionParam func_param;
 			func_param.type = param_type.type();
-			func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+			func_param.size_in_bits = getTypeSpecSizeBits(param_type);
 			func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 			
 			// Handle empty parameter names (e.g., from defaulted constructors)

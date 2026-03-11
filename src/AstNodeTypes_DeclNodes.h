@@ -803,6 +803,9 @@ struct TypeInfo
 	EnumTypeInfo* getEnumInfo() { return enum_info_.get(); }
 
 	void setEnumInfo(std::unique_ptr<EnumTypeInfo> info) {
+		if (info) {
+			type_size_ = info->underlying_size;
+		}
 		enum_info_ = std::move(info);
 	}
 };
@@ -1113,12 +1116,15 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 		return 64;
 	}
 	Type t = type_spec.type();
-	if (t == Type::Struct || t == Type::UserDefined) {
+	if (t == Type::Struct || t == Type::UserDefined || t == Type::Enum) {
 		TypeIndex idx = type_spec.type_index();
 		if (idx > 0 && idx < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[idx];
 			if (const StructTypeInfo* si = ti.getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
+			}
+			if (const EnumTypeInfo* ei = ti.getEnumInfo()) {
+				return static_cast<int>(ei->underlying_size);
 			}
 			if (ti.type_size_ > 0) {
 				return ti.type_size_;
