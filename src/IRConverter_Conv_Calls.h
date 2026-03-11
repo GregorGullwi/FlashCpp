@@ -891,79 +891,78 @@
 		if (struct_type_it != gTypesByName.end()) {
 			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 			if (struct_info) {
-					// FIRST: If we have exactly one parameter that's a reference to the same struct type,
-					// prefer the corresponding same-type copy/move constructor over other single-parameter constructors.
-					if (num_params == 1 && !ctor_op.arguments.empty()) {
-						const TypedValue& arg = ctor_op.arguments[0];
-						bool arg_is_same_struct = (arg.type == Type::Struct &&
-							arg.type_index == struct_type_it->second->type_index_);
-						bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == 64);
+				// FIRST: If we have exactly one parameter that's a reference to the same struct type,
+				// prefer the corresponding same-type copy/move constructor over other single-parameter constructors.
+				if (num_params == 1 && !ctor_op.arguments.empty()) {
+					const TypedValue& arg = ctor_op.arguments[0];
+					bool arg_is_same_struct = (arg.type == Type::Struct &&
+						arg.type_index == struct_type_it->second->type_index_);
+					bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == 64);
 
-						if (arg_is_same_struct && arg_is_ref_or_pointer) {
-							bool prefer_move_ctor = arg.ref_qualifier == ReferenceQualifier::RValueReference;
-							const StructMemberFunction* same_type_ctor = struct_info->findPreferredSameTypeConstructor(prefer_move_ctor);
-							if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-								actual_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
-								FLASH_LOG_FORMAT(Codegen, Debug,
-									"Constructor call for {}: matched same-type {} constructor",
-									struct_name,
-									prefer_move_ctor ? "move" : "copy");
-							}
+					if (arg_is_same_struct && arg_is_ref_or_pointer) {
+						bool prefer_move_ctor = arg.ref_qualifier == ReferenceQualifier::RValueReference;
+						const StructMemberFunction* same_type_ctor = struct_info->findPreferredSameTypeConstructor(prefer_move_ctor);
+						if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+							actual_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+							FLASH_LOG_FORMAT(Codegen, Debug,
+								"Constructor call for {}: matched same-type {} constructor",
+								struct_name,
+								prefer_move_ctor ? "move" : "copy");
 						}
 					}
+				}
 
-					// SECOND: If no same-type constructor matched, look for other constructors with matching parameter count.
-					if (!actual_ctor) {
-						std::vector<TypeSpecifierNode> arg_types;
-						arg_types.reserve(num_params);
-						for (const auto& arg : ctor_op.arguments) {
-							TypeSpecifierNode arg_type = (arg.type == Type::Struct || arg.type == Type::UserDefined)
-								? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits)
-								: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits);
-							if (arg.pointer_depth > 0) {
-								for (int i = 0; i < arg.pointer_depth; ++i) {
-									arg_type.add_pointer_level();
-								}
+				// SECOND: If no same-type constructor matched, look for other constructors with matching parameter count.
+				if (!actual_ctor) {
+					std::vector<TypeSpecifierNode> arg_types;
+					arg_types.reserve(num_params);
+					for (const auto& arg : ctor_op.arguments) {
+						TypeSpecifierNode arg_type = (arg.type == Type::Struct || arg.type == Type::UserDefined)
+							? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits)
+							: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits);
+						if (arg.pointer_depth > 0) {
+							for (int i = 0; i < arg.pointer_depth; ++i) {
+								arg_type.add_pointer_level();
 							}
-							arg_type.set_reference_qualifier(arg.ref_qualifier);
-							arg_type.set_cv_qualifier(arg.cv_qualifier);
-							arg_types.push_back(std::move(arg_type));
 						}
+						arg_type.set_reference_qualifier(arg.ref_qualifier);
+						arg_type.set_cv_qualifier(arg.cv_qualifier);
+						arg_types.push_back(std::move(arg_type));
+					}
 
-						auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
-						if (resolution.has_match && resolution.selected_overload) {
-							actual_ctor = resolution.selected_overload;
-						}
+					auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
+					if (resolution.has_match && resolution.selected_overload) {
+						actual_ctor = resolution.selected_overload;
+					}
 
-						if (!actual_ctor) {
-							for (const auto& func : struct_info->member_functions) {
-								if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-									const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-									const auto& params = ctor_node.parameter_nodes();
+					if (!actual_ctor) {
+						for (const auto& func : struct_info->member_functions) {
+							if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+								const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+								const auto& params = ctor_node.parameter_nodes();
 
-									if (ctor_node.is_implicit() && params.size() == 1 && num_params == 1 &&
-										params[0].is<DeclarationNode>()) {
-										const auto& param_type = params[0].as<DeclarationNode>().type_node();
-										if (param_type.is<TypeSpecifierNode>()) {
-											const auto& pts = param_type.as<TypeSpecifierNode>();
-											if ((pts.is_reference() || pts.is_rvalue_reference()) &&
-												(pts.type() == Type::Struct || pts.type() == Type::UserDefined)) {
-												const TypedValue& arg = ctor_op.arguments[0];
-												if (arg.type != Type::Struct || arg.type_index != struct_type_it->second->type_index_) {
-													continue;
-												}
+								if (ctor_node.is_implicit() && params.size() == 1 && num_params == 1 &&
+									params[0].is<DeclarationNode>()) {
+									const auto& param_type = params[0].as<DeclarationNode>().type_node();
+									if (param_type.is<TypeSpecifierNode>()) {
+										const auto& pts = param_type.as<TypeSpecifierNode>();
+										if ((pts.is_reference() || pts.is_rvalue_reference()) &&
+											(pts.type() == Type::Struct || pts.type() == Type::UserDefined)) {
+											const TypedValue& arg = ctor_op.arguments[0];
+											if (arg.type != Type::Struct || arg.type_index != struct_type_it->second->type_index_) {
+												continue;
 											}
 										}
 									}
+								}
 
-									if (params.size() == num_params) {
-										actual_ctor = &ctor_node;
-										break;
-									}
+								if (params.size() == num_params) {
+									actual_ctor = &ctor_node;
+									break;
 								}
 							}
 						}
-				}
+					}
 				}
 			}
 		}
@@ -1144,8 +1143,8 @@
 						// Match handleFunctionCall: references and ABI-required by-address
 						// struct arguments must spill their address, not their value.
 						X64Register temp_reg = allocateRegisterWithSpilling();
-							if (!emitLoadAddressLikeArgument(temp_reg, arg, source_base_adjustment)) {
-								throw InternalError("Stack constructor argument marked pass-by-address is not addressable");
+						if (!emitLoadAddressLikeArgument(temp_reg, arg, source_base_adjustment)) {
+							throw InternalError("Stack constructor argument marked pass-by-address is not addressable");
 						}
 						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 						regAlloc.release(temp_reg);
@@ -1243,17 +1242,10 @@
 					X64Register target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
 					bool should_pass_address = is_reference_param || shouldPassStructByAddress(arg, is_two_reg_sysv);
 
-					if (should_pass_address && std::holds_alternative<StringHandle>(paramValue)) {
-							if (!emitLoadAddressLikeArgument(target_reg, arg, source_base_adjustment)) {
-								throw InternalError("Register constructor argument marked pass-by-address is not addressable");
-							}
-						continue;
-					}
-
-					if (should_pass_address && std::holds_alternative<TempVar>(paramValue)) {
-							if (!emitLoadAddressLikeArgument(target_reg, arg, source_base_adjustment)) {
-								throw InternalError("Register constructor TempVar argument marked pass-by-address is not addressable");
-							}
+					if (should_pass_address && (std::holds_alternative<StringHandle>(paramValue) || std::holds_alternative<TempVar>(paramValue))) {
+						if (!emitLoadAddressLikeArgument(target_reg, arg, source_base_adjustment)) {
+							throw InternalError("Register constructor argument marked pass-by-address is not addressable");
+						}
 						continue;
 					}
 
@@ -1275,8 +1267,8 @@
 						const TempVar temp_var = std::get<TempVar>(paramValue);
 						int param_offset = getStackOffsetFromTempVar(temp_var);
 						if (is_two_reg_sysv) {
-								emitTwoRegStructToRegs(param_offset, target_reg, int_reg_index, max_int_regs);
-							} else {
+							emitTwoRegStructToRegs(param_offset, target_reg, int_reg_index, max_int_regs);
+						} else {
 							// For value parameters: source (sized stack slot) -> dest (64-bit register)
 							emitMovFromFrameSized(
 								SizedRegister{target_reg, 64, false},  // dest: 64-bit register
