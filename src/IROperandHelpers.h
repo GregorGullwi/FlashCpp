@@ -4,6 +4,8 @@
 #include <vector>
 #include <span>
 
+#include "InlineVector.h"
+
 // Note: IrValue and all struct definitions (BinaryOp, etc.) are now in IRTypes.h
 // This file only contains helper functions for working with those types
 
@@ -31,6 +33,26 @@ inline IrValue toIrValue(const IrOperand& operand) {
 			return static_cast<unsigned long long>(0);  // Unreachable, but prevents warning
 	}
 }
+
+using ExprOperands = InlineVector<IrOperand, 4>;
+
+struct ExprResult {
+	Type type = Type::Void;
+	int size_in_bits = 0;
+	IrOperand value{};
+	TypeIndex type_index = 0;
+	int pointer_depth = 0;
+
+	operator ExprOperands() const {
+		unsigned long long metadata = 0;
+		if (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) {
+			metadata = static_cast<unsigned long long>(type_index);
+		} else if (pointer_depth > 0) {
+			metadata = static_cast<unsigned long long>(pointer_depth);
+		}
+		return { type, size_in_bits, value, metadata };
+	}
+};
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
@@ -61,6 +83,19 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 
 inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 	return toTypedValue(std::span<const IrOperand>(operands));
+}
+
+inline TypedValue toTypedValue(const ExprOperands& operands) {
+	assert(operands.size() >= 3 && operands.size() <= 4 && "ExprOperands must contain exactly 3 or 4 operands");
+	std::array<IrOperand, 4> inline_copy{};
+	for (size_t i = 0; i < operands.size(); ++i) {
+		inline_copy[i] = operands[i];
+	}
+	return toTypedValue(std::span<const IrOperand>(inline_copy.data(), operands.size()));
+}
+
+inline TypedValue toTypedValue(const ExprResult& result) {
+	return toTypedValue(static_cast<ExprOperands>(result));
 }
 
 // ============================================================================

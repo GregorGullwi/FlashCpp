@@ -1,7 +1,7 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: Proposed
+**Status**: In Progress
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
 ## Problem
@@ -109,6 +109,48 @@ from `std::vector<IrOperand>` to `InlineVector<IrOperand, 4>`.
 
 All existing code continues to work — nothing returns `ExprResult` yet, but
 the heap allocation overhead is eliminated.
+
+**PR #882 status (2026-03-11):**
+- `ExprResult` was added in `IROperandHelpers.h`
+- the existing `InlineVector` was reused for `ExprOperands`
+- fixed-size expression-result return types were migrated from
+  `std::vector<IrOperand>` to `InlineVector<IrOperand, 4>`
+- hot-path consumers such as `toTypedValue(const ExprOperands&)` and
+  `generateTypeConversion(...)` must stay on `ExprOperands` (or another
+  non-owning/fixed-size view) to avoid implicitly converting back to
+  `std::vector<IrOperand>` and reintroducing heap allocation
+- variable-length operand builders used to assemble call packets remain
+  `std::vector<IrOperand>` internally; they are not the fixed 3-4 operand
+  expression-result tuple that this migration is targeting
+
+**Phase 1 clarification discovered during PR #882:**
+- `InlineVector::data()` must not be used to form a span over an `InlineVector`
+  that may overflow, because its storage is not guaranteed to be contiguous
+  across inline and overflow elements
+- fixed-size expression-result consumers should index/copy the 3-4 operands
+  directly instead of assuming contiguous backing storage
+
+**Remaining `std::vector<IrOperand>` parameter sites (deferred to Phase 2):**
+These functions still accept `const std::vector<IrOperand>&`, causing implicit
+`InlineVector→std::vector` heap-allocating conversions when called with
+`ExprOperands`. They are deferred because Phase 2 will change them to accept
+`const ExprResult&` with named fields, making a Phase 1 `const ExprOperands&`
+intermediate step wasteful:
+- `handleLValueAssignment` (`AstToIr.h:458`) — 2 params
+- `handleLValueCompoundAssignment` (`AstToIr.h:465`) — 2 params
+- `extractBaseFromOperands` (`AstToIr.h:201`)
+- `extractBaseOperand` (`AstToIr.h:227`)
+- `markReferenceMetadata` (`AstToIr.h:231`)
+- `isVaListPointerType` (`AstToIr.h:178`)
+- `handleRValueReferenceCast` (`AstToIr.h:245`)
+- `handleLValueReferenceCast` (`AstToIr.h:251`)
+- `generateUnaryIncDecOverloadCall` (`AstToIr.h:284`)
+- `generateBuiltinIncDec` (`AstToIr.h:296`)
+
+These are not a regression: before this PR they received `std::vector`
+directly (no conversion). The implicit conversion cost is equivalent to the
+previous heap allocation at the producer site. Phase 2 will eliminate both
+by switching to `ExprResult`.
 
 ### Phase 2: Migrate producers one at a time
 

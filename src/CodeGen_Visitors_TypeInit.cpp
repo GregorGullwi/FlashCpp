@@ -1905,7 +1905,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 
 
-std::vector<IrOperand> AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
+ExprOperands AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
 	// This should not happen during normal code generation - template parameters should be substituted
 	// during template instantiation. If we get here, it means template instantiation failed.
 	std::string param_name = std::string(templateParamRefNode.param_name().view());

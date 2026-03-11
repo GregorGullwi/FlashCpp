@@ -1,7 +1,7 @@
 #include "CodeGen.h"
 #include "LambdaHelpers.h"
 
-	std::vector<IrOperand> AstToIr::generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
+	ExprOperands AstToIr::generateTypeConversion(const ExprOperands& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
 		// operands format: [type, size, value]
 		int fromSize = (operands.size() >= 2) ? std::get<int>(operands[1]) : get_type_size_bits(fromType);
@@ -54,7 +54,7 @@
 			TempVar resultVar = var_counter.next();
 			TypeConversionOp conv_op{
 				.result = resultVar,
-				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.from = toTypedValue(operands),
 				.to_type = toType,
 				.to_size_in_bits = toSize
 			};
@@ -75,7 +75,7 @@
 			TempVar resultVar = var_counter.next();
 			TypeConversionOp conv_op{
 				.result = resultVar,
-				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.from = toTypedValue(operands),
 				.to_type = toType,
 				.to_size_in_bits = toSize
 			};
@@ -88,11 +88,13 @@
 		if (fromSize == toSize) {
 			// Same size, different signedness - just change the type metadata
 			// Return the same value with the new type
-			std::vector<IrOperand> result;
+			ExprOperands result;
 			result.push_back(toType);
 			result.push_back(toSize);
 			// Copy the value (TempVar or identifier)
-			result.insert(result.end(), operands.begin() + 2, operands.end());
+			for (size_t i = 2; i < operands.size(); ++i) {
+				result.push_back(operands[i]);
+			}
 			return result;
 		}
 
@@ -102,7 +104,7 @@
 		if (fromSize < toSize) {
 			// Extension needed
 			ConversionOp conv_op{
-				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.from = toTypedValue(operands),
 				.to_type = toType,
 				.to_size = toSize,
 				.result = resultVar
@@ -149,7 +151,7 @@
 		} else if (fromSize > toSize) {
 			// Truncation needed
 			ConversionOp conv_op{
-				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.from = toTypedValue(operands),
 				.to_type = toType,
 				.to_size = toSize,
 				.result = resultVar
@@ -160,7 +162,7 @@
 		return { toType, toSize, resultVar, 0ULL };
 	}
 
-	std::vector<IrOperand>
+	ExprOperands
 		AstToIr::generateStringLiteralIr(const StringLiteralNode& stringLiteralNode) {
 		// Generate IR for string literal
 		// Create a temporary variable to hold the address of the string
@@ -383,7 +385,7 @@
 		return std::nullopt;
 	}
 
-	std::optional<std::vector<IrOperand>> AstToIr::decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token) {
+	std::optional<ExprOperands> AstToIr::decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token) {
 		auto sig_opt = getFunctionSignatureFromLambdaStruct(struct_info);
 		if (!sig_opt.has_value()) {
 			return std::nullopt;
@@ -412,13 +414,11 @@
 		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
 		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
-		return std::vector<IrOperand>{ Type::FunctionPointer, 64, func_addr_var, 0ULL };
+		return ExprOperands{ Type::FunctionPointer, 64, func_addr_var, 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
+	ExprOperands AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
 	ExpressionContext context) {
-		std::vector<IrOperand> irOperands;
-
 		// OPERATOR OVERLOAD RESOLUTION
 		// For full standard compliance, operator& should call overloaded operator& if it exists.
 		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
@@ -1519,7 +1519,7 @@
 // Helper: generate a member function call for user-defined operator++/-- overloads on structs.
 // Returns the IR operands {result_type, result_size, ret_var, result_type_index} on success,
 // or std::nullopt if no overload was found.
-std::optional<std::vector<IrOperand>> AstToIr::generateUnaryIncDecOverloadCall(
+std::optional<ExprOperands> AstToIr::generateUnaryIncDecOverloadCall(
 	OverloadableOperator op_kind,  // Increment or Decrement
 	Type operandType,
 	const std::vector<IrOperand>& operandIrOperands,
@@ -1633,7 +1633,7 @@ std::optional<std::vector<IrOperand>> AstToIr::generateUnaryIncDecOverloadCall(
 	TypeIndex result_type_index = call_op.return_type_index;
 	Type result_type = call_op.return_type;
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
-	return std::vector<IrOperand>{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
+	return ExprOperands{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
 }
 
 
@@ -1641,7 +1641,7 @@ std::optional<std::vector<IrOperand>> AstToIr::generateUnaryIncDecOverloadCall(
 // Helper: generate built-in pointer or integer increment/decrement IR.
 // Handles pointer arithmetic (add/subtract element_size) and integer pre/post inc/dec.
 // is_increment: true for ++, false for --
-std::vector<IrOperand> AstToIr::generateBuiltinIncDec(
+ExprOperands AstToIr::generateBuiltinIncDec(
 	bool is_increment,
 	bool is_prefix,
 	bool operandHandledAsIdentifier,

@@ -1,8 +1,8 @@
 #include "CodeGen.h"
 
-	std::vector<IrOperand> AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
+	ExprOperands AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
 	ExpressionContext context) {
-		return std::visit([this, context](const auto& expr) -> std::vector<IrOperand> {
+		return std::visit([this, context](const auto& expr) -> ExprOperands {
 			using T = std::decay_t<decltype(expr)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return generateIdentifierIr(expr, context);
@@ -84,7 +84,7 @@
 		}, exprNode);
 	}
 
-	std::vector<IrOperand> AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
+	ExprOperands AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
 		bool is_noexcept = true;
 		if (noexcept_node.expr().is<ExpressionNode>()) {
 			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
@@ -92,7 +92,7 @@
 		return { Type::Bool, 8, is_noexcept ? 1ULL : 0ULL, 0ULL };
 	}
 
-	std::vector<IrOperand> AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
+	ExprOperands AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
 		std::string_view type_name = dtor.has_qualified_name() 
 			? dtor.qualified_type_name().view()
 			: dtor.type_name();
@@ -143,7 +143,7 @@
 		return {};
 	}
 
-	std::vector<IrOperand> AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
+	ExprOperands AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
 		auto object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
 		if (object_operands.empty()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
@@ -236,7 +236,7 @@
 		return size_bits;
 	}
 
-	std::vector<IrOperand> AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
+	ExprOperands AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context) {
 		// Check if this is a captured variable in a lambda.
 		// Explicit captures ([x], [&x]) have binding set at parse time.
@@ -1192,7 +1192,7 @@
 		return {};
 	}
 
-	std::vector<IrOperand> AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+	ExprOperands AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
 		// Check if this is a scoped enum value (e.g., Direction::North)
 		NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
 		if (!ns_handle.isGlobal()) {
@@ -1551,7 +1551,7 @@
 		return {};
 	}
 
-	std::vector<IrOperand>
+	ExprOperands
 		AstToIr::generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
 		// Generate IR for numeric literal using the actual type from the literal
 		// Check if it's a floating-point type
@@ -1563,4 +1563,3 @@
 			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()), 0ULL };
 		}
 	}
-

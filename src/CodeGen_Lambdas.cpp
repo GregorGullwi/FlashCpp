@@ -121,7 +121,7 @@
 		return collected_lambdas_.back();
 	}
 
-	std::vector<IrOperand> AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
+	ExprOperands AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
 		// Collect lambda information for deferred generation
 		// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
 		// If target_var_name is provided, use it as the closure variable name (for variable declarations)

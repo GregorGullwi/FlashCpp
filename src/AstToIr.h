@@ -146,50 +146,50 @@ private:
 	void visitSehLeaveStatementNode(const SehLeaveStatementNode& node);
 	void visitVariableDeclarationNode(const ASTNode& ast_node);
 	void visitStructuredBindingNode(const ASTNode& ast_node);
-	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 
+	ExprOperands visitExpressionNode(const ExpressionNode& exprNode, 
 	ExpressionContext context = ExpressionContext::Load);
-	std::vector<IrOperand> generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
-	std::vector<IrOperand> generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
-	std::vector<IrOperand> generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
+	ExprOperands generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
+	ExprOperands generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
+	ExprOperands generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
-	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode, 
+	ExprOperands generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context = ExpressionContext::Load);
-	std::optional<std::vector<IrOperand>> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
-	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
-	std::vector<IrOperand>
+	std::optional<ExprOperands> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
+	ExprOperands generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
+	ExprOperands
 		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
-	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token);
-	std::vector<IrOperand>
+	ExprOperands generateTypeConversion(const ExprOperands& operands, Type fromType, Type toType, const Token& source_token);
+	ExprOperands
 		generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(
 		const ExpressionNode& expr, 
 		int accumulated_offset = 0);
-	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
+	ExprOperands generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
 	ExpressionContext context = ExpressionContext::Load);
-	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
-	std::vector<IrOperand> generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
+	ExprOperands generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
+	ExprOperands generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {});
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {});
 	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override = "", const std::vector<std::string>& namespace_path = {});
-	std::optional<std::vector<IrOperand>> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name);
+	std::optional<ExprOperands> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode);
+	ExprOperands generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name);
 	bool isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const;
-	std::vector<IrOperand> generateVaArgIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateVaStartIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode);
-	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode);
+	ExprOperands generateVaArgIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateVaStartIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode);
+	ExprOperands generateFunctionCallIr(const FunctionCallNode& functionCallNode);
+	ExprOperands generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
-	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
+	ExprOperands generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
@@ -203,7 +203,7 @@ private:
 		Type& base_type,
 		size_t& base_type_index,
 		std::string_view error_context);
-	static std::vector<IrOperand> makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index = 0);
+	static ExprOperands makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index = 0);
 	bool setupBaseFromIdentifier(
 		std::string_view object_name,
 		const Token& member_token,
@@ -211,18 +211,18 @@ private:
 		Type& base_type,
 		size_t& base_type_index,
 		bool& is_pointer_dereference);
-	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
+	ExprOperands generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	ExpressionContext context = ExpressionContext::Load);
 	std::optional<size_t> calculateArraySize(const DeclarationNode& decl);
-	std::vector<IrOperand> generateSizeofIr(const SizeofExprNode& sizeofNode);
-	std::vector<IrOperand> generateAlignofIr(const AlignofExprNode& alignofNode);
-	std::vector<IrOperand> generateOffsetofIr(const OffsetofExprNode& offsetofNode);
+	ExprOperands generateSizeofIr(const SizeofExprNode& sizeofNode);
+	ExprOperands generateAlignofIr(const AlignofExprNode& alignofNode);
+	ExprOperands generateOffsetofIr(const OffsetofExprNode& offsetofNode);
 	bool isScalarType(Type type, bool is_reference, size_t pointer_depth) const;
 	bool isArithmeticType(Type type) const;
 	bool isFundamentalType(Type type) const;
-	std::vector<IrOperand> generateTypeTraitIr(const TypeTraitExprNode& traitNode);
-	std::vector<IrOperand> generateNewExpressionIr(const NewExpressionNode& newExpr);
-	std::vector<IrOperand> generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
+	ExprOperands generateTypeTraitIr(const TypeTraitExprNode& traitNode);
+	ExprOperands generateNewExpressionIr(const NewExpressionNode& newExpr);
+	ExprOperands generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
 	std::variant<StringHandle, TempVar> extractBaseOperand(
 		const std::vector<IrOperand>& expr_operands,
 		TempVar fallback_var,
@@ -241,25 +241,25 @@ private:
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
-	std::vector<IrOperand> handleRValueReferenceCast(
+	ExprOperands handleRValueReferenceCast(
 		const std::vector<IrOperand>& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
-	std::vector<IrOperand> handleLValueReferenceCast(
+	ExprOperands handleLValueReferenceCast(
 		const std::vector<IrOperand>& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
-	std::vector<IrOperand> generateStaticCastIr(const StaticCastNode& staticCastNode);
-	std::vector<IrOperand> generateTypeidIr(const TypeidNode& typeidNode);
-	std::vector<IrOperand> generateDynamicCastIr(const DynamicCastNode& dynamicCastNode);
-	std::vector<IrOperand> generateConstCastIr(const ConstCastNode& constCastNode);
-	std::vector<IrOperand> generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode);
+	ExprOperands generateStaticCastIr(const StaticCastNode& staticCastNode);
+	ExprOperands generateTypeidIr(const TypeidNode& typeidNode);
+	ExprOperands generateDynamicCastIr(const DynamicCastNode& dynamicCastNode);
+	ExprOperands generateConstCastIr(const ConstCastNode& constCastNode);
+	ExprOperands generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode);
 	LambdaInfo collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda);
-	std::vector<IrOperand> generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name = "");
+	ExprOperands generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name = "");
 	void generateLambdaFunctions(const LambdaInfo& lambda_info);
 	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info);
@@ -278,7 +278,7 @@ private:
 	// Helper: generate a member function call for user-defined operator++/-- overloads on structs.
 	// Returns the IR operands {result_type, result_size, ret_var, result_type_index} on success,
 	// or std::nullopt if no overload was found.
-	std::optional<std::vector<IrOperand>> generateUnaryIncDecOverloadCall(
+	std::optional<ExprOperands> generateUnaryIncDecOverloadCall(
 		OverloadableOperator op_kind,  // Increment or Decrement
 		Type operandType,
 		const std::vector<IrOperand>& operandIrOperands,
@@ -288,7 +288,7 @@ private:
 	// Helper: generate built-in pointer or integer increment/decrement IR.
 	// Handles pointer arithmetic (add/subtract element_size) and integer pre/post inc/dec.
 	// is_increment: true for ++, false for --
-	std::vector<IrOperand> generateBuiltinIncDec(
+	ExprOperands generateBuiltinIncDec(
 		bool is_increment,
 		bool is_prefix,
 		bool operandHandledAsIdentifier,
@@ -306,7 +306,7 @@ private:
 	// Helper function to try evaluating sizeof/alignof using ConstExprEvaluator
 	// Returns the evaluated operands if successful, empty vector otherwise
 	template<typename NodeType>
-	std::vector<IrOperand> tryEvaluateAsConstExpr(const NodeType& node) {
+	ExprOperands tryEvaluateAsConstExpr(const NodeType& node) {
 		// Try to evaluate as a constant expression first
 		ConstExpr::EvaluationContext ctx(symbol_table);
 		
@@ -373,7 +373,7 @@ private:
 
 	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 	// Used when a member function call syntax is used but the object is not a struct
-	std::vector<IrOperand> convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode);
+	ExprOperands convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode);
 
 	// Helper function to check if access to a member is allowed
 	// Returns true if access is allowed, false otherwise
@@ -783,13 +783,13 @@ private:
 	// Generate an instantiated member function template
 	void generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info);
 
-	std::vector<IrOperand> generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode);
+	ExprOperands generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode);
 
 	// Generate IR for std::initializer_list construction
 	// This is the "compiler magic" that creates a backing array on the stack
 	// and constructs an initializer_list pointing to it
-	std::vector<IrOperand> generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list);
+	ExprOperands generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list);
 
-	std::vector<IrOperand> generateConstructorCallIr(const ConstructorCallNode& constructorCallNode);
+	ExprOperands generateConstructorCallIr(const ConstructorCallNode& constructorCallNode);
 
 };

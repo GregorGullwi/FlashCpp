@@ -1,6 +1,6 @@
 #include "CodeGen.h"
 
-	std::vector<IrOperand> AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
+	ExprOperands AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4);  // ret + name + this + ~4 per arg
 
@@ -1435,7 +1435,7 @@
 					} else {
 						// Unknown symbol type - fall back to visitExpressionNode
 						auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-						call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+						call_op.args.push_back(toTypedValue(argumentIrOperands));
 					}
 				}
 				else {
@@ -1505,12 +1505,12 @@
 								});
 							} else {
 								// Fallback - just pass through
-								call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+								call_op.args.push_back(toTypedValue(argumentIrOperands));
 							}
 						}
 					} else {
 						// Parameter doesn't expect a reference - pass through as-is
-						call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+						call_op.args.push_back(toTypedValue(argumentIrOperands));
 					}
 				}
 			
@@ -1556,7 +1556,7 @@
 
 // Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 // Used when a member function call syntax is used but the object is not a struct
-std::vector<IrOperand> AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
+ExprOperands AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
 	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 	const DeclarationNode& decl_node = func_decl.decl_node();
 	
