@@ -129,7 +129,6 @@ Re-validated on this branch:
 See also:
 
 - `docs/EXCEPTION_HANDLING.md`
-- `docs/2026-03-10_WindowsCatchReturnPath.md`
 
 ### Historical symptoms
 

@@ -74,6 +74,85 @@ The current recommendation is **minimal first, then reassess**.
 - If more control-flow exits in this area need attention, do the medium refactor before continuing.
 - The medium step is **useful but not mandatory** before a future larger redesign.
 
+## Windows Catch-Funclet Return Model
+
+On Windows FH3, a source-level `return` inside a catch body is **not** treated as “the catch is complete.”
+Instead, the catch funclet records a pending return from the **parent** function, then the normal catch-finalization path remains authoritative.
+
+### Why this matters
+
+`CatchEnd` still owns several pieces of required work:
+
+- finishing catch-handler bookkeeping,
+- returning the continuation address expected by the CRT,
+- creating or reusing the parent-function continuation fixup,
+- deciding whether control resumes normally after the catch or returns from the parent function.
+
+The older “terminated catch funclet” idea was wrong because it implied catch finalization could be skipped.
+The landed implementation instead uses a **pending parent return** model.
+
+### Current implementation shape
+
+The Windows path tracks catch-return state with:
+
+- `catch_funclet_return_slot_offset_`
+- `catch_funclet_return_flag_slot_offset_`
+- `catch_has_pending_parent_return_`
+- `current_catch_continuation_label_`
+- `catch_continuation_fixup_map_`
+- `catch_return_bridges_`
+
+The saved parent return value lives in a spill slot sized from the enclosing function's actual return convention:
+
+- floating-point returns use the XMM0 spill path,
+- integer/pointer-like returns use a sized RAX spill path,
+- hidden-return / reference-return cases reserve pointer-sized storage.
+
+The catch-return flag means:
+
+- `0`: normal fallthrough after catch finalization,
+- `1`: return from the parent function after catch finalization.
+
+### Lowering model
+
+When `handleReturn(...)` executes while `in_catch_funclet_` is true on Windows, it:
+
+1. saves the pending parent return value,
+2. flushes dirty registers,
+3. sets `catch_has_pending_parent_return_ = true`,
+4. stores `1` into the catch-return flag slot,
+5. loads `RAX` with the continuation-fixup address when a continuation label exists,
+6. emits the funclet epilogue and `ret`.
+
+`CatchEnd` then remains authoritative:
+
+- it obtains the parent continuation label from `CatchEndOp`,
+- creates or reuses a synthetic continuation-fixup label,
+- reserves both spill slots before the first shared fixup stub,
+- clears the catch-return flag on normal fallthrough,
+- returns the continuation/fixup address expected by the CRT.
+
+The continuation/fixup decides between normal fallthrough and parent return by checking the saved catch-return flag:
+
+- if the flag is clear, execution resumes at the normal continuation label,
+- if the flag is set, the fixup clears the flag, restores the saved parent return value, emits the parent epilogue, and returns from the enclosing function.
+
+### Key regression coverage for this model
+
+- `test_exceptions_catch_funclets_ret0.cpp`
+- `test_eh_catch_float_return_ret0.cpp`
+- `test_eh_catch_conditional_return_fallthrough_ret0.cpp`
+- `test_eh_catch_shared_fixup_late_return_ret0.cpp`
+- `test_eh_catch_local_dtor_fallthrough_ret0.cpp`
+
+Together these cover:
+
+- direct returns from multiple typed catch handlers,
+- floating-point return preservation,
+- mixed return/fallthrough paths inside one catch,
+- shared continuation-fixup reuse,
+- catch-local destructor execution on normal fallthrough.
+
 ## Architecture
 
 ### Linux: Itanium C++ ABI Exception Flow
@@ -239,6 +318,10 @@ Key test files:
 - `test_eh_catch_virtual_base_value_late_handler_ret0.cpp` — later typed catch handler materializes virtual-base catch object
 - `test_eh_catch_virtual_base_value_late_handler_return_ret0.cpp` — direct return from by-value virtual-base catch handler
 - `test_eh_rethrow_propagate_ret0.cpp` — `throw;` (rethrow) propagates with correct type info
+- `test_eh_rethrow_catch_local_dtor_ret0.cpp` — rethrow from inside a catch cleans up catch-local destructors before propagation
+- `test_eh_catch_float_return_ret0.cpp` — catch-funclet parent return preserves floating-point return values
+- `test_eh_catch_conditional_return_fallthrough_ret0.cpp` — catch body can return on one path and fall through on another
+- `test_eh_catch_shared_fixup_late_return_ret0.cpp` — multiple handlers safely share one continuation/fixup path
 - `test_eh_noexcept_normal_ret0.cpp` — noexcept functions work normally + inner try/catch
 
 ## References
