@@ -248,6 +248,8 @@
 			return result;
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value) -> ExprResult {
+			// Preserve the original direct-identifier encoding rule from these sites:
+			// struct identifiers carry type_index; non-struct identifiers carry pointer_depth.
 			const bool carries_type_index = type_node.type() == Type::Struct;
 			return makeIdentifierResult(
 				type_node.type(),
