@@ -247,6 +247,17 @@
 			result.pointer_depth = pointer_depth;
 			return result;
 		};
+		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value) -> ExprResult {
+			const bool carries_type_index = type_node.type() == Type::Struct ||
+				type_node.type() == Type::Enum ||
+				type_node.type() == Type::UserDefined;
+			return makeIdentifierResult(
+				type_node.type(),
+				size_bits,
+				std::move(value),
+				carries_type_index ? type_node.type_index() : 0,
+				carries_type_index ? 0 : type_node.pointer_depth());
+		};
 
 		// Check if this is a captured variable in a lambda.
 		// Explicit captures ([x], [&x]) have binding set at parse time.
@@ -453,8 +464,7 @@
 								LValueInfo(LValueInfo::Kind::Global, saved_name),
 								type_n.type(), size_bits));
 						}
-						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
-						return makeIdentifierResult(type_n.type(), size_bits, result_temp, type_index);
+						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp);
 					}
 
 					if (fast_sym->is<DeclarationNode>()) {
@@ -490,8 +500,7 @@
 								LValueInfo(LValueInfo::Kind::Global, saved_global_name),
 								type_n.type(), size_bits));
 						}
-						TypeIndex type_index = (type_n.type() == Type::Struct) ? type_n.type_index() : 0;
-						return makeIdentifierResult(type_n.type(), size_bits, result_temp, type_index);
+						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp);
 					}
 					// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
 				}
@@ -877,8 +886,7 @@
 				// Return the temp variable that will hold the loaded value
 				// For pointers and arrays, return 64 bits (pointer size)
 				// Include type_index for struct types
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return makeIdentifierResult(type_node.type(), size_bits, result_temp, type_index);
+				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp);
 			}
 
 			// Check if this is a reference parameter - if so, we need to dereference it
@@ -1068,8 +1076,7 @@
 
 				// Return the temp variable that will hold the loaded value
 				// Include type_index for struct types
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return makeIdentifierResult(type_node.type(), size_bits, result_temp, type_index);
+				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp);
 			} else {
 				// This is a local variable
 				
@@ -1163,12 +1170,10 @@
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
 				// - Otherwise return 0
-				return makeIdentifierResult(
-					type_node.type(),
+				return makeIdentifierResultFromTypeNode(
+					type_node,
 					size_bits,
-					StringTable::getOrInternStringHandle(identifierNode.name()),
-					type_node.type() == Type::Struct ? type_node.type_index() : 0,
-					type_node.type() == Type::Struct ? 0 : type_node.pointer_depth());
+					StringTable::getOrInternStringHandle(identifierNode.name()));
 			}
 		}
 		
