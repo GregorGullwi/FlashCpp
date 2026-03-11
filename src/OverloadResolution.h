@@ -872,6 +872,12 @@ inline bool isConcreteBinaryOperatorOperandType(const TypeSpecifierNode& spec) {
 }
 
 inline bool isUserDefinedBinaryOperatorOperandType(const TypeSpecifierNode& spec) {
+	if (spec.pointer_depth() > 0
+		|| spec.is_function_pointer()
+		|| spec.is_member_function_pointer()
+		|| spec.is_member_object_pointer()) {
+		return false;
+	}
 	Type type = effectiveBinaryOperatorTypeFromSpec(spec);
 	return binaryOperatorUsesTypeIndexIdentity(type) && spec.type_index() > 0;
 }

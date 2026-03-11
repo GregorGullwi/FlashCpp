@@ -158,6 +158,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleShiftRight(const IrInstruction& instruction) {
@@ -175,6 +178,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleUnsignedDivide(const IrInstruction& instruction) {
@@ -218,6 +224,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleBitwiseArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description) {
@@ -370,6 +379,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleLogicalOr(const IrInstruction& instruction) {
@@ -384,6 +396,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleLogicalNot(const IrInstruction& instruction) {
@@ -439,6 +454,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+			regAlloc.release(ctx.rhs_physical_reg);
+		}
 	}
 
 	void handleFloatSubtract(const IrInstruction& instruction) {
@@ -459,6 +477,9 @@
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+			if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+				regAlloc.release(ctx.rhs_physical_reg);
+			}
 	}
 
 	void handleFloatMultiply(const IrInstruction& instruction) {
@@ -1646,6 +1667,9 @@
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 			}
 			storeArithmeticResult(ctx);
+			if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+				regAlloc.release(ctx.rhs_physical_reg);
+			}
 			return;
 		}
 

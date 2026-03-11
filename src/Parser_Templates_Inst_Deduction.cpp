@@ -584,6 +584,30 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			if (idx >= gTypeInfo.size()) return;
 
 			std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
+			if (const StructTypeInfo* owner_struct = gTypeInfo[idx].getStructInfo(); owner_struct && type_name.find("::") == std::string_view::npos) {
+				std::string_view token_name = ts.token().value();
+				std::string_view owner_name = StringTable::getStringView(owner_struct->name);
+				if (!token_name.empty() && token_name != owner_name) {
+					StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
+							StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
+					auto qualified_type_it = gTypesByName.find(qualified_alias_handle);
+						if (qualified_type_it != gTypesByName.end() && qualified_type_it->second != nullptr) {
+							const TypeInfo* resolved_info = qualified_type_it->second;
+							int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->type_);
+							TypeSpecifierNode resolved_spec(
+								resolved_info->type_,
+								resolved_info->type_index_,
+								resolved_size_bits,
+								ts.token(),
+								ts.cv_qualifier(),
+								ts.reference_qualifier());
+							resolved_spec.copy_indirection_from(ts);
+							resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+							type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
+							return;
+						}
+					}
+				}
 			if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name));
 				direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 				const auto& alias_node = direct_alias->as<TemplateAliasNode>();
@@ -1557,6 +1581,30 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (idx >= gTypeInfo.size()) return;
 		
 		std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
+			if (const StructTypeInfo* owner_struct = gTypeInfo[idx].getStructInfo(); owner_struct && type_name.find("::") == std::string_view::npos) {
+				std::string_view token_name = ts.token().value();
+				std::string_view owner_name = StringTable::getStringView(owner_struct->name);
+				if (!token_name.empty() && token_name != owner_name) {
+					StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
+						StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
+					auto qualified_type_it = gTypesByName.find(qualified_alias_handle);
+					if (qualified_type_it != gTypesByName.end() && qualified_type_it->second != nullptr) {
+						const TypeInfo* resolved_info = qualified_type_it->second;
+						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->type_);
+						TypeSpecifierNode resolved_spec(
+							resolved_info->type_,
+							resolved_info->type_index_,
+							resolved_size_bits,
+							ts.token(),
+							ts.cv_qualifier(),
+							ts.reference_qualifier());
+						resolved_spec.copy_indirection_from(ts);
+						resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+						type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
+						return;
+					}
+				}
+			}
 		
 		// Fast path: check alias registry for the exact dependent name
 		if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name)); 

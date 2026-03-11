@@ -745,6 +745,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		};
 
 		auto requiresUserDefinedBinaryOperator = [](const TypeSpecifierNode& type_spec) {
+				if (type_spec.pointer_depth() > 0
+					|| type_spec.is_function_pointer()
+					|| type_spec.is_member_function_pointer()
+					|| type_spec.is_member_object_pointer()) {
+					return false;
+				}
 			Type base_type = resolve_type_alias(type_spec.type(), type_spec.type_index());
 			return (base_type == Type::Struct || base_type == Type::UserDefined) && type_spec.type_index() > 0;
 		};
@@ -1094,10 +1100,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		std::optional<bool> lhs_syntax_requires_user_defined;
 		std::optional<bool> rhs_syntax_requires_user_defined;
 		if (concrete_type_specs.has_value()) {
-			lhsType = effectiveBinaryOperatorTypeFromSpec(concrete_type_specs->first);
-			rhsType = effectiveBinaryOperatorTypeFromSpec(concrete_type_specs->second);
-			lhsSize = getTypeSpecSizeBits(concrete_type_specs->first);
-			rhsSize = getTypeSpecSizeBits(concrete_type_specs->second);
+			// Keep the lowered IR operand types/sizes for built-in arithmetic.
+			// The parser's concrete syntax type specs are only for overload resolution;
+			// overwriting lhsType/rhsType here can corrupt nested arithmetic chains by
+			// reusing pre-conversion syntax types instead of the actual subexpression result types.
 			lhs_has_user_defined_identity = concrete_operands_require_user_defined_operator
 				&& isUserDefinedBinaryOperatorOperandType(concrete_type_specs->first);
 			rhs_has_user_defined_identity = concrete_operands_require_user_defined_operator
@@ -1206,7 +1212,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					|| requiresUserDefinedBinaryOperatorByBase(rhsType, rhs_type_index);
 			}
 
-			if (!overload_result.has_match && requires_user_defined_operator) {
+			bool can_try_spaceship_rewrite = false;
+				can_try_spaceship_rewrite =
+					!overload_result.has_match
+					&& requires_user_defined_operator
+					&& lhsType == Type::Struct
+					&& (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=");
+
+				if (!overload_result.has_match && requires_user_defined_operator && !can_try_spaceship_rewrite) {
 				throw CompileError("Operator" + std::string(op) + " not defined for operand types");
 			}
 
@@ -1440,11 +1453,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			}
 			}
 
-		// Special handling for spaceship operator <=> on struct types
-		// This should be converted to a member function call: lhs.operator<=>(rhs)
+			// Special handling for spaceship-based comparisons on struct types.
+			// Direct <=> returns the comparison result; relational/equality operators
+			// are rewritten to compare that result against zero when no direct overload matched.
 		FLASH_LOG_FORMAT(Codegen, Debug, "Binary operator check: op='{}', lhsType={}", op, static_cast<int>(lhsType));
 
-		if (op == "<=>") {
+			if (op == "<=>" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=") {
 			FLASH_LOG_FORMAT(Codegen, Debug, "Spaceship operator detected: lhsType={}, is_struct={}",
 				static_cast<int>(lhsType), lhsType == Type::Struct);
 
@@ -1618,15 +1632,36 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
-							// Return the result
-							return { return_type, return_size, result_var, 0ULL };
+								if (op == "<=>") {
+									return { return_type, return_size, result_var, 0ULL };
+								}
+
+								TempVar cmp_result = var_counter.next();
+								BinaryOp cmp_op{
+									.lhs = { Type::Int, 32, result_var },
+									.rhs = { Type::Int, 32, 0ULL },
+									.result = cmp_result,
+								};
+
+								IrOpcode cmp_opcode = IrOpcode::Equal;
+								if (op == "<") cmp_opcode = IrOpcode::LessThan;
+								else if (op == "<=") cmp_opcode = IrOpcode::LessEqual;
+								else if (op == ">") cmp_opcode = IrOpcode::GreaterThan;
+								else if (op == ">=") cmp_opcode = IrOpcode::GreaterEqual;
+								else if (op == "==") cmp_opcode = IrOpcode::Equal;
+								else if (op == "!=") cmp_opcode = IrOpcode::NotEqual;
+
+								ir_.addInstruction(IrInstruction(cmp_opcode, std::move(cmp_op), binaryOperatorNode.get_token()));
+								return { Type::Bool, 8, cmp_result, 0ULL };
 						}
 					}
 				}
 			}
 
-			// If we get here, operator<=> is not defined or not found
-			// Fall through to error handling
+				// If we get here, operator<=> is not defined or not found
+				if (can_try_spaceship_rewrite) {
+					throw CompileError("Operator" + std::string(op) + " not defined for operand types");
+				}
 		}
 
 		// Try to get pointer depth for pointer arithmetic

@@ -409,6 +409,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	}
 	
 	auto result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), func_token));
+		std::get<FunctionCallNode>(result.as<ExpressionNode>()).set_qualified_name(func_name);
 	
 	// Set the mangled name on the function call if we have the function declaration
 	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
