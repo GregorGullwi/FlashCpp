@@ -1553,19 +1553,5 @@
 		// Flush all dirty registers before jumping
 		flushAllDirtyRegisters();
 
-		// Generate JMP instruction (E9 + 32-bit relative offset)
-		// We'll use a placeholder offset and fix it up later
-		textSectionData.push_back(0xE9); // JMP rel32
-
-		// Store position where we need to patch the offset
-		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
-
-		// Add placeholder offset (will be patched later)
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-
-		// Record this jump for later patching (convert string_view to StringHandle)
-		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
+		emitJmpToLabel(StringTable::getOrInternStringHandle(target_label));
 	}

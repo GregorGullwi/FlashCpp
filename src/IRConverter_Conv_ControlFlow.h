@@ -44,11 +44,9 @@
 				if (currentFunctionHasCatchParentReturnValue()) {
 					emitRestorePendingCatchParentReturnValue(bridge.return_slot_offset);
 				}
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x89);
-				textSectionData.push_back(0xEC);
-				textSectionData.push_back(0x5D);
-				textSectionData.push_back(0xC3);
+					emitMovRegReg(X64Register::RSP, X64Register::RBP);
+					emitPopReg(X64Register::RBP);
+					emitRet();
 
 				uint32_t skip_target = static_cast<uint32_t>(textSectionData.size());
 				int32_t rel = static_cast<int32_t>(skip_target) - static_cast<int32_t>(skip_patch + 4);
@@ -64,25 +62,11 @@
 		// Unconditional branch: jmp label
 		assert(instruction.hasTypedPayload() && "Branch instruction must use typed payload");
 		const auto& branch_op = instruction.getTypedPayload<BranchOp>();
-		std::string_view target_label = StringTable::getStringView(branch_op.getTargetLabel());  // Phase 4: Use helper
+		StringHandle target_label = branch_op.getTargetLabel();
 		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
 
-		// Generate JMP instruction (E9 + 32-bit relative offset)
-		// We'll use a placeholder offset and fix it up later
-		textSectionData.push_back(0xE9); // JMP rel32
-
-		// Store position where we need to patch the offset
-		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
-
-		// Add placeholder offset (will be patched later)
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-
-		// Record this branch for later patching
-		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
+		emitJmpToLabel(target_label);
 	}
 
 	void handleLoopBegin(const IrInstruction& instruction) {
