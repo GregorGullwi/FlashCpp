@@ -199,6 +199,16 @@ struct RegisterAllocator
 		registers[static_cast<int>(reg)].isDirty = false;
 	}
 
+	void invalidateRegister(X64Register reg) {
+		if (reg == X64Register::Count) {
+			return;
+		}
+		auto& reg_info = registers[static_cast<int>(reg)];
+		reg_info.stackVariableOffset = INT_MIN;
+		reg_info.isDirty = false;
+		reg_info.size_in_bits = 0;
+	}
+
 	// Find which register (if any) currently holds a value for the given stack offset
 	std::optional<X64Register> findRegisterForStackOffset(int32_t stackOffset) const {
 		for (const auto& reg : registers) {
@@ -469,16 +479,14 @@ struct RegisterAllocator
 			int idx = static_cast<int>(reg);
 			// Don't release if not allocated, but clear the stack variable mapping
 			if (registers[idx].isAllocated) {
-				registers[idx].stackVariableOffset = INT_MIN;
-				registers[idx].isDirty = false;
+				invalidateRegister(reg);
 			}
 		}
 		
 		// Clear all XMM registers (all are caller-saved)
 		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
 			if (registers[i].isAllocated) {
-				registers[i].stackVariableOffset = INT_MIN;
-				registers[i].isDirty = false;
+				invalidateRegister(static_cast<X64Register>(i));
 			}
 		}
 	}
