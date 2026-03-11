@@ -1,29 +1,5 @@
 #include "CodeGen.h"
 
-namespace {
-	constexpr std::string_view kOverloadableBinaryOps[] = {
-		"+", "-", "*", "/", "%",           // Arithmetic
-		"==", "!=", "<", ">", "<=", ">=",  // Comparison
-		"&&", "||",                        // Logical
-		"&", "|", "^",                     // Bitwise
-		"<<", ">>",                        // Shift
-		",",                               // Comma (already handled above)
-		"<=>",                             // Spaceship (handled below)
-		// Compound assignment operators (dispatched as member function calls for structs)
-		"+=", "-=", "*=", "/=", "%=",
-		"&=", "|=", "^=", "<<=", ">>=",
-	};
-
-	inline bool isOverloadableBinaryOperator(std::string_view op) {
-		for (std::string_view candidate : kOverloadableBinaryOps) {
-			if (candidate == op) {
-				return true;
-			}
-		}
-		return false;
-	}
-}
-
 
 AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const IdentifierNode& identifier) {
 	GlobalStaticBindingInfo info;
@@ -965,8 +941,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		bool lhs_has_user_defined_identity = lhs_type_index > 0 && lhs_type_index < gTypeInfo.size();
 		bool rhs_has_user_defined_identity = rhs_type_index > 0 && rhs_type_index < gTypeInfo.size();
+		OverloadableOperator op_kind = stringToOverloadableOperator(op);
 
-		if (isOverloadableBinaryOperator(op)
+		if (isOverloadableBinaryOperator(op_kind)
 			&& (lhs_has_user_defined_identity || rhs_has_user_defined_identity || binaryOperatorNode.has_recorded_operator_overload_resolution())) {
 				// Check for operator overload (member function or free function)
 				OperatorOverloadResult overload_result;
@@ -984,14 +961,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						overload_result = findBinaryOperatorOverloadWithFreeFunction(
 							type_specs->first,
 							type_specs->second,
-							stringToOverloadableOperator(op),
+							op_kind,
 							op,
 							sym_table);
 					} else {
 						overload_result = findBinaryOperatorOverloadWithFreeFunction(
 							lhs_type_index,
 							rhs_type_index,
-							stringToOverloadableOperator(op),
+							op_kind,
 							op,
 							sym_table,
 							rhsType);

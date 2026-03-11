@@ -432,7 +432,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						(left_type_spec.has_value() && isUserDefinedBinaryOperatorOperandType(*left_type_spec))
 						|| (right_type_spec.has_value() && isUserDefinedBinaryOperatorOperandType(*right_type_spec));
 
-					if (has_concrete_left_type && has_concrete_right_type && has_user_defined_operand && op_kind != OverloadableOperator::None) {
+					if (has_concrete_left_type && has_concrete_right_type && has_user_defined_operand && isOverloadableBinaryOperator(op_kind)) {
 						adjust_argument_type_for_overload_resolution(*leftNode, *left_type_spec);
 						adjust_argument_type_for_overload_resolution(*rightNode, *right_type_spec);
 
