@@ -2,6 +2,22 @@
 
 This note is primarily **forward-looking**. It defines the next cleanup/refactor steps around identifier/function/member resolution, while separating what should remain local to constexpr evaluation from what could become broadly reusable across the compiler. A short progress addendum is included so the remaining work stays grounded in what has already landed.
 
+## Scope Boundary: C++20 Constexpr Only
+
+This refactor plan is about cleanup and correctness for **C++20 constexpr**
+evaluation only.
+
+Explicit non-goals for this plan:
+
+- no post-C++20 constexpr feature expansion
+- no constexpr exception handling work (`throw`, `try`, `catch` during constant evaluation)
+- no reinterpretation of internal evaluator error handling as language support
+
+If the evaluator internally catches exceptions or converts failures into
+`EvalResult::error(...)`, that is an implementation detail / diagnostics gap,
+not support for constexpr exceptions. Those remain unsupported and are tracked
+in the constexpr limitation docs.
+
 ## Progress Update (2026-03-08)
 
 ### Landed checkpoint commits
@@ -57,6 +73,55 @@ This note is primarily **forward-looking**. It defines the next cleanup/refactor
 - decide whether the current lookup-only helpers should remain constexpr-local or be promoted only once a second non-constexpr consumer exists
 - decide whether any lookup-only helper has earned promotion into a broader semantic utility, or should remain constexpr-local for now
 
+## Make-This-Implementable Checklist
+
+Before starting the next slice, build a tiny audit table with one row per
+remaining candidate site:
+
+- function / area
+- duplication kind (`lookup-only` vs `evaluation-coupled`)
+- likely helper boundary
+- whether it depends on `EvalResult`
+- whether a non-constexpr consumer already exists
+
+That turns the next pass into a bounded extraction task instead of a vague
+re-audit. If a site depends on `EvalResult`, keep it in the constexpr-local
+track immediately instead of debating promotion.
+
+## Initial Remaining Candidate Site Table (2026-03-11)
+
+This is a **working inventory**, not a claim that every remaining duplication
+site has been found. It is meant to make the next implementation slices small
+and reviewable.
+
+| Function / area | File | Duplication kind | Likely helper boundary | Depends on `EvalResult`? | Shared outside constexpr? |
+| --- | --- | --- | --- | --- | --- |
+| `evaluate_expression_with_bindings` + `evaluate_expression_with_bindings_const` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled walker duplication | shared dispatch layer for bound-expression recursion; keep mutation-only assignment/inc-dec logic in the mutable path | Yes | No, keep constexpr-local |
+| `evaluate_qualified_identifier` | `src/ConstExprEvaluator_Members.cpp` | mixed lookup + constexpr synthesis | split qualified-type/static-member resolution from `integral_constant` / trait-value synthesis | Partly | Maybe later, but only the lookup half |
+| `evaluate_member_access` | `src/ConstExprEvaluator_Members.cpp` | mixed object-source resolution + member evaluation tail | reuse a small helper for “resolve object, then either static-member fast path or member-source evaluation” | Yes | No |
+| `evaluate_nested_member_access` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled nested member extraction | helper for “evaluate final resolved member source” after `resolve_constexpr_member_source_from_initializer(...)` | Yes | No |
+| `evaluate_member_function_call` | `src/ConstExprEvaluator_Members.cpp` | mixed lookup/evaluation dispatch | isolate object-kind dispatch (`this`, lambda, callable object, ctor-backed object, current-struct static case) from actual call evaluation | Yes | Lookup-only pieces maybe, full flow no |
+| `evaluate_function_call_member_access` + `evaluate_static_member_from_struct` | `src/ConstExprEvaluator_Members.cpp` | lookup-heavy static-member access | helper for “resolve static member from struct-returning expression/type info, then evaluate initializer/default” | Partly | Possibly, if reduced to declaration lookup only |
+| `evaluate_array_subscript_member_access` + `evaluate_variable_array_subscript` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled array element extraction | unify array-initializer element extraction / bounds handling after source resolution | Yes | No |
+| constructor-backed member extraction (`try_evaluate_member_from_constructor_initializers`, nearby ctor/member callers) | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled constructor-member interpretation | one helper boundary for “bind ctor args, then read member/default/member-init result” | Yes | No |
+
+## Suggested Next Slice Order
+
+1. **`evaluate_expression_with_bindings*` pair**
+   - highest duplication density
+   - fully constexpr-local
+   - easiest to review in isolation
+2. **static-member lookup family**
+   - `evaluate_qualified_identifier`
+   - `evaluate_function_call_member_access`
+   - `evaluate_static_member_from_struct`
+3. **member-access family**
+   - `evaluate_member_access`
+   - `evaluate_nested_member_access`
+   - array-member extraction paths
+4. **member-function-call dispatcher**
+   - save for after the smaller lookup/evaluation boundaries above are cleaner
+
 ## Goals
 
 - Reduce duplicated resolution and member-extraction logic in the constexpr evaluator.
@@ -70,6 +135,8 @@ This note is primarily **forward-looking**. It defines the next cleanup/refactor
 - No IR or codegen redesign.
 - No changes to `src/IRTypes_Ops.h` as part of this plan.
 - No broad architectural move unless a helper proves clearly reusable outside constexpr.
+- No constexpr exception-handling feature work; keep this plan strictly within C++20 constexpr semantics.
+- No move of constexpr evaluation behavior into parser-owned code.
 
 ## Key Design Split
 
@@ -91,6 +158,16 @@ This layer should return things like:
 - owner-struct metadata when needed
 
 This is the part most likely to become reusable outside constexpr evaluation.
+
+If promoted, these helpers should live in a **shared semantic-resolution
+utility layer** usable by:
+
+- the constexpr evaluator
+- regular non-constexpr semantic/codegen consumers
+- parser-adjacent semantic follow-up paths when needed
+
+They should **not** become parser-owned evaluation helpers. The goal is to
+share lookup policy, not to move constant-evaluation behavior into the parser.
 
 ### Layer B: Constexpr-only object/member evaluation
 
@@ -174,6 +251,14 @@ Determine whether the declaration-resolution helpers are useful enough outside c
 - codegen paths that still duplicate declaration targeting rules
 - semantic/template utilities that need the exact function target from parser metadata
 - static member lookup logic currently open-coded in isolated places
+- parser-adjacent semantic lookup paths that need the same declaration-resolution policy without constexpr evaluation
+
+### Promotion target
+
+If a helper graduates out of `ConstExprEvaluator`, prefer a small shared
+semantic-resolution utility layer rather than placing it directly in parser
+logic. That keeps the parser thin while still letting parser-adjacent semantic
+work reuse the same lookup rules.
 
 ### Promotion rule
 

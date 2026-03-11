@@ -5,6 +5,11 @@
 Covers `src/ConstExprEvaluator_Core.cpp`, `src/ConstExprEvaluator_Members.cpp`.
 See also `docs/CONSTEXPR_LIMITATIONS.md` for a more detailed treatment of items marked **[Known]**.
 
+**Scope note:** this document describes FlashCpp behavior against **C++20 constexpr**.
+It does **not** claim support for constexpr exception handling. Any mention of
+internal `catch` behavior below refers to evaluator implementation/diagnostics,
+not to `throw` / `try` / `catch` being supported during constant evaluation.
+
 > **Legend** · ✅ Correct · ⚠️ Partial · ❌ Missing / Wrong
 
 ---
@@ -62,11 +67,14 @@ workarounds exist that detect `size_in_bits == 0` and fall back to a symbol tabl
 **Standard:** If a `constexpr` expression cannot be evaluated at compile time for a required
 constant-expression context, the program is ill-formed and the compiler must diagnose it.
 
-**FlashCpp:** `ConstExprEvaluator_Core.cpp:153–154` has a catch-all that returns
+**FlashCpp:** `ConstExprEvaluator_Core.cpp:153–154` has an internal catch-all that returns
 `EvalResult::error(…)` at *runtime*, which causes the caller to silently treat the expression
 as non-constant and fall back to a codegen path that may produce wrong code without any
 visible diagnostic. Other specific gaps: `sizeof` with complex expressions (line 533),
 certain bitwise and shift operators (lines 594–623).
+
+This is a diagnostics/implementation issue, **not** support for constexpr
+exception handling.
 
 **Location:** `src/ConstExprEvaluator_Core.cpp:153–154, 533, 594–623`
 

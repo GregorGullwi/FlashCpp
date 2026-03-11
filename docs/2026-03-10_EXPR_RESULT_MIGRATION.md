@@ -1,14 +1,24 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress
+**Status**: In Progress (`ExprResult` landed; Phase 2 partially landed)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
+
+## Status Check (2026-03-11)
+
+- `ExprResult` and `ExprOperands` are present in `src/IROperandHelpers.h`
+- `toTypedValue(const ExprResult&)` already exists, so consumer-side bridging is started
+- priority producer sites have been migrated in `src/CodeGen_MemberAccess.cpp`, `src/CodeGen_Expr_Primitives.cpp`, and selected address-expression paths in `src/CodeGen_Expr_Conversions.cpp`
+- the current implementation includes a temporary compatibility escape hatch (`encoded_metadata` plus `preserveLegacyEnumPointerDepthEncoding(...)`) for legacy slot-4 enum encoding edge cases
+- the plan is still directionally correct, but the next implementation work is no longer “add ExprResult” — it is “finish removing legacy positional consumers and manual slot-4 construction”
 
 ## Problem
 
 Expression-evaluating codegen functions (e.g. `generateArraySubscriptIr`,
-`generateIdentifierIr`, `generateMemberAccessIr`) return
-`std::vector<IrOperand>` with positional semantics:
+`generateIdentifierIr`, `generateMemberAccessIr`) historically returned
+`std::vector<IrOperand>` with positional semantics. The fixed-size hot path has
+now moved to `ExprOperands` (`InlineVector<IrOperand, 4>`), but much of the
+legacy positional contract still exists at the producer/consumer boundary:
 
 ```
 [0] Type               — element type
@@ -61,10 +71,17 @@ struct ExprResult {
     TypeIndex type_index = 0;
     int pointer_depth = 0;
 
-    // Backward-compat: implicit conversion to InlineVector<IrOperand, 4>
-    operator InlineVector<IrOperand, 4>() const;
+    // Transitional compatibility override for legacy slot-4 encoding.
+    std::optional<unsigned long long> encoded_metadata;
+
+    // Backward-compat: implicit conversion to ExprOperands.
+    operator ExprOperands() const;
 };
 ```
+
+`encoded_metadata` is a temporary migration aid, not the end state. It exists
+to preserve legacy enum-specific slot-4 behavior while remaining producers and
+consumers are still being migrated away from positional metadata.
 
 ### Why this works
 
@@ -180,7 +197,7 @@ is converted at the return site.  No callers need to change.
 
 **Priority producers** (these construct the 4th operand today):
 - `generateArraySubscriptIr` in `CodeGen_MemberAccess.cpp`
-- `generateIdentifierIr` in `CodeGen.h`
+- `generateIdentifierIr` in `CodeGen_Expr_Primitives.cpp`
 - `makeMemberResult` in `CodeGen_MemberAccess.cpp`
 
 **Phase 2 progress (2026-03-11):**
@@ -197,6 +214,32 @@ is converted at the return site.  No callers need to change.
 - intentionally deferred broader non-priority/manual 4-slot sites outside these
   producer paths (for example other unary/conversion helpers and qualified
   identifier paths) to keep Phase 2 reviewable and producer-focused
+
+## Immediate Implementation Checklist
+
+The plan is easier to execute if it is split into these concrete slices:
+
+1. **Finish producer cleanup before changing public signatures**
+   - migrate any remaining manual 4-slot expression-result builders
+   - prefer tiny local `ExprResult` builders over open-coded `{ type, size, value, metadata }`
+2. **Convert legacy expression-result helper parameters**
+   - the current deferred `AstToIr.h` sites still taking `const std::vector<IrOperand>&` are the clearest next boundary:
+     - `handleLValueAssignment`
+     - `handleLValueCompoundAssignment`
+     - `extractBaseFromOperands`
+     - `extractBaseOperand`
+     - `markReferenceMetadata`
+     - `isVaListPointerType`
+     - `handleRValueReferenceCast`
+     - `handleLValueReferenceCast`
+     - `generateUnaryIncDecOverloadCall`
+     - `generateBuiltinIncDec`
+3. **Only once producers and helper parameters are mostly migrated, change return signatures**
+   - otherwise Phase 3 creates churn without removing the legacy positional access patterns
+4. **Delete the compatibility shim last**
+   - remove `encoded_metadata`
+   - remove `preserveLegacyEnumPointerDepthEncoding(...)`
+   - remove slot-4 decoding from `toTypedValue()`
 
 ### Phase 3: Change function signatures (optional, longer-term)
 
@@ -215,6 +258,9 @@ Callers that use `toTypedValue()` continue to work (add a
 (`result[0]`, `result[2]`) must be updated to use the named fields — this is
 intentional, as those are the fragile access patterns we want to eliminate.
 
+**Recommendation:** do not start Phase 3 until the Phase 2 checklist above has
+eliminated almost all remaining positional producer/consumer sites.
+
 ### Phase 4: Remove the encoding/decoding layer
 
 Once all expression results flow through `ExprResult`, the
@@ -231,5 +277,8 @@ operator and `toTypedValue()`:
 | `Type::Struct`, `Type::Enum`, `Type::UserDefined` | `type_index`        |
 | Everything else                         | `pointer_depth`     |
 
-This rule is a limitation of the single-slot encoding.  `ExprResult` eliminates
-the need to choose — both fields are always available.
+This rule is a limitation of the single-slot encoding. `ExprResult` eliminates
+the need to choose — both fields are always available. The temporary
+`encoded_metadata` override exists only so the migration can proceed
+incrementally without reintroducing enum slot-4 regressions while mixed old/new
+paths still coexist.

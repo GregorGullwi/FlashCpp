@@ -13,6 +13,23 @@ The recent `AddressOfMember` bug fix exposed that backend code currently mixes t
 
 The current representation is workable for small fixes, but the naming and split of responsibility make it easy for new code to accidentally treat any `reference_stack_info_` entry as a true reference.
 
+## Status Check (2026-03-11)
+
+Parts of this plan have already landed:
+
+- helper registration now exists via `setIndirectStorageInfo(...)`, `setReferenceInfo(...)`, and `setAddressOnlyInfo(...)`
+- helper queries now exist via `getIndirectStackInfo(...)`, `hasIndirectStackStorage(...)`, `hasIndirectStorage(...)`, and `shouldImplicitlyDeref(...)`
+- `AddressOf` and `AddressOfMember` already record address-only pointer results through helpers instead of open-coding side-table writes
+
+What has **not** landed yet:
+
+- `reference_stack_info_` is still the concrete storage name everywhere
+- raw `.find()` / `.count()` lookups still exist in several backend files
+- TempVar metadata still cannot represent `AddressOnly`
+- there is still no single shared “is this valid as a pointer base?” helper for member access / compute-address lowering
+
+So this document should now be read as a **migration checklist from partially-landed helper groundwork**, not as a greenfield plan.
+
 ## What was intentionally kept small in the current patch
 
 The immediate cleanup should stay narrow:
@@ -20,6 +37,12 @@ The immediate cleanup should stay narrow:
 - factor address-only registration behind helpers
 - stop duplicating the `AddressOf` vs `AddressOfMember` side-table setup
 - prefer helper predicates over raw `reference_stack_info_.count()/find()` checks in touched code
+
+Status today:
+
+- factor address-only registration behind helpers ✅
+- stop duplicating the `AddressOf` vs `AddressOfMember` side-table setup ✅
+- prefer helper predicates over raw `reference_stack_info_.count()/find()` checks in touched code ⚠️ partial
 
 This note captures the **larger** cleanup that should happen later.
 
@@ -66,8 +89,8 @@ They answer only “is there indirect storage metadata?” but not:
 
 Preferred helper layer:
 
-- `getIndirectStorageInfo(...)`
-- `hasIndirectStorage(...)`
+- `getIndirectStackInfo(...)`
+- `hasIndirectStackStorage(...)` / `hasIndirectStorage(...)`
 - `shouldImplicitlyDeref(...)`
 - `isPointerBaseStorage(...)`
 
@@ -81,10 +104,25 @@ That decision should eventually come from one shared helper rather than repeated
 
 ## Suggested future implementation plan
 
+### Track 0: Finish helper adoption before renaming anything
+
+Current raw-map sites still appear in at least:
+
+- `src/IRConverter_Conv_Arithmetic.h`
+- `src/IRConverter_Conv_ControlFlow.h`
+- `src/IRConverter_Conv_VarDecl.h`
+- `src/IRConverter_Emit_CompareBranch.h`
+
+Recommended first pass:
+
+1. replace direct `.find()` / `.count()` checks with existing helpers where behavior already matches
+2. introduce one missing helper (`isPointerBaseStorage(...)` or equivalent) for member-access / compute-address decisions
+3. only after helper adoption stabilizes, consider broader renaming
+
 ### Track 1: Rename the concept
 
 - introduce an `IndirectStorageInfo` type name (or alias)
-- rename `reference_stack_info_` after the broad EH work settles
+- rename `reference_stack_info_` only after Track 0 and after the broad EH work settles
 
 ### Track 2: Extend TempVar metadata
 
@@ -93,7 +131,7 @@ That decision should eventually come from one shared helper rather than repeated
 
 ### Track 3: Migrate backend consumers
 
-- replace raw map lookups in memory/member/call lowering with semantic helpers
+- replace raw map lookups in arithmetic/control-flow/var-decl/member/call lowering with semantic helpers
 - keep all implicit-deref decisions centralized
 
 ### Track 4: Add focused regression coverage

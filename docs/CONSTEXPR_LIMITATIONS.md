@@ -6,6 +6,11 @@ This document details the current limitations of constexpr evaluation in FlashCp
 
 FlashCpp supports constexpr evaluation for use in `static_assert`, template parameters, and other contexts requiring compile-time constant expressions. The implementation supports struct/class member access, constructor evaluation, and constexpr member functions with some limitations.
 
+**Standard boundary:** this document tracks FlashCpp against **C++20 constexpr**.
+It does not treat `throw` / `try` / `catch` during constant evaluation as a
+supported target. If evaluator internals catch exceptions while reporting
+errors, that is implementation plumbing, not language-feature support.
+
 ## What Works
 
 ### ✅ Basic Constexpr Variables
