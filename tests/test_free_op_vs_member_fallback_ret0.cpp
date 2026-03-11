@@ -12,31 +12,31 @@
 // Actual (buggy): member A::operator+(int) is selected with wrong argument type.
 
 struct B {
-    int value;
-    B(int v) : value(v) {}
+	int value;
+	B(int v) : value(v) {}
 };
 
 struct A {
-    int value;
-    A(int v) : value(v) {}
+	int value;
+	A(int v) : value(v) {}
 
-    // Member operator+ that takes int (NOT B)
-    A operator+(int rhs) {
-        return A(value + rhs);
-    }
+	// Member operator+ that takes int (NOT B)
+	A operator+(int rhs) {
+		return A(value + rhs);
+	}
 };
 
 // Free-function operator+ that takes (A, B) — this is the correct overload for `a + b`
 A operator+(const A& a, const B& b) {
-    return A(a.value + b.value);
+	return A(a.value + b.value);
 }
 
 int main() {
-    A a(10);
-    B b(20);
-    A result = a + b;  // Should call free operator+(A, B), not member A::operator+(int)
-    if (result.value == 30) {
-        return 0;  // success: free function was called
-    }
-    return 1;  // failure: wrong overload selected
+	A a(10);
+	B b(20);
+	A result = a + b;  // Should call free operator+(A, B), not member A::operator+(int)
+	if (result.value == 30) {
+		return 0;  // success: free function was called
+	}
+	return 1;  // failure: wrong overload selected
 }

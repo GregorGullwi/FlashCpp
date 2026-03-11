@@ -1,7 +1,8 @@
 # Operator Overload Resolution Follow-Up Plan
 
 **Date**: 2026-03-10
-**Status**: Deferred to follow-up PR
+**Last updated**: 2026-03-11
+**Status**: In progress on follow-up branch
 
 ## Current status on fresh `origin/main`
 
@@ -13,121 +14,129 @@ After rebasing this branch onto `origin/main`, the previously reported tests all
 - `test_constexpr_lambda_returned_closure_ret0.cpp`
 - all listed `test_spaceship_*` cases
 
-That means there is no remaining red test in this PR to fix on top of the rebased tree. This document captures the larger operator-overload follow-up work that should happen in a separate PR.
+That means there is no remaining red test in this PR to fix on top of the rebased tree. This document originally captured the larger operator-overload follow-up work that should happen in a separate PR; the work has now started and the sections below track completed and remaining items.
+
+## Progress update on this branch
+
+Completed commits so far:
+
+- `32d05fe0` — detect ambiguous operator-overload candidates
+- `001de182` — require explicit RHS types for operator lookup
+- `b87594cc` — cache resolved binary operators on the AST
+
+Tests added during this follow-up work:
+
+- `tests/test_operator_ambiguity_mixed_free_fail.cpp`
+- `tests/test_operator_ambiguity_mixed_member_free_fail.cpp`
+- `tests/test_operator_member_tiebreak_ret0.cpp`
+- `tests/test_operator_assign_primitive_ranking_ret0.cpp`
+
+Validation rerun on this branch:
+
+- `./build_flashcpp.bat`
+- `./tests/run_all_tests.ps1 test_operator_assign_primitive_ranking_ret0.cpp`
+- `./tests/run_all_tests.ps1 test_operator_member_tiebreak_ret0.cpp`
+- `./tests/run_all_tests.ps1 test_operator_ambiguity_mixed_free_fail.cpp`
+- `./tests/run_all_tests.ps1 test_operator_ambiguity_mixed_member_free_fail.cpp`
 
 ## Problem summary
 
-Binary operator overload resolution currently lives in a split state:
+Binary operator overload resolution is in a better state than when this document was opened, but
+it is still not fully semantic-first:
 
-- General function overload resolution already supports `no_match` vs `ambiguous` vs `match`
-  via `OverloadResolutionResult` in `src/OverloadResolution.h`.
-- Binary operator helpers still use a separate `OperatorOverloadResult` that can only express
-  `has_overload` vs `no_overload`.
-- `findBinaryOperatorOverloadWithFreeFunction(...)` ranks candidates with partial operand type
-  information and does not explicitly report ambiguity.
-- Both binary operator helpers still expose `Type right_type = Type::Void`, which is a fragile
-  API contract for primitive-parameter ranking.
+- Ambiguity handling and candidate ranking are now substantially aligned with normal overload
+  resolution.
+- Non-dependent binary expressions can now cache a resolved operator overload on the AST.
+- However, operator matching still relies on reduced `(TypeIndex, Type)` summaries in places where
+  full `TypeSpecifierNode` semantics would be more correct.
+- The AST still cannot explicitly represent a semantic `no_match` result for binary operators.
+- Codegen still contains fallback operator lookup for cache-miss cases instead of consuming a fully
+  authoritative semantic result.
 
-## Concrete issues to address
+## Status against the original plan
 
-### 1. Ambiguity is not representable in `OperatorOverloadResult`
+### Phase 1 — Make operator results structurally correct `[done]`
 
-Current state:
+- `OperatorOverloadResult` now distinguishes `has_match`, `no_match`, and `is_ambiguous`.
+- Operator-overload callers now diagnose ambiguity instead of silently picking one candidate.
+- This closes the original representability gap versus `OverloadResolutionResult`.
 
-- `src/OverloadResolution.h:794-809` defines `OperatorOverloadResult`
-- it has `member_overload`, `free_function_overload`, `has_overload`, and `is_free_function`
-- it has no `is_ambiguous` state
+### Phase 2 — Unify ranking behavior `[done]`
 
-This differs from `OverloadResolutionResult` in `src/OverloadResolution.h:438-454`, which can
-explicitly return `ambiguous()`.
+- Binary operator ranking now computes the set of undominated viable candidates instead of keeping
+  only a running `best`.
+- Mixed incomparable candidates now produce an ambiguity result.
+- The member-vs-free-function preference is preserved only as a tie-break when candidates are
+  otherwise equivalent.
 
-### 2. Candidate ranking does not diagnose mixed incomparable candidates
+### Phase 3 — Remove `Type::Void` fallback semantics `[mostly done]`
 
-Current state:
+- The default `right_type = Type::Void` has been removed from both binary helpers.
+- Callers now pass explicit RHS base-type information.
+- The assignment path now threads the actual RHS type and no longer collapses to “first primitive
+  overload wins”.
+- Remaining gap: operator matching still relies on `(TypeIndex, Type)` summaries rather than full
+  `TypeSpecifierNode`-based comparison for references, cv-qualification, arrays, and value
+  category.
 
-- `src/OverloadResolution.h:1103-1125` compares each operator candidate only against the current
-  `best`
-- candidates that are better on one operand and worse on another are skipped
-- the helper returns the last surviving `best` instead of proving it is uniquely best
+### Phase 4 — Move ownership toward semantic resolution `[partially done]`
 
-This should be reworked to follow the same “count best matches / detect ties” pattern already
-used by general overload resolution.
+- `BinaryOperatorNode` now caches resolved member/free-function overload choices and ambiguity.
+- Parser-side construction records non-dependent, concrete binary overload decisions on the AST.
+- Template/substitution copy sites preserve that semantic payload.
+- Codegen consumes the cached semantic result first and only falls back to lookup when the AST has
+  no recorded decision.
+- Remaining gap: the AST still has no explicit `no_match` / `resolved-but-unavailable` state, so
+  codegen fallback is still required on cache misses.
 
-### 3. `Type::Void` default arguments are a latent footgun
+## Remaining work
 
-Current state:
+### 1. Finish semantic ownership of non-dependent binary resolution
 
-- `findBinaryOperatorOverload(...)` at `src/OverloadResolution.h:850`
-- `findBinaryOperatorOverloadWithFreeFunction(...)` at `src/OverloadResolution.h:951`
+1. Add an explicit semantic state for `BinaryOperatorNode`, e.g. unresolved / no-match /
+   ambiguous / member-match / free-function-match.
+2. Record `no_match` in semantic analysis so codegen can trust the AST instead of re-running
+   lookup on cache misses.
+3. Restrict codegen fallback to template-dependent or otherwise intentionally deferred cases.
 
-Both helpers default `right_type` to `Type::Void`.
+### 2. Upgrade operator argument matching beyond `(TypeIndex, Type)`
 
-That is non-standard as a stand-in for “unknown operand type”, and it can produce incorrect
-primitive matching behavior depending on the caller and helper path.
+1. Reuse the same `TypeSpecifierNode`-level comparison logic used by normal overload resolution.
+2. Cover reference binding, cv-qualification, array decay/shape, and value category.
+3. Re-check self-referential and template-substituted operator parameters against the richer
+   matcher.
 
-### 4. Parser/codegen split encourages duplicated semantics
+### 3. Tighten parser/codegen diagnostic parity
 
-Current state:
+1. Make parser-time diagnostics and codegen-time diagnostics agree for the same non-dependent
+   source.
+2. Ensure ambiguity and no-match diagnostics come from semantic analysis whenever possible.
 
-- parser-side validation uses weaker checks in `src/Parser_Expr_BinaryPrecedence.cpp`
-- codegen performs the richer free-function/member operator lookup in
-  `src/CodeGen_Expr_Operators.cpp:868-869`
+### 4. Expand regression coverage
 
-Longer term, non-dependent binary expressions should be resolved once during semantic analysis,
-with codegen consuming the recorded result instead of reconstructing it.
+Add targeted tests for the still-open cases:
 
-## Recommended follow-up PR scope
-
-### Phase 1: Make operator results structurally correct
-
-1. Extend `OperatorOverloadResult` with:
-   - `is_ambiguous`
-   - `has_match`
-   - helper factories mirroring `OverloadResolutionResult`
-2. Update all operator-overload callers to diagnose ambiguity instead of silently selecting one
-   candidate.
-
-### Phase 2: Unify ranking behavior
-
-1. Refactor binary operator ranking to use the same “uniquely best viable function” logic as
-   general overload resolution.
-2. Preserve the member-vs-free-function tie-break rule only when the candidates are otherwise
-   equivalent under the standard comparison.
-
-### Phase 3: Remove `Type::Void` fallback semantics
-
-1. Remove the default `right_type = Type::Void` from both binary operator helpers.
-2. Require callers to pass complete operand type information.
-3. Prefer full `TypeSpecifierNode`-based matching for correctness, especially around reference
-   binding and value category.
-
-### Phase 4: Move ownership toward semantic resolution
-
-1. Resolve non-dependent binary operator overloads in parser/semantic analysis.
-2. Store the selected overload (or ambiguity/no-match state) on the AST.
-3. Let codegen consume the semantic result.
-4. Keep deferred resolution only for template-dependent expressions.
-
-## Test plan for the follow-up PR
-
-Add targeted tests for:
-
-- ambiguous free-function vs free-function operator overloads
-- ambiguous member vs free-function operator overloads
-- primitive parameter member operators where a missing RHS base type would otherwise filter a
-  valid candidate
 - template/self-referential operator parameters
+- reference-qualified and cv-sensitive overload selection
 - parser-time diagnostics vs codegen-time diagnostics for the same source
+- deferred template-dependent expressions that become resolvable after substitution
 
-Prefer `_fail.cpp` tests for ambiguity diagnostics and `_retX.cpp` tests for successful ranking.
+## Suggested next steps
 
-## Non-goals for this PR
-
-- no broad operator-resolution refactor
-- no AST ownership changes for operator resolution
-- no code change solely to chase a now-green test on rebased `origin/main`
+1. Introduce an explicit semantic result enum/state on `BinaryOperatorNode`, including `no_match`.
+2. Teach parser/semantic analysis to write that full state for every non-dependent binary
+   expression.
+3. Narrow codegen fallback so it only runs for dependent expressions or intentionally unresolved
+   cases.
+4. Replace the remaining `(TypeIndex, Type)` matching shortcuts with `TypeSpecifierNode`-aware
+   comparison.
+5. Add the missing regression tests for reference binding, template/self-reference, and
+   parser-vs-codegen diagnostic parity.
 
 ## Validation already performed
 
 On the rebased branch, the originally reported failing test list was rerun with
 `./tests/run_all_tests.ps1 <test>.cpp -Jobs 1`, and every listed test passed.
+
+On top of that baseline, the follow-up operator-overload commits listed above were rebuilt and the
+targeted regression suite was rerun successfully.
