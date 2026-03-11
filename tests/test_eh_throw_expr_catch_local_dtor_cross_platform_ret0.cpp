@@ -56,26 +56,29 @@ void throwFromCatch() {
 }
 
 int main() {
+	int catch_result = 0;
 	try {
 		throwFromCatch();
 		return 1; // should not reach
 	} catch (Payload& caught) {
 		// Verify value was materialized before destructors ran
-		if (caught.value != 10) return 2;
+		if (caught.value != 10) catch_result = 2;
 
 		// Verify each Guard destructor ran exactly once (2 guards)
-		if (g_guard_dtor_count != 2) return 3;
+		if (g_guard_dtor_count != 2) catch_result = 3;
 
-		// Verify Payload destructor ran twice:
-		//   1. the original catch-local `payload`
-		//   2. the materialized temporary (after throw copies from it)
-		if (g_payload_dtor_count != 2) return 4;
+		// Inside the handler the original catch-local `payload` is already gone,
+		// but the exception object itself is still alive until the handler exits.
+		if (g_payload_dtor_count != 1) catch_result = 4;
 
 		// Verify copy constructor ran exactly once (materialization)
-		if (g_copy_ctor_count != 1) return 5;
-
-		return 0;
+		if (g_copy_ctor_count != 1) catch_result = 5;
 	}
 
-	return 6;
+	if (catch_result != 0) return catch_result;
+
+	// After the catch handler exits, the exception object is destroyed too.
+	if (g_payload_dtor_count != 2) return 6;
+
+	return 0;
 }
