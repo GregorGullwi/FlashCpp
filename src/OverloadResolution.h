@@ -984,33 +984,33 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	// For struct/enum/user-defined types, identity is determined by type_index.
 	// For primitive types, uses can_convert_type(Type, Type) for standard rankings.
 	auto rankOperandMatch = [&](Type arg_type, TypeIndex arg_type_index, const TypeSpecifierNode& param_spec) -> ConversionRank {
-			Type param_type = param_spec.type();
-			TypeIndex param_idx = param_spec.type_index();
+		Type param_type = param_spec.type();
+		TypeIndex param_idx = param_spec.type_index();
 
-			// Resolve self-referential template parameter types.
-			if (usesTypeIndexIdentity(param_type)) {
-				param_idx = resolveSelfRefParamIndex(param_idx, left_type_index);
+		// Resolve self-referential template parameter types.
+		if (usesTypeIndexIdentity(param_type)) {
+			param_idx = resolveSelfRefParamIndex(param_idx, left_type_index);
+		}
+
+		// Struct/Enum/UserDefined parameter: identity by type_index.
+		if (usesTypeIndexIdentity(param_type)) {
+			if (usesTypeIndexIdentity(arg_type) && arg_type_index == param_idx) {
+				return ConversionRank::ExactMatch;
 			}
-
-			// Struct/Enum/UserDefined parameter: identity by type_index.
-			if (usesTypeIndexIdentity(param_type)) {
-				if (usesTypeIndexIdentity(arg_type) && arg_type_index == param_idx) {
-					return ConversionRank::ExactMatch;
-				}
-				if (usesTypeIndexIdentity(arg_type)) {
-					return ConversionRank::NoMatch;  // Different user-defined types.
-				}
-				return ConversionRank::UserDefined;  // Primitive → user-defined type (converting ctor).
-			}
-
-			// Primitive parameter.
 			if (usesTypeIndexIdentity(arg_type)) {
-				return ConversionRank::UserDefined;  // Struct → primitive (conversion operator)
+				return ConversionRank::NoMatch;  // Different user-defined types.
 			}
+			return ConversionRank::UserDefined;  // Primitive → user-defined type (converting ctor).
+		}
 
-			// Both primitive: use standard type conversion ranking.
-			return can_convert_type(arg_type, param_type).rank;
-		};
+		// Primitive parameter.
+		if (usesTypeIndexIdentity(arg_type)) {
+			return ConversionRank::UserDefined;  // Struct → primitive (conversion operator)
+		}
+
+		// Both primitive: use standard type conversion ranking.
+		return can_convert_type(arg_type, param_type).rank;
+	};
 
 	// Determine LHS actual type from gTypeInfo. If the type entry is invalid/void
 	// (e.g., template instantiation whose type_ wasn't explicitly set), treat as Struct

@@ -856,9 +856,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 			}
 
-			// Get the type index of the right operand (if it's a struct)
+			// Get the type index of the right operand for type-index-identity types.
 			TypeIndex rhs_type_index = 0;
-			if (rhsType == Type::Struct && rhsIrOperands.size() >= 4) {
+			if ((rhsType == Type::Struct || rhsType == Type::Enum || rhsType == Type::UserDefined) && rhsIrOperands.size() >= 4) {
 				if (std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
 					rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
 				}
