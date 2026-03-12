@@ -22,6 +22,7 @@ in the constexpr limitation docs.
 
 ### Landed checkpoint commits
 
+- `eb0983bf` — shared constexpr expression dispatch for bound-expression recursion
 - `0fb14c95` — refactored shared constexpr lookup resolution helpers
 - `e444335a` — extracted constexpr member source resolution
 - `ccab61ff` — deduplicated constexpr identifier lookup helpers
@@ -43,6 +44,7 @@ in the constexpr limitation docs.
 
 ### What is now complete
 
+- shared expression dispatch helper centralizes common bound-expression walking logic
 - shared lookup helpers cover `resolved_name`/raw-name fallback and parser-stored function targets
 - current-struct static-member lookup/preference is centralized
 - current-struct/member-function candidate filtering is centralized for the migrated call paths
@@ -96,7 +98,7 @@ and reviewable.
 
 | Function / area | File | Duplication kind | Likely helper boundary | Depends on `EvalResult`? | Shared outside constexpr? |
 | --- | --- | --- | --- | --- | --- |
-| `evaluate_expression_with_bindings` + `evaluate_expression_with_bindings_const` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled walker duplication | shared dispatch layer for bound-expression recursion; keep mutation-only assignment/inc-dec logic in the mutable path | Yes | No, keep constexpr-local |
+| `evaluate_expression_with_bindings` + `evaluate_expression_with_bindings_const` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled walker duplication | ~~shared dispatch layer for bound-expression recursion~~ **COMPLETED** | Yes | No, keep constexpr-local |
 | `evaluate_qualified_identifier` | `src/ConstExprEvaluator_Members.cpp` | mixed lookup + constexpr synthesis | split qualified-type/static-member resolution from `integral_constant` / trait-value synthesis | Partly | Maybe later, but only the lookup half |
 | `evaluate_member_access` | `src/ConstExprEvaluator_Members.cpp` | mixed object-source resolution + member evaluation tail | reuse a small helper for “resolve object, then either static-member fast path or member-source evaluation” | Yes | No |
 | `evaluate_nested_member_access` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled nested member extraction | helper for “evaluate final resolved member source” after `resolve_constexpr_member_source_from_initializer(...)` | Yes | No |
@@ -107,7 +109,7 @@ and reviewable.
 
 ## Suggested Next Slice Order
 
-1. **`evaluate_expression_with_bindings*` pair**
+1. ~~**`evaluate_expression_with_bindings*` pair**~~ ✅ COMPLETED
    - highest duplication density
    - fully constexpr-local
    - easiest to review in isolation
