@@ -419,16 +419,6 @@
 
 	ExprOperands AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
 	ExpressionContext context) {
-		auto makeExprResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
-			ExprResult result;
-			result.type = type;
-			result.size_in_bits = size_bits;
-			result.value = std::move(value);
-			result.type_index = type_index;
-			result.pointer_depth = pointer_depth;
-			return result;
-		};
-
 		// OPERATOR OVERLOAD RESOLUTION
 		// For full standard compliance, operator& should call overloaded operator& if it exists.
 		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
@@ -617,7 +607,6 @@
 					result_var,
 					0,
 					addr_components->pointer_depth + 1);
-				preserveLegacyEnumPointerDepthEncoding(result);
 				return result;
 			}
 			
@@ -1296,25 +1285,27 @@
 		}
 		else if (unaryOperatorNode.op() == "++") {
 			// Increment operator (prefix or postfix)
+			ExprResult operand_result = toExprResult(operandIrOperands);
 
 			// Check for user-defined operator++ overload on struct types
-			auto inc_result = generateUnaryIncDecOverloadCall(OverloadableOperator::Increment, operandType, operandIrOperands, unaryOperatorNode.is_prefix());
+			auto inc_result = generateUnaryIncDecOverloadCall(OverloadableOperator::Increment, operandType, operand_result, unaryOperatorNode.is_prefix());
 			if (inc_result.has_value()) {
 				return *inc_result;
 			}
 			
-			return generateBuiltinIncDec(true, unaryOperatorNode.is_prefix(), operandHandledAsIdentifier, unaryOperatorNode, operandIrOperands, operandType, result_var);
+			return generateBuiltinIncDec(true, unaryOperatorNode.is_prefix(), operandHandledAsIdentifier, unaryOperatorNode, operand_result, operandType, result_var);
 		}
 		else if (unaryOperatorNode.op() == "--") {
 			// Decrement operator (prefix or postfix)
+			ExprResult operand_result = toExprResult(operandIrOperands);
 
 			// Check for user-defined operator-- overload on struct types
-			auto dec_result = generateUnaryIncDecOverloadCall(OverloadableOperator::Decrement, operandType, operandIrOperands, unaryOperatorNode.is_prefix());
+			auto dec_result = generateUnaryIncDecOverloadCall(OverloadableOperator::Decrement, operandType, operand_result, unaryOperatorNode.is_prefix());
 			if (dec_result.has_value()) {
 				return *dec_result;
 			}
 			
-			return generateBuiltinIncDec(false, unaryOperatorNode.is_prefix(), operandHandledAsIdentifier, unaryOperatorNode, operandIrOperands, operandType, result_var);
+			return generateBuiltinIncDec(false, unaryOperatorNode.is_prefix(), operandHandledAsIdentifier, unaryOperatorNode, operand_result, operandType, result_var);
 		}
 		else if (unaryOperatorNode.op() == "&") {
 			// Address-of operator: &x
@@ -1538,16 +1529,13 @@
 std::optional<ExprOperands> AstToIr::generateUnaryIncDecOverloadCall(
 	OverloadableOperator op_kind,  // Increment or Decrement
 	Type operandType,
-	const std::vector<IrOperand>& operandIrOperands,
+	const ExprResult& operandIrResult,
 	bool is_prefix
 ) {
-	if (operandType != Type::Struct || operandIrOperands.size() < 4)
+	if (operandType != Type::Struct)
 		return std::nullopt;
 
-	TypeIndex operand_type_index = 0;
-	if (std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
-		operand_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operandIrOperands[3]));
-	}
+	TypeIndex operand_type_index = operandIrResult.type_index;
 	if (operand_type_index == 0)
 		return std::nullopt;
 
@@ -1623,7 +1611,7 @@ std::optional<ExprOperands> AstToIr::generateUnaryIncDecOverloadCall(
 	TempVar this_addr = var_counter.next();
 	AddressOfOp addr_op;
 	addr_op.result = this_addr;
-	addr_op.operand = toTypedValue(operandIrOperands);
+	addr_op.operand = toTypedValue(operandIrResult);
 	addr_op.operand.pointer_depth = 0;
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
@@ -1649,7 +1637,7 @@ std::optional<ExprOperands> AstToIr::generateUnaryIncDecOverloadCall(
 	TypeIndex result_type_index = call_op.return_type_index;
 	Type result_type = call_op.return_type;
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
-	return ExprOperands{ result_type, result_size, ret_var, static_cast<unsigned long long>(result_type_index) };
+	return makeExprResult(result_type, result_size, ret_var, result_type_index);
 }
 
 
@@ -1662,23 +1650,29 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 	bool is_prefix,
 	bool operandHandledAsIdentifier,
 	const UnaryOperatorNode& unaryOperatorNode,
-	const std::vector<IrOperand>& operandIrOperands,
+	const ExprResult& operandIrResult,
 	Type operandType,
 	TempVar result_var
 ) {
 	auto getOperandPointerDepth = [&]() -> int {
-		if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
-			return static_cast<int>(std::get<unsigned long long>(operandIrOperands[3]));
-		}
-		return 0;
+		return operandIrResult.pointer_depth;
 	};
 
 	int operand_pointer_depth = getOperandPointerDepth();
+	auto makeUpdatedPointerResult = [&](TempVar value_var) {
+		return makeExprResult(
+			operandType,
+			64,
+			value_var,
+			operandIrResult.type_index,
+			operand_pointer_depth,
+			operandIrResult.encoded_metadata
+		);
+	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
-		if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3]) &&
-		    (typed_value.type == Type::Struct || typed_value.type == Type::Enum)) {
-			typed_value.type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operandIrOperands[3]));
+		if ((typed_value.type == Type::Struct || typed_value.type == Type::Enum) && operandIrResult.type_index != 0) {
+			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {
 			typed_value.pointer_depth = operand_pointer_depth;
@@ -1686,29 +1680,26 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 		}
 	};
 
-	auto storeBackUpdatedValue = [&](const std::vector<IrOperand>& rhs_operands) -> bool {
-		if (operandIrOperands.size() < 3) {
-			return false;
-		}
-		if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+	auto storeBackUpdatedValue = [&](const ExprResult& rhs_operands) -> bool {
+		if (std::holds_alternative<StringHandle>(operandIrResult.value)) {
 			AssignmentOp assign_op;
-			auto lhs_value = std::get<StringHandle>(operandIrOperands[2]);
+			auto lhs_value = std::get<StringHandle>(operandIrResult.value);
 			assign_op.result = lhs_value;
-			assign_op.lhs = { std::get<Type>(operandIrOperands[0]), std::get<int>(operandIrOperands[1]), lhs_value };
+			assign_op.lhs = { operandIrResult.type, operandIrResult.size_in_bits, lhs_value };
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), unaryOperatorNode.get_token()));
 			return true;
 		}
-		if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
-			if (handleLValueAssignment(operandIrOperands, rhs_operands, unaryOperatorNode.get_token())) {
+		if (std::holds_alternative<TempVar>(operandIrResult.value)) {
+			if (handleLValueAssignment(operandIrResult, rhs_operands, unaryOperatorNode.get_token())) {
 				return true;
 			}
 			AssignmentOp assign_op;
-			auto lhs_value = std::get<TempVar>(operandIrOperands[2]);
+			auto lhs_value = std::get<TempVar>(operandIrResult.value);
 			assign_op.result = lhs_value;
-			assign_op.lhs = { std::get<Type>(operandIrOperands[0]), std::get<int>(operandIrOperands[1]), lhs_value };
+			assign_op.lhs = { operandIrResult.type, operandIrResult.size_in_bits, lhs_value };
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
@@ -1726,40 +1717,53 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 		if (operand_pointer_depth > 1) {
 			element_size = 8;
 		} else {
-			element_size = getSizeInBytes(operandType, 0, get_type_size_bits(operandType));
+			element_size = getSizeInBytes(operandType, operandIrResult.type_index, get_type_size_bits(operandType));
 			if (element_size == 0) {
 				element_size = 1;
 			}
 		}
 	}
-	if (operandHandledAsIdentifier && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+	auto applyPointerTypeInfo = [&](const TypeSpecifierNode& type_node, size_t consumed_dereferences = 0) {
+		if (type_node.pointer_depth() <= consumed_dereferences) {
+			return;
+		}
+		size_t remaining_pointer_depth = type_node.pointer_depth() - consumed_dereferences;
+		is_pointer = true;
+		operand_pointer_depth = static_cast<int>(remaining_pointer_depth);
+		if (remaining_pointer_depth > 1) {
+			element_size = 8;  // Multi-level pointer: element is a pointer
+		} else {
+			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), type_node.size_in_bits());
+		}
+	};
+	auto tryApplyPointerInfoFromIdentifier = [&](const IdentifierNode& identifier, size_t consumed_dereferences = 0) -> bool {
+		auto symbol = symbol_table.lookup(identifier.name());
+		if (!symbol.has_value()) {
+			return false;
+		}
+		if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+			applyPointerTypeInfo(decl->type_node().as<TypeSpecifierNode>(), consumed_dereferences);
+			return true;
+		}
+		return false;
+	};
+	if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-		if (std::holds_alternative<IdentifierNode>(operandExpr)) {
-			const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
-			auto symbol = symbol_table.lookup(identifier.name());
-			if (symbol.has_value()) {
-				const TypeSpecifierNode* type_node = nullptr;
-				if (symbol->is<DeclarationNode>()) {
-					type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-				}
-				
-				if (type_node && type_node->pointer_depth() > 0) {
-					is_pointer = true;
-					operand_pointer_depth = static_cast<int>(type_node->pointer_depth());
-					if (type_node->pointer_depth() > 1) {
-						element_size = 8;  // Multi-level pointer: element is a pointer
-					} else {
-						element_size = getSizeInBytes(type_node->type(), type_node->type_index(), type_node->size_in_bits());
-					}
+		if (operandHandledAsIdentifier && std::holds_alternative<IdentifierNode>(operandExpr)) {
+			tryApplyPointerInfoFromIdentifier(std::get<IdentifierNode>(operandExpr));
+		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {
+			const UnaryOperatorNode& deref_expr = std::get<UnaryOperatorNode>(operandExpr);
+			if (deref_expr.op() == "*" && deref_expr.get_operand().is<ExpressionNode>()) {
+				const ExpressionNode& inner_expr = deref_expr.get_operand().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(inner_expr)) {
+					tryApplyPointerInfoFromIdentifier(std::get<IdentifierNode>(inner_expr), 1);
 				}
 			}
 		}
 	}
 	
 	UnaryOp unary_op{
-		.value = toTypedValue(operandIrOperands),
+		.value = toTypedValue(operandIrResult),
 		.result = result_var
 	};
 	
@@ -1768,7 +1772,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 	if (is_pointer) {
 		// For pointers, use a BinaryOp to add/subtract element_size
 		// Extract the pointer operand value once (used in multiple BinaryOp/AssignmentOp below)
-		IrValue ptr_operand = toIrValue(operandIrOperands[2]);
+		IrValue ptr_operand = toIrValue(operandIrResult.value);
 		
 		if (is_prefix) {
 			BinaryOp bin_op{
@@ -1777,7 +1781,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
-			std::vector<IrOperand> rhs_operands{ operandType, 64, result_var };
+			ExprResult rhs_operands = makeUpdatedPointerResult(result_var);
 			if (!storeBackUpdatedValue(rhs_operands)) {
 				FLASH_LOG(Codegen, Error, "Failed to store back pointer increment/decrement result");
 				return {};
@@ -1789,7 +1793,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 			AssignmentOp save_op;
 			save_op.result = old_value;
 			save_op.lhs = { Type::UnsignedLongLong, 64, old_value };
-			save_op.rhs = toTypedValue(operandIrOperands);
+			save_op.rhs = toTypedValue(operandIrResult);
 			populateIncDecTypedValueMetadata(save_op.rhs);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
 			BinaryOp bin_op{
@@ -1798,7 +1802,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
-			std::vector<IrOperand> rhs_operands{ operandType, 64, result_var };
+			ExprResult rhs_operands = makeUpdatedPointerResult(result_var);
 			if (!storeBackUpdatedValue(rhs_operands)) {
 				FLASH_LOG(Codegen, Error, "Failed to store back pointer postfix increment/decrement result");
 				return {};
@@ -1822,11 +1826,9 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 		if (gsi.is_global_or_static) {
 			// For global/static: manually do load → add/sub 1 → store
 			IrOpcode arith_opcode_int = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
-			Type elem_type = std::get<Type>(operandIrOperands[0]);
-			int elem_size = std::get<int>(operandIrOperands[1]);
-			IrValue loaded_val = std::holds_alternative<TempVar>(operandIrOperands[2])
-				? IrValue(std::get<TempVar>(operandIrOperands[2]))
-				: toIrValue(operandIrOperands[2]);
+			Type elem_type = operandIrResult.type;
+			int elem_size = operandIrResult.size_in_bits;
+			IrValue loaded_val = toIrValue(operandIrResult.value);
 
 			if (is_prefix) {
 				BinaryOp bin_op{
@@ -1865,7 +1867,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 		}
 	}
 	
-	return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };
+	return { operandType, operandIrResult.size_in_bits, result_var, 0ULL };
 }
 
 

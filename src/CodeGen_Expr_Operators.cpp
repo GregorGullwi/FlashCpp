@@ -434,7 +434,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Try to handle assignment using unified lvalue metadata handler
-					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+					if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
 						// Assignment was handled successfully via metadata
 						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member assignment");
 						return rhsIrOperands;
@@ -468,7 +468,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 						// Handle assignment using unified lvalue metadata handler
-						if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+						if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
 							// Assignment was handled successfully via metadata
 							FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
 							return rhsIrOperands;
@@ -503,7 +503,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					std::string_view lhs_name = lhs_ident.name();
 					auto lhsIrOperands = visitExpressionNode(lhs_expr);
 					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+					if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
 						FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
 						return rhsIrOperands;
 					}
@@ -687,7 +687,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// 3. Store the result back to the lvalue
 
 					// Try to handle compound assignment using lvalue metadata
-					if (handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
+					if (handleLValueCompoundAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token(), op)) {
 						// Compound assignment was handled successfully via metadata
 						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member compound assignment");
 						// Return the LHS operands which contain the result type/size info
@@ -710,14 +710,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Try unified metadata-based handler for compound assignments on identifiers
 		// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
 		if (compound_assignment_ops.count(op) > 0 &&
-		handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
+		handleLValueCompoundAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token(), op)) {
 			FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for compound assignment");
 			return lhsIrOperands;
 		}
 
 		// Try unified lvalue-based assignment handler (uses value category metadata)
 		// This handles assignments like *ptr = value using lvalue metadata
-		if (op == "=" && handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+		if (op == "=" && handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
 			// Assignment was handled via lvalue metadata, return RHS as result
 			return rhsIrOperands;
 		}
@@ -2483,7 +2483,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
 
-	bool AstToIr::isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const {
+	bool AstToIr::isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const {
 		// Check if the argument is an identifier with pointer type
 		if (arg.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg.as<ExpressionNode>())) {
 			const auto& id = std::get<IdentifierNode>(arg.as<ExpressionNode>());
@@ -2499,10 +2499,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
-		if (ir_result.size() >= 2 && std::holds_alternative<int>(ir_result[1])) {
-			if (std::get<int>(ir_result[1]) == POINTER_SIZE_BITS) {
-				return true;
-			}
+		if (ir_result.size_in_bits == POINTER_SIZE_BITS) {
+			return true;
 		}
 
 		return false;
@@ -2578,7 +2576,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
 		// This must match the detection logic in generateVaStartIntrinsic
-		bool va_list_is_pointer = isVaListPointerType(arg0, va_list_ir);
+		bool va_list_is_pointer = isVaListPointerType(arg0, toExprResult(va_list_ir));
 
 		if (context_->isItaniumMangling() && !va_list_is_pointer) {
 			// Linux/System V AMD64 ABI: Use va_list structure
@@ -3211,7 +3209,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
-		bool va_list_is_pointer = isVaListPointerType(arg0, arg0_ir);
+		bool va_list_is_pointer = isVaListPointerType(arg0, toExprResult(arg0_ir));
 
 		// Get the second argument (last fixed parameter)
 		ASTNode arg1 = functionCallNode.arguments()[1];
@@ -3500,16 +3498,16 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 // - ArrayElement and Member cases need additional metadata (index, member_name) not currently in LValueInfo
 // - Only Indirect (dereference) case is fully implemented
 // - Future work: Extend LValueInfo or pass additional context to handle all cases
-bool AstToIr::handleLValueAssignment(const std::vector<IrOperand>& lhs_operands,
-const std::vector<IrOperand>& rhs_operands,
+bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
+const ExprResult& rhs_operands,
 const Token& token) {
 	// Check if LHS has a TempVar with lvalue metadata
-	if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
-		FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - size=", lhs_operands.size(), " has_tempvar=", (lhs_operands.size() >= 3 ? std::holds_alternative<TempVar>(lhs_operands[2]) : false));
+	if (!std::holds_alternative<TempVar>(lhs_operands.value)) {
+		FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - has_tempvar=false");
 		return false;
 	}
 
-	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
+	TempVar lhs_temp = std::get<TempVar>(lhs_operands.value);
 	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
 	TempVarMetadata lhs_meta = getTempVarMetadata(lhs_temp);
 
@@ -3519,19 +3517,16 @@ const Token& token) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
-	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : std::get<Type>(lhs_operands[0]);
+	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.type;
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
-			if (lhs_operands.size() > 3 && std::holds_alternative<unsigned long long>(lhs_operands[3])) {
-				TypeIndex type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhs_operands[3]));
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
-					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-						inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
-					} else {
-						inferred_size_bits = static_cast<int>(type_info.type_size_);
-					}
+			if (lhs_operands.type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[lhs_operands.type_index];
+				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
+				} else {
+					inferred_size_bits = static_cast<int>(type_info.type_size_);
 				}
 			}
 		} else {
@@ -3541,7 +3536,7 @@ const Token& token) {
 			inferred_size_bits = lhs_meta.value_size_bits;
 		}
 		if (inferred_size_bits == 0) {
-			inferred_size_bits = std::get<int>(lhs_operands[1]);
+			inferred_size_bits = lhs_operands.size_in_bits;
 		}
 		return inferred_size_bits;
 	};
@@ -3572,14 +3567,14 @@ const Token& token) {
 			// Build TypedValue for value with LHS type/size but RHS value
 			// This is important: the size must match the array element type
 			TypedValue value_tv;
-			value_tv.type = std::get<Type>(lhs_operands[0]);
-			value_tv.size_in_bits = std::get<int>(lhs_operands[1]);
-			value_tv.value = toIrValue(rhs_operands[2]);
+			value_tv.type = lhs_operands.type;
+			value_tv.size_in_bits = lhs_operands.size_in_bits;
+			value_tv.value = toIrValue(rhs_operands.value);
 
 			// Emit the store using helper
 			emitArrayStore(
-				std::get<Type>(lhs_operands[0]),  // element_type
-				std::get<int>(lhs_operands[1]),   // element_size_bits
+				lhs_operands.type,                 // element_type
+				lhs_operands.size_in_bits,         // element_size_bits
 				lv_info.base,                      // array
 				index_tv,                          // index
 				value_tv,                          // value (with LHS type/size, RHS value)
@@ -3601,7 +3596,7 @@ const Token& token) {
 			}
 
 			// Safety check: validate size is reasonable (not 0 or negative)
-			int lhs_size = std::get<int>(lhs_operands[1]);
+			int lhs_size = lhs_operands.size_in_bits;
 			if (lhs_size <= 0 || lhs_size > 1024) {
 				FLASH_LOG(Codegen, Debug, "     Invalid size in metadata (", lhs_size, "), falling back");
 				return false;
@@ -3610,9 +3605,9 @@ const Token& token) {
 			// Build TypedValue with LHS type/size but RHS value
 			// This is important: the size must match the member being stored to, not the RHS
 			TypedValue value_tv;
-			value_tv.type = std::get<Type>(lhs_operands[0]);
+			value_tv.type = lhs_operands.type;
 			value_tv.size_in_bits = lhs_size;
-			value_tv.value = toIrValue(rhs_operands[2]);
+			value_tv.value = toIrValue(rhs_operands.value);
 
 			// Emit the store using helper
 			emitMemberStore(
@@ -3638,7 +3633,7 @@ const Token& token) {
 			TypedValue value_tv;
 			value_tv.type = pointee_type;
 			value_tv.size_in_bits = pointee_size_bits;
-			value_tv.value = toIrValue(rhs_operands[2]);
+			value_tv.value = toIrValue(rhs_operands.value);
 
 			// Emit the store using helper
 			emitDereferenceStore(
@@ -3669,18 +3664,17 @@ const Token& token) {
 // Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] += 5)
 // Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
 // This is similar to handleLValueAssignment but also performs the arithmetic operation
-bool AstToIr::handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
-const std::vector<IrOperand>& rhs_operands,
+bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
+const ExprResult& rhs_operands,
 const Token& token,
 std::string_view op) {
 	// Check if LHS has a TempVar with lvalue metadata
-	if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
-		FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - size=", lhs_operands.size(),
-			", has_tempvar=", (lhs_operands.size() >= 3 && std::holds_alternative<TempVar>(lhs_operands[2])));
+	if (!std::holds_alternative<TempVar>(lhs_operands.value)) {
+		FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - has_tempvar=false");
 		return false;
 	}
 
-	TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
+	TempVar lhs_temp = std::get<TempVar>(lhs_operands.value);
 	FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: Checking TempVar {} for metadata", lhs_temp.var_number);
 	auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
 	TempVarMetadata lhs_meta = getTempVarMetadata(lhs_temp);
@@ -3691,19 +3685,16 @@ std::string_view op) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
-	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : std::get<Type>(lhs_operands[0]);
+	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.type;
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
-			if (lhs_operands.size() > 3 && std::holds_alternative<unsigned long long>(lhs_operands[3])) {
-				TypeIndex type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhs_operands[3]));
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
-					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-						inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
-					} else {
-						inferred_size_bits = static_cast<int>(type_info.type_size_);
-					}
+			if (lhs_operands.type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[lhs_operands.type_index];
+				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
+				} else {
+					inferred_size_bits = static_cast<int>(type_info.type_size_);
 				}
 			}
 		} else {
@@ -3713,7 +3704,7 @@ std::string_view op) {
 			inferred_size_bits = lhs_meta.value_size_bits;
 		}
 		if (inferred_size_bits == 0) {
-			inferred_size_bits = std::get<int>(lhs_operands[1]);
+			inferred_size_bits = lhs_operands.size_in_bits;
 		}
 		return inferred_size_bits;
 	};
@@ -3841,8 +3832,8 @@ std::string_view op) {
 		// Create ArrayAccessOp to load current value
 		ArrayAccessOp load_op;
 		load_op.result = current_value_temp;
-		load_op.element_type = std::get<Type>(lhs_operands[0]);
-		load_op.element_size_in_bits = std::get<int>(lhs_operands[1]);
+		load_op.element_type = lhs_operands.type;
+		load_op.element_size_in_bits = lhs_operands.size_in_bits;
 		load_op.array = lv_info.base;
 		load_op.index = index_tv;
 		load_op.member_offset = lv_info.offset;
@@ -3855,8 +3846,8 @@ std::string_view op) {
 
 		// Create the binary operation
 		BinaryOp bin_op;
-		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
-		bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+		bin_op.lhs.type = lhs_operands.type;
+		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = current_value_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
 		bin_op.result = result_temp;
@@ -3865,14 +3856,14 @@ std::string_view op) {
 
 		// Finally, store the result back to the array element
 		TypedValue result_tv;
-		result_tv.type = std::get<Type>(lhs_operands[0]);
-		result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+		result_tv.type = lhs_operands.type;
+		result_tv.size_in_bits = lhs_operands.size_in_bits;
 		result_tv.value = result_temp;
 
 		// Emit the store using helper
 		emitArrayStore(
-			std::get<Type>(lhs_operands[0]),  // element_type
-			std::get<int>(lhs_operands[1]),   // element_size_bits
+			lhs_operands.type,                 // element_type
+			lhs_operands.size_in_bits,         // element_size_bits
 			lv_info.base,                      // array
 			index_tv,                          // index
 			result_tv,                         // value (result of operation)
@@ -3896,8 +3887,8 @@ std::string_view op) {
 		// lhs_temp already holds the loaded value (from GlobalLoad in LHS evaluation)
 		TempVar result_temp = var_counter.next();
 		BinaryOp bin_op;
-		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
-		bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+		bin_op.lhs.type = lhs_operands.type;
+		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = lhs_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
 		bin_op.result = result_temp;
@@ -3957,8 +3948,8 @@ std::string_view op) {
 
 	MemberLoadOp load_op;
 	load_op.result.value = current_value_temp;
-	load_op.result.type = std::get<Type>(lhs_operands[0]);
-	load_op.result.size_in_bits = std::get<int>(lhs_operands[1]);
+	load_op.result.type = lhs_operands.type;
+	load_op.result.size_in_bits = lhs_operands.size_in_bits;
 	load_op.object = lv_info.base;
 	load_op.member_name = lv_info.member_name.value();
 	load_op.offset = lv_info.offset;
@@ -3974,8 +3965,8 @@ std::string_view op) {
 
 	// Create the binary operation
 	BinaryOp bin_op;
-	bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
-	bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+	bin_op.lhs.type = lhs_operands.type;
+	bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 	bin_op.lhs.value = current_value_temp;
 	bin_op.rhs = toTypedValue(rhs_operands);
 	bin_op.result = result_temp;
@@ -3984,8 +3975,8 @@ std::string_view op) {
 
 	// Finally, store the result back to the lvalue
 	TypedValue result_tv;
-	result_tv.type = std::get<Type>(lhs_operands[0]);
-	result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+	result_tv.type = lhs_operands.type;
+	result_tv.size_in_bits = lhs_operands.size_in_bits;
 	result_tv.value = result_temp;
 	CVReferenceQualifier member_ref_qualifier = member_is_rvalue_reference
 		? CVReferenceQualifier::RValueReference

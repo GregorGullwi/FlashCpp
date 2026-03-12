@@ -9,8 +9,8 @@
 - `ExprResult` and `ExprOperands` are present in `src/IROperandHelpers.h`
 - `toTypedValue(const ExprResult&)` already exists, so consumer-side bridging is started
 - priority producer sites have been migrated in `src/CodeGen_MemberAccess.cpp`, `src/CodeGen_Expr_Primitives.cpp`, and selected address-expression paths in `src/CodeGen_Expr_Conversions.cpp`
-- the current implementation includes a temporary compatibility escape hatch (`encoded_metadata` plus `preserveLegacyEnumPointerDepthEncoding(...)`) for legacy slot-4 enum encoding edge cases
-- the plan is still directionally correct, but the next implementation work is no longer “add ExprResult” — it is “finish removing legacy positional consumers and manual slot-4 construction”
+- the current implementation still uses `encoded_metadata` as a temporary compatibility escape hatch for legacy slot-4 enum encoding edge cases
+- the remaining Phase 2 work is no longer “add ExprResult” — it is “finish removing legacy positional consumers and manual slot-4 construction”, then unblock Phase 3 return-signature changes
 
 ## Problem
 
@@ -147,10 +147,10 @@ the heap allocation overhead is eliminated.
 - fixed-size expression-result consumers should index/copy the 3-4 operands
   directly instead of assuming contiguous backing storage
 
-**Remaining `std::vector<IrOperand>` parameter sites (deferred to Phase 2):**
-These functions still accept `const std::vector<IrOperand>&`, causing implicit
+**Original `std::vector<IrOperand>` parameter sites deferred to Phase 2 (44960e4):**
+These functions still accepted `const std::vector<IrOperand>&`, causing implicit
 `InlineVector→std::vector` heap-allocating conversions when called with
-`ExprOperands`. They are deferred because Phase 2 will change them to accept
+`ExprOperands`. They were deferred because Phase 2 would change them to accept
 `const ExprResult&` with named fields, making a Phase 1 `const ExprOperands&`
 intermediate step wasteful:
 - `handleLValueAssignment` (`AstToIr.h:458`) — 2 params
@@ -164,10 +164,17 @@ intermediate step wasteful:
 - `generateUnaryIncDecOverloadCall` (`AstToIr.h:284`)
 - `generateBuiltinIncDec` (`AstToIr.h:296`)
 
-These are not a regression: before this PR they received `std::vector`
+These were not a regression: before this PR they received `std::vector`
 directly (no conversion). The implicit conversion cost is equivalent to the
 previous heap allocation at the producer site. Phase 2 will eliminate both
 by switching to `ExprResult`.
+
+**Current remaining legacy positional helper sites (after 2026-03-12 follow-up):**
+- none in the original Phase 2 deferred helper list
+
+All helpers from the original deferred list now take `const ExprResult&` and
+consume named fields directly. The remaining compatibility concerns are now
+isolated to producer return signatures and the temporary slot-4 bridge.
 
 ### Phase 2: Migrate producers one at a time
 
@@ -211,6 +218,26 @@ is converted at the return site.  No callers need to change.
 - migrated related array-address producer returns in
   `src/CodeGen_Expr_Conversions.cpp` (`analyzeAddressExpression` result return
   and multidimensional `&arr[i][j]`)
+- added `toExprResult(...)` bridge helpers in `src/IROperandHelpers.h` that
+  preserve raw legacy slot-4 metadata in `ExprResult::encoded_metadata` while
+  exposing named `type` / `size_in_bits` / `value` / decoded metadata fields
+- migrated the deferred helper consumers in `src/CodeGen_MemberAccess.cpp`,
+  `src/CodeGen_NewDeleteCast.cpp`, `src/CodeGen_Expr_Operators.cpp`, and
+  `src/CodeGen_Expr_Conversions.cpp` from `const std::vector<IrOperand>&` to
+  `const ExprResult&` for:
+  - `extractBaseFromOperands`
+  - `extractBaseOperand`
+  - `markReferenceMetadata`
+  - `isVaListPointerType`
+  - `handleRValueReferenceCast`
+  - `handleLValueReferenceCast`
+  - `generateUnaryIncDecOverloadCall`
+  - `generateBuiltinIncDec`
+- migrated `handleLValueAssignment` and `handleLValueCompoundAssignment` to
+  `const ExprResult&` and updated their call sites to consume named fields
+- removed `preserveLegacyEnumPointerDepthEncoding(...)`; enum/user-defined
+  pointer metadata now round-trips through `ExprResult::operator ExprOperands()`
+  and `toTypedValue(const ExprResult&)` without an extra helper
 - intentionally deferred broader non-priority/manual 4-slot sites outside these
   producer paths (for example other unary/conversion helpers and qualified
   identifier paths) to keep Phase 2 reviewable and producer-focused
@@ -222,23 +249,14 @@ The plan is easier to execute if it is split into these concrete slices:
 1. **Finish producer cleanup before changing public signatures**
    - migrate any remaining manual 4-slot expression-result builders
    - prefer tiny local `ExprResult` builders over open-coded `{ type, size, value, metadata }`
-2. **Convert legacy expression-result helper parameters**
-   - the current deferred `AstToIr.h` sites still taking `const std::vector<IrOperand>&` are the clearest next boundary:
-     - `handleLValueAssignment`
-     - `handleLValueCompoundAssignment`
-     - `extractBaseFromOperands`
-     - `extractBaseOperand`
-     - `markReferenceMetadata`
-     - `isVaListPointerType`
-     - `handleRValueReferenceCast`
-     - `handleLValueReferenceCast`
-     - `generateUnaryIncDecOverloadCall`
-     - `generateBuiltinIncDec`
-3. **Only once producers and helper parameters are mostly migrated, change return signatures**
-   - otherwise Phase 3 creates churn without removing the legacy positional access patterns
+2. **Convert legacy expression-result helper parameters** ✅ complete
+   - all helpers from the original deferred `AstToIr.h` list now take
+     `const ExprResult&`
+3. **Change return signatures now that helper parameters are migrated**
+   - Phase 3 is now unblocked because the last legacy positional helper
+     parameters have been removed
 4. **Delete the compatibility shim last**
    - remove `encoded_metadata`
-   - remove `preserveLegacyEnumPointerDepthEncoding(...)`
    - remove slot-4 decoding from `toTypedValue()`
 
 ### Phase 3: Change function signatures (optional, longer-term)
@@ -258,8 +276,9 @@ Callers that use `toTypedValue()` continue to work (add a
 (`result[0]`, `result[2]`) must be updated to use the named fields — this is
 intentional, as those are the fragile access patterns we want to eliminate.
 
-**Recommendation:** do not start Phase 3 until the Phase 2 checklist above has
-eliminated almost all remaining positional producer/consumer sites.
+**Recommendation:** Phase 3 can now start, but keep it incremental: change
+return signatures one producer family at a time so any remaining positional
+callers are updated together with each producer.
 
 ### Phase 4: Remove the encoding/decoding layer
 

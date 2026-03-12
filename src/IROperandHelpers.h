@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <algorithm>
 #include <vector>
 #include <span>
 
@@ -51,6 +52,8 @@ struct ExprResult {
 		unsigned long long metadata = 0;
 		if (encoded_metadata.has_value()) {
 			metadata = *encoded_metadata;
+		} else if ((type == Type::Enum || type == Type::UserDefined) && pointer_depth > 0) {
+			metadata = static_cast<unsigned long long>(pointer_depth);
 		} else if (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) {
 			metadata = static_cast<unsigned long long>(type_index);
 		} else if (pointer_depth > 0) {
@@ -60,10 +63,26 @@ struct ExprResult {
 	}
 };
 
-inline void preserveLegacyEnumPointerDepthEncoding(ExprResult& result) {
-	if (result.type == Type::Enum && result.pointer_depth > 0) {
-		result.encoded_metadata = static_cast<unsigned long long>(result.pointer_depth);
-	}
+// Tiny aggregate builder for migrated Phase 2 sites that want named ExprResult
+// fields without open-coding member assignments. `encoded_metadata` is optional
+// so callers can preserve the raw legacy slot-4 payload when they are only
+// partially migrated and still have to bridge back into positional helpers.
+inline ExprResult makeExprResult(
+	Type type,
+	int size_in_bits,
+	IrOperand value,
+	TypeIndex type_index = 0,
+	int pointer_depth = 0,
+	std::optional<unsigned long long> encoded_metadata = std::nullopt
+) {
+	return {
+		.type = type,
+		.size_in_bits = size_in_bits,
+		.value = std::move(value),
+		.type_index = type_index,
+		.pointer_depth = pointer_depth,
+		.encoded_metadata = encoded_metadata
+	};
 }
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
@@ -100,14 +119,81 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 inline TypedValue toTypedValue(const ExprOperands& operands) {
 	assert(operands.size() >= 3 && operands.size() <= 4 && "ExprOperands must contain exactly 3 or 4 operands");
 	std::array<IrOperand, 4> inline_copy{};
-	for (size_t i = 0; i < operands.size(); ++i) {
-		inline_copy[i] = operands[i];
-	}
+	std::copy_n(operands.begin(), operands.size(), inline_copy.begin());
 	return toTypedValue(std::span<const IrOperand>(inline_copy.data(), operands.size()));
 }
 
 inline TypedValue toTypedValue(const ExprResult& result) {
-	return toTypedValue(static_cast<ExprOperands>(result));
+	TypedValue tv;
+	tv.type = result.type;
+	tv.size_in_bits = result.size_in_bits;
+	tv.value = toIrValue(result.value);
+	tv.type_index = result.type_index;
+	tv.pointer_depth = result.pointer_depth;
+	return tv;
+}
+
+// Temporary Phase 2 bridge: decode positional expression operands into named
+// ExprResult fields while also preserving the raw slot-4 payload in
+// `encoded_metadata`. This lets migrated helpers use named fields internally
+// but round-trip back to legacy positional consumers without changing the
+// compatibility encoding yet.
+inline ExprResult toExprResult(std::span<const IrOperand> operands) {
+	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
+	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
+	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][metadata]");
+
+	ExprResult result;
+	result.type = std::get<Type>(operands[0]);
+	result.size_in_bits = std::get<int>(operands[1]);
+	result.value = operands[2];
+
+	// Decode the optional 4th slot into named fields.
+	//
+	// The encoding rule used by tryBuildIdentifierOperand / generateIdentifierIr is:
+	//   Type::Struct                        → type_index
+	//   non-Struct with pointer_depth > 0   → pointer_depth   (includes Enum pointers!)
+	//   otherwise                           → 0
+	//
+	// toTypedValue uses a DIFFERENT rule (Struct|Enum|UserDefined → type_index),
+	// which is correct for non-pointer enum *values* but wrong for enum *pointers*.
+	// We must match the encoder's rule here so that ExprResult named fields are
+	// correct for all callers.
+	if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
+		unsigned long long metadata = std::get<unsigned long long>(operands[3]);
+		result.encoded_metadata = metadata;
+
+		if (result.type == Type::Struct) {
+			// Struct slot-4 is always type_index (even for struct pointers,
+			// the encoder stores type_index, not pointer_depth).
+			result.type_index = static_cast<TypeIndex>(metadata);
+		} else if (result.size_in_bits == 64 && metadata > 0 && result.type == Type::Enum) {
+			// Enum with 64-bit size and nonzero metadata:
+			// under the current producer contract, non-pointer enum values are
+			// lowered to their underlying runtime type before reaching this bridge,
+			// so a 64-bit Type::Enum result here represents an enum pointer.
+			result.pointer_depth = static_cast<int>(metadata);
+		} else if (result.type == Type::Enum || result.type == Type::UserDefined) {
+			// Non-pointer enum/UserDefined: slot-4 is type_index.
+			result.type_index = static_cast<TypeIndex>(metadata);
+		} else {
+			// All other types: slot-4 is pointer_depth.
+			result.pointer_depth = static_cast<int>(metadata);
+		}
+	}
+
+	return result;
+}
+
+inline ExprResult toExprResult(const std::vector<IrOperand>& operands) {
+	return toExprResult(std::span<const IrOperand>(operands));
+}
+
+inline ExprResult toExprResult(const ExprOperands& operands) {
+	assert(operands.size() >= 3 && operands.size() <= 4 && "ExprOperands must contain exactly 3 or 4 operands");
+	std::array<IrOperand, 4> inline_copy{};
+	std::copy_n(operands.begin(), operands.size(), inline_copy.begin());
+	return toExprResult(std::span<const IrOperand>(inline_copy.data(), operands.size()));
 }
 
 // ============================================================================

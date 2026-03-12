@@ -142,7 +142,6 @@
 			result.value = std::move(value);
 			result.type_index = type_index;
 			result.pointer_depth = pointer_depth;
-			preserveLegacyEnumPointerDepthEncoding(result);
 			return result;
 		};
 
@@ -823,28 +822,22 @@
 	}
 
 	bool AstToIr::extractBaseFromOperands(
-		const std::vector<IrOperand>& operands,
+		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
 		size_t& base_type_index,
 		std::string_view error_context) {
 
-		if (operands.size() < 3) {
-			FLASH_LOG(Codegen, Error, "Failed to evaluate ", error_context, " for member access");
-			return false;
-		}
-		base_type = std::get<Type>(operands[0]);
-		if (std::holds_alternative<TempVar>(operands[2])) {
-			base_object = std::get<TempVar>(operands[2]);
-		} else if (std::holds_alternative<StringHandle>(operands[2])) {
-			base_object = std::get<StringHandle>(operands[2]);
+		base_type = operands.type;
+		if (std::holds_alternative<TempVar>(operands.value)) {
+			base_object = std::get<TempVar>(operands.value);
+		} else if (std::holds_alternative<StringHandle>(operands.value)) {
+			base_object = std::get<StringHandle>(operands.value);
 		} else {
 			FLASH_LOG(Codegen, Error, error_context, " result has unsupported value type");
 			return false;
 		}
-		if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
-			base_type_index = static_cast<size_t>(std::get<unsigned long long>(operands[3]));
-		}
+		base_type_index = static_cast<size_t>(operands.type_index);
 		return true;
 	}
 
@@ -1007,7 +1000,7 @@
 			}
 			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 				auto call_result = generateMemberFunctionCallIr(*call);
-				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
+				if (!extractBaseFromOperands(toExprResult(call_result), base_object, base_type, base_type_index, "member function call")) {
 					throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1016,7 +1009,7 @@
 			}
 			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
 				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
-				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
+				if (!extractBaseFromOperands(toExprResult(nested_result), base_object, base_type, base_type_index, "nested member access")) {
 					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (base_type != Type::Struct && base_type != Type::UserDefined) {
@@ -1106,7 +1099,7 @@
 
 				if (!is_lambda_this) {
 					auto pointer_operands = visitExpressionNode(operand_expr);
-					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
+					if (!extractBaseFromOperands(toExprResult(pointer_operands), base_object, base_type, base_type_index, "pointer expression")) {
 						throw InternalError(std::string("Failed to extract base from pointer dereference for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 					}
 					is_pointer_dereference = true;
@@ -1114,13 +1107,13 @@
 			}
 			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
 				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
-				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
+				if (!extractBaseFromOperands(toExprResult(array_operands), base_object, base_type, base_type_index, "array subscript")) {
 					throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 			}
 			else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
 				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
-				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
+				if (!extractBaseFromOperands(toExprResult(call_result), base_object, base_type, base_type_index, "function call")) {
 					throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {

@@ -184,7 +184,7 @@ private:
 	std::optional<ExprOperands> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode);
 	ExprOperands generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprOperands generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name);
-	bool isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const;
+	bool isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const;
 	ExprOperands generateVaArgIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprOperands generateVaStartIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprOperands generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode);
@@ -207,7 +207,7 @@ private:
 		size_t& base_type_index,
 		bool& is_pointer_dereference);
 	bool extractBaseFromOperands(
-		const std::vector<IrOperand>& operands,
+		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
 		size_t& base_type_index,
@@ -233,11 +233,11 @@ private:
 	ExprOperands generateNewExpressionIr(const NewExpressionNode& newExpr);
 	ExprOperands generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
 	std::variant<StringHandle, TempVar> extractBaseOperand(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		TempVar fallback_var,
 		const char* cast_name = "cast");
 	void markReferenceMetadata(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		TempVar result_var,
 		Type target_type,
 		int target_size,
@@ -251,13 +251,13 @@ private:
 		const Token& token,
 		const char* cast_name = "cast");
 	ExprOperands handleRValueReferenceCast(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
 	ExprOperands handleLValueReferenceCast(
-		const std::vector<IrOperand>& expr_operands,
+		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
@@ -290,7 +290,7 @@ private:
 	std::optional<ExprOperands> generateUnaryIncDecOverloadCall(
 		OverloadableOperator op_kind,  // Increment or Decrement
 		Type operandType,
-		const std::vector<IrOperand>& operandIrOperands,
+		const ExprResult& operandIrResult,
 		bool is_prefix
 	);
 
@@ -302,7 +302,7 @@ private:
 		bool is_prefix,
 		bool operandHandledAsIdentifier,
 		const UnaryOperatorNode& unaryOperatorNode,
-		const std::vector<IrOperand>& operandIrOperands,
+		const ExprResult& operandIrResult,
 		Type operandType,
 		TempVar result_var
 	);
@@ -464,15 +464,15 @@ private:
 	// - ArrayElement and Member cases need additional metadata (index, member_name) not currently in LValueInfo
 	// - Only Indirect (dereference) case is fully implemented
 	// - Future work: Extend LValueInfo or pass additional context to handle all cases
-	bool handleLValueAssignment(const std::vector<IrOperand>& lhs_operands,
-	const std::vector<IrOperand>& rhs_operands,
+	bool handleLValueAssignment(const ExprResult& lhs_operands,
+	const ExprResult& rhs_operands,
 	const Token& token);
 
 	// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] += 5)
 	// Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
 	// This is similar to handleLValueAssignment but also performs the arithmetic operation
-	bool handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
-	const std::vector<IrOperand>& rhs_operands,
+	bool handleLValueCompoundAssignment(const ExprResult& lhs_operands,
+	const ExprResult& rhs_operands,
 	const Token& token,
 	std::string_view op);
 

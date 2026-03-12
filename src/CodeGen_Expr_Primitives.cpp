@@ -273,9 +273,7 @@
 				carries_type_index ? type_node.type_index() : 0,
 				pointer_depth);
 			if (type_node.type() == Type::Enum) {
-				if (is_enum_pointer) {
-					preserveLegacyEnumPointerDepthEncoding(result);
-				} else {
+				if (!is_enum_pointer) {
 					result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
 				}
 			}
@@ -283,9 +281,7 @@
 		};
 		auto preserveEnumIdentifierEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
 			if (type_node.type() == Type::Enum) {
-				if (type_node.pointer_depth() > 0) {
-					preserveLegacyEnumPointerDepthEncoding(result);
-				} else {
+				if (type_node.pointer_depth() == 0) {
 					result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
 				}
 			}
