@@ -693,15 +693,15 @@
 						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '", 
 						qualified_name, "'");
 						// Evaluate the initializer expression
-						ExprOperands init_operands = visitExpressionNode(init_expr);
+						ExprResult init_operands = visitExpressionNode(init_expr);
 						// Convert to raw bytes
-						if (init_operands.size() >= 3) {
+						{
 							unsigned long long value = 0;
-							if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-								value = std::get<unsigned long long>(init_operands[2]);
+							if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+								value = std::get<unsigned long long>(init_operands.value);
 								FLASH_LOG(Codegen, Debug, "  Extracted uint64 value: ", value);
-							} else if (std::holds_alternative<double>(init_operands[2])) {
-								double d = std::get<double>(init_operands[2]);
+							} else if (std::holds_alternative<double>(init_operands.value)) {
+								double d = std::get<double>(init_operands.value);
 								std::memcpy(&value, &d, sizeof(double));
 								FLASH_LOG(Codegen, Debug, "  Extracted double value: ", d);
 							}
@@ -710,20 +710,18 @@
 								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 							}
 							FLASH_LOG(Codegen, Debug, "  Wrote ", byte_count, " bytes to init_data");
-						} else {
-							FLASH_LOG(Codegen, Debug, "  WARNING: init_operands.size() = ", init_operands.size(), " (expected >= 3)");
 						}
 					} else if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
 						FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '", 
 						qualified_name, "' - should have been substituted!");
 						// Try to evaluate anyway
-						ExprOperands init_operands = visitExpressionNode(init_expr);
-						if (init_operands.size() >= 3) {
+						ExprResult init_operands = visitExpressionNode(init_expr);
+						{
 							unsigned long long value = 0;
-							if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-								value = std::get<unsigned long long>(init_operands[2]);
-							} else if (std::holds_alternative<double>(init_operands[2])) {
-								double d = std::get<double>(init_operands[2]);
+							if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+								value = std::get<unsigned long long>(init_operands.value);
+							} else if (std::holds_alternative<double>(init_operands.value)) {
+								double d = std::get<double>(init_operands.value);
 								std::memcpy(&value, &d, sizeof(double));
 							}
 							size_t byte_count = op.size_in_bits / 8;
@@ -748,13 +746,13 @@
 								FLASH_LOG(Codegen, Debug, "  Set reloc_target='", id.name(), "' for reference static member");
 							} else {
 							// Evaluate the initializer expression
-							ExprOperands init_operands = visitExpressionNode(init_expr);
-							if (init_operands.size() >= 3) {
+							ExprResult init_operands = visitExpressionNode(init_expr);
+							{
 								unsigned long long value = 0;
-								if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-									value = std::get<unsigned long long>(init_operands[2]);
-								} else if (std::holds_alternative<double>(init_operands[2])) {
-									double d = std::get<double>(init_operands[2]);
+								if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+									value = std::get<unsigned long long>(init_operands.value);
+								} else if (std::holds_alternative<double>(init_operands.value)) {
+									double d = std::get<double>(init_operands.value);
 									std::memcpy(&value, &d, sizeof(double));
 								}
 								size_t byte_count = op.size_in_bits / 8;
@@ -946,13 +944,13 @@
 									found_base_value = true;
 									FLASH_LOG(Codegen, Debug, "Found bool literal value: ", bool_lit.value());
 								} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-									ExprOperands init_operands = visitExpressionNode(init_expr);
-									if (init_operands.size() >= 3 && std::holds_alternative<unsigned long long>(init_operands[2])) {
-										inferred_value = std::get<unsigned long long>(init_operands[2]);
+									ExprResult init_operands = visitExpressionNode(init_expr);
+									if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+										inferred_value = std::get<unsigned long long>(init_operands.value);
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found numeric literal value: ", inferred_value);
-									} else if (init_operands.size() >= 3 && std::holds_alternative<double>(init_operands[2])) {
-										double d = std::get<double>(init_operands[2]);
+									} else if (std::holds_alternative<double>(init_operands.value)) {
+										double d = std::get<double>(init_operands.value);
 										inferred_value = static_cast<unsigned long long>(d);
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found double literal value: ", d);
@@ -1152,23 +1150,19 @@
 						const ASTNode& init_node = member.default_initializer.value();
 						if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 							// Use the default member initializer
-							ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							// Extract just the value (third element of init_operands)
 							// Verify we have at least 3 elements before accessing
-							if (init_operands.size() < 3) {
-								FLASH_LOG(Codegen, Warning, "Default initializer expression returned fewer than 3 operands");
-								continue;
-							}
 							
 							IrValue member_value;
-							if (std::holds_alternative<TempVar>(init_operands[2])) {
-								member_value = std::get<TempVar>(init_operands[2]);
-							} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-								member_value = std::get<unsigned long long>(init_operands[2]);
-							} else if (std::holds_alternative<double>(init_operands[2])) {
-								member_value = std::get<double>(init_operands[2]);
-							} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-								member_value = std::get<StringHandle>(init_operands[2]);
+							if (std::holds_alternative<TempVar>(init_operands.value)) {
+								member_value = std::get<TempVar>(init_operands.value);
+							} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+								member_value = std::get<unsigned long long>(init_operands.value);
+							} else if (std::holds_alternative<double>(init_operands.value)) {
+								member_value = std::get<double>(init_operands.value);
+							} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+								member_value = std::get<StringHandle>(init_operands.value);
 							} else {
 								member_value = 0ULL;  // fallback
 							}
@@ -1478,10 +1472,7 @@ const Token& token)
 
 	const size_t emit_count = std::min(element_count, flat_initializers.size());
 	for (size_t i = 0; i < emit_count; ++i) {
-		ExprOperands init_operands = visitExpressionNode(*flat_initializers[i]);
-		if (init_operands.size() < 3) {
-			throw InternalError("Invalid array member initializer operands");
-		}
+		ExprResult init_operands = visitExpressionNode(*flat_initializers[i]);
 
 		emitArrayStore(
 			member.type,
@@ -1601,19 +1592,17 @@ const Token& token)
 			// Not a struct type - try to extract single value from single-element list
 			const auto& nested_initializers = nested_init_list.initializers();
 			if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
-				ExprOperands init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+				ExprResult init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
 				IrValue member_value = 0ULL;
-				if (init_operands.size() >= 3) {
-					if (std::holds_alternative<TempVar>(init_operands[2])) {
-						member_value = std::get<TempVar>(init_operands[2]);
-					} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-						member_value = std::get<unsigned long long>(init_operands[2]);
-					} else if (std::holds_alternative<double>(init_operands[2])) {
-						member_value = std::get<double>(init_operands[2]);
-					} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-						member_value = std::get<StringHandle>(init_operands[2]);
+					if (std::holds_alternative<TempVar>(init_operands.value)) {
+						member_value = std::get<TempVar>(init_operands.value);
+					} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+						member_value = std::get<unsigned long long>(init_operands.value);
+					} else if (std::holds_alternative<double>(init_operands.value)) {
+						member_value = std::get<double>(init_operands.value);
+					} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+						member_value = std::get<StringHandle>(init_operands.value);
 					}
-				}
 
 				MemberStoreOp member_store;
 				member_store.value.type = member.type;
@@ -1640,19 +1629,17 @@ const Token& token)
 			}
 		} else if (init_expr.is<ExpressionNode>()) {
 			// Direct expression initializer
-			ExprOperands init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+			ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 			IrValue member_value = 0ULL;
-			if (init_operands.size() >= 3) {
-				if (std::holds_alternative<TempVar>(init_operands[2])) {
-					member_value = std::get<TempVar>(init_operands[2]);
-				} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-					member_value = std::get<unsigned long long>(init_operands[2]);
-				} else if (std::holds_alternative<double>(init_operands[2])) {
-					member_value = std::get<double>(init_operands[2]);
-				} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-					member_value = std::get<StringHandle>(init_operands[2]);
+				if (std::holds_alternative<TempVar>(init_operands.value)) {
+					member_value = std::get<TempVar>(init_operands.value);
+				} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+					member_value = std::get<unsigned long long>(init_operands.value);
+				} else if (std::holds_alternative<double>(init_operands.value)) {
+					member_value = std::get<double>(init_operands.value);
+				} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+					member_value = std::get<StringHandle>(init_operands.value);
 				}
-			}
 
 			MemberStoreOp member_store;
 			member_store.value.type = member.type;

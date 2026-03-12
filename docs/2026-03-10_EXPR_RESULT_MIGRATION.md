@@ -1,7 +1,7 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress (planned consumer-side `toExprResult` cleanup complete; compatibility-shim cleanup remains)
+**Status**: In Progress (all consumer-side positional-slot reads migrated; only the legacy `ExprOperands` shim + `encoded_metadata` field remain to be deleted)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
 ## Status Check (2026-03-12)
@@ -88,7 +88,78 @@
   - remove the implicit `ExprResult -> ExprOperands` compatibility path
   - remove slot-4 decoding from `toTypedValue()` once all callers consume named
     `ExprResult` fields or other direct metadata
-  - harden `makeExprResult(...)` so metadata arguments cannot be misordered
+- a follow-up on this branch then hardened `makeExprResult(...)` so the legacy
+  slot-4 bridge is explicit instead of positional:
+  - common construction now uses dedicated 3/4/5-argument overloads
+  - legacy raw metadata preservation must go through
+    `preserveEncodedExprMetadata(...)`
+  - the old bug shape `makeExprResult(..., 0, 0, ull)` no longer matches a
+    public overload
+- another small producer-side cleanup then removed the last direct
+  `ExprResult::encoded_metadata = ...` writes from codegen:
+  - `generateIdentifierIr(...)` now preserves enum identifier slot-4 metadata
+    by rebuilding through `makeExprResult(..., preserveEncodedExprMetadata(...))`
+  - after that change, raw `encoded_metadata` field writes remain only in the
+    compatibility bridge helpers inside `src/IROperandHelpers.h`
+- a follow-up consumer cleanup then migrated control-statement condition/value
+  handling in `src/CodeGen_Stmt_Control.cpp` to named `ExprResult` fields:
+  - `if`, `for`, `while`, `do-while`, `switch`, and range-for condition sites
+    now pass `ExprResult` directly into `toTypedValue(...)`
+  - the `switch` comparison chain now reads `.type`, `.size_in_bits`, and
+    `.value` from `ExprResult` instead of re-decoding positional operand slots
+- another larger consumer cleanup then migrated the indirect/member-call lowering
+  in `src/CodeGen_Call_Indirect.cpp` to named `ExprResult` fields:
+  - immediate lambda invocation now uses the direct `ExprResult` returned by
+    `generateLambdaExpressionIr(...)` instead of re-reading positional slots
+  - indirect/member/virtual call argument packing now consumes `ExprResult`
+    directly for typed argument construction
+  - temporary-object call paths and reference-argument materialization now read
+    `.value`, `.type`, and `.size_in_bits` instead of positional operand slots
+- the largest consumer-side batch then migrated several more files to named
+  `ExprResult` fields in a single wave:
+  - `src/CodeGen_Expr_Operators.cpp`: struct-init-list member initializers,
+    ternary operator true/false branches, function-pointer assignment RHS,
+    global-variable assignment RHS, compound-assignment-to-global RHS,
+    and both `__builtin_abs`/`__builtin_fabs` intrinsic argument paths
+  - `src/CodeGen_MemberAccess.cpp`: the member-struct array subscript index
+    path, the main regular array subscript path (both `array_result` and
+    `index_result`), and the `sizeof`/`alignof` expression-fallback paths
+  - `src/CodeGen_Lambdas.cpp`: init-capture initializer expression path
+  - `src/CodeGen_Visitors_Namespace.cpp`: namespace-scope struct-member
+    initializer store path
+  - `src/CodeGen_Stmt_TryCatchSeh.cpp`: `throw` expression evaluation and
+    SEH `__except`-filter expression evaluation; the throw path now reads
+    `.type_index` directly instead of decoding legacy slot-3 metadata
+- the final consumer-side batch then migrated the last six files in a single wave:
+  - `src/CodeGen_Stmt_Decl.cpp`: constructor-arg packing, default-param handling,
+    conversion-operator init, array-element stores, member-store argument paths,
+    and copy-init detection (two legacy `operands.insert(begin/end)` sites deferred
+    because they feed the broader positional `operands[]` vector protocol)
+  - `src/CodeGen_Visitors_Decl.cpp`: static-member initializers, ctor-arg packing,
+    nested/flat aggregate init, enum-value tracking
+  - `src/CodeGen_Visitors_TypeInit.cpp`: global/flat aggregate init, scalar direct-init,
+    member-value extraction
+  - `src/CodeGen_NewDeleteCast.cpp`: `new` placement address, array/single-object
+    ctor args, `delete` pointer
+  - `src/CodeGen_Expr_Conversions.cpp`: `analyzeAddressExpression` object/array-subscript
+    lookup, member address paths; removed the stale `size() < 4` early-return guard
+  - `src/CodeGen_Call_Direct.cpp`: argument IR operand extraction
+- after this batch, all named consumer-side `ExprOperands foo = visitExpressionNode(...)`
+  captures that immediately read positional slots have been migrated; the only
+  remaining `ExprOperands` captures are at architectural legacy sites that feed a
+  broader positional `operands[]` vector (deferred to chunked-vector refactor)
+
+## Remaining Work (Phase 4 — shim removal)
+
+Once the two legacy `operands.insert` architectural sites in `CodeGen_Stmt_Decl.cpp` are
+migrated (using the global chunked-vector + span approach), the following dead code can
+be deleted:
+
+1. `ExprResult::encoded_metadata` field and `preserveEncodedExprMetadata(...)` helper
+2. `ExprResult::operator ExprOperands() const` implicit conversion
+3. `toExprResult(...)` helper overloads in `src/IROperandHelpers.h`
+4. slot-4 decoding path inside `toTypedValue(ExprOperands)` in `src/IROperandHelpers.h`
+5. `ExprOperands` typedef (or keep as internal alias only)
 
 ## Problem
 
@@ -386,17 +457,13 @@ paths still coexist.
 
 ### Deferred Follow-up: Harden `makeExprResult`
 
-**Problem:** The original `makeExprResult` has positional parameters with defaults:
+**Problem (fixed on 2026-03-12):** The original `makeExprResult` had positional
+parameters with defaults:
 
 ```cpp
-inline ExprResult makeExprResult(
-    Type type,
-    int size_in_bits,
-    IrOperand value,
-    TypeIndex type_index = 0,           // default
-    int pointer_depth = 0,              // default
-    std::optional<unsigned long long> encoded_metadata = std::nullopt  // default
-);
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value);
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index);
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth);
 ```
 
 This caused bugs like:
@@ -406,8 +473,8 @@ This caused bugs like:
 makeExprResult(Type::Struct, size, value, 0, 0, static_cast<unsigned long long>(type_index));
 ```
 
-**Narrow solution:** Replace the current defaulted helper with explicit
-overloads or similarly explicit helper entry points:
+**Implemented solution:** Keep the common overloads terse, but make the legacy
+slot-4 preservation path explicit:
 
 ```cpp
 // 3 args: just type + value (most common)
@@ -416,28 +483,34 @@ inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value);
 // 4 args: with TypeIndex
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index);
 
-// 4 args: with pointer_depth
-inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, int pointer_depth);
-
 // 5 args: both type_index and pointer_depth
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth);
 
-// 6 args: legacy encoded_metadata bridge (rare - only for partial migrations)
-inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, unsigned long long encoded_metadata);
+// Explicit legacy bridge for partial-migration sites only
+inline EncodedExprMetadata preserveEncodedExprMetadata(unsigned long long value);
+inline EncodedExprMetadata preserveEncodedExprMetadata(std::optional<unsigned long long> value);
+inline ExprResult makeExprResult(
+    Type type,
+    int size_in_bits,
+    IrOperand value,
+    TypeIndex type_index,
+    int pointer_depth,
+    EncodedExprMetadata encoded_metadata
+);
 ```
-
-This is a good **follow-up hardening step**, but it is not a prerequisite for
-finishing the main `ExprResult` migration.
 
 **Benefits:**
 - The bug case `makeExprResult(..., 0, 0, ull)` no longer compiles
-- Callers with `TypeIndex` variables work without changes (they're already the correct type)
-- Only literal `0` for pointer_depth needs explicit cast
+- Legacy-bridge call sites are visually obvious in review because they spell
+  `preserveEncodedExprMetadata(...)`
+- Regular callers keep the compact overloads and do not need to thread a
+  wrapper type through the common path
 
 **Migration:**
-- ~150 call sites to update
-- Bug cases `makeExprResult(..., 0, 0, ull)` → `makeExprResult(..., type_index)`
-- 5-arg calls `makeExprResult(..., ti, 0)` → `makeExprResult(..., ti)`
+- update only the small set of legacy bridge sites that intentionally preserve
+  raw slot-4 payloads
+- convert those calls to
+  `makeExprResult(..., preserveEncodedExprMetadata(...))`
 
 ## Explicitly Out of Scope for This Plan
 

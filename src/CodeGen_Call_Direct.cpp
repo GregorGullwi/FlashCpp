@@ -74,7 +74,14 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 									
 									// Return pointer type (64-bit address) with pointer depth 1
-									return makeExprResult(operand_type, 64, IrOperand{result_var}, 0, 0, 1ULL);
+									return makeExprResult(
+										operand_type,
+										64,
+										IrOperand{result_var},
+										0,
+										0,
+										preserveEncodedExprMetadata(1ULL)
+									);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
 								// (we can't inline complex expressions that need reference semantics)
@@ -225,9 +232,9 @@
 							arg_types.push_back(self_type);
 						} else {
 							// Normal argument - visit the expression
-							ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-							Type arg_type = std::get<Type>(argumentIrOperands[0]);
-							int arg_size = std::get<int>(argumentIrOperands[1]);
+							ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+							Type arg_type = argumentIrOperands.type;
+							int arg_size = argumentIrOperands.size_in_bits;
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
 								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
@@ -236,7 +243,7 @@
 								} else {
 									return 0ULL;
 								}
-							}, argumentIrOperands[2]);
+							}, argumentIrOperands.value);
 							call_op.args.push_back(TypedValue{arg_type, arg_size, arg_value});
 							
 							// Type for mangling
@@ -1326,6 +1333,14 @@
 		TypeIndex type_index_result = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
 			? return_type.type_index()
 			: 0;
-		return makeExprResult(return_type.type(), result_size, IrOperand{ret_var}, type_index_result, 0,
-			type_index_result ? std::optional<unsigned long long>{static_cast<unsigned long long>(type_index_result)} : std::nullopt);
+		return makeExprResult(
+			return_type.type(),
+			result_size,
+			IrOperand{ret_var},
+			type_index_result,
+			0,
+			preserveEncodedExprMetadata(
+				type_index_result ? std::optional<unsigned long long>{static_cast<unsigned long long>(type_index_result)} : std::nullopt
+			)
+		);
 	}

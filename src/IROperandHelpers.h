@@ -63,17 +63,27 @@ struct ExprResult {
 	}
 };
 
-// Tiny aggregate builder for migrated Phase 2 sites that want named ExprResult
-// fields without open-coding member assignments. `encoded_metadata` is optional
-// so callers can preserve the raw legacy slot-4 payload when they are only
-// partially migrated and still have to bridge back into positional helpers.
-inline ExprResult makeExprResult(
+// Explicit wrapper for the temporary legacy slot-4 bridge so callers must opt in
+// when they need to preserve raw encoded metadata during the ExprResult migration.
+struct EncodedExprMetadata {
+	std::optional<unsigned long long> value;
+};
+
+inline EncodedExprMetadata preserveEncodedExprMetadata(unsigned long long value) {
+	return EncodedExprMetadata{value};
+}
+
+inline EncodedExprMetadata preserveEncodedExprMetadata(std::optional<unsigned long long> value) {
+	return EncodedExprMetadata{value};
+}
+
+inline ExprResult makeExprResultImpl(
 	Type type,
 	int size_in_bits,
 	IrOperand value,
-	TypeIndex type_index = 0,
-	int pointer_depth = 0,
-	std::optional<unsigned long long> encoded_metadata = std::nullopt
+	TypeIndex type_index,
+	int pointer_depth,
+	std::optional<unsigned long long> encoded_metadata
 ) {
 	return {
 		.type = type,
@@ -83,6 +93,33 @@ inline ExprResult makeExprResult(
 		.pointer_depth = pointer_depth,
 		.encoded_metadata = encoded_metadata
 	};
+}
+
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value) {
+	return makeExprResultImpl(type, size_in_bits, std::move(value), 0, 0, std::nullopt);
+}
+
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index) {
+	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, 0, std::nullopt);
+}
+
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth) {
+	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth, std::nullopt);
+}
+
+// Tiny aggregate builder for migrated Phase 2 sites that want named ExprResult
+// fields without open-coding member assignments. The legacy slot-4 escape hatch
+// is intentionally explicit so callers cannot accidentally pass raw metadata in
+// the wrong positional slot.
+inline ExprResult makeExprResult(
+	Type type,
+	int size_in_bits,
+	IrOperand value,
+	TypeIndex type_index,
+	int pointer_depth,
+	EncodedExprMetadata encoded_metadata
+) {
+	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth, std::move(encoded_metadata.value));
 }
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {

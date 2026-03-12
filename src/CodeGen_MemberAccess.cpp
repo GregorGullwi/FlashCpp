@@ -423,7 +423,7 @@
 								if (member_result) {
 									const StructMember* member = member_result.member;
 									// Get index expression
-									ExprOperands index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+									ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 									// Get element type and size from the member
 									Type element_type = member->type;
@@ -456,7 +456,7 @@
 										static_cast<int64_t>(member_result.adjusted_offset)  // member offset in struct
 									);
 									// Store index information for unified assignment handler
-									lvalue_info.array_index = toIrValue(index_operands[2]);
+									lvalue_info.array_index = toIrValue(index_result.value);
 									lvalue_info.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 									setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
@@ -470,15 +470,9 @@
 									payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 
 									// Set index as TypedValue
-									payload.index.type = std::get<Type>(index_operands[0]);
-									payload.index.size_in_bits = std::get<int>(index_operands[1]);
-									if (std::holds_alternative<unsigned long long>(index_operands[2])) {
-										payload.index.value = std::get<unsigned long long>(index_operands[2]);
-									} else if (std::holds_alternative<TempVar>(index_operands[2])) {
-										payload.index.value = std::get<TempVar>(index_operands[2]);
-									} else if (std::holds_alternative<StringHandle>(index_operands[2])) {
-										payload.index.value = std::get<StringHandle>(index_operands[2]);
-									}
+									payload.index.type = index_result.type;
+									payload.index.size_in_bits = index_result.size_in_bits;
+									payload.index.value = toIrValue(index_result.value);
 
 									// Propagate type_index for struct element types so downstream member access
 									// (e.g. c.items[0].value) can look up the struct's member layout
@@ -506,14 +500,14 @@
 
 		// Fall back to default handling for regular arrays
 		// Get the array expression (should be an identifier for now)
-		ExprOperands array_operands = visitExpressionNode(arraySubscriptNode.array_expr().as<ExpressionNode>());
+		ExprResult array_result = visitExpressionNode(arraySubscriptNode.array_expr().as<ExpressionNode>());
 
 		// Get the index expression
-		ExprOperands index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+		ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 		// Get array type information
-		Type element_type = std::get<Type>(array_operands[0]);
-		int element_size_bits = std::get<int>(array_operands[1]);
+		Type element_type = array_result.type;
+		int element_size_bits = array_result.size_in_bits;
 
 		// Check if this is a pointer type (e.g., int* arr)
 		// If so, we need to get the base type size, not the pointer size (64)
@@ -597,7 +591,7 @@
 		// Fix element size for array members accessed through TempVar (e.g., vls.values[i])
 		// When array comes from member_access, element_size_bits is the TOTAL array size (e.g., 640 bits for int[20])
 		// We need to derive the actual element size from the element type
-		if (std::holds_alternative<TempVar>(array_operands[2]) && !is_pointer_to_array) {
+		if (std::holds_alternative<TempVar>(array_result.value) && !is_pointer_to_array) {
 			// Check if element_size_bits is much larger than expected for element_type
 			int base_element_size = get_type_size_bits(element_type);
 			if (base_element_size > 0 && element_size_bits > base_element_size) {
@@ -648,10 +642,10 @@
 			// computed operands to keep a valid base (TempVar or StringHandle) instead of
 			// leaving an empty StringHandle that leads to invalid offsets.
 			if (base_variant.valueless_by_exception()) {
-				if (std::holds_alternative<TempVar>(array_operands[2])) {
-					base_variant = std::get<TempVar>(array_operands[2]);
-				} else if (std::holds_alternative<StringHandle>(array_operands[2])) {
-					base_variant = std::get<StringHandle>(array_operands[2]);
+				if (std::holds_alternative<TempVar>(array_result.value)) {
+					base_variant = std::get<TempVar>(array_result.value);
+				} else if (std::holds_alternative<StringHandle>(array_result.value)) {
+					base_variant = std::get<StringHandle>(array_result.value);
 				}
 			}
 		}
@@ -660,8 +654,8 @@
 			const auto& ident = std::get<IdentifierNode>(array_expr);
 			base_variant = StringTable::getOrInternStringHandle(ident.name());
 		}
-		if (std::holds_alternative<TempVar>(array_operands[2])) {
-			TempVar base_temp = std::get<TempVar>(array_operands[2]);
+		if (std::holds_alternative<TempVar>(array_result.value)) {
+			TempVar base_temp = std::get<TempVar>(array_result.value);
 			if (auto base_lv = getTempVarLValueInfo(base_temp)) {
 				if (base_lv->kind == LValueInfo::Kind::Member && base_lv->member_name.has_value()) {
 					// Build qualified name: object.member
@@ -678,13 +672,13 @@
 			}
 		}
 		if (!std::holds_alternative<StringHandle>(base_variant)) {
-			if (std::holds_alternative<StringHandle>(array_operands[2])) {
-				base_variant = std::get<StringHandle>(array_operands[2]);
+			if (std::holds_alternative<StringHandle>(array_result.value)) {
+				base_variant = std::get<StringHandle>(array_result.value);
 			}
 		}
 		// Prefer keeping TempVar base when available to preserve stack offsets for nested accesses
-		if (!std::holds_alternative<TempVar>(base_variant) && std::holds_alternative<TempVar>(array_operands[2])) {
-			base_variant = std::get<TempVar>(array_operands[2]);
+		if (!std::holds_alternative<TempVar>(base_variant) && std::holds_alternative<TempVar>(array_result.value)) {
+			base_variant = std::get<TempVar>(array_result.value);
 		}
 
 		// Mark array element access as lvalue (Option 2: Value Category Tracking)
@@ -696,7 +690,7 @@
 		);
 		// Store index information for unified assignment handler
 		// Support both constant and variable indices
-		lvalue_info.array_index = toIrValue(index_operands[2]);
+		lvalue_info.array_index = toIrValue(index_result.value);
 		FLASH_LOG(Codegen, Debug, "Array index stored in metadata (supports constants and variables)");
 		lvalue_info.is_pointer_to_array = is_pointer_to_array || base_is_pointer_to_member;
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
@@ -710,24 +704,24 @@
 		payload.is_pointer_to_array = is_pointer_to_array;
 
 		// Set array (either variable name or temp)
-		if (std::holds_alternative<StringHandle>(array_operands[2])) {
-			payload.array = std::get<StringHandle>(array_operands[2]);
-		} else if (std::holds_alternative<TempVar>(array_operands[2])) {
-			payload.array = std::get<TempVar>(array_operands[2]);
+		if (std::holds_alternative<StringHandle>(array_result.value)) {
+			payload.array = std::get<StringHandle>(array_result.value);
+		} else if (std::holds_alternative<TempVar>(array_result.value)) {
+			payload.array = std::get<TempVar>(array_result.value);
 		}
 
 		// Set index as TypedValue
-		Type index_type = std::get<Type>(index_operands[0]);
-		int index_size = std::get<int>(index_operands[1]);
+		Type index_type = index_result.type;
+		int index_size = index_result.size_in_bits;
 		payload.index.type = index_type;
 		payload.index.size_in_bits = index_size;
 
-		if (std::holds_alternative<unsigned long long>(index_operands[2])) {
-			payload.index.value = std::get<unsigned long long>(index_operands[2]);
-		} else if (std::holds_alternative<TempVar>(index_operands[2])) {
-			payload.index.value = std::get<TempVar>(index_operands[2]);
-		} else if (std::holds_alternative<StringHandle>(index_operands[2])) {
-			payload.index.value = std::get<StringHandle>(index_operands[2]);
+		if (std::holds_alternative<unsigned long long>(index_result.value)) {
+			payload.index.value = std::get<unsigned long long>(index_result.value);
+		} else if (std::holds_alternative<TempVar>(index_result.value)) {
+			payload.index.value = std::get<TempVar>(index_result.value);
+		} else if (std::holds_alternative<StringHandle>(index_result.value)) {
+			payload.index.value = std::get<StringHandle>(index_result.value);
 		}
 
 		// When context is LValueAddress, skip the load and return address/metadata only
@@ -1781,14 +1775,11 @@
 
 			// Fall back to default expression handling
 			// Generate IR for the expression to get its type
-			ExprOperands expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
-			if (expr_operands.empty()) {
-				return ExprResult{};
-			}
+			ExprResult expr_result = visitExpressionNode(expr_node.as<ExpressionNode>());
 
 			// Extract type and size from the expression result
-			Type expr_type = std::get<Type>(expr_operands[0]);
-			int size_in_bits = std::get<int>(expr_operands[1]);
+			Type expr_type = expr_result.type;
+			int size_in_bits = expr_result.size_in_bits;
 
 			// Handle struct types
 			if (expr_type == Type::Struct) {
@@ -1896,14 +1887,11 @@
 
 			// Fall back to default expression handling
 			// Generate IR for the expression to get its type
-			ExprOperands expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
-			if (expr_operands.empty()) {
-				return ExprResult{};
-			}
+			ExprResult expr_result = visitExpressionNode(expr_node.as<ExpressionNode>());
 
 			// Extract type and size from the expression result
-			Type expr_type = std::get<Type>(expr_operands[0]);
-			int size_in_bits = std::get<int>(expr_operands[1]);
+			Type expr_type = expr_result.type;
+			int size_in_bits = expr_result.size_in_bits;
 
 			// Handle struct types
 			if (expr_type == Type::Struct) {

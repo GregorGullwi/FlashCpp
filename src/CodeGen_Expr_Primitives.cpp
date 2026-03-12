@@ -203,7 +203,14 @@
 		TypeIndex member_type_index = ptr_result.type_index;
 		
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
-		return makeExprResult(member_type, member_size, IrOperand{result_var}, member_type_index, 0, static_cast<unsigned long long>(member_type_index));
+		return makeExprResult(
+			member_type,
+			member_size,
+			IrOperand{result_var},
+			member_type_index,
+			0,
+			preserveEncodedExprMetadata(static_cast<unsigned long long>(member_type_index))
+		);
 	}
 
 	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
@@ -230,14 +237,25 @@
 
 	ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context) {
-		auto makeIdentifierResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
-			ExprResult result;
-			result.type = type;
-			result.size_in_bits = size_bits;
-			result.value = std::move(value);
-			result.type_index = type_index;
-			result.pointer_depth = pointer_depth;
-			return result;
+		auto makeIdentifierResult = [](
+			Type type,
+			int size_bits,
+			IrOperand value,
+			TypeIndex type_index = 0,
+			int pointer_depth = 0,
+			std::optional<unsigned long long> encoded_metadata = std::nullopt
+		) -> ExprResult {
+			if (encoded_metadata.has_value()) {
+				return makeExprResult(
+					type,
+					size_bits,
+					std::move(value),
+					type_index,
+					pointer_depth,
+					preserveEncodedExprMetadata(encoded_metadata)
+				);
+			}
+			return makeExprResult(type, size_bits, std::move(value), type_index, pointer_depth);
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
 			bool preserve_pointer_depth = false) -> ExprResult {
@@ -258,24 +276,29 @@
 			}
 			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
 			const int pointer_depth = preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0;
-			ExprResult result = makeIdentifierResult(
+			const std::optional<unsigned long long> encoded_metadata =
+				(type_node.type() == Type::Enum && !is_enum_pointer)
+				? std::optional<unsigned long long>{static_cast<unsigned long long>(type_node.type_index())}
+				: std::nullopt;
+			return makeIdentifierResult(
 				result_type,
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
-				pointer_depth);
-			if (type_node.type() == Type::Enum) {
-				if (!is_enum_pointer) {
-					result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
-				}
-			}
-			return result;
+				pointer_depth,
+				encoded_metadata
+			);
 		};
 		auto preserveEnumIdentifierEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
-			if (type_node.type() == Type::Enum) {
-				if (type_node.pointer_depth() == 0) {
-					result.encoded_metadata = static_cast<unsigned long long>(type_node.type_index());
-				}
+			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0) {
+				return makeExprResult(
+					result.type,
+					result.size_in_bits,
+					std::move(result.value),
+					result.type_index,
+					result.pointer_depth,
+					preserveEncodedExprMetadata(static_cast<unsigned long long>(type_node.type_index()))
+				);
 			}
 			return std::move(result);
 		};

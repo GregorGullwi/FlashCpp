@@ -33,7 +33,7 @@
 			// This ensures operator() and __invoke functions will be generated.
 			// Without this, the lambda is never added to collected_lambdas_ and
 			// its functions are never generated, causing linker errors.
-			ExprOperands lambda_ir = generateLambdaExpressionIr(lambda);
+			ExprResult lambda_result = generateLambdaExpressionIr(lambda);
 			
 			// Check if this is a generic lambda (has auto parameters)
 			bool is_generic = false;
@@ -119,10 +119,12 @@
 								static_cast<unsigned char>(literal.sizeInBits())));
 						} else {
 							// For complex expressions, evaluate and get type
-							ExprOperands operands = visitExpressionNode(arg_expr);
-							Type type = std::get<Type>(operands[0]);
-							int size = std::get<int>(operands[1]);
-							arg_types.push_back(TypeSpecifierNode(type, TypeQualifier::None, static_cast<unsigned char>(size)));
+							ExprResult operand_result = visitExpressionNode(arg_expr);
+							arg_types.push_back(TypeSpecifierNode(
+								operand_result.type,
+								TypeQualifier::None,
+								static_cast<unsigned char>(operand_result.size_in_bits)
+							));
 						}
 					});
 					
@@ -210,7 +212,7 @@
 				// Add arguments
 				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
-					ExprOperands argumentIrOperands = visitExpressionNode(arg_expr);
+					ExprResult argument_result = visitExpressionNode(arg_expr);
 					if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						const auto& identifier = std::get<IdentifierNode>(arg_expr);
 						const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
@@ -224,7 +226,7 @@
 						call_op.args.push_back(arg);
 					} else {
 						// Convert argumentIrOperands to TypedValue
-						TypedValue arg = toTypedValue(argumentIrOperands);
+						TypedValue arg = toTypedValue(argument_result);
 						call_op.args.push_back(arg);
 					}
 				});
@@ -240,15 +242,15 @@
 				return makeExprResult(lambda_return_type, lambda_return_size, IrOperand{ret_var});
 			}
 
-			if (lambda_ir.size() < 4 || !std::holds_alternative<StringHandle>(lambda_ir[2]) || !std::holds_alternative<unsigned long long>(lambda_ir[3])) {
+			if (!std::holds_alternative<StringHandle>(lambda_result.value) || lambda_result.type_index == 0) {
 				throw InternalError("Immediate capturing lambda did not produce a named closure object");
 			}
 
-			immediate_lambda_object_name = std::get<StringHandle>(lambda_ir[2]);
+			immediate_lambda_object_name = std::get<StringHandle>(lambda_result.value);
 			immediate_lambda_object_type = TypeSpecifierNode(
 				Type::Struct,
-				static_cast<TypeIndex>(std::get<unsigned long long>(lambda_ir[3])),
-				static_cast<int>(std::get<int>(lambda_ir[1])),
+				lambda_result.type_index,
+				static_cast<int>(lambda_result.size_in_bits),
 				memberFunctionCallNode.called_from()
 			);
 
@@ -401,8 +403,11 @@
 									
 									// Generate member access chain for o.inner.callback
 									// First get o.inner
-					ExprOperands base_result = visitExpressionNode(*object_expr);
-									TempVar base_temp = std::get<TempVar>(base_result[2]);
+									ExprResult base_result = visitExpressionNode(*object_expr);
+									if (!std::holds_alternative<TempVar>(base_result.value)) {
+										throw InternalError("Function pointer member base expression did not produce a TempVar");
+									}
+									TempVar base_temp = std::get<TempVar>(base_result.value);
 									
 									// Now access the callback member from that
 									TempVar func_ptr_temp = var_counter.next();
@@ -422,19 +427,12 @@
 									// Build arguments for the indirect call
 									std::vector<TypedValue> arguments;
 									memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-										ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-										Type arg_type = std::get<Type>(argumentIrOperands[0]);
-										int arg_size = std::get<int>(argumentIrOperands[1]);
-										IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
-											using T = std::decay_t<decltype(arg)>;
-											if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-											std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-												return arg;
-											} else {
-												return 0ULL;
-											}
-										}, argumentIrOperands[2]);
-										arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
+										ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+										arguments.push_back(TypedValue{
+											argument_result.type,
+											argument_result.size_in_bits,
+											toIrValue(argument_result.value)
+										});
 									});
 									
 									IndirectCallOp op{
@@ -710,12 +708,11 @@
 						// Add object operand
 						if (object_name.empty()) {
 							// Object is not a named variable - evaluate the expression to get a TempVar
-							// visitExpressionNode returns {Type, size_in_bits, value, ...} (at least 3 elements)
-						ExprOperands obj_result = visitExpressionNode(*object_expr);
-							if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+							ExprResult obj_result = visitExpressionNode(*object_expr);
+							if (!std::holds_alternative<TempVar>(obj_result.value)) {
 								throw InternalError("Function pointer member call: expression did not produce a TempVar");
 							}
-							member_load.object = std::get<TempVar>(obj_result[2]);
+							member_load.object = std::get<TempVar>(obj_result.value);
 						} else {
 							member_load.object = StringTable::getOrInternStringHandle(object_name);
 						}
@@ -737,20 +734,12 @@
 						// Add arguments
 						std::vector<TypedValue> arguments;
 						memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-							ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-							// Extract type, size, and value from the expression result
-							Type arg_type = std::get<Type>(argumentIrOperands[0]);
-							int arg_size = std::get<int>(argumentIrOperands[1]);
-							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
-								using T = std::decay_t<decltype(arg)>;
-								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-											std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-									return arg;
-								} else {
-									return 0ULL;
-								}
-							}, argumentIrOperands[2]);
-							arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
+							ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+							arguments.push_back(TypedValue{
+								argument_result.type,
+								argument_result.size_in_bits,
+								toIrValue(argument_result.value)
+							});
 						});
 
 						IndirectCallOp op{
@@ -986,11 +975,11 @@
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			if (object_name.empty()) {
 				// Object is a temporary expression result - evaluate it to get a TempVar
-					ExprOperands obj_result = visitExpressionNode(*object_expr);
-				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+				ExprResult obj_result = visitExpressionNode(*object_expr);
+				if (!std::holds_alternative<TempVar>(obj_result.value)) {
 					throw InternalError("Virtual call on expression: did not produce a TempVar");
 				}
-				vcall_op.object = std::get<TempVar>(obj_result[2]);
+				vcall_op.object = std::get<TempVar>(obj_result.value);
 			} else {
 				vcall_op.object = StringTable::getOrInternStringHandle(object_name);
 			}
@@ -1002,7 +991,7 @@
 
 			// Generate IR for function arguments
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-				ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+				ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 				
 				// For variables, we need to add the type and size
 				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
@@ -1020,10 +1009,8 @@
 				else {
 					// Convert from IrOperand to TypedValue
 					// Format: [type, size, value]
-					if (argumentIrOperands.size() >= 3) {
-						TypedValue tv = toTypedValue(argumentIrOperands);
-						vcall_op.arguments.push_back(tv);
-					}
+					TypedValue tv = toTypedValue(argument_result);
+					vcall_op.arguments.push_back(tv);
 				}
 			});
 
@@ -1275,11 +1262,11 @@
 			if (object_name.empty()) {
 				// Object is a temporary expression result (e.g., getContainer().method())
 				// Evaluate the expression to get a TempVar, then take its address for the this pointer
-					ExprOperands obj_result = visitExpressionNode(*object_expr);
-				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
+				ExprResult obj_result = visitExpressionNode(*object_expr);
+				if (!std::holds_alternative<TempVar>(obj_result.value)) {
 					throw InternalError("Member function call on expression: did not produce a TempVar");
 				}
-				TempVar obj_temp = std::get<TempVar>(obj_result[2]);
+				TempVar obj_temp = std::get<TempVar>(obj_result.value);
 				
 				if (object_is_pointer_like) {
 					// Temporary is already a pointer/reference - pass through directly
@@ -1439,28 +1426,28 @@
 						}
 					} else {
 						// Unknown symbol type - fall back to visitExpressionNode
-						ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-						call_op.args.push_back(toTypedValue(argumentIrOperands));
+						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+						call_op.args.push_back(toTypedValue(argument_result));
 					}
 				}
 				else {
 					// Not an identifier - call visitExpressionNode to get the value
-					ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 					
 					// Check if parameter expects a reference and argument is a literal
 					if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 						// Parameter expects a reference, but argument is not an identifier
 						// We need to materialize the value into a temporary and pass its address
 						
-						// Check if this is a literal value (has unsigned long long or double in operand[2])
-						bool is_literal = (argumentIrOperands.size() >= 3 && 
-						(std::holds_alternative<unsigned long long>(argumentIrOperands[2]) ||
-						std::holds_alternative<double>(argumentIrOperands[2])));
+						// Check if this is a literal value
+						bool is_literal =
+							std::holds_alternative<unsigned long long>(argument_result.value) ||
+							std::holds_alternative<double>(argument_result.value);
 						
 						if (is_literal) {
 							// Materialize the literal into a temporary variable
-							Type literal_type = std::get<Type>(argumentIrOperands[0]);
-							int literal_size = std::get<int>(argumentIrOperands[1]);
+							Type literal_type = argument_result.type;
+							int literal_size = argument_result.size_in_bits;
 							
 							// Create a temporary variable to hold the literal value
 							TempVar temp_var = var_counter.next();
@@ -1471,10 +1458,10 @@
 							
 							// Convert IrOperand to IrValue for the literal
 							IrValue rhs_value;
-							if (std::holds_alternative<unsigned long long>(argumentIrOperands[2])) {
-								rhs_value = std::get<unsigned long long>(argumentIrOperands[2]);
-							} else if (std::holds_alternative<double>(argumentIrOperands[2])) {
-								rhs_value = std::get<double>(argumentIrOperands[2]);
+							if (std::holds_alternative<unsigned long long>(argument_result.value)) {
+								rhs_value = std::get<unsigned long long>(argument_result.value);
+							} else if (std::holds_alternative<double>(argument_result.value)) {
+								rhs_value = std::get<double>(argument_result.value);
 							}
 							
 							// Create TypedValue for lhs and rhs
@@ -1495,10 +1482,10 @@
 							});
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
-							if (argumentIrOperands.size() >= 3 && std::holds_alternative<TempVar>(argumentIrOperands[2])) {
-								Type expr_type = std::get<Type>(argumentIrOperands[0]);
-								int expr_size = std::get<int>(argumentIrOperands[1]);
-								TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
+							if (std::holds_alternative<TempVar>(argument_result.value)) {
+								Type expr_type = argument_result.type;
+								int expr_size = argument_result.size_in_bits;
+								TempVar expr_var = std::get<TempVar>(argument_result.value);
 								
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 								
@@ -1510,12 +1497,12 @@
 								});
 							} else {
 								// Fallback - just pass through
-								call_op.args.push_back(toTypedValue(argumentIrOperands));
+								call_op.args.push_back(toTypedValue(argument_result));
 							}
 						}
 					} else {
 						// Parameter doesn't expect a reference - pass through as-is
-						call_op.args.push_back(toTypedValue(argumentIrOperands));
+						call_op.args.push_back(toTypedValue(argument_result));
 					}
 				}
 			
@@ -1556,8 +1543,16 @@
 		TypeIndex ret_type_index = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
 			? return_type.type_index()
 			: 0;
-		return makeExprResult(return_type.type(), return_size_bits, IrOperand{ret_var}, ret_type_index, 0,
-			ret_type_index ? std::optional<unsigned long long>{static_cast<unsigned long long>(ret_type_index)} : std::nullopt);
+		return makeExprResult(
+			return_type.type(),
+			return_size_bits,
+			IrOperand{ret_var},
+			ret_type_index,
+			0,
+			preserveEncodedExprMetadata(
+				ret_type_index ? std::optional<unsigned long long>{static_cast<unsigned long long>(ret_type_index)} : std::nullopt
+			)
+		);
 	}
 
 
