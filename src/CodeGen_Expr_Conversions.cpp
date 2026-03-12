@@ -1829,9 +1829,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 			IrOpcode arith_opcode_int = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
 			Type elem_type = operandIrResult.type;
 			int elem_size = operandIrResult.size_in_bits;
-			IrValue loaded_val = std::holds_alternative<TempVar>(operandIrResult.value)
-				? IrValue(std::get<TempVar>(operandIrResult.value))
-				: toIrValue(operandIrResult.value);
+			IrValue loaded_val = toIrValue(operandIrResult.value);
 
 			if (is_prefix) {
 				BinaryOp bin_op{
