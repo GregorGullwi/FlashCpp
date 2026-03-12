@@ -342,8 +342,7 @@ public:
 		//    the front of overflow (in order) to make room.
 		size_t new_inline_used = idx + count + inline_tail; // would-be inline occupancy
 		if (new_inline_used > N) {
-			size_t spill = new_inline_used - N;
-			// The spilled elements come from the rightmost `spill` positions of the
+			// The spilled elements come from the rightmost positions of the
 			// combined sequence (existing tail elements first, then new elements that
 			// don't fit). It's simplest to: move ALL tail elements to a temp, write
 			// new elements, then put tail elements back — spilling as needed.
