@@ -2650,7 +2650,7 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 	}
 
 	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(StringTable::getStringView(type_info.name_));
+	qualified_name_builder.append(StringTable::getStringView(owner_struct ? owner_struct->getName() : type_info.name_));
 	qualified_name_builder.append("::");
 	qualified_name_builder.append(member_name);
 	std::string_view qualified_member_name = qualified_name_builder.commit();
