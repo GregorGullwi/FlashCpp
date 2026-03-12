@@ -419,16 +419,6 @@
 
 	ExprOperands AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
 	ExpressionContext context) {
-		auto makeExprResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
-			ExprResult result;
-			result.type = type;
-			result.size_in_bits = size_bits;
-			result.value = std::move(value);
-			result.type_index = type_index;
-			result.pointer_depth = pointer_depth;
-			return result;
-		};
-
 		// OPERATOR OVERLOAD RESOLUTION
 		// For full standard compliance, operator& should call overloaded operator& if it exists.
 		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
