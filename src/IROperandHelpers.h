@@ -73,14 +73,14 @@ inline ExprResult makeExprResult(
 	int pointer_depth = 0,
 	std::optional<unsigned long long> encoded_metadata = std::nullopt
 ) {
-	ExprResult result;
-	result.type = type;
-	result.size_in_bits = size_in_bits;
-	result.value = std::move(value);
-	result.type_index = type_index;
-	result.pointer_depth = pointer_depth;
-	result.encoded_metadata = encoded_metadata;
-	return result;
+	return {
+		.type = type,
+		.size_in_bits = size_in_bits,
+		.value = std::move(value),
+		.type_index = type_index,
+		.pointer_depth = pointer_depth,
+		.encoded_metadata = encoded_metadata
+	};
 }
 
 inline void preserveLegacyEnumPointerDepthEncoding(ExprResult& result) {
