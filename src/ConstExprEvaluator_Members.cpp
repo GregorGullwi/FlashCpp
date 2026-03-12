@@ -2639,40 +2639,34 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 	std::string_view member_name,
 	EvaluationContext& context) {
 	
-	// Look up the static member in the struct
-	// Search for a static member variable with the given name
-	for (const auto& static_member : struct_info->static_members) {
-		if (static_member.getName() == member_name_handle) {
-			// Found the static member - check if it has an initializer
-			if (static_member.initializer.has_value()) {
-				// Evaluate the initializer directly
-				return evaluate(*static_member.initializer, context);
+	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
+	
+	if (!static_member) {
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in return type");
+	}
+
+	if (static_member->initializer.has_value()) {
+		return evaluate(*static_member->initializer, context);
+	}
+
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(StringTable::getStringView(type_info.name_));
+	qualified_name_builder.append("::");
+	qualified_name_builder.append(member_name);
+	std::string_view qualified_member_name = qualified_name_builder.commit();
+
+	auto member_symbol = context.symbols->lookup(qualified_member_name);
+	if (member_symbol.has_value()) {
+		const ASTNode& member_node = member_symbol.value();
+		if (member_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
+			if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
+				return evaluate(*var_decl.initializer(), context);
 			}
-			
-			// If no inline initializer, try to find the definition in the symbol table
-			// Build qualified member name using StringBuilder
-			StringBuilder qualified_name_builder;
-			qualified_name_builder.append(StringTable::getStringView(type_info.name_));
-			qualified_name_builder.append("::");
-			qualified_name_builder.append(member_name);
-			std::string_view qualified_member_name = qualified_name_builder.commit();
-			
-			auto member_symbol = context.symbols->lookup(qualified_member_name);
-			if (member_symbol.has_value()) {
-				const ASTNode& member_node = member_symbol.value();
-				if (member_node.is<VariableDeclarationNode>()) {
-					const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
-					if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
-						return evaluate(*var_decl.initializer(), context);
-					}
-				}
-			}
-			
-			return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer");
 		}
 	}
-	
-	return EvalResult::error("Member '" + std::string(member_name) + "' not found in return type");
+
+	return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer");
 }
 
 // Evaluate function call followed by member access (e.g., get_struct().member)
