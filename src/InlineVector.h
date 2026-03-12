@@ -276,6 +276,108 @@ public:
 	const_iterator cbegin() const { return const_iterator(this, 0); }
 	const_iterator cend() const { return const_iterator(this, size()); }
 
+	// Insert a single element at position (const iterator)
+	iterator insert(const_iterator pos, const T& value) {
+		size_t idx = pos - begin();
+		if (inline_count_ < N) {
+			// Make space by shifting elements
+			for (size_t i = inline_count_; i > idx; --i) {
+				inline_data_[i] = std::move(inline_data_[i - 1]);
+			}
+			inline_data_[idx] = value;
+			inline_count_++;
+		} else {
+			overflow_.insert(overflow_.begin() + static_cast<typename std::vector<T>::difference_type>(idx - N), value);
+		}
+		return iterator(this, idx);
+	}
+
+	// Insert a single element at position (non-const iterator)
+	iterator insert(iterator pos, const T& value) {
+		size_t idx = pos - begin();
+		if (inline_count_ < N) {
+			for (size_t i = inline_count_; i > idx; --i) {
+				inline_data_[i] = std::move(inline_data_[i - 1]);
+			}
+			inline_data_[idx] = value;
+			inline_count_++;
+		} else {
+			overflow_.insert(overflow_.begin() + static_cast<typename std::vector<T>::difference_type>(idx - N), value);
+		}
+		return iterator(this, idx);
+	}
+
+	// Insert a range of elements at position (const iterators)
+	iterator insert(const_iterator pos, const_iterator first, const_iterator last) {
+		if (first == last) return iterator(this, pos - begin());
+
+		size_t count = static_cast<size_t>(last - first);
+		size_t idx = pos - begin();
+
+		// Ensure we have enough capacity
+		size_t new_size = size() + count;
+		reserve(new_size);
+
+		if (inline_count_ <= N) {
+			// Currently in inline storage
+			if (idx <= inline_count_) {
+				// Shifting within inline storage
+				for (size_t i = inline_count_; i > idx; --i) {
+					inline_data_[i + count - 1] = std::move(inline_data_[i - 1]);
+				}
+				// Copy new elements
+				for (size_t i = 0; i < count && idx + i < N; ++i) {
+					if (idx + i < inline_count_ + count) {
+						inline_data_[idx + i] = first[i];
+					}
+				}
+				inline_count_ = static_cast<uint8_t>(inline_count_ + count);
+			} else {
+				// Insert position is beyond inline storage, copy to overflow
+				for (auto it = first; it != last; ++it) {
+					push_back(*it);
+				}
+			}
+		} else {
+			// Already in overflow, use vector insert
+			overflow_.insert(overflow_.begin() + static_cast<typename std::vector<T>::difference_type>(idx - N), first, last);
+		}
+		return iterator(this, idx);
+	}
+
+	// Insert a range of elements at position (non-const iterators)
+	iterator insert(iterator pos, iterator first, iterator last) {
+		if (first == last) return iterator(this, pos - begin());
+
+		size_t count = static_cast<size_t>(last - first);
+		size_t idx = pos - begin();
+
+		// Ensure we have enough capacity
+		size_t new_size = size() + count;
+		reserve(new_size);
+
+		if (inline_count_ <= N) {
+			if (idx <= inline_count_) {
+				for (size_t i = inline_count_; i > idx; --i) {
+					inline_data_[i + count - 1] = std::move(inline_data_[i - 1]);
+				}
+				for (size_t i = 0; i < count && idx + i < N; ++i) {
+					if (idx + i < inline_count_ + count) {
+						inline_data_[idx + i] = first[i];
+					}
+				}
+				inline_count_ = static_cast<uint8_t>(inline_count_ + count);
+			} else {
+				for (auto it = first; it != last; ++it) {
+					push_back(*it);
+				}
+			}
+		} else {
+			overflow_.insert(overflow_.begin() + static_cast<typename std::vector<T>::difference_type>(idx - N), first, last);
+		}
+		return iterator(this, idx);
+	}
+
 private:
 	static_assert(N <= 255, "InlineVector: N must be <= 255 (inline_count_ is uint8_t)");
 	std::array<T, N> inline_data_{};
