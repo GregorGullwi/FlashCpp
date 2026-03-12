@@ -4,16 +4,16 @@
 **Status**: Proposed  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
-## Short Answer
+## Proposed Approach
 
-I **mostly agree** with the direction in the question:
+The proposed design direction is:
 
 - `enum` identity is primarily a **parser / semantic / type-system** concern
 - the **runtime representation** of an enum is its underlying integral type
 - therefore, carrying `Type::Enum` deeply into IR/codegen for ordinary arithmetic,
   loads/stores, pointer arithmetic, and ABI lowering is more fragile than helpful
 
-However, I do **not** think the right design is “erase enums immediately after
+The right design is **not** to: “erase enums immediately after
 parsing and pretend they are just `int` everywhere”.  Enum **identity** still
 matters after parsing for:
 
@@ -24,13 +24,13 @@ matters after parsing for:
 - `__underlying_type`
 - diagnostics and semantic checking
 
-So the better design is:
+The proposed approach is:
 
 > keep enum identity in the semantic type layer, but lower enum **value
 > representation** to the underlying integer type at the IR/codegen boundary
 > wherever the backend only needs storage/ABI/arithmetic information.
 
-This document lays out how to get there incrementally.
+This document lays out how to achieve this incrementally.
 
 ---
 
@@ -53,7 +53,7 @@ That conflation causes codegen-specific special cases like:
 - codegen helpers needing to know when an enum should behave like an integer and
   when its nominal identity still has to be preserved
 
-The recent `ExprResult` regressions are a good example:
+The recent `ExprResult` regressions demonstrate this issue:
 
 - enum pointers were semantically “enum-flavored”
 - but operationally they needed pointer-depth and pointee-size behavior identical
@@ -346,9 +346,52 @@ other nominal types.
 
 ---
 
-## Concrete First Slice I Would Implement
+## Impact Analysis
 
-If/when this plan is picked up, I would start with the narrowest, safest slice:
+### Files Likely to Require Modifications
+
+The following files contain code that directly handles `Type::Enum` and will need review during implementation:
+
+| File | Type of Changes Expected |
+|------|-------------------------|
+| `CodeGen_Expr_Primitives.cpp` | Enum-to-runtime lowering in primitive operations |
+| `CodeGen_Expr_Conversions.cpp` | Conversion logic between enum and integral types |
+| `CodeGen_Expr_Operators.cpp` | Binary/unary operator handling for enums |
+| `CodeGen_Call_Direct.cpp` | Argument passing and return value handling |
+| `IRConverter_Conv_CorePrivate.h` | IR conversion logic |
+| `IROperandHelpers.h` | Operand creation helpers |
+| `OverloadResolution.h` | Ranking and resolution logic |
+| `NameMangling.h` | Type identity preservation |
+
+### Components With Indirect Impact
+
+These components use enum information but may not need direct changes:
+
+- **Template instantiation** - Uses enum identity for matching; should be unaffected
+- **Type traits** - `is_enum`, `__underlying_type` work at semantic layer; unchanged
+- **Debug info** - Enum names come from semantic type; should be unaffected
+
+### Expected Benefits
+
+- Reduced fragility in codegen from explicit representation boundary
+- Cleaner pointer arithmetic handling via explicit pointee-size helpers
+- Simpler `ExprResult` encoding by reducing special-case enum handling
+- Easier future maintenance when adding new nominal types
+
+### Migration Complexity
+
+The phased approach allows incremental migration:
+
+- **Phase 0-1** (Inventory + Helpers): Low risk, adding new code only
+- **Phase 2-3** (TypedValue refactoring): Medium risk, existing code paths modified
+- **Phase 4-5** (Pointer semantics + ExprResult): Medium risk, core infrastructure changes
+- **Phase 6-7** (ABI audit + Final cleanup): Lower risk, final adjustments
+
+---
+
+## Proposed First Slice
+
+The proposed starting point is the narrowest, safest slice:
 
 1. add `getRuntimeValueType(...)` and `getRuntimeValueSizeBits(...)`
 2. add `getPointerPointeeSizeBits(...)`
@@ -368,14 +411,117 @@ That would reduce codegen fragility without forcing a whole-compiler rewrite.
 
 ---
 
-## Decision
+## Success Criteria
 
-I **do not agree** with the current design as an end state.
+The enum lowering refactoring is considered complete when:
 
-I **do agree** that enums should mostly stop being a runtime/codegen-level
-special case, but only if we replace that with an explicit split:
+### Code Quality Metrics
 
-- keep enum identity in semantic/type metadata
-- lower enum runtime behavior to the underlying integral representation earlier
+- No `Type::Enum` branches in arithmetic, comparison, load/store, or assignment helpers in codegen
+- Pointer operations use explicit pointee-size helpers rather than deriving size from enum metadata
+- `ExprResult` encoding uses fewer special-case enum handling paths
 
-That is the design direction I would pursue.
+### Functional Requirements
+
+- All existing enum tests pass (arithmetic, comparisons, pointers, arrays)
+- Overload resolution correctly prefers enum overloads over integer overloads
+- Mangling for enum parameters remains unchanged
+- `typeid` and RTTI-like features preserve enum identity
+- `__underlying_type` and type traits work correctly
+
+### Regression Prevention
+
+- The original enum-pointer `ExprResult` regression (slot-4 encoding) does not recur
+- Pointer arithmetic on enum pointers works correctly
+- Enum values passed by value or reference follow correct ABI rules
+
+### Cleanup Verification
+
+- `Type::Enum` remains only in:
+  - AST / type system layers
+  - Semantic analysis
+  - Mangling
+  - Type traits evaluation
+  - RTTI / type identity features
+  - Diagnostics
+
+### Test Coverage
+
+| Test File | Coverage |
+|-----------|----------|
+| `test_enum_ret0.cpp` | Basic enum, enum class, explicit values, underlying type |
+| `test_enum_class_mangling_ret0.cpp` | Mangling for enum class |
+| `test_enum_implicit_conv_ret0.cpp` | Implicit conversion to int/unsigned/long |
+| `test_enum_pointer_increment_ret30.cpp` | Pointer increment on enum pointers |
+| `test_enum_pointer_array_subscript_ret0.cpp` | Array subscript on enum pointer arrays |
+| `test_enum_scoped_selfref_ret0.cpp` | Scoped enum with self-referencing enumerators |
+| `test_c_style_casts_ret65.cpp` | C-style casts with enums |
+| `test_type_traits_intrinsics_ret147.cpp` | `__is_enum` trait |
+| `test_underlying_type_ret42.cpp` | `__underlying_type` trait |
+| `test_using_enum_ret6.cpp` | C++20 using enum |
+| `test_switch_10_ret10.cpp` | Switch statements with enums |
+| `test_enum_comparison_ret0.cpp` | Enum comparisons |
+| `test_enum_bitwise_ret0.cpp` | Enum bitwise operations |
+| `test_enum_increment_decrement_ret0.cpp` | Enum increment/decrement |
+
+### Known Gaps
+
+- Direct ++/-- on enum values
+- Enum bitwise compound assignment (|=, &=, ^=)
+- `enum class` not yet supported
+
+### Verification Tests
+
+The following tests should compile and return 0 when the enum lowering work is complete:
+
+#### Enum Arithmetic Test
+
+```cpp
+enum Color : int { Red = 1, Green = 2, Blue = 3 };
+
+int test_enum_plus_enum() {
+    int c = Red + Green;  // Should be 3
+    return c == 3 ? 0 : 1;
+}
+
+int test_enum_minus_enum() {
+    int c = Blue - Red;  // Should be 2
+    return c == 2 ? 0 : 2;
+}
+```
+
+#### Enum Overload Resolution Test
+
+```cpp
+enum Color { Red = 1, Green = 2, Blue = 3 };
+
+int overloaded(int x) { return 1; }
+int overloaded(Color c) { return 2; }
+
+int test_enum_preferred_over_int() {
+    Color c = Green;
+    // Should call overloaded(Color), not overloaded(int)
+    return overloaded(c) == 2 ? 0 : 1;
+}
+```
+
+#### Enum Class Test
+
+```cpp
+enum class Status { Pending = 0, Running = 1, Done = 2 };
+
+int test_enum_class() {
+    Status s = Status::Running;
+    return s == Status::Running ? 0 : 1;
+}
+```
+
+---
+
+## Summary
+
+This plan proposes:
+
+- Keep enum identity in semantic/type metadata
+- Lower enum runtime behavior to the underlying integral representation earlier
+- Move the representation boundary earlier and make it explicit
