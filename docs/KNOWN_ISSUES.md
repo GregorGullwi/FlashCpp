@@ -3,6 +3,26 @@
 This file tracks currently open issues only. Fixed items are removed once they are
 validated.
 
+## Missing semantic analysis pass for implicit standard conversions
+
+FlashCpp has no dedicated semantic analysis (Sema) pass between parsing and codegen.
+Implicit C++ standard conversions (arithmetic promotions, integral↔floating-point
+conversions, etc.) are therefore handled ad-hoc inside individual codegen functions
+(`generateBinaryOperatorIr`, return-statement codegen) but are absent in others.
+
+Known gaps:
+- **Function call arguments**: passing an `int` literal to a `double` parameter emits
+  `int32` in the call IR instead of converting to `double` first.  This causes the
+  callee to read from XMM0 (which holds whatever happened to be there) instead of the
+  intended value.  Reproducer: `tests/template_parsing_test_ret0.cpp`.
+- Assignments and variable initializers may have the same gap for mixed-type pairs.
+
+Correct fix: introduce an `ImplicitCastNode` AST node and a `SemanticAnalysis` pass
+(run after parsing, before codegen) that inserts it wherever C++ [conv] standard
+conversions apply — mirroring Clang's `Sema::ImpCastExprToType`.  This would replace
+all current ad-hoc `generateTypeConversion` call sites and cover every context
+uniformly.
+
 ## Parser recursion/iteration limits on deeply nested expressions
 
 - Extremely deep unary-expression nesting can still overflow the parser stack and crash
