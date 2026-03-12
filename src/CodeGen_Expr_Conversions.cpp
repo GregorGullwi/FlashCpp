@@ -348,8 +348,9 @@
 					element_size_bits = get_type_size_bits(element_type);
 				}
 				// Try to get pointer depth from array_operands[3] if available
-				if (array_operands.type_index != 0) {
-					element_pointer_depth = static_cast<int>(array_operands.type_index);
+				if (array_operands.pointer_depth != 0) {
+					element_pointer_depth = array_operands.pointer_depth;
+				}
 				}
 			}
 			
