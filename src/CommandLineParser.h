@@ -13,36 +13,37 @@ struct CliOptionInfo {
 	std::string_view name;         // option name without leading '-'
 	std::string_view value_hint;   // non-empty when the option takes a value (e.g. "<file>")
 	std::string_view description;  // human-readable description for --help
+	std::string_view example;      // example usage shown after the description (e.g. "-o out.obj")
 	bool             is_alias;     // true for duplicate/alias entries omitted from --help output
 };
 
 // Options that accept a value (--name=value or -name value)
 inline constexpr CliOptionInfo all_cli_value_options[] = {
-	{ "o",          "<file>",   "Specify output object file",                                         false },
-	{ "I",          "<path>",   "Add include directory",                                              false },
-	{ "log-level",  "<level>",  "Set log level (see below for details)",                               false },
-	{ "fmangling",  "<style>",  "Name mangling style: msvc or itanium",                              false },
+	{ "o",          "<file>",   "Specify output object file",           "-o out.obj",                    false },
+	{ "I",          "<path>",   "Add include directory",                "-Iinclude or -I include",       false },
+	{ "log-level",  "<level>",  "Set log level (see below for details)", "--log-level=debug",            false },
+	{ "fmangling",  "<style>",  "Name mangling style: msvc or itanium", "-fmangling itanium",           false },
 };
 
 // Flag options (no value, presence implies true)
 inline constexpr CliOptionInfo all_cli_flags[] = {
-	{ "h",                          "", "Show this help message",                                    true  },
-	{ "help",                       "", "Show this help message",                                    false },
-	{ "v",                          "", "Verbose output (shows dependency analysis and IR)",         false },
-	{ "verbose",                    "", "Verbose output",                                            true  },
-	{ "E",                          "", "Preprocess only (output preprocessed source)",              false },
-	{ "d",                          "", "Enable debug output",                                       false },
-	{ "debug",                      "", "Enable debug output",                                       true  },
-	{ "perf-stats",                 "", "Show performance statistics",                               false },
-	{ "stats",                      "", "Show performance statistics",                               true  },
-	{ "time",                       "", "Show compilation timing",                                   false },
-	{ "timing",                     "", "Show compilation timing",                                   true  },
-	{ "fno-access-control",         "", "Disable access-control checks",                             false },
-	{ "no-access-control",          "", "Disable access-control checks",                             true  },
-	{ "fgcc-compat",                "", "Use GCC/Clang compatible built-in macros",                  false },
-	{ "fclang-compat",              "", "Use GCC/Clang compatible built-in macros",                  true  },
-	{ "fno-exceptions",             "", "Disable exception handling",                                false },
-	{ "eager-template-instantiation", "", "Instantiate all template members eagerly (default: lazy)", false },
+	{ "h",                          "", "Show this help message",                                    "", true  },
+	{ "help",                       "", "Show this help message",                                    "", false },
+	{ "v",                          "", "Verbose output (shows dependency analysis and IR)",         "", false },
+	{ "verbose",                    "", "Verbose output",                                            "", true  },
+	{ "E",                          "", "Preprocess only (output preprocessed source)",              "", false },
+	{ "d",                          "", "Enable debug output",                                       "", false },
+	{ "debug",                      "", "Enable debug output",                                       "", true  },
+	{ "perf-stats",                 "", "Show performance statistics",                               "", false },
+	{ "stats",                      "", "Show performance statistics",                               "", true  },
+	{ "time",                       "", "Show compilation timing",                                   "", false },
+	{ "timing",                     "", "Show compilation timing",                                   "", true  },
+	{ "fno-access-control",         "", "Disable access-control checks",                             "", false },
+	{ "no-access-control",          "", "Disable access-control checks",                             "", true  },
+	{ "fgcc-compat",                "", "Use GCC/Clang compatible built-in macros",                  "", false },
+	{ "fclang-compat",              "", "Use GCC/Clang compatible built-in macros",                  "", true  },
+	{ "fno-exceptions",             "", "Disable exception handling",                                "", false },
+	{ "eager-template-instantiation", "", "Instantiate all template members eagerly (default: lazy)", "", false },
 };
 
 // Compile-time lookup: _opt user-defined literal.
@@ -195,7 +196,13 @@ public:
 			} else {
 				left += ' '; // Ensure at least one space separator
 			}
-			std::cout << left << opt.description << "\n";
+			std::cout << left << opt.description;
+			if (!opt.example.empty()) {
+				std::cout << "\n";
+				std::string pad(kHelpColumnWidth, ' ');
+				std::cout << pad << "  e.g. " << opt.example;
+			}
+			std::cout << "\n";
 		};
 
 		for (const auto& opt : all_cli_value_options) {
