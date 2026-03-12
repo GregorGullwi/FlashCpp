@@ -543,7 +543,7 @@
 						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name),
 						type_node->type(), size_bits));
 
-					unsigned long long fourth_element = (type_node->type() == Type::Struct)
+					unsigned long long encoded_metadata = (type_node->type() == Type::Struct)
 						? static_cast<unsigned long long>(type_node->type_index())
 						: ((type_node->pointer_depth() > 0) ? static_cast<unsigned long long>(type_node->pointer_depth()) : 0ULL);
 					out = makeExprResult(
@@ -552,7 +552,7 @@
 						IrOperand{result_temp},
 						type_node->type_index(),
 						type_node->pointer_depth(),
-						fourth_element
+						encoded_metadata
 					);
 					return true;
 				}
@@ -561,14 +561,17 @@
 			// Static local variables are stored as globals with mangled names
 			auto static_local_it = static_local_names_.find(identifier_handle);
 			if (static_local_it != static_local_names_.end()) {
+				constexpr TypeIndex kStaticLocalTypeIndex = 0;
+				constexpr int kStaticLocalPointerDepth = 0;
+				constexpr unsigned long long kStaticLocalEncodedMetadata = 0ULL;
 				out = makeExprResult(
 					static_local_it->second.type,
 					static_cast<int>(static_local_it->second.size_in_bits),
 					IrOperand{static_local_it->second.mangled_name},
-					0,
-					0,
-					0ULL
-				); // pointer depth - assume 0 for static locals for now
+					kStaticLocalTypeIndex,
+					kStaticLocalPointerDepth,
+					kStaticLocalEncodedMetadata
+				); // pointer depth/type_index metadata are assumed 0 for static locals here
 				return true;
 			}
 
@@ -580,7 +583,7 @@
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 			// - For non-struct pointer types, return pointer_depth
 			// - Otherwise return 0
-			unsigned long long fourth_element = (type_node->type() == Type::Struct)
+			unsigned long long encoded_metadata = (type_node->type() == Type::Struct)
 				? static_cast<unsigned long long>(type_node->type_index())
 				: ((type_node->pointer_depth() > 0) ? static_cast<unsigned long long>(type_node->pointer_depth()) : 0ULL);
 			out = makeExprResult(
@@ -589,7 +592,7 @@
 				IrOperand{identifier_handle},
 				type_node->type_index(),
 				type_node->pointer_depth(),
-				fourth_element
+				encoded_metadata
 			);
 			return true;
 		};
@@ -1344,7 +1347,7 @@
 				operandType,
 				64,
 				IrOperand{result_var},
-				0,
+				operandIrOperands.type_index,
 				static_cast<int>(operand_ptr_depth + 1),
 				operand_ptr_depth + 1
 			);
@@ -1440,7 +1443,7 @@
 					operandType,
 					64,
 					IrOperand{lvalue_temp},
-					0,
+					operandIrOperands.type_index,
 					static_cast<int>(result_ptr_depth),
 					result_ptr_depth
 				);
@@ -1451,7 +1454,7 @@
 			
 			// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
 			pointer_depth = operandIrOperands.pointer_depth;
-			// Otherwise, look up the pointer operand to determine its pointer depth from symbol table
+			// If pointer_depth is still 0, look up the pointer operand in the symbol table.
 			if (pointer_depth == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(operandExpr)) {
@@ -1532,7 +1535,7 @@
 				operandType,
 				element_size,
 				IrOperand{result_var},
-				0,
+				operandIrOperands.type_index,
 				static_cast<int>(result_ptr_depth),
 				result_ptr_depth
 			);
